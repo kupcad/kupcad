@@ -44,12 +44,15 @@ describe("a run's problems", () => {
       warnings: [
         { message: 'mended', line: 1, column: 1 },
         { message: 'meshed coarse', line: null, column: null },
+        // A library's function warned: in that module, at its line
+        { message: 'thin wall', line: 4, column: 3, file: 'lib/holes.kup' },
       ],
     });
     expect(problemsOf(failed)).toEqual([
-      { severity: 'error', message: 'boom', line: 2, column: 5 },
-      { severity: 'warning', message: 'mended', line: 1, column: 1 },
-      { severity: 'warning', message: 'meshed coarse', line: null, column: null },
+      { severity: 'error', message: 'boom', line: 2, column: 5, file: null },
+      { severity: 'warning', message: 'mended', line: 1, column: 1, file: null },
+      { severity: 'warning', message: 'meshed coarse', line: null, column: null, file: null },
+      { severity: 'warning', message: 'thin wall', line: 4, column: 3, file: 'lib/holes.kup' },
     ]);
   });
 });

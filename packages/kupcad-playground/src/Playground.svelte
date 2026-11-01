@@ -252,9 +252,13 @@
     runner?.run(value, values, { now: true, files });
   }
 
-  /** @param {Problem | ConsoleLine} place a problem or a console line with a line, clicked */
+  /**
+   * Shows the script where a problem or a console line is, clicked; one in a library (`file`),
+   * another file than the editor's, isn't shown.
+   * @param {Problem | ConsoleLine} place
+   */
   function reveal(place) {
-    if (place.line !== null) editor?.reveal(place.line, place.column ?? 1);
+    if (place.line !== null && !place.file) editor?.reveal(place.line, place.column ?? 1);
   }
 
   /** @param {ExportFormat} format */

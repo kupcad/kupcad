@@ -494,7 +494,9 @@
 {#snippet said(/** @type {Problem} */ problem)}
   <span class="severity">{SEVERITIES[problem.severity]}</span>
   <span class="message">{problem.message}</span>
-  {#if problem.line !== null}<span class="place">line {problem.line}</span>{/if}
+  {#if problem.line !== null}<span class="place"
+      >{problem.file ? `${problem.file} ` : ''}line {problem.line}</span
+    >{/if}
 {/snippet}
 
 <style>

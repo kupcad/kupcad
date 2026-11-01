@@ -133,18 +133,20 @@ fn importingVm(files: *MemoryVfs) !VM {
     return vm;
 }
 
-test "run report: what an imported module's function warns of is placed at the script's call of it" {
+test "run report: what an imported module's function warns of is placed in the module, at its own line" {
+    // It was placed at the script's call of it: a library's warning on a line of the script
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
     var vm = try importingVm(&files);
     defer vm.deinit();
-    // The module's offset of its warning is on the script's line 1: it was placed there
     try testing.expectEqual(.ok, try run(&vm, "CAD.config(engine: :brep)\nimport { tinted } from \"./tint.kup\"\nx = 1\ny = 2\npart = tinted(cube(1))\n"));
     try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
-    try testing.expectEqual(@as(u32, 5), vm.report.warnings.items[0].position.?.line);
+    const warning = vm.report.warnings.items[0];
+    try testing.expectEqualStrings("tint.kup", warning.module.?);
+    try testing.expectEqual(run_report.LinePosition{ .line = 2, .column = 3 }, warning.position.?);
 }
 
-test "run report: what a module warns of as it runs is placed at its import, and given again by an import from the cache, once" {
+test "run report: what a module warns of as it runs is placed in it, and given again there by an import from the cache, once" {
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
     var vm = try importingVm(&files);
@@ -153,13 +155,26 @@ test "run report: what a module warns of as it runs is placed at its import, and
     try testing.expectEqual(.ok, try run(&vm, script));
     try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
     try testing.expect(std.mem.find(u8, vm.report.warnings.items[0].message, "brep") != null);
+    try testing.expectEqualStrings("shaded.kup", vm.report.warnings.items[0].module.?);
     try testing.expectEqual(@as(u32, 2), vm.report.warnings.items[0].position.?.line);
 
     // The session's next run: the module comes from the cache, and doesn't run
     vm.resetRunOutput();
     try testing.expectEqual(.ok, try run(&vm, script));
     try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expectEqualStrings("shaded.kup", vm.report.warnings.items[0].module.?);
     try testing.expectEqual(@as(u32, 2), vm.report.warnings.items[0].position.?.line);
+}
+
+test "run report: a script's own warn() is a warning where it is called, printed as ever" {
+    // It was printed only: no editor or preview showed it beside the line
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try run(&vm, "x = 1\nwarn(\"thin wall: \", 0.4)\n"));
+    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expectEqualStrings("thin wall: 0.4", vm.report.warnings.items[0].message);
+    try testing.expectEqual(run_report.LinePosition{ .line = 2, .column = 1 }, vm.report.warnings.items[0].position.?);
+    try testing.expectEqual(@as(?[]u8, null), vm.report.warnings.items[0].module);
 }
 
 test "run report: an error raised in an imported module's code is placed at the script's call, its backtrace naming the module" {

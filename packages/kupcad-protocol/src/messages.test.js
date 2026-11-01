@@ -69,6 +69,21 @@ describe('isViewerMessage', () => {
     ]) {
       expect(isViewerMessage({ type: 'reveal', uri: 'file:///w/a.kup', line, column })).toBe(false);
     }
+    // A library's place: a path in the project, never out of it
+    const reveal = { type: 'reveal', uri: 'file:///w/a.kup', line: 3, column: 1 };
+    expect(isViewerMessage({ ...reveal, file: 'lib/holes.kup' })).toBe(true);
+    for (const file of [
+      '',
+      '/etc/passwd',
+      'C:/w/a.kup',
+      '../a.kup',
+      'lib/../../a.kup',
+      'a\\b.kup',
+      'lib//a.kup',
+      3,
+    ]) {
+      expect(isViewerMessage({ ...reveal, file })).toBe(false);
+    }
     expect(isViewerMessage({ type: 'setParams', uri: 'file:///w/a.kup', values: null })).toBe(
       false,
     );

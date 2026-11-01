@@ -19,12 +19,27 @@ pub const ParamList = std.MultiArrayList(ParamRegistry);
 pub const CachedModule = struct {
     exports: value.Value,
     params: std.ArrayList(ParamRegistry) = .empty,
-    /// The warnings' messages, owned.
-    warnings: std.ArrayList([]u8) = .empty,
+    /// The warnings, as the run that cached it placed them.
+    warnings: std.ArrayList(CachedWarning) = .empty,
 
     pub fn deinit(self: *CachedModule, allocator: std.mem.Allocator) void {
         self.params.deinit(allocator);
-        for (self.warnings.items) |message| allocator.free(message);
+        for (self.warnings.items) |w| w.deinit(allocator);
         self.warnings.deinit(allocator);
+    }
+};
+
+/// A warning a cached module's run gave: its message, and its place in the module whose code
+/// gave it (the path in the project, null for one placed at the import), each owned.
+pub const CachedWarning = struct {
+    message: []u8,
+    /// Its 1-based line and column; 0 for none (the model was being meshed).
+    line: u32 = 0,
+    column: u32 = 0,
+    module: ?[]u8 = null,
+
+    pub fn deinit(self: CachedWarning, allocator: std.mem.Allocator) void {
+        allocator.free(self.message);
+        if (self.module) |m| allocator.free(m);
     }
 };

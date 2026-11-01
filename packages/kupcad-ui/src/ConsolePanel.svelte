@@ -56,7 +56,8 @@
         <li class={line.kind}>
           {#if line.line !== null && onreveal}
             <button type="button" class="place" onclick={() => onreveal(line)}>
-              {line.text} <span class="at">line {line.line}</span>
+              {line.text}
+              <span class="at">{line.file ? `${line.file} ` : ''}line {line.line}</span>
             </button>
           {:else}
             {line.text}

@@ -8,7 +8,8 @@
 
 /**
  * @param {readonly Finding[]} findings `check`'s
- * @param {readonly Problem[]} problems the run's (`problemsOf(header)`): those with a line
+ * @param {readonly Problem[]} problems the run's (`problemsOf(header)`): those with a line in
+ *   the script (not in a library, `file`)
  * @returns {Mark[]}
  */
 export function marksOf(findings, problems) {
@@ -16,7 +17,8 @@ export function marksOf(findings, problems) {
   /** @type {Mark[]} */
   const placed = [];
   for (const problem of problems) {
-    if (problem.line === null || (checked && problem.severity === 'error')) continue;
+    if (problem.line === null || problem.file || (checked && problem.severity === 'error'))
+      continue;
     const { severity, message, line } = problem;
     placed.push({ severity, message, line, column: problem.column ?? 1 });
   }

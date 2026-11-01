@@ -20,6 +20,9 @@ pub const Warning = struct {
     message: []u8,
     /// Null where the script wasn't running (a warning while the model was meshed).
     position: ?LinePosition,
+    /// The module whose code warned, its path in the project, owned; null for the running
+    /// document's own code. A library's function warned at the line that called it.
+    module: ?[]u8 = null,
 };
 
 pub const RunReport = struct {
@@ -40,7 +43,10 @@ pub const RunReport = struct {
     }
 
     pub fn clear(self: *RunReport, allocator: std.mem.Allocator) void {
-        for (self.warnings.items) |w| allocator.free(w.message);
+        for (self.warnings.items) |w| {
+            allocator.free(w.message);
+            if (w.module) |m| allocator.free(m);
+        }
         self.warnings.clearRetainingCapacity();
         self.forgetRefusal(allocator);
         self.output.clearRetainingCapacity();
@@ -71,14 +77,21 @@ pub const RunReport = struct {
     /// already, word for word, is freed instead (a run warns of a thing once: a loop's pass,
     /// a module imported twice), and so is one past MAX_WARNINGS.
     pub fn addWarning(self: *RunReport, allocator: std.mem.Allocator, message: []u8, position: ?LinePosition) !void {
-        if (self.warnings.items.len >= MAX_WARNINGS or self.has(message)) return allocator.free(message);
-        errdefer allocator.free(message);
-        try self.warnings.append(allocator, .{ .message = message, .position = position });
+        return self.addWarningIn(allocator, message, position, null);
     }
 
-    fn has(self: *const RunReport, message: []const u8) bool {
+    /// addWarning, of the code of the module at `module` (copied; null: the document's own).
+    pub fn addWarningIn(self: *RunReport, allocator: std.mem.Allocator, message: []u8, position: ?LinePosition, module: ?[]const u8) !void {
+        if (self.warnings.items.len >= MAX_WARNINGS or self.has(message, module)) return allocator.free(message);
+        errdefer allocator.free(message);
+        const owned_module = if (module) |m| try allocator.dupe(u8, m) else null;
+        errdefer if (owned_module) |m| allocator.free(m);
+        try self.warnings.append(allocator, .{ .message = message, .position = position, .module = owned_module });
+    }
+
+    fn has(self: *const RunReport, message: []const u8, module: ?[]const u8) bool {
         for (self.warnings.items) |kept| {
-            if (std.mem.eql(u8, kept.message, message)) return true;
+            if (std.mem.eql(u8, kept.message, message) and sameModule(kept.module, module)) return true;
         }
         return false;
     }
@@ -102,6 +115,11 @@ pub const RunReport = struct {
         self.refused_path = owned_path;
     }
 };
+
+fn sameModule(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
+}
 
 fn freePath(allocator: std.mem.Allocator, path: []Step) void {
     for (path) |step| switch (step) {

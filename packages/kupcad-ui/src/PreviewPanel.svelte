@@ -185,7 +185,7 @@
    */
   function revealProblem(problem) {
     if (!shown || problem.line === null) return;
-    host.post({ type: 'reveal', uri: shown.uri, line: problem.line, column: problem.column ?? 1 });
+    host.post({ type: 'reveal', uri: shown.uri, ...placeOf(problem) });
   }
 
   /**
@@ -194,7 +194,17 @@
    */
   function revealLine(line) {
     if (!shown || line.line === null) return;
-    host.post({ type: 'reveal', uri: shown.uri, line: line.line, column: line.column ?? 1 });
+    host.post({ type: 'reveal', uri: shown.uri, ...placeOf(line) });
+  }
+
+  /**
+   * Where a problem or a console line is, as `reveal` says it: in a library, its `file`, which
+   * the host opens in place of the script shown.
+   * @param {{ line: number | null, column: number | null, file: string | null }} at
+   */
+  function placeOf(at) {
+    const place = { line: at.line ?? 1, column: at.column ?? 1 };
+    return at.file ? { ...place, file: at.file } : place;
   }
 
   /** @param {Blob} image */

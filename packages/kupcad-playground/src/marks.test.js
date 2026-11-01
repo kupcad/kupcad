@@ -19,9 +19,11 @@ const findingOf = (finding) =>
 it("marks check's findings and the places the run named, the run's error unless check found errors", () => {
   /** @type {Problem[]} */
   const problems = [
-    { severity: 'error', message: 'RuntimeError: boom', line: 3, column: null },
-    { severity: 'warning', message: 'mended', line: 2, column: 5 },
-    { severity: 'warning', message: 'meshed coarse', line: null, column: null },
+    { severity: 'error', message: 'RuntimeError: boom', line: 3, column: null, file: null },
+    { severity: 'warning', message: 'mended', line: 2, column: 5, file: null },
+    { severity: 'warning', message: 'meshed coarse', line: null, column: null, file: null },
+    // A library's line, not the script's
+    { severity: 'warning', message: 'thin wall', line: 1, column: 1, file: 'lib/holes.kup' },
   ];
   expect(marksOf([findingOf({})], problems)).toEqual([
     findingOf({}),

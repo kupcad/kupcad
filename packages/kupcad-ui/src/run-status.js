@@ -20,6 +20,8 @@
  * @property {string} message
  * @property {number | null} line
  * @property {number | null} column
+ * @property {string | null} file the path in the project of the module whose code it is in (a
+ *   library's function), its line and column that module's; null for the script shown
  */
 
 /** @type {Record<RunStatus['state'], string>} */
@@ -59,11 +61,12 @@ export function describeRun(run) {
 export function problemsOf(header) {
   if (!header) return [];
   /** @type {Problem[]} */
-  const problems = header.warnings.map(({ message, line, column }) => ({
+  const problems = header.warnings.map(({ message, line, column, file }) => ({
     severity: 'warning',
     message,
     line,
     column,
+    file: file ?? null,
   }));
   const { error } = header;
   if (error) {
@@ -72,6 +75,7 @@ export function problemsOf(header) {
       message: error.message,
       line: error.line,
       column: error.column,
+      file: null,
     });
   }
   return problems;

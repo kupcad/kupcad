@@ -1544,7 +1544,13 @@ pub const VM = struct {
         for (declared) |index| cached.params.appendAssumeCapacity(self.param_registry.get(index));
         const warned = self.report.warnings.items[warned_from..];
         try cached.warnings.ensureTotalCapacity(self.allocator, warned.len);
-        for (warned) |w| cached.warnings.appendAssumeCapacity(try self.allocator.dupe(u8, w.message));
+        for (warned) |w| {
+            const message = try self.allocator.dupe(u8, w.message);
+            errdefer self.allocator.free(message);
+            const module = if (w.module) |m| try self.allocator.dupe(u8, m) else null;
+            const position = w.position orelse LinePosition{ .line = 0, .column = 0 };
+            cached.warnings.appendAssumeCapacity(.{ .message = message, .line = position.line, .column = position.column, .module = module });
+        }
         const gop = try owned_keys.getOrPutOwned(&self.modules, self.allocator, path);
         if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
         gop.value_ptr.* = cached;
@@ -1764,14 +1770,34 @@ pub const VM = struct {
         comptime checkMessageLayout(fmt);
         if (!self.mute_errors) log.warn(fmt, args);
         const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        self.keepWarning(message);
+    }
+
+    /// Keeps `message` (owned, taken) as a warning where the code running now is: an imported
+    /// module's in that module (its own lines), the script's in the script.
+    pub fn keepWarning(self: *VM, message: []u8) void {
+        if (self.frames.items.len > 0) {
+            const frame = &self.frames.items[self.frames.items.len - 1];
+            if (frame.closure.function.namespace) |ns| if (ns.line_index) |*li| {
+                const position: ?LinePosition = if (frame.sourceOffset()) |offset| at: {
+                    const at = li.humanPosition(offset);
+                    break :at .{ .line = at.line, .column = at.column };
+                } else null;
+                self.report.addWarningIn(self.allocator, message, position, ns.path) catch {};
+                return;
+            };
+        }
         self.report.addWarning(self.allocator, message, self.currentPosition()) catch {};
     }
 
-    /// Keeps a warning a module gave when it ran, where the script is now (its import from
-    /// the cache): logged then, it isn't again.
-    fn warnAgain(self: *VM, message: []const u8) void {
-        const owned = self.allocator.dupe(u8, message) catch return;
-        self.report.addWarning(self.allocator, owned, self.currentPosition()) catch {};
+    /// Keeps a warning a module gave when it ran (its import from the cache), where it gave
+    /// it; one it placed at no module's code, where the script is now. Logged then, it isn't
+    /// again.
+    fn warnAgain(self: *VM, cached: parameters.CachedWarning) void {
+        const owned = self.allocator.dupe(u8, cached.message) catch return;
+        const module = cached.module orelse return self.report.addWarning(self.allocator, owned, self.currentPosition()) catch {};
+        const position: ?LinePosition = if (cached.line > 0) .{ .line = cached.line, .column = cached.column } else null;
+        self.report.addWarningIn(self.allocator, owned, position, module) catch {};
     }
 
     /// The settings in force (CAD.config / CAD.with_config).
@@ -2382,7 +2408,7 @@ pub const VM = struct {
         // and its warnings given, here
         if (self.modules.getPtr(path_str)) |cached| {
             for (cached.params.items) |param| self.declareParam(param) catch |err| return self.allocationFailed(err);
-            for (cached.warnings.items) |message| self.warnAgain(message);
+            for (cached.warnings.items) |w| self.warnAgain(w);
             self.push(cached.exports);
             return null;
         }

@@ -7,6 +7,7 @@ const geom = @import("geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
 const path_mod = @import("path.zig");
 const identifier = @import("identifier.zig");
+const LineIndex = @import("line_index.zig").LineIndex;
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
 /// print in scientific notation instead (1e-7), as in JavaScript.
@@ -322,6 +323,9 @@ pub const Namespace = struct {
     is_marked: bool = false,
     /// Its import is running (compiled into, then run): kept though no function of it lives yet.
     pinned: bool = false,
+    /// Where its source's lines start, owned (its `source` is empty: the text is gone once
+    /// it is compiled), so what its code warns of is placed in it, not at its importer's call.
+    line_index: ?LineIndex = null,
 
     pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
         (try owned_keys.getOrPutOwned(&self.globals, allocator, name)).value_ptr.* = val;
@@ -335,6 +339,7 @@ pub const Namespace = struct {
     pub fn deinit(self: *Namespace, allocator: std.mem.Allocator) void {
         owned_keys.deinit(&self.globals, allocator, .borrowed);
         allocator.free(self.path);
+        if (self.line_index) |li| li.deinit(allocator);
     }
 };
 

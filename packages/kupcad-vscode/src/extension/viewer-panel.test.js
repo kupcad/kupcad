@@ -426,7 +426,7 @@ describe('ViewerPanel export', () => {
 /**
  * The page names a place in part.kup: what the panel showed for it, once it showed it or said why
  * not.
- * @param {{ line: number, column: number }} place
+ * @param {{ line: number, column: number, file?: string }} place
  */
 async function reveal(place) {
   // The panel shows part.kup: it acts on the document it shows alone
@@ -464,6 +464,14 @@ describe('ViewerPanel reveal', () => {
     const shown = await reveal({ line: 9, column: 3 });
     expect(shown.viewColumn).toBe(-2);
     expect(shown.selection?.start).toEqual({ line: 0, character: 2 });
+  });
+
+  it("shows a library's place in the library, by its path in the workspace folder", async () => {
+    // A warning of a library's function: it was shown in the script that called it
+    documentAt('/work/lib/holes.kup').text = 'def hole\n  1\nend';
+    const shown = await reveal({ line: 2, column: 3, file: 'lib/holes.kup' });
+    expect(shown.uri).toBe('file:///work/lib/holes.kup');
+    expect(shown.selection?.start).toEqual({ line: 1, character: 2 });
   });
 
   it("says why the script can't be shown", async () => {

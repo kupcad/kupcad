@@ -57,21 +57,23 @@ pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
     var header = try headerOf(arena, script);
     header.params.values = try valuesOf(arena, vm, header.params.schema);
     header.timing.runMs = stopwatch.milliseconds(run.run_ns);
-    var warnings: std.ArrayList(frame.Warning) = .empty;
-    for (vm.report.warnings.items) |w| try warnings.append(arena, warningOf(w.message, w.position));
     header.output = try textOf(arena, vm.report.output.items);
     header.outputCut = vm.report.output_cut;
 
     var clock = stopwatch.Stopwatch.start(vm.io);
     // What a run that still succeeded reported failed nothing: an error of showing it is new
     if (run.ok) vm.clearLastError();
-    const view: Shown = if (run.ok) shown(arena, vm, &warnings) catch |err| switch (err) {
+    const view: Shown = if (run.ok) shown(arena, vm) catch |err| switch (err) {
         // Raised in the VM: why is its last error
         error.RuntimeError => .failed,
         else => |e| return e,
     } else .failed;
     header.timing.renderMs = stopwatch.milliseconds(clock.lap());
-    header.warnings = warnings.items;
+    // Once it is shown: what meshing the model warned of, and what the preview says of it,
+    // are the run's report's too, which a host reads beside the frame (an editor's diagnostics)
+    const warnings = try arena.alloc(frame.Warning, vm.report.warnings.items.len);
+    for (warnings, vm.report.warnings.items) |*placed, w| placed.* = warningOf(w.message, w.position, if (w.module) |m| try arena.dupe(u8, m) else null);
+    header.warnings = warnings;
     switch (view) {
         .failed => header.@"error" = failureOf(vm),
         .model => |m| {
@@ -152,20 +154,20 @@ const Shown = union(enum) {
 
 /// The model the run left: its Solids (and ghosts) as GLB, else its Sketches and Paths as
 /// SVG, else nothing. Sketches beside Solids aren't shown, and a model that is empty (no
-/// triangle, no outline) shows nothing: a warning says so, where an export raises. A
-/// document that ends in no model at all (a module of definitions) shows its ghosts, or
-/// nothing, where an export would refuse it. Owned by `arena`.
-fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warning)) !Shown {
+/// triangle, no outline) shows nothing: a warning in the run's report says so, where an
+/// export raises. A document that ends in no model at all (a module of definitions) shows
+/// its ghosts, or nothing, where an export would refuse it. Owned by `arena`.
+fn shown(arena: std.mem.Allocator, vm: *VM) !Shown {
     const model: model_mod.Model = if (model_mod.isModel(vm.finalValue())) try model_mod.collectModel(arena, vm) else .{ .ghosts = vm.display_list.items };
     const flat = model.sketches.items.len + model.paths.items.len;
     if (model.solids.items.len > 0 or model.ghosts.len > 0) {
         if (flat > 0) {
-            const message = try arena.print("the preview shows the model's Solids; its {d} Sketches and Paths beside them aren't shown (export them as SVG or DXF to see them)", .{flat});
-            try warnings.append(arena, warningOf(message, null));
+            const message = try std.fmt.allocPrint(vm.allocator, "the preview shows the model's Solids; its {d} Sketches and Paths beside them aren't shown (export them as SVG or DXF to see them)", .{flat});
+            try vm.report.addWarning(vm.allocator, message, null);
         }
         const glb = export_mod.exportShapes(arena, vm, .glb, .{}, .{ .solids = model.solids.items, .ghosts = model.ghosts, .title = model.title }) catch |err| switch (err) {
             error.NoGeometry => {
-                try warnings.append(arena, warningOf(EMPTY_MODEL, null));
+                try vm.report.addWarning(vm.allocator, try vm.allocator.dupe(u8, EMPTY_MODEL), null);
                 return .{ .model = .{ .kind = .none } };
             },
             else => |e| return e,
@@ -175,7 +177,7 @@ fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warni
     if (flat > 0) {
         const drawing = try export_mod.drawingOf(arena, vm, model.sketches.items, &.{}, model.paths.items);
         if (drawing.bounds == null) {
-            try warnings.append(arena, warningOf(EMPTY_MODEL, null));
+            try vm.report.addWarning(vm.allocator, try vm.allocator.dupe(u8, EMPTY_MODEL), null);
             return .{ .model = .{ .kind = .none } };
         }
         return .{ .model = .{ .kind = .@"2d", .body = try export_mod.writeDrawing(arena, .svg, .{}, &drawing) } };
@@ -241,9 +243,10 @@ fn paramValue(arena: std.mem.Allocator, v: value.Value) !?param_values.ParamValu
     return if (literal.jsonSafe()) literal else null;
 }
 
-/// A warning of the run as a frame places it, at its line and column (null for none).
-pub fn warningOf(message: []const u8, position: ?LinePosition) frame.Warning {
-    return .{ .message = message, .line = lineOf(position), .column = columnOf(position) };
+/// A warning of the run as a frame places it, at its line and column (null for none), in
+/// `module`'s code (null: the document's own).
+pub fn warningOf(message: []const u8, position: ?LinePosition, module: ?[]const u8) frame.Warning {
+    return .{ .message = message, .line = lineOf(position), .column = columnOf(position), .file = module };
 }
 
 fn lineOf(position: ?LinePosition) ?u32 {

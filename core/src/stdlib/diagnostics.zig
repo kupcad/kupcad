@@ -50,21 +50,19 @@ fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !val
     return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{arguments.typeName(vm, msg)});
 }
 
+/// `warn(*parts)`: prints `[Warning] ` and the parts, as `puts` would, and keeps them as a
+/// warning of the run where it is called, which an editor shows on that line and the
+/// preview beside the model. It was printed only.
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
+    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    defer out.deinit();
+    for (args) |arg| try arg.stringify(false, &out.writer);
     if (vm.host.print_handler) |print_handler| {
-        var out: std.Io.Writer.Allocating = .init(vm.allocator);
-        defer out.deinit();
-
-        try out.writer.writeAll("[Warning] ");
-
-        for (args) |arg| {
-            try arg.stringify(false, &out.writer);
-        }
-        try out.writer.writeAll("\n");
-
-        print_handler(vm, out.written());
+        const line = try std.fmt.allocPrint(vm.allocator, "[Warning] {s}\n", .{out.written()});
+        defer vm.allocator.free(line);
+        print_handler(vm, line);
     }
-
+    vm.keepWarning(try out.toOwnedSlice());
     return value.Value.initNil();
 }
 

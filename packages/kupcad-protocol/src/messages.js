@@ -18,6 +18,19 @@ const isObject = (value) => typeof value === 'object' && value !== null && !Arra
 const isString = (value) => typeof value === 'string';
 /** @param {unknown} value @returns {value is number} a 1-based line or column */
 const isPlace = (value) => Number.isInteger(value) && /** @type {number} */ (value) >= 1;
+/**
+ * Whether `value` is a path in the project, as a frame names a library: relative, with `/`
+ * between its folders, none of them `..`, so a host opens nothing outside the project by it.
+ * @param {unknown} value
+ * @returns {value is string}
+ */
+const isProjectPath = (value) =>
+  isString(value) &&
+  value !== '' &&
+  !value.startsWith('/') &&
+  !/^[A-Za-z]:/.test(value) &&
+  !value.includes('\\') &&
+  value.split('/').every((part) => part !== '' && part !== '..');
 
 /**
  * Whether `value` is parameter values: names to a number, a string, a boolean, or an array or
@@ -79,7 +92,11 @@ const VIEWER_MESSAGES = {
   /** @param {Record<string, unknown>} m */
   problem: (m) => isString(m.message),
   /** @param {Record<string, unknown>} m */
-  reveal: (m) => isString(m.uri) && isPlace(m.line) && isPlace(m.column),
+  reveal: (m) =>
+    isString(m.uri) &&
+    isPlace(m.line) &&
+    isPlace(m.column) &&
+    (m.file === undefined || isProjectPath(m.file)),
   /** @param {Record<string, unknown>} m */
   setting: (m) => isString(m.key) && m.key.length <= MAX_SETTING_KEY && isSettingValue(m.value),
 };

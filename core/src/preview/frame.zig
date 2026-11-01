@@ -65,11 +65,14 @@ pub const Part = struct {
 };
 
 /// A warning of the run, at the line and column (1-based, the column in UTF-8 bytes) the
-/// script was at; null where it wasn't running (a warning while the model was meshed).
+/// script was at; null where it wasn't running (a warning while the model was meshed). In
+/// `file`, the path in the project of the module whose code warned (a library's function),
+/// those lines its; null for the document's own. Added in protocol version 1, optional.
 pub const Warning = struct {
     message: []const u8,
     line: ?u32,
     column: ?u32,
+    file: ?[]const u8 = null,
 };
 
 pub const Params = struct {

@@ -19,7 +19,8 @@ import { anotherDocument, ScriptValues } from './host.js';
  * @property {(text: string) => void} fail a request to the server that failed
  * @property {(uri: string, format: ExportFormat) => void} export
  * @property {(png: string) => void} screenshot the image's bytes in base64 (`pngBytes`)
- * @property {(uri: string, line: number, column: number) => void} reveal shows the script there
+ * @property {(uri: string, line: number, column: number, file: string | null) => void} reveal
+ *   shows the script there; with a `file`, that module of the project (a library) instead
  * @property {(uri: string) => void} [presets] tells the page the document's presets
  *   (`tellPresets`), asked whenever the document is told; none offered without it
  * @property {(uri: string, name: string) => void} [applyPreset]
@@ -97,7 +98,7 @@ export function createPreviewHost(services) {
         services.warn(`The page: ${message.message}`);
         return;
       case 'reveal':
-        services.reveal(message.uri, message.line, message.column);
+        services.reveal(message.uri, message.line, message.column, message.file ?? null);
         return;
       case 'setting':
         services.keepSetting?.(message.key, message.value);

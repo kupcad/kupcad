@@ -36,7 +36,8 @@ import {
  *   builds the script (the native side's `kupcad build`); rejects with what kupcad said
  * @property {() => number} memoryLimit the most memory, in GB, a build may hold (the setting)
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
- * @property {(uri: string, line: number, column: number) => void} reveal shows the script there
+ * @property {(uri: string, line: number, column: number, file: string | null) => void} reveal
+ *   shows the script there; with a `file`, that module of the folder (a library) instead
  * @property {(text: string) => void} log
  */
 

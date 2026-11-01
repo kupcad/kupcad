@@ -42,7 +42,7 @@
     rowMenu,
     within,
   } from '@kupcad/files';
-  import { fileUri } from './folder.js';
+  import { fileUri, moduleUri } from './folder.js';
   import { createHost } from './host.js';
   import { menuBar } from './menu.js';
   import { fontSizeOf, KEYS, recentOf, withRecent, zoomOf, zoomStep } from './prefs.js';
@@ -192,7 +192,8 @@
     exportModel: (...args) => platform.exportModel(...args),
     memoryLimit: () => memoryLimit,
     writeFile: (path, bytes) => platform.writeFile(path, bytes),
-    reveal: (uri, line, column) => void reveal(uri, line, column),
+    reveal: (uri, line, column, file) =>
+      void reveal(file && project ? moduleUri(project.root, file) : uri, line, column),
     log: (text) => (problem = text),
   });
 

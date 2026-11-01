@@ -19,6 +19,8 @@ export const MAX_LINES = 2000;
  * @property {string} text
  * @property {number | null} line
  * @property {number | null} column
+ * @property {string | null} file the module the line and column are in (its path in the
+ *   project), null for the script's own
  */
 
 /**
@@ -26,9 +28,16 @@ export const MAX_LINES = 2000;
  * @param {string} text
  * @param {number | null} [line]
  * @param {number | null} [column]
+ * @param {string | null} [file]
  * @returns {ConsoleLine}
  */
-const lineOf = (kind, text, line = null, column = null) => ({ kind, text, line, column });
+const lineOf = (kind, text, line = null, column = null, file = null) => ({
+  kind,
+  text,
+  line,
+  column,
+  file,
+});
 
 /**
  * `text`'s lines, without the end its last one has.
@@ -48,8 +57,8 @@ export function linesOfRun(header, name) {
   if (header.outputCut) {
     lines.push(lineOf('log', 'It printed more than a run keeps: the rest is left out.'));
   }
-  for (const { message, line, column } of header.warnings) {
-    lines.push(lineOf('warning', `Warning: ${message}`, line, column));
+  for (const { message, line, column, file } of header.warnings) {
+    lines.push(lineOf('warning', `Warning: ${message}`, line, column, file ?? null));
   }
   const { error } = header;
   if (error) lines.push(lineOf('error', `Error: ${error.message}`, error.line, error.column));

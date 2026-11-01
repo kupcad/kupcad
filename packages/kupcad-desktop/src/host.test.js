@@ -172,7 +172,7 @@ describe('the host', () => {
     expect(path).toBe('/out/part.png');
     expect([...bytes]).toEqual([...new TextEncoder().encode('PNG')]);
     host.post({ type: 'reveal', uri: PART.uri, line: 3, column: 5 });
-    expect(services.reveal).toHaveBeenCalledWith(PART.uri, 3, 5);
+    expect(services.reveal).toHaveBeenCalledWith(PART.uri, 3, 5, null);
   });
 });
 

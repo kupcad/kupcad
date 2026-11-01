@@ -34,6 +34,7 @@ const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
 const preview_frame = @import("../preview/frame.zig");
 const FrameWarning = preview_frame.Warning;
+const ModuleWarnings = lsp_preview.ModuleWarnings;
 
 const logger = std.log.scoped(.lsp);
 
@@ -94,18 +95,15 @@ pub const DocumentBuffer = struct {
     module_path: []const u8,
     source: []const u8,
     doc: ?api.Document = null,
-    /// What its last run warned of (Preview.takeRunWarnings), in `run_warnings_memory`, shown
+    /// What the runs warned of in it (Handler.warningsIn), in `run_warnings_memory`, shown
     /// beside its lint findings until an edit moves the lines they are on.
     run_warnings: []const FrameWarning = &.{},
     run_warnings_memory: std.heap.ArenaAllocator,
 
-    /// Takes a copy of `warnings` as its run's, in place of the last (none, when the copy fails).
+    /// Takes a copy of `warnings` as its runs', in place of the last (none, when the copy fails).
     fn setRunWarnings(self: *DocumentBuffer, warnings: []const FrameWarning) !void {
         self.forgetRunWarnings();
-        const memory = self.run_warnings_memory.allocator();
-        const copy = try memory.alloc(FrameWarning, warnings.len);
-        for (copy, warnings) |*to, from| to.* = .{ .message = try memory.dupe(u8, from.message), .line = from.line, .column = from.column };
-        self.run_warnings = copy;
+        self.run_warnings = try copyWarnings(self.run_warnings_memory.allocator(), warnings);
     }
 
     fn forgetRunWarnings(self: *DocumentBuffer) void {
@@ -278,6 +276,9 @@ pub const Handler = struct {
     can_watch_files: bool = false,
     /// The data files the editor watches for the preview (owned, sorted; watchFilesRead).
     watched_files: [][]u8 = &.{},
+    /// What each module's last run warned of, by its path (owned): a warning is shown in the
+    /// document it names (`file`, a library whose code warned), else in the module's own.
+    run_warnings: std.StringArrayHashMapUnmanaged(RunWarnings) = .empty,
     /// The number of the last request the server sent the editor.
     last_request: u32 = 0,
     /// The document whose frame the viewport shows (its module path and URI owned): the one
@@ -402,8 +403,9 @@ pub const Handler = struct {
         self.showRunWarnings();
     }
 
-    /// Shows what the runs warned of on the open documents they are of: a document whose
-    /// warnings changed has its diagnostics published again, its lint findings with them.
+    /// Shows what the runs warned of on the open documents they are in: a document whose
+    /// warnings changed has its diagnostics published again, its lint findings with them. A
+    /// library's warning is in the library, whichever module's run called it.
     fn showRunWarnings(self: *Handler) void {
         var arena_state = std.heap.ArenaAllocator.init(self.allocator);
         defer arena_state.deinit();
@@ -412,14 +414,64 @@ pub const Handler = struct {
             logger.warn("Could not read what the runs warned of: {}", .{err});
             return;
         };
-        for (modules) |module| {
-            const buf = self.bufferOf(module.module_path) orelse continue;
-            if (sameWarnings(buf.run_warnings, module.warnings)) continue;
-            buf.setRunWarnings(module.warnings) catch |err| {
-                logger.warn("Could not keep what {s} warned of: {}", .{ module.module_path, err });
+        for (modules) |module| self.keepRunWarnings(module) catch |err| {
+            logger.warn("Could not keep what {s} warned of: {}", .{ module.module_path, err });
+        };
+        var buffers = self.files.valueIterator();
+        while (buffers.next()) |buf| {
+            const warnings = self.warningsIn(arena, buf.module_path) catch continue;
+            if (sameWarnings(buf.run_warnings, warnings)) continue;
+            buf.setRunWarnings(warnings) catch |err| {
+                logger.warn("Could not keep what was warned of in {s}: {}", .{ buf.module_path, err });
                 continue;
             };
             self.runDiagnostics(arena, buf) catch |err| logger.warn("Could not publish {s}'s diagnostics: {}", .{ buf.uri, err });
+        }
+    }
+
+    /// Keeps `module`'s run's warnings in place of its last run's.
+    fn keepRunWarnings(self: *Handler, module: ModuleWarnings) !void {
+        const entry = try self.run_warnings.getOrPut(self.allocator, module.module_path);
+        if (!entry.found_existing) {
+            // The key is the module's own copy: what the worker sent goes with its arena
+            entry.key_ptr.* = self.allocator.dupe(u8, module.module_path) catch |err| {
+                _ = self.run_warnings.orderedRemove(module.module_path);
+                return err;
+            };
+            entry.value_ptr.* = .{ .memory = .init(self.allocator) };
+        }
+        const run = entry.value_ptr;
+        run.warnings = &.{};
+        _ = run.memory.reset(.retain_capacity);
+        run.warnings = try copyWarnings(run.memory.allocator(), module.warnings);
+    }
+
+    /// What the runs warned of in the module at `module_path`, each once (a library's top
+    /// level warns in its own run and in each importer's), owned by `arena`.
+    fn warningsIn(self: *const Handler, arena: std.mem.Allocator, module_path: []const u8) ![]const FrameWarning {
+        var found: std.ArrayList(FrameWarning) = .empty;
+        for (self.run_warnings.keys(), self.run_warnings.values()) |ran, run| {
+            for (run.warnings) |w| {
+                if (!std.mem.eql(u8, w.file orelse ran, module_path)) continue;
+                if (containsWarning(found.items, w)) continue;
+                try found.append(arena, .{ .message = w.message, .line = w.line, .column = w.column });
+            }
+        }
+        return found.items;
+    }
+
+    /// Forgets what the runs warned of in the module at `module_path`: it was edited, and its
+    /// lines moved. A run of it, or of a module that calls it, says what it warns of now.
+    fn forgetWarningsIn(self: *Handler, module_path: []const u8) void {
+        for (self.run_warnings.keys(), self.run_warnings.values()) |ran, *run| {
+            const kept = run.memory.allocator().alloc(FrameWarning, run.warnings.len) catch continue;
+            var count: usize = 0;
+            for (run.warnings) |w| {
+                if (std.mem.eql(u8, w.file orelse ran, module_path)) continue;
+                kept[count] = w;
+                count += 1;
+            }
+            run.warnings = kept[0..count];
         }
     }
 
@@ -529,6 +581,11 @@ pub const Handler = struct {
         if (self.root) |r| self.allocator.free(r);
         if (self.root_uri) |r| self.allocator.free(r);
         freeFiles(self.allocator, self.watched_files);
+        for (self.run_warnings.keys(), self.run_warnings.values()) |path, *run| {
+            self.allocator.free(path);
+            run.memory.deinit();
+        }
+        self.run_warnings.deinit(self.allocator);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -639,7 +696,10 @@ pub const Handler = struct {
         logger.debug("Opened {s}", .{params.textDocument.uri});
         const buf = try self.hold(params.textDocument.uri, params.textDocument.text);
         try self.syncSession(buf.uri, buf.module_path, buf.source);
-        try self.runDiagnostics(arena, self.files.getPtr(params.textDocument.uri).?);
+        const held = self.files.getPtr(params.textDocument.uri).?;
+        // What a run warned of in it before it was opened (a library an open script calls)
+        try held.setRunWarnings(try self.warningsIn(arena, held.module_path));
+        try self.runDiagnostics(arena, held);
     }
 
     /// Holds the document at `uri` with `text`, in place of one held there before. Held, it
@@ -688,6 +748,7 @@ pub const Handler = struct {
                         if (buf.doc) |*d| d.deinit();
                         // Its lines moved: its next run says what it warns of now
                         buf.forgetRunWarnings();
+                        self.forgetWarningsIn(buf.module_path);
 
                         buf.source = source;
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
@@ -1170,10 +1231,11 @@ pub const Handler = struct {
             });
         }
         // A warning is placed from its call to the end of that line; one with no place (the
-        // model was being meshed) is the viewer's to show
+        // model was being meshed, or it is empty) on the line that makes the model
+        const model_line = line_index.humanPosition(modelOffset(doc)).line;
         for (buf.run_warnings) |w| {
-            const line = w.line orelse continue;
-            const start = line_index.offsetOf(line, w.column orelse 1) orelse continue;
+            const line = w.line orelse model_line;
+            const start = line_index.offsetOf(line, if (w.line == null) 1 else w.column orelse 1) orelse continue;
             const end = line_index.offsetOf(line, std.math.maxInt(u32)) orelse continue;
             try lsp_diags.append(arena, .{
                 .range = .{ .start = self.lspPosition(line_index, start), .end = self.lspPosition(line_index, end) },
@@ -1250,6 +1312,43 @@ fn isDrivePath(path: []const u8) bool {
 }
 
 /// Whether two runs warned of the same, at the same places.
+/// Where `doc` makes its model: its last statement, the value a run leaves (0, its start, for a
+/// document of none). A warning of no place (an empty model, Sketches the preview left out)
+/// is shown there.
+fn modelOffset(doc: *const api.Document) u32 {
+    const root = doc.tree.getNode(doc.tree.root) orelse return 0;
+    if (root.tag != .block) return 0;
+    const statements = doc.tree.getNodes(doc.tree.block(root).stmts);
+    if (statements.len == 0) return 0;
+    const last = doc.tree.getNode(statements[statements.len - 1]) orelse return 0;
+    return doc.tokens.starts[last.main_token];
+}
+
+/// What a module's last run warned of (Preview.takeRunWarnings), owned by `memory`.
+const RunWarnings = struct {
+    warnings: []const FrameWarning = &.{},
+    memory: std.heap.ArenaAllocator,
+};
+
+/// A copy of `warnings` in `memory`, their messages and files with them.
+fn copyWarnings(memory: std.mem.Allocator, warnings: []const FrameWarning) ![]const FrameWarning {
+    const copy = try memory.alloc(FrameWarning, warnings.len);
+    for (copy, warnings) |*to, from| to.* = .{
+        .message = try memory.dupe(u8, from.message),
+        .line = from.line,
+        .column = from.column,
+        .file = if (from.file) |f| try memory.dupe(u8, f) else null,
+    };
+    return copy;
+}
+
+fn containsWarning(warnings: []const FrameWarning, w: FrameWarning) bool {
+    for (warnings) |kept| {
+        if (std.mem.eql(u8, kept.message, w.message) and kept.line == w.line and kept.column == w.column) return true;
+    }
+    return false;
+}
+
 fn sameWarnings(a: []const FrameWarning, b: []const FrameWarning) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {

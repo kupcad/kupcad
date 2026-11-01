@@ -946,3 +946,48 @@ test "LSP: what a run warned of is a diagnostic on the line of its call, beside 
     server.settle();
     try testing.expectEqual(@as(u32, 4), (try diagnosticsOf(&server, arena, URI))[1].range.start.line);
 }
+
+test "LSP: a library's warning is a diagnostic in the library, at its own line, not at the script's call" {
+    // It was placed at the script's call of the library's function
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    const arena = server.arena.allocator();
+    try server.open(LIB_URI, "def tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n");
+    try server.open(MAIN_URI, "CAD.config(engine: :brep)\nimport { tinted } from \"./lib.kup\"\ntinted(cube(1))\n");
+    server.settle();
+    try testing.expectEqual(@as(usize, 0), (try diagnosticsOf(&server, arena, MAIN_URI)).len);
+    const in_lib = try diagnosticsOf(&server, arena, LIB_URI);
+    try testing.expectEqual(@as(usize, 1), in_lib.len);
+    try testing.expectEqual(@as(u32, 1), in_lib[0].range.start.line);
+    try testing.expect(std.mem.find(u8, in_lib[0].message, "brep") != null);
+
+    // The library edited, its lines moved: gone until the script's next run says it again
+    try server.change(LIB_URI, "\ndef tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n");
+    try testing.expectEqual(@as(usize, 0), (try diagnosticsOf(&server, arena, LIB_URI)).len);
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try testing.expectEqual(@as(u32, 2), (try diagnosticsOf(&server, arena, LIB_URI))[0].range.start.line);
+}
+
+test "LSP: a warning of no line, and a script's warn(), are diagnostics too: on the model's line, and the call's" {
+    // An empty model was said in the viewer alone, and warn() printed to its console alone
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    const arena = server.arena.allocator();
+    try server.open(URI, "# a wall\nwarn(\"thin wall\")\ncube(2) - cube(3)\n");
+    server.settle();
+    const shown = try diagnosticsOf(&server, arena, URI);
+    try testing.expectEqual(@as(usize, 2), shown.len);
+    try testing.expectEqualStrings("thin wall", shown[0].message);
+    try testing.expectEqual(@as(u32, 1), shown[0].range.start.line);
+    try testing.expect(std.mem.find(u8, shown[1].message, "empty") != null);
+    try testing.expectEqual(@as(u32, 2), shown[1].range.start.line);
+    try testing.expectEqual(@as(u32, 0), shown[1].range.start.character);
+}

@@ -90,7 +90,8 @@ export class ViewerPanel {
       fail: (text) => options.log.error(text),
       export: (uri, format) => void vscode.commands.executeCommand(EXPORT_COMMAND, uri, format),
       screenshot: (png) => void this.#saveScreenshot(png),
-      reveal: (uri, line, column) => void this.#revealPlace(uri, line, column),
+      reveal: (uri, line, column, file) =>
+        void this.#revealPlace(file ? (moduleUri(file) ?? uri) : uri, line, column),
       presets: () => void this.#tellPresets(),
       applyPreset: (uri, name) => void this.#applyPreset(uri, name),
       savePreset: (uri, values) => void this.#savePreset(uri, values),
@@ -332,4 +333,15 @@ export class ViewerPanel {
     this.#presetsWatch?.dispose();
     this.#presetsWatch = null;
   }
+}
+
+/**
+ * The URI of the module at `file`, a path in the project as a frame names a library: in the
+ * first workspace folder, the language server's root, which its paths are relative to; null
+ * with no folder open.
+ * @param {string} file
+ */
+function moduleUri(file) {
+  const root = vscode.workspace.workspaceFolders?.[0];
+  return root ? vscode.Uri.joinPath(root.uri, ...file.split('/')).toString() : null;
 }

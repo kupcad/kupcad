@@ -56,6 +56,8 @@ export interface Warning {
   message: string;
   line: number | null;
   column: number | null;
+  /** The path in the project of the module whose code warned (a library's function), the line and column its; null or absent for the document's own. */
+  file?: string | null;
 }
 
 /** Why a run failed, where, and the parameter whose value it refused, and where in it. */
@@ -268,7 +270,8 @@ export type ViewerMessage =
   /** Something the viewer couldn't do, for the host's log. */
   | { type: 'problem'; message: string }
   /** The document is shown in its editor at a place its run named: a Warning's line and column. */
-  | { type: 'reveal'; uri: string; line: number; column: number }
+  /** `file`: a library's place, its path in the project; the place is in the document without it. */
+  | { type: 'reveal'; uri: string; line: number; column: number; file?: string }
   /** A setting of the viewer's changed (a pane's size, whether it shows): the host keeps it, for the page it makes next. */
   | { type: 'setting'; key: string; value: SettingValue };
 

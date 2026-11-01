@@ -127,6 +127,17 @@ export function fileUri(path) {
   return `file://${absolute.split('/').map(encodeURIComponent).join('/')}`;
 }
 
+/**
+ * The file URI of the module at `file` in the folder `root`: a path in the project, `/` between
+ * its folders, as a frame names a library (the protocol holds it inside the project).
+ * @param {string} root
+ * @param {string} file
+ */
+export function moduleUri(root, file) {
+  const separator = root.includes('\\') && !root.includes('/') ? '\\' : '/';
+  return fileUri(`${root.replace(/[\\/]$/, '')}${separator}${file.replaceAll('/', separator)}`);
+}
+
 /** What the app reads, writes, makes and renames the folder's files with. */
 export const files = {
   read: readTextFile,

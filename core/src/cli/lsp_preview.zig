@@ -432,7 +432,7 @@ pub const SessionPreview = struct {
             const id = self.session.workspace.path_to_id.get(path) orelse continue;
             const node = &self.session.nodes.items[@backingInt(id)];
             const warnings = try arena.alloc(FrameWarning, node.warnings.items.len);
-            for (warnings, node.warnings.items) |*placed, w| placed.* = preview_build.warningOf(try arena.dupe(u8, w.message), w.position);
+            for (warnings, node.warnings.items) |*placed, w| placed.* = preview_build.warningOf(try arena.dupe(u8, w.message), w.position, if (w.module) |m| try arena.dupe(u8, m) else null);
             modules.appendAssumeCapacity(.{ .module_path = try arena.dupe(u8, path), .warnings = warnings });
         }
         // Taken once they are all copied: a copy that failed leaves them for the next call

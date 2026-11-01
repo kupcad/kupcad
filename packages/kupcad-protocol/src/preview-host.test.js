@@ -77,7 +77,10 @@ describe('the preview host', () => {
     host.post({ type: 'problem', message: 'the model has no parts' });
     expect(services.export).toHaveBeenCalledWith(PART.uri, '3mf');
     expect(services.screenshot).toHaveBeenCalledWith('UE5H');
-    expect(services.reveal).toHaveBeenCalledWith(PART.uri, 2, 5);
+    expect(services.reveal).toHaveBeenCalledWith(PART.uri, 2, 5, null);
+    // A library's place: the host opens that module
+    host.post({ type: 'reveal', uri: PART.uri, line: 4, column: 3, file: 'lib/holes.kup' });
+    expect(services.reveal).toHaveBeenLastCalledWith(PART.uri, 4, 3, 'lib/holes.kup');
     expect(services.applyPreset).toHaveBeenCalledWith(PART.uri, 'Small');
     expect(services.savePreset).toHaveBeenCalledWith(PART.uri, { w: 1 });
     expect(services.keepSetting).toHaveBeenCalledWith('preview.params', 240);

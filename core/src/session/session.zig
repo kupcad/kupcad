@@ -62,7 +62,10 @@ pub const SessionNode = struct {
     }
 
     fn forgetWarnings(self: *SessionNode, allocator: std.mem.Allocator) void {
-        for (self.warnings.items) |w| allocator.free(w.message);
+        for (self.warnings.items) |w| {
+            allocator.free(w.message);
+            if (w.module) |m| allocator.free(m);
+        }
         self.warnings.clearRetainingCapacity();
     }
 
@@ -71,7 +74,10 @@ pub const SessionNode = struct {
         self.forgetWarnings(allocator);
         try self.warnings.ensureTotalCapacity(allocator, vm.report.warnings.items.len);
         for (vm.report.warnings.items) |w| {
-            self.warnings.appendAssumeCapacity(.{ .message = try allocator.dupe(u8, w.message), .position = w.position });
+            const message = try allocator.dupe(u8, w.message);
+            errdefer allocator.free(message);
+            const module = if (w.module) |m| try allocator.dupe(u8, m) else null;
+            self.warnings.appendAssumeCapacity(.{ .message = message, .position = w.position, .module = module });
         }
     }
 
@@ -469,8 +475,9 @@ pub const ScriptSession = struct {
         const run_ns = clock.lap();
         // A failed run is watched too: fixing the file it couldn't read runs it again
         try node.rememberFilesRead(self.allocator, &self.vm);
-        try node.rememberWarnings(self.allocator, &self.vm);
         if (self.observer) |o| o.ran(o.context, .{ .path = mod.path, .source = mod.source, .doc = &doc, .vm = &self.vm, .ok = result == .ok, .run_ns = run_ns });
+        // After the observer: showing the model (the preview's frame) warns too
+        try node.rememberWarnings(self.allocator, &self.vm);
         if (result != .ok) return error.RuntimeError;
 
         // Borrowed: owned by vm.dag_cache (ensureConcrete) or by vm.display_list.

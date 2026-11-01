@@ -460,8 +460,10 @@ describe('ViewerPane', () => {
     const clicked = [];
     /** @type {Problem[]} */
     const problems = [
-      { severity: 'error', message: 'undefined variable `w`', line: 3, column: 7 },
-      { severity: 'warning', message: 'meshed coarse', line: null, column: null },
+      { severity: 'error', message: 'undefined variable `w`', line: 3, column: 7, file: null },
+      { severity: 'warning', message: 'meshed coarse', line: null, column: null, file: null },
+      // A library's: named by its file
+      { severity: 'warning', message: 'thin wall', line: 4, column: 3, file: 'lib/holes.kup' },
     ];
     const { rerender } = render(ViewerPane, {
       props: {
@@ -475,12 +477,17 @@ describe('ViewerPane', () => {
     const said = [...list.querySelectorAll('li')].map((li) =>
       li.textContent?.replace(/\s+/g, ' ').trim(),
     );
-    expect(said).toEqual(['Error undefined variable `w` line 3', 'Warning meshed coarse']);
+    expect(said).toEqual([
+      'Error undefined variable `w` line 3',
+      'Warning meshed coarse',
+      'Warning thin wall lib/holes.kup line 4',
+    ]);
     // The warning has no line: nothing to show in the script
     const buttons = list.querySelectorAll('button');
-    expect(buttons).toHaveLength(1);
+    expect(buttons).toHaveLength(2);
     await fireEvent.click(buttons[0]);
-    expect(clicked).toEqual([problems[0]]);
+    await fireEvent.click(buttons[1]);
+    expect(clicked).toEqual([problems[0], problems[2]]);
     // Without a host to show them, none is clicked; with none, there is no list
     await rerender({ onproblem: undefined });
     expect(screen.getByRole('list', { name: 'Problems' }).querySelector('button')).toBeNull();

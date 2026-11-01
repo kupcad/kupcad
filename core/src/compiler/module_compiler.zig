@@ -22,6 +22,9 @@ pub fn compileModule(vm: *VM, path: []const u8, source: []const u8, namespace: *
         return vm.fail(.ImportError, "could not parse '{s}': {s} (and {d} more)", .{ path, first, doc.diagnostics.len - 1 });
     }
 
+    if (namespace.line_index) |old| old.deinit(vm.allocator);
+    namespace.line_index = .{ .line_starts = try vm.allocator.dupe(u32, doc.line_index.line_starts), .source = "" };
+
     const module_chunk = try vm.allocator.create(chunk.Chunk);
     module_chunk.* = chunk.Chunk.init();
     errdefer {
