@@ -1311,7 +1311,6 @@ fn isDrivePath(path: []const u8) bool {
         (path.len == 2 or path[2] == '/' or path[2] == '\\');
 }
 
-/// Whether two runs warned of the same, at the same places.
 /// Where `doc` makes its model: its last statement, the value a run leaves (0, its start, for a
 /// document of none). A warning of no place (an empty model, Sketches the preview left out)
 /// is shown there.
@@ -1349,6 +1348,7 @@ fn containsWarning(warnings: []const FrameWarning, w: FrameWarning) bool {
     return false;
 }
 
+/// Whether two runs warned of the same, at the same places.
 fn sameWarnings(a: []const FrameWarning, b: []const FrameWarning) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
