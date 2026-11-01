@@ -1,4 +1,6 @@
-// The hooks the smoke page gives the test.
+// The hooks the smoke page gives the test, and Vite's types (the pane's page imports CSS).
+
+/// <reference types="vite/client" />
 
 import type { Environment, Section, View, Projection } from '../src/viewer/types.js';
 

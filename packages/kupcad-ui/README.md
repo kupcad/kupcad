@@ -295,4 +295,4 @@ on a face (at the bottom, the top, and from below) without streaks; a drawing's 
 order over the grid; the view
 cube, which turns the camera to the part clicked; and the `ViewerPane` laid out by the browser,
 its panel beside the model and, in a pane narrower than 36em, under it (a container query,
-which jsdom doesn't apply).
+which jsdom doesn't apply), a white part's swatch framed on the light panel.

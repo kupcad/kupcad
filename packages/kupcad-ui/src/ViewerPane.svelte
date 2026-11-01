@@ -651,6 +651,8 @@
     height: 10px;
     border-radius: 2px;
     flex: none;
+    /* Framed, so a part the colour of the panel (white in the light theme) still shows */
+    box-shadow: inset 0 0 0 1px var(--kc-border);
   }
   .name {
     flex: 1;
