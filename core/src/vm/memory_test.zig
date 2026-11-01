@@ -610,3 +610,18 @@ test "GC: a top-level def outlives the chunk it ran from, and a collection then 
     try testing.expectEqual(.ok, try support.runOn(&vm, "r = f() + g.call"));
     try support.expectValue(.{ .num = 3 }, vm.globals.get("r").?);
 }
+
+test "GC: an object is charged what it takes, not its struct alone, and gives all of it back" {
+    // Charged 24 bytes and its 7 characters, a million short strings held 3 to 5 times the limit
+    const memory = @import("memory.zig");
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.gc.collectGarbage(&vm, false);
+    const before = vm.gc.bytes_allocated;
+    _ = try vm.gc.allocateString(&vm, "abcdefg");
+    const struct_bytes = std.mem.alignForward(usize, @sizeOf(value.ObjString), memory.ALLOCATION_GRAIN);
+    try testing.expectEqual(before + struct_bytes + memory.OBJECT_OVERHEAD + memory.ALLOCATION_GRAIN, vm.gc.bytes_allocated);
+    // Unreferenced, it is swept, and what it was charged with it
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(before, vm.gc.bytes_allocated);
+}

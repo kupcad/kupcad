@@ -19,6 +19,14 @@ const build_info = @import("build_info");
 /// can rescue it. Raising it used to fail too, and the run ended with "out of memory while
 /// raising an error". Only the raise gets it: the heap never passes the limit by more.
 pub const OUT_OF_MEMORY_RESERVE: usize = 64 * 1024;
+/// What the heap is charged for an object past its struct: its slot in its type's list and on
+/// the gray stack, the allocator's header and rounding, and a string's or a symbol's entry in
+/// its intern table. Charged its struct alone, a million short strings held 3 to 5 times the
+/// memory limit; the VM's own tables grow outside the count, so this stands in for them.
+pub const OBJECT_OVERHEAD: usize = 64;
+/// The allocator hands out memory in steps of this many bytes: a request is charged as many as
+/// it takes (a 7-character string's chars 16).
+pub const ALLOCATION_GRAIN: usize = 16;
 
 /// What tells one native from another: its function and its name (a static string, as
 /// allocateNative requires, so the same name is the same pointer).
@@ -151,20 +159,33 @@ pub const GC = struct {
         };
     }
 
+    /// What the heap is charged for `len` bytes the tracking allocator hands out: as many as
+    /// the allocator takes for them (ALLOCATION_GRAIN). A free or a resize takes off what was
+    /// charged, by the same rounding.
+    fn charged(len: usize) usize {
+        return std.mem.alignForward(usize, len, ALLOCATION_GRAIN);
+    }
+
+    /// What the heap is charged for an object of type T: its struct, rounded as the allocator
+    /// rounds it, and OBJECT_OVERHEAD.
+    fn objectCost(comptime T: type) usize {
+        return comptime charged(@sizeOf(T)) + OBJECT_OVERHEAD;
+    }
+
     fn trackAlloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (self.memoryCap()) |cap| {
-            if (self.bytes_allocated + len > cap) return null;
+            if (self.bytes_allocated + charged(len) > cap) return null;
         }
         const res = self.allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
-        self.bytes_allocated += len;
+        self.bytes_allocated += charged(len);
         return res;
     }
 
     fn trackResize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
-            const diff = new_len - buf.len;
+            const diff = charged(new_len) - charged(buf.len);
             if (self.memoryCap()) |cap| {
                 if (self.bytes_allocated + diff > cap) return false;
             }
@@ -175,7 +196,7 @@ pub const GC = struct {
             return false;
         } else {
             if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
-                self.bytes_allocated -= (buf.len - new_len);
+                self.bytes_allocated -= charged(buf.len) - charged(new_len);
                 return true;
             }
             return false;
@@ -185,7 +206,7 @@ pub const GC = struct {
     fn trackRemap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
-            const diff = new_len - buf.len;
+            const diff = charged(new_len) - charged(buf.len);
             if (self.memoryCap()) |cap| {
                 if (self.bytes_allocated + diff > cap) return null;
             }
@@ -196,7 +217,7 @@ pub const GC = struct {
             return null;
         } else {
             if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
-                self.bytes_allocated -= (buf.len - new_len);
+                self.bytes_allocated -= charged(buf.len) - charged(new_len);
                 return new_ptr;
             }
             return null;
@@ -206,7 +227,7 @@ pub const GC = struct {
     fn trackFree(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *GC = @ptrCast(@alignCast(ctx));
         self.allocator.rawFree(buf, buf_align, ret_addr);
-        self.bytes_allocated -= buf.len;
+        self.bytes_allocated -= charged(buf.len);
     }
 
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
@@ -269,20 +290,20 @@ pub const GC = struct {
 
     /// Generic allocator that appends directly to the specific tracking list
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayList(*T), obj_type: value.ObjType) !*T {
-        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.collectionThreshold()) {
+        if (self.stress or self.bytes_allocated + objectCost(T) > self.collectionThreshold()) {
             self.collectGarbage(vm, false);
         }
 
         // The run raises the OutOfMemoryError that names the limit (VM.allocationFailed).
         if (self.memoryCap()) |cap| {
-            if (self.bytes_allocated + @sizeOf(T) > cap) return error.OutOfMemory;
+            if (self.bytes_allocated + objectCost(T) > cap) return error.OutOfMemory;
         }
 
         const ptr = try self.allocator.create(T);
         // Not in its list yet: nothing would ever sweep it (it leaked, and stayed counted).
         errdefer self.allocator.destroy(ptr);
         try list.append(self.allocator, ptr);
-        self.bytes_allocated += @sizeOf(T);
+        self.bytes_allocated += objectCost(T);
 
         ptr.obj = .{
             .obj_type = obj_type,
@@ -907,9 +928,9 @@ pub const GC = struct {
     }
 
     inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {
-        std.debug.assert(self.bytes_allocated >= @sizeOf(T));
+        std.debug.assert(self.bytes_allocated >= objectCost(T));
         self.allocator.destroy(ptr);
-        self.bytes_allocated -= @sizeOf(T);
+        self.bytes_allocated -= objectCost(T);
     }
 
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
