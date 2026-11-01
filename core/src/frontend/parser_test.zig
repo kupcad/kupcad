@@ -4121,6 +4121,38 @@ test "KupCAD Parser: a block parameter cannot take a block" {
     try expectSingleDiagnostic("[1, 2].each { |a, 5| a }\n", "Expected a block parameter name, found '5'");
 }
 
+test "KupCAD Parser: a parameter in parentheses is an array's names, with one splat at most" {
+    // These reached the compiler, which took them for a fault of its own: an internal error
+    try compileOnly("[[1, 2, 3]].each { |(a, *b)| a }\n");
+    try compileOnly("[[1, [2, 3]]].each { |(a, (*b, c)), (*d)| a }\n");
+    try expectSingleDiagnostic("[[1]].each { |(*a, *b)| a }\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("[[1]].each { |(a, (*b, *c))| a }\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("[[1]].each { |(a = 1, b)| a }\n", "A parameter in parentheses cannot have a default value");
+    try expectSingleDiagnostic("[[1]].each { |(a, x: 1)| a }\n", "A parameter in parentheses cannot be a keyword");
+    try expectSingleDiagnostic("[[1]].each { |(a, x:)| a }\n", "A parameter in parentheses cannot be a keyword");
+    try expectSingleDiagnostic("[[1]].each { |(a, **b)| a }\n", "A parameter in parentheses cannot take keywords ('**')");
+    // Outside them a keyword is a block's own
+    try compileOnly("[[1]].each { |a, x: 1| a }\n");
+}
+
+test "KupCAD Parser: a parameter list takes one splat, one double splat and one block" {
+    // The second of a kind was accepted and got nothing; Ruby refuses it
+    try expectSingleDiagnostic("def f(*a, *b)\n  a\nend\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("def f *a, *b\n  a\nend\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("def f(**a, **b)\n  a\nend\n", "Parameters can take one double splat ('**'), not two");
+    try expectSingleDiagnostic("def f(&a, &b)\n  a\nend\n", "Parameters can take one block ('&'), not two");
+    try expectSingleDiagnostic("g = ->(*a, *b) { a }\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("g = ->(**a, **b) { a }\n", "Parameters can take one double splat ('**'), not two");
+    try expectSingleDiagnostic("[1].each { |*a, *b| a }\n", "Parameters can take one splat ('*'), not two");
+    try expectSingleDiagnostic("[1].each { |**a, **b| a }\n", "Parameters can take one double splat ('**'), not two");
+    // One of each is fine, and a list inside another counts its own: a default's lambda, a
+    // block's brackets
+    try compileOnly("def f(*a, **b, &c)\n  [a, b, c]\nend\n");
+    try compileOnly("def f(a = ->(*x) { x }, *b)\n  [a, b]\nend\n");
+    try compileOnly("def f(*a, b: ->(*x) { x })\n  [a, b]\nend\n");
+    try compileOnly("[[1]].each { |*a, (*b, c)| [a, b, c] }\n");
+}
+
 test "KupCAD Parser: `when <constant or name> then` is a clause, not a call" {
     // `when Integer then x` was read as the call `Integer(then x)`.
     for ([_][]const u8{

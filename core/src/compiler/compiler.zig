@@ -2770,12 +2770,20 @@ pub const Compiler = struct {
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
             try self.emitOp(.op_pop);
         } else if (node.tag == .array_literal) {
-            // Recursive Spatial Destructuring!
+            // Recursive Spatial Destructuring! A splat (`|(a, *rest, z)|`) takes what the names
+            // around it leave, as `a, *rest, z = value` does
             const elements = self.tree.getNodes(self.tree.nodeSpan(node));
-            if (elements.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-
-            try self.emitOp(.op_unpack);
-            try self.emitByte(@intCast(elements.len));
+            if (self.splatElementIndex(elements)) |before| {
+                const after = elements.len - 1 - before;
+                if (before > limits.MAX_SHORT_CONSTANTS or after > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+                try self.emitOp(.op_unpack_splat);
+                try self.emitByte(@intCast(before));
+                try self.emitByte(@intCast(after));
+            } else {
+                if (elements.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+                try self.emitOp(.op_unpack);
+                try self.emitByte(@intCast(elements.len));
+            }
             self.simulatePop(1);
             self.simulatePush(elements.len);
 
@@ -2784,10 +2792,22 @@ pub const Compiler = struct {
                 el_i -= 1;
                 try self.compileDestructureNode(elements[el_i]);
             }
+        } else if (node.tag == .splat_expr) {
+            // The rest, an array, into the splat's name
+            try self.compileDestructureNode(self.tree.nodeIndex(node));
         } else {
-            // MUST reject invalid tuple parameters (like splats or defaults) natively
+            // A default, a keyword or `**`, which the parser reports: no array element is one
             return error.UnknownNode;
         }
+    }
+
+    /// Where the splat is among a destructured parameter's names (the parser lets one through).
+    fn splatElementIndex(self: *Compiler, elements: []const ast.NodeIndex) ?usize {
+        for (elements, 0..) |idx, i| {
+            const element = self.tree.getNode(idx) orelse continue;
+            if (element.tag == .splat_expr) return i;
+        }
+        return null;
     }
 
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {

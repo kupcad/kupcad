@@ -22,6 +22,15 @@ const RescueEnsurePayload = struct {
     ensure_body: ast.NodeIndex,
 };
 
+/// The rest parameters (`*rest`, `**opts`) and the block parameter (`&b`) a parameter list
+/// has taken so far. A list takes one of each, as in Ruby: a second was accepted, and got
+/// nothing.
+const RestParams = struct {
+    splat: bool = false,
+    double_splat: bool = false,
+    block: bool = false,
+};
+
 pub const ParseError = common_errors.ParseError;
 
 pub const Precedence = enum(u8) {
@@ -82,6 +91,8 @@ pub const Parser = struct {
     diagnostics: Diagnostics,
     comments: std.ArrayList(common_token.Comment) = .empty,
     in_block_params: bool = false,
+    /// Of the parameter list being parsed (enterParamList): a default's lambda has its own.
+    rest_params: RestParams = .{},
     /// Set while parsing a `for` or `while` header, where `do` never opens a block (as in
     /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
     /// block, which swallowed the loop's body. Brackets inside the header clear it again.
@@ -799,7 +810,9 @@ pub const Parser = struct {
 
             // Toggle the state flag for parameter parsing
             self.in_block_params = true;
+            const outer_list = self.enterParamList();
             const elements = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .pipe);
+            self.rest_params = outer_list;
             self.in_block_params = false;
             try self.checkParamCount(elements.len);
 
@@ -1113,6 +1126,8 @@ pub const Parser = struct {
         if (self.tag(0) == .l_paren) {
             params_span = try self.parseParenParams();
         } else {
+            const outer_list = self.enterParamList();
+            defer self.rest_params = outer_list;
             const s_len = self.scratch_params.items.len;
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
 
@@ -1534,7 +1549,9 @@ pub const Parser = struct {
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
+        const mod_tok = self.tok_idx;
         const mod = self.parseArgModifier(); // Automatically handles *, **, and &
+        self.noteRestParam(mod, mod_tok);
 
         const name_tok = try self.expectParamName();
         const name_id = try self.b.intern(self.tokens.lexeme(self.source, name_tok));
@@ -1578,6 +1595,8 @@ pub const Parser = struct {
     fn parseParenParams(self: *Parser) ParseError!ast.Span {
         if (self.tag(0) == .l_paren) {
             self.advance();
+            const outer_list = self.enterParamList();
+            defer self.rest_params = outer_list;
             const s_len = self.scratch_params.items.len;
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
             const elements = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .r_paren);
@@ -2096,12 +2115,14 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         if (self.tag(0) == .star) {
             self.advance();
+            self.noteRestParam(.splat, start_tok);
             const ident_tok = try self.expectParamName();
             try self.declareLocal(ident_tok);
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.splatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .star_star) {
             self.advance();
+            self.noteRestParam(.double_splat, start_tok);
             const ident_tok = try self.expectParamName();
             try self.declareLocal(ident_tok);
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
@@ -2121,7 +2142,8 @@ pub const Parser = struct {
                 // Keyword param: a: or a: 10
                 self.advance();
                 const name_id = try self.b.intern(ident_str);
-                if (self.tag(0) != .comma and self.tag(0) != .pipe) {
+                // `)` ends a parameter in parentheses, which can't be a keyword: one error says so
+                if (self.tag(0) != .comma and self.tag(0) != .pipe and self.tag(0) != .r_paren) {
                     // Keyword with default: a: 10
                     const default_val = try self.parseExpression(.none);
 
@@ -2141,9 +2163,13 @@ pub const Parser = struct {
             return self.b.identifierNode(ident_str, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .l_paren) {
             self.advance();
+            // An array's names: a splat here is the group's, not the block's
+            const outer_list = self.enterParamList();
+            defer self.rest_params = outer_list;
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             const tuple_params = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .r_paren);
+            self.checkDestructuredParams(tuple_params);
             const end_tok = self.tok_idx;
             _ = try self.expect(.r_paren);
             const span = try self.b.addNodes(tuple_params);
@@ -2155,6 +2181,41 @@ pub const Parser = struct {
         }
         self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
         return ParseError.UnexpectedToken;
+    }
+
+    /// Reports what a parameter in parentheses (`|(a, *rest)|`) can't be, as Ruby refuses it:
+    /// its names are an array's elements, which have no defaults and no keywords (a second
+    /// splat is noteRestParam's). The compiler took them for a fault of its own.
+    fn checkDestructuredParams(self: *Parser, params: []const ast.NodeIndex) void {
+        for (params) |idx| {
+            const node = self.b.tree.getNode(idx) orelse continue;
+            const loc = self.getLoc(node.main_token);
+            switch (node.tag) {
+                .assignment => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot have a default value", .{}),
+                .symbol, .hash_literal => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot be a keyword", .{}),
+                .double_splat_expr => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot take keywords ('**')", .{}),
+                else => {},
+            }
+        }
+    }
+
+    /// Starts a parameter list, which has taken no rest parameter yet; gives the enclosing
+    /// list's (a lambda's list in a default is inside a method's), for the caller to put back.
+    fn enterParamList(self: *Parser) RestParams {
+        defer self.rest_params = .{};
+        return self.rest_params;
+    }
+
+    /// Notes the parameter of `mod` (`*`, `**` or `&`) at `tok`, and reports the list's second
+    /// of a kind, as Ruby refuses it.
+    fn noteRestParam(self: *Parser, mod: ?ast.ArgModifier, tok: u24) void {
+        const seen, const what = switch (mod orelse return) {
+            .splat => .{ &self.rest_params.splat, "splat ('*')" },
+            .double_splat => .{ &self.rest_params.double_splat, "double splat ('**')" },
+            .block => .{ &self.rest_params.block, "block ('&')" },
+        };
+        if (seen.*) self.reportError(self.getLoc(tok), .@"invalid-parameter", "Parameters can take one {s}, not two", .{what});
+        seen.* = true;
     }
 
     fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {

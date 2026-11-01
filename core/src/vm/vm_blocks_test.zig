@@ -1342,18 +1342,41 @@ test "VM: Block silently trims extraneous yielded arguments" {
     try testing.expectEqual(@as(f64, 99.0), result.asNumber());
 }
 
-test "Compiler: Block array destructuring rejects splats and defaults natively" {
+test "VM: a block's destructured parameter takes a splat, as `a, *rest = value` does" {
+    // `|(a, *rest)|` was an internal compiler error, in a nested group too
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    const source =
+        \\def give(&b)
+        \\  b.call([1, 2, 3, 4], [5, [6, 7, 8]], 9)
+        \\end
+        \\result = give do |(a, *m, z), (b, (c, *d)), (e, *f)|
+        \\  [a, m, z, b, c, d, e, f].inspect
+        \\end
+        \\short = [[1]].map { |(a, *m, z)| [a, m, z] }.inspect
+        \\first = [[1, 2, 3]].map { |(*m, z)| [m, z] }.inspect
+    ;
+    try testing.expectEqual(.ok, try helpers.compileAndRun(&vm, &out_chunk, source));
+    // A value that isn't an array is the first name's, the rest empty
+    try helpers.expectGlobalString(&vm, "result", "[1, [2, 3], 4, 5, 6, [7, 8], 9, []]");
+    try helpers.expectGlobalString(&vm, "short", "[[1, [], nil]]");
+    try helpers.expectGlobalString(&vm, "first", "[[[1, 2], 3]]");
+}
+
+test "Compiler: Block array destructuring refuses what no array element is, should the parser let it through" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Manually build a bad destructuring parameter: |(x, *y)|
+    // Manually build a bad destructuring parameter, which the parser reports: |(x, **y)|
     const x_id = try b.identifierNode("x", 0);
     const y_id = try b.identifierNode("y", 0);
-    const y_splat = try b.splatExpr(y_id, 0); // Invalid inside tuple!
+    const y_keywords = try b.doubleSplatExpr(y_id, 0); // Invalid inside tuple!
 
-    const tuple_span = try b.addNodes(&.{ x_id, y_splat });
+    const tuple_span = try b.addNodes(&.{ x_id, y_keywords });
     const tuple_node = try b.arrayLiteral(tuple_span, 0, 0);
 
     const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
@@ -1366,7 +1389,7 @@ test "Compiler: Block array destructuring rejects splats and defaults natively" 
     var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
-    // The compiler MUST reject the splat inside the tuple and return error.UnknownNode!
+    // The compiler MUST reject the double splat inside the tuple and return error.UnknownNode!
     const result = comp.compile(block_node);
     try testing.expectError(error.UnknownNode, result);
 }
