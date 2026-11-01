@@ -30,7 +30,9 @@ the OCCT, SMLib/usd-brep, SolveSpace and libfive sources.
    repaired guess, never a hang.
 3. Deterministic: the same inputs give the same bytes on every platform and thread count.
 4. Usable by KupCAD through a thin adapter (`kernel/engines/brep/driver.zig`), and by
-   other programs through the same Zig API (and a C API later).
+   other programs through the same Zig API (and a C API later). In KupCAD a script means
+   the same on either engine: same options, same results, same refusals, checked by
+   tests (§9.3).
 5. Small enough for a small team to understand whole. OCCT's modelling toolkits are ~1M
    lines; SolveSpace's whole NURBS kernel is 6.6k. Locus aims at the order of 30–40k lines
    including tests, by choosing what not to build (below).
@@ -579,7 +581,9 @@ exactly `Resolution.segmentsFor(r)` equal segments starting at angle 0, and an a
 the segments of that same grid it covers, rounded outward: the very polygon KupCAD's mesh
 engine builds for the same circle. That is the kernel-parity rule (every parameter means
 the same on both engines): a cylinder tessellated by Locus has the vertices Manifold's
-cylinder has, so the parity tests' bounding boxes and the viewer's picture agree. Per face: the loops' pcurves become a
+cylinder has, so the parity tests' bounding boxes and the viewer's picture agree.
+
+Per face: the loops' pcurves become a
 UV polygon with holes, scaled to be near-isometric (on a cylinder `u` is radians and `v`
 millimetres; without the scaling every triangle is a sliver); triangulated by monotone
 partition (BKOS ch. 3, deterministic, holes native), then Lawson flips to a constrained
@@ -728,13 +732,64 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
 - **Known issues**: `KNOWN_ISSUES.md` with an expected-failure test per entry, removed
   with the fix (usd-brep's process).
 
+### 9.3 Parity with the mesh engine
+
+KupCAD runs the same script on either engine (`CAD.config(engine: :brep)`), and the rule
+is that **the script means the same on both**: the same options, the same results, the
+same refusals. Locus cannot test this itself, since it knows nothing of KupCAD; the tests
+live in KupCAD, in `core/src/kernel/parity_test.zig` and `invariants_test.zig`, and every
+milestone extends them with the features it unlocks before its `supports` flag is flipped.
+
+*Options.* Every parameter a method takes maps to one Locus input with the same meaning:
+`segments` → `Resolution` (one implementation of the segment rule, Locus's, used by both
+drivers, so both engines cut a circle into the same polygon, §7.7), `tolerance` →
+`Tolerance.zone`, `center:`, positional and keyword forms, ranges. Defaults live in
+KupCAD's `EngineConfig`, never in an engine. A parameter one engine cannot honour is
+refused through a `Feature` flag with the "can't … yet" error, never ignored (an ignored
+`segments` or `twist` is a stand-in result).
+
+*Results.* Same bounding box. Locus's exact measures (volume, area, centroid, genus)
+agree with Manifold's mesh measures within the bound that follows from `segments`, not a
+loose epsilon: a circle of radius `r` cut into `n` segments has area `(n/2)·r²·sin(2π/n)`,
+so a cylinder's volume deficit is known exactly and the test asserts it. Locus's own
+tessellation at the same `Resolution` reproduces Manifold's mesh measures to floating
+point, since the vertices are the same points. `decompose` gives the same number of parts,
+`contours` the same polylines, names, materials and tags survive the same operations,
+and an empty result is empty on both (`empty`: a boolean that removes everything never
+raises on Manifold, so never on Locus).
+
+*Refusals.* An argument one engine refuses, the other refuses with the same message (the
+`REFUSED` table). Validation therefore lives in KupCAD's methods, before either driver.
+
+*Properties.* The invariants suite (closed mesh, measures consistent with the mesh,
+inclusion–exclusion, rigid moves keep volume, `scale(s)` multiplies it by `s³`) runs its
+`SHAPES` on both engines; a property that holds on one and not the other is a bug.
+
+*Allowed differences.* Two, and only two: exactness itself (Locus's circle is a circle,
+Manifold's the polygon; the bound above is that difference) and what `supports` says is
+missing. Where the mesh engine approximates by design (offset by shrink-then-grow,
+curved hull as a polyhedron), the approximation is documented and the exact result is
+allowed to differ by the documented amount. A third kind of difference is a bug on one
+side; Locus is presumed right only once its oracle tests (§9.2) pass on the case.
+
+*How the tests grow.* The `SHAPES` and `REFUSED` tables are the registry: M1 adds sphere,
+cone, extrude, revolve and the measures; M2 the sketch operations and contours; M3 ray
+casts, `contains_point`, `min_gap` and face queries with the same answers; M4–M5 the
+booleans and the degeneracy corpus run on both engines; M6–M7 lofts, sweeps, offsets,
+fillets. `kupcad dev brep-readiness` (§12) runs every example and documentation snippet on
+both engines and compares box and volume within the chordal bound, so parity holds over
+the whole corpus and not only the table. Today the parity test reads Locus's box from its
+STEP export at `1e-5` (six decimals); with M0's full-precision writer that drops to
+floating point, and with M1's `bounding_box` the box is read directly.
+
 ---
 
 ## 10. Roadmap
 
 Each milestone ends with its tests green, `check.run` level 2 on every fixture, the
-KupCAD `supports` flags it unlocks flipped and the corresponding `brepLacks` tests
-retargeted, and the docs updated. Line counts are estimates of the delta including tests.
+parity and invariants tables extended with the scripts of the features it unlocks and
+green on both engines (§9.3), the KupCAD `supports` flags flipped and the corresponding
+`brepLacks` tests retargeted, and the docs updated. Line counts are estimates of the delta including tests.
 
 | # | Milestone | Scope | Unlocks in KupCAD | ~lines |
 |---|---|---|---|---|

@@ -37,3 +37,6 @@ the test strategy, the milestones, and the decisions with their reasons.
 10. Ideas from other kernels, never their code: OCCT (LGPL), SolveSpace (GPL), SMLib
     (proprietary) and libfive (MPL) are read, not copied. Shewchuk's public-domain
     predicates are ported.
+11. A KupCAD script means the same on both engines: same options, same results, same
+    refusals (`architecture.md` §9.3). A feature is flipped on in `supports` only after
+    KupCAD's parity and invariants tests cover it on both engines.
