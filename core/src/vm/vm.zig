@@ -2103,20 +2103,23 @@ pub const VM = struct {
         const kwargs: ?value.Value = if (has_kwargs) args[args.len - 1] else null;
         const expected_args = closure.function.arity;
 
-        // `args` may lie in the stack, which growing it moves: its values are taken first
+        // `args` may lie in the stack, which growing it moves: found again after it grows, and
+        // moved as by memmove, as they may lie where the frame goes too. (Copying them aside
+        // first took a buffer of MAX_ARGS values, which a safe build filled with 0xAA on each
+        // call: `each` ran 2.7 times as long as in ReleaseFast.)
         std.debug.assert(given.len <= limits.MAX_ARGS);
-        var positional_buf: [limits.MAX_ARGS]value.Value = undefined;
-        const positional = positional_buf[0..given.len];
-        @memcpy(positional, given);
+        const stack_start = @intFromPtr(self.stack.ptr);
+        const in_stack = @intFromPtr(given.ptr) >= stack_start and @intFromPtr(given.ptr) < stack_start + self.stack.len * @sizeOf(value.Value);
+        const offset = if (in_stack) (@intFromPtr(given.ptr) - stack_start) / @sizeOf(value.Value) else 0;
         // Ensure stack capacity for closure, args, padded nils, the keyword Map and the implicit null block
-        const total_pushes = 1 + @max(positional.len, expected_args) + 2;
+        const total_pushes = 1 + @max(given.len, expected_args) + 2;
         try self.ensureStackCapacity(self.stack_top + total_pushes);
+        const positional = if (in_stack) self.stack[offset..][0..given.len] else given;
 
         const base_slot = self.stack_top; // Record where slot 0 lands exactly
-
-        self.push(self_val);
-
-        for (positional) |arg| self.push(arg);
+        @memmove(self.stack[base_slot + 1 ..][0..positional.len], positional);
+        self.stack[base_slot] = self_val;
+        self.stack_top = base_slot + 1 + positional.len;
 
         // A sync call passes no block; the keyword Map stays rooted in the caller's args
         try self.padClosureFrame(closure, positional.len, base_slot, kwargs, null);
