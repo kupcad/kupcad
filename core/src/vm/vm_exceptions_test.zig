@@ -1567,7 +1567,7 @@ test "VM: runtime errors have their own class and a message without a class pref
         .{ .expr = "1 / 0", .kind = "ZeroDivisionError", .message = "Division by zero." },
         .{ .expr = "1 | Number::INFINITY", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
         .{ .expr = "polygon([[0, 0], [1, \"x\"], [0, 1]])", .kind = "TypeError", .message = "polygon expects a number for a coordinate (point 1, component 1), got String" },
-        .{ .expr = "cube(Number::INFINITY - Number::INFINITY)", .kind = "ValueError", .message = "cube expects a finite number for x, got NaN" },
+        .{ .expr = "cube(Number::INFINITY - Number::INFINITY)", .kind = "ValueError", .message = "cube expects x to be a finite number greater than zero, got NaN" },
         .{ .expr = "3.times", .kind = "ArgumentError", .message = "times requires a block" },
     };
     for (cases) |case| {

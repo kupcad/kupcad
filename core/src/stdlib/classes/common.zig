@@ -128,7 +128,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
 
             if (!has_block_param and args.block() != null) return vm.fail(.ArgumentError, "{s} doesn't take a block", .{args.name});
             const given = args.positional();
-            if (sig) |s| try checkArguments(vm, args.name, s, given);
+            if (sig) |s| try checkArguments(vm, args.name, s, given, if (has_receiver) args.receiver() else null);
             if (given.len < arity.required or (arity.max != null and given.len > arity.max.?)) {
                 return arityError(vm, args.name, arity.required, arity.max, given.len);
             }
@@ -183,9 +183,13 @@ pub fn wrapGlobalWith(comptime func: anytype, comptime sig: Signature) value.Nat
 
 /// A call with more positional arguments than `sig` names, or with keywords when it takes
 /// none, is an ArgumentError before the native runs: natives that read their arguments
-/// by hand used to drop the rest (`extrude(10, 5)` was `extrude(10)`). The keywords
-/// themselves are checked by the native, which parses `sig.keywords`.
-fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []const value.Value) error{RuntimeError}!void {
+/// by hand used to drop the rest (`extrude(10, 5)` was `extrude(10)`). A number given for a
+/// parameter `sig.sizes` names (`sig.solid_sizes` too, on a Solid) must be greater than
+/// zero, a ValueError otherwise: the one declaration the lint reads (`nonpositive-size`)
+/// holds when the script runs, where each native used to check its own sizes, and some
+/// didn't (`extrude(0)` failed in the kernel). The keywords themselves are checked by the
+/// native, which parses `sig.keywords`.
+fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []const value.Value, receiver: ?value.Value) error{RuntimeError}!void {
     const has_keywords = arguments.trailingKwargs(given) != null;
     const positional = given.len - @intFromBool(has_keywords);
     if (sig.rest == null and positional > sig.positional.len) {
@@ -199,6 +203,32 @@ fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []c
         return vm.fail(.ArgumentError, "{s} takes at most {d} positional {s} ({s}), got {d}", .{ name, sig.positional.len, noun, names, positional });
     }
     if (has_keywords and sig.keywords.len == 0) return vm.fail(.ArgumentError, "{s} takes no keywords", .{name});
+
+    if (sig.sizes.len == 0 and sig.solid_sizes.len == 0) return;
+    const on_solid = if (receiver) |r| r.isGeometry() else false;
+    for (given[0..@min(positional, sig.positional.len)], 0..) |arg, i| {
+        try requireSize(vm, name, sig, sig.positional[i], arg, on_solid);
+    }
+    if (arguments.trailingKwargs(given)) |map| {
+        var it = map.entries();
+        while (it.next()) |entry| {
+            const param = entry.key.nameChars() orelse continue; // the native refuses the key
+            try requireSize(vm, name, sig, param, entry.value, on_solid);
+        }
+    }
+}
+
+/// `arg`, given for `param`, is greater than zero when `sig` says `param` is a size; a value
+/// that isn't a number is the native's to refuse.
+fn requireSize(vm: *VM, name: []const u8, comptime sig: Signature, param: []const u8, arg: value.Value, on_solid: bool) error{RuntimeError}!void {
+    if (!arg.isNumber()) return;
+    if (!lists(sig.sizes, param) and !(on_solid and lists(sig.solid_sizes, param))) return;
+    return arguments.requirePositive(vm, arg.asNumber(), name, param);
+}
+
+fn lists(list: []const []const u8, name: []const u8) bool {
+    for (list) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
 }
 
 fn arityError(vm: *VM, name: []const u8, required: usize, max: ?usize, given: usize) error{RuntimeError} {

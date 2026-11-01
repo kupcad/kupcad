@@ -144,7 +144,6 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         return vm.fail(.TypeError, "min_gap expects a Solid to measure against, got {s}", .{if (args.len < 1) "nothing" else arguments.typeName(vm, args[0])});
     }
     const search_length: ?f64 = if (args.len > 1) try arguments.requireNumber(vm, args[1], "min_gap", "search_length") else null;
-    if (search_length) |length| try arguments.requirePositive(vm, length, "min_gap", "search_length");
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
     try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0

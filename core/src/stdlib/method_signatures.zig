@@ -24,9 +24,9 @@ pub const REPEAT_LINEAR = Signature{ .positional = &.{ "count", "x", "y", "z" },
 pub const REPEAT_POLAR = Signature{ .positional = &.{ "count", "angle" }, .keywords = &.{"angle"} };
 
 // --- Sweeps (of a sketch) ---
-pub const EXTRUDE = Signature{ .positional = &.{"h"}, .keywords = &.{ "h", "slices", "twist", "scale_x", "scale_y", "scale", "center" } };
+pub const EXTRUDE = Signature{ .positional = &.{"h"}, .keywords = &.{ "h", "slices", "twist", "scale_x", "scale_y", "scale", "center" }, .sizes = &.{"h"} };
 pub const REVOLVE = Signature{ .positional = &.{"deg"}, .keywords = &.{ "deg", "angle", "segments" } };
-pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "pitch", "turns", "slices" } };
+pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "pitch", "turns", "slices" }, .sizes = &.{ "h", "pitch" } };
 pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
 pub const SWEEP = Signature{ .positional = &.{"path"}, .keywords = &.{ "path", "segments" } };
 
@@ -40,7 +40,7 @@ pub const SHELL = Signature{ .positional = &.{"thickness"}, .keywords = &.{ "thi
 pub const SLICE = Signature{ .positional = &.{"height"} };
 pub const PROJECT = Signature{ .keywords = &.{"cut"} };
 pub const ON_FACE = Signature{ .positional = &.{"direction"} };
-pub const SIMPLIFY = Signature{ .positional = &.{"tolerance"} };
+pub const SIMPLIFY = Signature{ .positional = &.{"tolerance"}, .sizes = &.{"tolerance"} };
 
 // --- Inspection ---
 pub const MIN_GAP = Signature{ .positional = &.{ "other", "search_length" }, .sizes = &.{"search_length"} };
@@ -48,7 +48,7 @@ pub const CONTAINS = Signature{ .positional = &.{"point"} };
 pub const RAY_CAST = Signature{ .positional = &.{ "origin", "end" } };
 
 // --- Materials and files ---
-pub const MATERIAL = Signature{ .keywords = &.{ "color", "alpha", "roughness", "metallic", "transmission", "density" } };
+pub const MATERIAL = Signature{ .keywords = &.{ "color", "alpha", "roughness", "metallic", "transmission", "density" }, .sizes = &.{"density"} };
 pub const NAMED = Signature{ .positional = &.{"name"} };
 pub const EXPORT = Signature{ .positional = &.{"path"} };
 pub const EXPORT_GLTF = Signature{ .positional = &.{ "path", "draco" } };

@@ -40,10 +40,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         .roughness = try unitInterval(vm, "roughness", opts.roughness orelse defaults.roughness),
         .metallic = try unitInterval(vm, "metallic", opts.metallic orelse defaults.metallic),
         .transmission = try unitInterval(vm, "transmission", opts.transmission orelse defaults.transmission),
-        .density = if (opts.density) |d| blk: {
-            try arguments.requirePositive(vm, d, "material", "density (g/cm³)");
-            break :blk d;
-        } else null,
+        .density = opts.density,
     };
 
     // Insert into VM registry to get an ID

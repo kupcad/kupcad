@@ -70,6 +70,8 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     var opts = (try arguments.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
     // angle: is deg: by the name repeat_polar's and rotate's angles have
     if (opts.angle) |angle| opts.deg = angle;
+    // A turn of nothing sweeps nothing: it gave an empty Solid, and the export failed later
+    if (opts.deg == 0) return vm.fail(.ValueError, "revolve expects deg to be other than zero (a negative angle turns the other way), got 0", .{});
     try arguments.requireSegmentCount(vm, opts.segments, "segments");
 
     // A full turn's segments, the script's or the resolution's at the profile's farthest
@@ -97,10 +99,7 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     var opts = (try arguments.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
     if ((opts.pitch != null or opts.turns != null) and pos.len > 1) return vm.fail(.ArgumentError, "helix takes its twist positionally or as pitch: or turns:, not both", .{});
     // How far it rises per turn, or how many turns it makes over h: the twist they mean
-    if (opts.pitch) |pitch| {
-        try arguments.requirePositive(vm, pitch, "helix", "pitch");
-        opts.twist = opts.h / pitch * 360.0;
-    }
+    if (opts.pitch) |pitch| opts.twist = opts.h / pitch * 360.0;
     if (opts.turns) |turns| {
         try arguments.requireFinite(vm, turns, "helix", "turns");
         opts.twist = turns * 360.0;

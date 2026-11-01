@@ -1703,6 +1703,30 @@ test "Stdlib: text draws accented and Cyrillic letters and symbols, and refuses 
     });
 }
 
+test "Stdlib: a size is refused where the lint reads it, before the native runs" {
+    // Each native checked its own sizes, and some didn't: `extrude(0)` failed in the kernel,
+    // `revolve(0)` gave an empty Solid, `simplify(-1)` was taken. The Signature's sizes, which
+    // `nonpositive-size` reads, hold when the script runs too (common.checkArguments)
+    try expectScripts(&.{
+        .{ .src = comptime rescued("square(2).extrude(0)"), .expected = .{ .str = "ValueError: extrude expects h to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("square(2).extrude(h: -1)"), .expected = .{ .str = "ValueError: extrude expects h to be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("square(2).translate(x: 3).revolve(0)"), .expected = .{ .str = "ValueError: revolve expects deg to be other than zero (a negative angle turns the other way), got 0" } },
+        .{ .src = comptime rescued("square(2).translate(x: 3).revolve(angle: 0)"), .expected = .{ .str = "ValueError: revolve expects deg to be other than zero (a negative angle turns the other way), got 0" } },
+        .{ .src = comptime rescued("cube(1).simplify(-1)"), .expected = .{ .str = "ValueError: simplify expects tolerance to be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("line([0, 0], [1, 0]).stroke(0)"), .expected = .{ .str = "ValueError: stroke expects width to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("square(2).helix(0)"), .expected = .{ .str = "ValueError: helix expects h to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("arc(center: [0, 0], r: 0, start: 0, sweep: 90)"), .expected = .{ .str = "ValueError: arc expects r to be a finite number greater than zero, got 0" } },
+        // Named as the lint names it, by the parameter: it was "radius 1"
+        .{ .src = comptime rescued("cylinder(r1: 0, h: 1)"), .expected = .{ .str = "ValueError: cylinder expects r1 to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("cylinder(d: -2, h: 1)"), .expected = .{ .str = "ValueError: cylinder expects d to be a finite number greater than zero, got -2" } },
+        .{ .src = comptime rescued("cube(0)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got 0" } },
+        // What isn't a number is the native's to refuse, as before
+        .{ .src = comptime rescued("cube(\"wide\")"), .expected = .{ .str = "TypeError: cube expects a number for x, got String" } },
+        // A sketch's offset may shrink it; a Solid's by a negative delta too
+        .{ .src = "r = square(4).offset(-1).area", .expected = .{ .num = 4 } },
+    });
+}
+
 test "Stdlib: revolve takes segments and sizes them to the profile" {
     // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
     const seg8 = "v = nil\nCAD.with_config(resolution: { min_angle: 1, min_length: 1 }) do\n  v = ";
@@ -2403,7 +2427,7 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("cube(1).scale(1, 0, 1)"), .expected = .{ .str = "ValueError: scale factors must be non-zero, got [1, 0, 1]" } },
         // Errors that used to surface as the generic "Native Execution Error" when rescued.
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])"), .expected = .{ .str = "ValueError: polyhedron face index 4 is out of range (0..4)" } },
-        .{ .src = rescued("cube(Number::INFINITY - Number::INFINITY)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got NaN" } },
+        .{ .src = rescued("cube(Number::INFINITY - Number::INFINITY)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got NaN" } },
         .{ .src = rescued("cube(-1)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got -1" } },
     });
 }

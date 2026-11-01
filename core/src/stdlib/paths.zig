@@ -20,13 +20,13 @@ const Signature = @import("signature.zig").Signature;
 
 pub const LINE = Signature{ .positional = &.{ "from", "to" } };
 pub const POLYLINE = Signature{ .positional = &.{"points"} };
-pub const ARC = Signature{ .keywords = &.{ "center", "r", "radius", "start", "sweep", "to", "ccw", "large" } };
+pub const ARC = Signature{ .keywords = &.{ "center", "r", "radius", "start", "sweep", "to", "ccw", "large" }, .sizes = &.{ "r", "radius" } };
 pub const LINE_TO = Signature{ .positional = &.{"to"} };
 pub const ARC_TO = Signature{ .positional = &.{"to"}, .keywords = &.{ "r", "radius", "ccw", "large" }, .sizes = &.{ "r", "radius" } };
 pub const TANGENT_ARC_TO = Signature{ .positional = &.{"to"} };
 pub const FILLET = Signature{ .positional = &.{"r"}, .keywords = &.{"r"}, .sizes = &.{"r"} };
 pub const CHAMFER = Signature{ .positional = &.{"size"}, .keywords = &.{"size"}, .sizes = &.{"size"} };
-pub const STROKE = Signature{ .positional = &.{"width"}, .keywords = &.{ "width", "cap", "segments" }, .solid_sizes = &.{"width"} };
+pub const STROKE = Signature{ .positional = &.{"width"}, .keywords = &.{ "width", "cap", "segments" }, .sizes = &.{"width"} };
 
 /// The fewest points a polyline takes: a line.
 const MIN_POLYLINE_POINTS = 2;
@@ -84,7 +84,6 @@ pub fn nativeArc(vm: *VM, args: []const value.Value) !value.Value {
     // ARC has no positional names, so the parse refuses a positional argument
     const opts = (try arguments.parseKwargsSubset(Opts, ARC.keywords, vm, args, "arc")).opts;
     const radius = opts.r orelse opts.radius orelse return vm.fail(.ArgumentError, "arc needs a radius (r:)", .{});
-    try arguments.requirePositive(vm, radius, "arc", "r");
     const start_val = opts.start orelse return vm.fail(.ArgumentError, "arc needs start:, an angle in degrees with center: and sweep:, or a point with to:", .{});
 
     if (opts.center) |center_val| {
@@ -146,7 +145,6 @@ pub fn pathArcTo(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     if (parsed.positional.len != 1) return vm.fail(.ArgumentError, "arc_to expects the point to go to, [x, y], and r:", .{});
     const to = try arguments.parsePoint(2, vm, parsed.positional[0], "arc_to", 0);
     const radius = parsed.opts.r orelse parsed.opts.radius orelse return vm.fail(.ArgumentError, "arc_to needs a radius (r:)", .{});
-    try arguments.requirePositive(vm, radius, "arc_to", "r");
     const from = receiver.asPath().end();
     const segment = path_mod.arcThrough(from, to, radius, parsed.opts.ccw, parsed.opts.large) orelse {
         return vm.fail(.ValueError, "arc_to of radius {f} can't reach from [{f}, {f}] to [{f}, {f}]: the points are {f} apart, more than twice the radius, or the same point", .{ value.fmtNumber(radius), value.fmtNumber(from[0]), value.fmtNumber(from[1]), value.fmtNumber(to[0]), value.fmtNumber(to[1]), value.fmtNumber(std.math.hypot(to[0] - from[0], to[1] - from[1])) });
@@ -212,7 +210,6 @@ fn oneSize(vm: *VM, args: []const value.Value, comptime signature: Signature, co
     if (pos.len == 1) @field(base, name) = try arguments.requireNumber(vm, pos[0], method, name);
     const opts = (try arguments.parseKwargsOver(SizeOpts, base, signature.keywords, vm, args, method)).opts;
     const size = @field(opts, name) orelse return vm.fail(.ArgumentError, method ++ " needs its " ++ name ++ ": " ++ method ++ "(" ++ name ++ ")", .{});
-    try arguments.requirePositive(vm, size, method, name);
     return size;
 }
 
@@ -354,7 +351,6 @@ pub fn pathStroke(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     var base = Opts{};
     if (pos.len > 0) base.width = try arguments.requireNumber(vm, pos[0], "stroke", "width");
     const opts = (try arguments.parseKwargsOver(Opts, base, STROKE.keywords, vm, args, "stroke")).opts;
-    try arguments.requirePositive(vm, opts.width, "stroke", "width");
     try arguments.requireSegmentCount(vm, opts.segments, "segments");
     const half = opts.width / 2.0;
 

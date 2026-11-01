@@ -338,10 +338,6 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     const r1 = opts.r1 orelse opts.r;
     const r2 = opts.r2 orelse opts.r;
 
-    try arguments.requirePositive(vm, r1, "cylinder", "radius 1");
-    try arguments.requirePositive(vm, r2, "cylinder", "radius 2");
-    try arguments.requirePositive(vm, opts.h, "cylinder", "height");
-
     if (opts.sides) |given_sides| {
         const sides = try requireSides(vm, given_sides, opts, "cylinder");
         if (opts.round_r != null or opts.chamfer != null) {
@@ -409,7 +405,6 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     var base = GeomOptions{};
     if (pos.len > 0) base.r = try arguments.requireNumber(vm, pos[0], "sphere", "r");
     var opts = (try parseGeomOptions(SPHERE.keywords, base, vm, args, "sphere")).opts;
-    try arguments.requirePositive(vm, opts.r, "sphere", "radius");
     if (opts.segments == 0) opts.segments = arguments.autoSegments(vm, opts.r);
     const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
@@ -420,7 +415,6 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     var base = GeomOptions{};
     if (pos.len > 0) base.r = try arguments.requireNumber(vm, pos[0], "circle", "r");
     var opts = (try parseGeomOptions(CIRCLE.keywords, base, vm, args, "circle")).opts;
-    try arguments.requirePositive(vm, opts.r, "circle", "radius");
     if (opts.sides) |sides| return try vm.allocateCrossSection(try addRegularPolygon(vm, try requireSides(vm, sides, opts, "circle"), opts.r));
 
     if (opts.segments == 0) opts.segments = arguments.autoSegments(vm, opts.r);
@@ -508,7 +502,6 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 /// (0: the resolution's) and known to a drawing.
 fn easedPolygon(vm: *VM, pts: []const [2]f64, how: path_corners.Ease, per_turn: i32) !value.Value {
     const size_name = if (how == .round) "round_r" else "chamfer";
-    try arguments.requirePositive(vm, how.size(), "polygon", size_name);
     const sides = try vm.allocator.alloc(path_mod.Segment, pts.len);
     defer vm.allocator.free(sides);
     for (sides, 0..) |*side, i| {
@@ -536,7 +529,6 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (opts.across_flats) |across| {
         // Opposite flats are parallel only with an even number of sides
         if (@rem(sides, 2) != 0) return vm.fail(.ArgumentError, "regular_polygon takes across_flats: with an even number of sides (a hex nut's 6), got {d}", .{sides});
-        try arguments.requirePositive(vm, across, "regular_polygon", "across_flats");
         r = across / (2 * @cos(std.math.pi / @as(f64, @floatFromInt(sides))));
     }
     try arguments.requirePositive(vm, r, "regular_polygon", "radius");
@@ -556,8 +548,6 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     if (opts.major_r) |r| major_r = r;
     if (opts.minor_r) |r| minor_r = r;
 
-    try arguments.requirePositive(vm, major_r, "torus", "major_r");
-    try arguments.requirePositive(vm, minor_r, "torus", "minor_r");
     if (minor_r >= major_r) {
         // The tube would reach (or cross) the axis and the revolved solid would intersect itself.
         return vm.fail(.ValueError, "torus needs minor_r smaller than major_r, got minor_r {f} and major_r {f}", .{ value.fmtNumber(minor_r), value.fmtNumber(major_r) });
@@ -671,7 +661,6 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.positional.len > 1) size = try arguments.requireNumber(vm, args[1], "text", "size");
     if (opts.size) |n| size = n;
 
-    try arguments.requirePositive(vm, size, "text", "size");
     // By default the glyphs are drawn as finely as a circle the size of a letter's bowl
     // (half the text size) at the active resolution, never finer than the floor below.
     const tolerance = opts.tolerance orelse @max(vm.config().chordError(size / 2.0), size * MIN_TEXT_TOLERANCE_RATIO);

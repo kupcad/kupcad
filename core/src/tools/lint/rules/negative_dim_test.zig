@@ -68,6 +68,12 @@ test "Linter Rule: NegativeDimRule flags a method's size on a shape the script h
         .{ .src = "cube(1).shell(thickness: 0)", .message = "shell expects thickness to be greater than zero, got 0" },
         .{ .src = "s = square(2).extrude(1)\ns.shell(-0.5)", .message = "shell expects thickness to be greater than zero, got -0.5" },
         .{ .src = "a = cube(2)\na.min_gap(cube(1), 0)", .message = "min_gap expects search_length to be greater than zero, got 0" },
+        // The sizes the runtime checks centrally (common.checkArguments) are the same list
+        .{ .src = "square(1).extrude(0)", .message = "extrude expects h to be greater than zero, got 0" },
+        .{ .src = "square(1).helix(h: -1)", .message = "helix expects h to be greater than zero, got -1" },
+        .{ .src = "cube(1).simplify(-0.1)", .message = "simplify expects tolerance to be greater than zero, got -0.1" },
+        .{ .src = "p = line([0, 0], [1, 0])\np.stroke(0)", .message = "stroke expects width to be greater than zero, got 0" },
+        .{ .src = "cube(1).material(density: 0)", .message = "material expects density to be greater than zero, got 0" },
     };
     for (cases) |case| {
         errdefer std.debug.print("source: {s}\n", .{case.src});

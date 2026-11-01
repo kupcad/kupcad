@@ -155,7 +155,6 @@ pub fn meshShell(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     if (pos.len > 0) base.thickness = try arguments.requireNumber(vm, pos[0], "shell", "thickness");
     const opts = (try arguments.parseKwargsOver(Opts, base, sig.SHELL.keywords, vm, args, "shell")).opts;
     const thickness = opts.thickness orelse return vm.fail(.ArgumentError, "shell needs its walls' thickness: shell(thickness)", .{});
-    try arguments.requirePositive(vm, thickness, "shell", "thickness");
     try arguments.requireSegmentCount(vm, opts.segments, "segments");
     const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, thickness);
     const b = &vm.dag_builder;
