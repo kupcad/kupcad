@@ -85,25 +85,24 @@ pub const Lockfile = struct {
 
                     if (pkg_val != .object) continue;
 
-                    var resolved: []const u8 = "";
-                    var ref: []const u8 = "";
-                    var integrity: []const u8 = "";
-                    var deps = StringMap.init(allocator);
-                    errdefer deps.deinit();
+                    // Freed whole when reading it fails part way: its strings and its
+                    // dependencies' leaked
+                    var locked: LockedPackage = .{ .resolved = "", .ref = "", .integrity = "", .dependencies = StringMap.init(allocator) };
+                    errdefer locked.deinit(allocator);
 
                     if (pkg_val.object.get("resolved")) |r| {
                         if (r == .string and r.string.len > 0) {
                             // Joined into the store's paths and the archive's URL: a commit
                             // id (or a content hash), or nothing
                             validate.validateCommitSha(r.string) catch return error.InvalidResolvedCommit;
-                            resolved = try allocator.dupe(u8, r.string);
+                            locked.resolved = try allocator.dupe(u8, r.string);
                         }
                     }
                     if (pkg_val.object.get("ref")) |r| {
-                        if (r == .string) ref = try allocator.dupe(u8, r.string);
+                        if (r == .string) locked.ref = try allocator.dupe(u8, r.string);
                     }
                     if (pkg_val.object.get("integrity")) |i| {
-                        if (i == .string) integrity = try allocator.dupe(u8, i.string);
+                        if (i == .string) locked.integrity = try allocator.dupe(u8, i.string);
                     }
 
                     if (pkg_val.object.get("dependencies")) |d| {
@@ -112,22 +111,18 @@ pub const Lockfile = struct {
                             while (dep_it.next()) |dep_entry| {
                                 if (dep_entry.value_ptr.* == .string) {
                                     const d_key = try allocator.dupe(u8, dep_entry.key_ptr.*);
+                                    errdefer allocator.free(d_key);
                                     const d_val = try allocator.dupe(u8, dep_entry.value_ptr.*.string);
-                                    try deps.put(d_key, d_val);
+                                    errdefer allocator.free(d_val);
+                                    try locked.dependencies.put(d_key, d_val);
                                 }
                             }
                         }
                     }
 
-                    const locked_pkg = LockedPackage{
-                        .resolved = resolved,
-                        .ref = ref,
-                        .integrity = integrity,
-                        .dependencies = deps,
-                    };
-
                     const key_dupe = try allocator.dupe(u8, pkg_id);
-                    try lockfile.packages.put(key_dupe, locked_pkg);
+                    errdefer allocator.free(key_dupe);
+                    try lockfile.packages.put(key_dupe, locked);
                 }
             }
         }

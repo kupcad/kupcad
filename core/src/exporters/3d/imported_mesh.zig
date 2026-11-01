@@ -43,11 +43,14 @@ pub const Builder = struct {
         try self.faces.append(allocator, corners);
     }
 
-    /// The mesh built, owned by `allocator`; the builder is spent.
+    /// The mesh built, owned by `allocator`; the builder is spent. When it fails the builder is
+    /// left to the caller to free, as on any of its errors: it freed itself as well, and a
+    /// caller's errdefer freed it again.
     pub fn finish(self: *Builder, allocator: std.mem.Allocator) !Mesh {
-        defer self.deinit(allocator);
         const points = try self.points.toOwnedSlice(allocator);
         errdefer allocator.free(points);
-        return .{ .points = points, .faces = try self.faces.toOwnedSlice(allocator) };
+        const faces = try self.faces.toOwnedSlice(allocator);
+        self.deinit(allocator);
+        return .{ .points = points, .faces = faces };
     }
 };
