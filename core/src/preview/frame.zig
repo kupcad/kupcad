@@ -62,6 +62,17 @@ pub const Part = struct {
     /// Added in protocol version 1, optional: no version bump.
     volume: ?f64 = null,
     size: ?[3]f64 = null,
+    /// Where its name was first given (`named`), so a viewer shows its line from the part;
+    /// null for a part without a name. Added in protocol version 1, optional.
+    source: ?Source = null,
+};
+
+/// A place in the project: its 1-based line and column (in UTF-8 bytes), in `file` (a module's
+/// path in the project), or in the document when null.
+pub const Source = struct {
+    line: u32,
+    column: u32,
+    file: ?[]const u8 = null,
 };
 
 /// A warning of the run, at the line and column (1-based, the column in UTF-8 bytes) the

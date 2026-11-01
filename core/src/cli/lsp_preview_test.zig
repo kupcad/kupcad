@@ -438,6 +438,28 @@ test "LSP preview: a document opened from outside the workspace imports its neig
     try testing.expect(std.mem.find(u8, past.header.@"error".?.message, "secret.kup") != null);
 }
 
+test "LSP preview: a part named in a library has its source there, from the import cache too" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    try preview.update("lib.kup", "x = 1\nlid = cube(1).named(\"lid\")\ndef make\n  cube(2).named(\"box\")\nend\nexport lid, make\n");
+    const main = "import { lid, make } from \"./lib.kup\"\n[lid, make().translate(x: 5)]\n";
+    // The second run imports the library from the cache: its top level doesn't run again
+    for ([_][]const u8{ main, main ++ "\n" }) |edited| {
+        try preview.update("main.kup", edited);
+        const parts = (try frameOf(a, &preview, "main.kup")).header.parts;
+        try testing.expectEqual(@as(usize, 2), parts.len);
+        for (parts) |part| {
+            const at = part.source orelse return error.TestExpectedSource;
+            try testing.expectEqualStrings("lib.kup", at.file.?);
+            try testing.expectEqual(@as(u32, if (std.mem.eql(u8, part.name, "lid")) 2 else 4), at.line);
+        }
+    }
+}
+
 test "LSP preview: a host's memory limit stands in for the interactive one, for runs and hovers" {
     // `kupcad lsp --memory-limit` (the desktop app's and the VS Code extension's setting): a
     // model the host exports, under the same limit, previews too

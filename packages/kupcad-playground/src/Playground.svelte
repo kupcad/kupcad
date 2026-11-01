@@ -255,7 +255,7 @@
   /**
    * Shows the script where a problem or a console line is, clicked; one in a library (`file`),
    * another file than the editor's, isn't shown.
-   * @param {Problem | ConsoleLine} place
+   * @param {{ line: number | null, column: number | null, file?: string | null }} place
    */
   function reveal(place) {
     if (place.line !== null && !place.file) editor?.reveal(place.line, place.column ?? 1);
@@ -318,6 +318,7 @@
           {status}
           {problems}
           onproblem={reveal}
+          onsource={(part) => part.source && reveal({ file: null, ...part.source })}
           onscreenshot={screenshot}
           {settings}
           {shortcuts}

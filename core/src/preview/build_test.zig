@@ -155,6 +155,26 @@ test "preview: a warning the run gave says where" {
     try testing.expect(warnings[0].column != null);
 }
 
+test "preview: a part's source is where its name was first given, and none without a name" {
+    // A viewer had no way from a part to the line that made it
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "lid = cube(1)\nx = 1\n[lid.named(\"lid\"), cube(2).translate(x: 5).named(\"box\"), cube(1).translate(x: 9).named(\"lid\"), cube(3).translate(x: 20)]\n";
+    const parts = (try preview(arena.allocator(), source, "")).header.parts;
+    var named: usize = 0;
+    for (parts) |part| {
+        if (std.mem.startsWith(u8, part.name, "part")) {
+            try testing.expectEqual(null, part.source);
+            continue;
+        }
+        named += 1;
+        const at = part.source.?;
+        try testing.expectEqual(@as(u32, 3), at.line);
+        try testing.expectEqual(@as(?[]const u8, null), at.file);
+    }
+    try testing.expectEqual(@as(usize, 2), named);
+}
+
 test "preview: what the run printed is the frame's, as printed, cut past what a run keeps" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

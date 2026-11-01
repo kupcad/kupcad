@@ -160,7 +160,8 @@ webview and the desktop app to the language server.
   Edges, Axes, Grid and Plate toggles; Fit, Persp, and the Iso, Top, Front and Right views, the
   one looked from pressed, a turn by hand pressing none), the model's parts in its bottom half,
   each with its colour and copies (a click on one selects its copies, as a click in the viewer
-  does: `bind:selected`). In a pane narrower than 36em (a phone's) the panel is under the model,
+  does: `bind:selected`), and, with an `onsource`, the line that names it (`named`, the
+  frame's `parts[].source`, a library's with its file), for the host to show. In a pane narrower than 36em (a phone's) the panel is under the model,
   at most half the pane. The model fills what the rest leave, no less than
   `--kc-model-min-height` (none by default), which a host whose pane is as tall as its content
   sets: the model has no height of its own. A bar above: a section through the model along an axis (a solid's: a drawing, which isn't cut, or no model offers none), screenshot, an

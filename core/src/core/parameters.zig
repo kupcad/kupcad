@@ -21,11 +21,15 @@ pub const CachedModule = struct {
     params: std.ArrayList(ParamRegistry) = .empty,
     /// The warnings, as the run that cached it placed them.
     warnings: std.ArrayList(CachedWarning) = .empty,
+    /// Where it named its parts (`named`), each a CachedWarning whose message is the name.
+    part_sources: std.ArrayList(CachedWarning) = .empty,
 
     pub fn deinit(self: *CachedModule, allocator: std.mem.Allocator) void {
         self.params.deinit(allocator);
         for (self.warnings.items) |w| w.deinit(allocator);
         self.warnings.deinit(allocator);
+        for (self.part_sources.items) |s| s.deinit(allocator);
+        self.part_sources.deinit(allocator);
     }
 };
 

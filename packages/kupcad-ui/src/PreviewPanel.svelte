@@ -29,7 +29,7 @@
   import { problemsOf, runStatusOf } from './run-status.js';
   import { connectViewport } from './viewport-socket.js';
 
-  /** @import { ExportFormat, ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
+  /** @import { ExportFormat, ParamValues, Part, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
   /** @import { ViewerOptions } from './viewer/types.js' */
   /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
@@ -198,6 +198,15 @@
   }
 
   /**
+   * Shows the script where `part` is named, in its editor (a library's, opened).
+   * @param {Part} part
+   */
+  function revealSource(part) {
+    if (!shown || !part.source) return;
+    host.post({ type: 'reveal', uri: shown.uri, ...placeOf({ file: null, ...part.source }) });
+  }
+
+  /**
    * Where a problem or a console line is, as `reveal` says it: in a library, its `file`, which
    * the host opens in place of the script shown.
    * @param {{ line: number | null, column: number | null, file: string | null }} at
@@ -233,6 +242,7 @@
         status={run}
         {problems}
         onproblem={revealProblem}
+        onsource={revealSource}
         onscreenshot={screenshot}
         onerror={failed}
       >

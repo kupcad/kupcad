@@ -7,6 +7,7 @@ import { modelOf, PARTS } from './fixtures.test-helper.js';
 import { memorySettings } from './settings.js';
 import ViewerPane from './ViewerPane.svelte';
 
+/** @import { Part } from '@kupcad/protocol/types' */
 /** @import { Viewer } from './viewer/index.js' */
 /** @import { Problem } from './run-status.js' */
 /** @import { Settings } from './settings.js' */
@@ -436,6 +437,29 @@ describe('ViewerPane', () => {
     const toolbar = /** @type {HTMLElement} */ (document.querySelector('.toolbar'));
     const buttons = [...toolbar.querySelectorAll('button')].map((b) => b.textContent?.trim());
     expect(buttons.slice(-2)).toEqual(['Export…', 'Panel']);
+  });
+
+  it("offers each named part's line, where it is named, for the host to show", async () => {
+    // From a part there was no way to the line that made it
+    /** @type {Part[]} */
+    const shown = [];
+    render(ViewerPane, {
+      props: {
+        model: await modelOf(PARTS),
+        options: { renderer: stubRenderer().renderer },
+        onsource: (/** @type {Part} */ part) => shown.push(part),
+      },
+    });
+    const list = screen.getByRole('list', { name: 'Parts' });
+    const lines = [...list.querySelectorAll('button.source')];
+    expect(lines.map((line) => line.textContent?.trim())).toEqual(['line 2', 'line 1']);
+    await fireEvent.click(screen.getByTitle('Show where bolt is named'));
+    expect(shown.map((part) => [part.name, part.source?.line])).toEqual([['bolt', 1]]);
+  });
+
+  it('offers no line without a host to show it', async () => {
+    await pane();
+    expect(screen.getByRole('list', { name: 'Parts' }).querySelector('button.source')).toBeNull();
   });
 
   it('hides the panel of controls and parts, and shows it again', async () => {

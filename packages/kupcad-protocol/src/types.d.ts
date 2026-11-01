@@ -46,6 +46,15 @@ export interface Part {
    */
   volume?: number | null;
   size?: [number, number, number] | null;
+  /** Where its name was first given (`named`); null, or absent from an older core, for a part without a name. */
+  source?: Source | null;
+}
+
+/** A place in the project: a 1-based line and column (UTF-8 bytes), in `file` (a module's path in the project), else in the document. */
+export interface Source {
+  line: number;
+  column: number;
+  file?: string | null;
 }
 
 /**

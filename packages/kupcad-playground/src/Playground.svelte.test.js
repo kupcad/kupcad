@@ -55,10 +55,15 @@ const undo = (view) => fireEvent.keyDown(view.contentDOM, { key: 'z', ctrlKey: t
 const statusText = () => screen.queryByRole('status')?.textContent?.replace(/\s+/g, ' ').trim();
 
 /**
- * The parts listed beside the model.
+ * The parts listed beside the model, by their names (not the lines that name them).
  */
-const partsListed = () =>
-  screen.queryByRole('list', { name: 'Parts' })?.textContent?.replace(/\s+/g, ' ').trim();
+const partsListed = () => {
+  const list = screen.queryByRole('list', { name: 'Parts' });
+  if (!list) return undefined;
+  return [...list.querySelectorAll('li > button:not(.source)')]
+    .map((button) => button.textContent?.replace(/\s+/g, ' ').trim())
+    .join(' ');
+};
 
 /** The console's lines, as they read. */
 const consoleLines = () =>
@@ -84,6 +89,8 @@ describe('Playground', () => {
     await playground('cube(10).named("box")\n');
     await vi.waitFor(() => expect(statusText()).toMatch(/^Ready · \d+ ms$/), RUN_MS);
     expect(partsListed()).toBe('box');
+    // And the line that names it, which the editor shows
+    expect(screen.getByTitle('Show where box is named').textContent?.trim()).toBe('line 1');
   });
 
   it('marks what check finds and where the run failed; a problem clicked takes the editor there', async () => {

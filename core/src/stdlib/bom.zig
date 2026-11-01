@@ -87,7 +87,11 @@ fn rowOf(vm: *VM, part: Part) !value.Value {
 /// sketch's in a drawing.
 pub fn meshNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
     if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "named", receiver);
-    const id = try vm.dag_builder.internPartName(try arguments.requireNonBlankName(vm, name, "named"));
+    const named = try arguments.requireNonBlankName(vm, name, "named");
+    const id = try vm.dag_builder.internPartName(named);
+    // Where it is named, the first time: a viewer shows the part's line from the part
+    const at = vm.runningPlace();
+    vm.report.nameAt(vm.allocator, named, at.position, at.module) catch {};
     if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchName(receiver.asCrossSection().dag_idx, id));
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addSetName(receiver.asGeometry().dag_idx, id) });
 }

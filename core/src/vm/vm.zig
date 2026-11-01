@@ -1551,6 +1551,18 @@ pub const VM = struct {
             const position = w.position orelse LinePosition{ .line = 0, .column = 0 };
             cached.warnings.appendAssumeCapacity(.{ .message = message, .line = position.line, .column = position.column, .module = module });
         }
+        // The parts its own code named (an import from the cache doesn't run it to name them)
+        var sources = self.report.part_sources.iterator();
+        while (sources.next()) |entry| {
+            const module = entry.value_ptr.module orelse continue;
+            if (!std.mem.eql(u8, module, path)) continue;
+            try cached.part_sources.ensureUnusedCapacity(self.allocator, 1);
+            const name = try self.allocator.dupe(u8, entry.key_ptr.*);
+            errdefer self.allocator.free(name);
+            const owned_module = try self.allocator.dupe(u8, module);
+            const at = entry.value_ptr.position;
+            cached.part_sources.appendAssumeCapacity(.{ .message = name, .line = at.line, .column = at.column, .module = owned_module });
+        }
         const gop = try owned_keys.getOrPutOwned(&self.modules, self.allocator, path);
         if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
         gop.value_ptr.* = cached;
@@ -1776,6 +1788,13 @@ pub const VM = struct {
     /// Keeps `message` (owned, taken) as a warning where the code running now is: an imported
     /// module's in that module (its own lines), the script's in the script.
     pub fn keepWarning(self: *VM, message: []u8) void {
+        const at = self.runningPlace();
+        self.report.addWarningIn(self.allocator, message, at.position, at.module) catch {};
+    }
+
+    /// Where the code running now is: an imported module's in that module (its path in the
+    /// project, borrowed, and its own lines), the script's in the script (module null).
+    pub fn runningPlace(self: *const VM) struct { position: ?LinePosition, module: ?[]const u8 } {
         if (self.frames.items.len > 0) {
             const frame = &self.frames.items[self.frames.items.len - 1];
             if (frame.closure.function.namespace) |ns| if (ns.line_index) |*li| {
@@ -1783,11 +1802,10 @@ pub const VM = struct {
                     const at = li.humanPosition(offset);
                     break :at .{ .line = at.line, .column = at.column };
                 } else null;
-                self.report.addWarningIn(self.allocator, message, position, ns.path) catch {};
-                return;
+                return .{ .position = position, .module = ns.path };
             };
         }
-        self.report.addWarning(self.allocator, message, self.currentPosition()) catch {};
+        return .{ .position = self.currentPosition(), .module = null };
     }
 
     /// Keeps a warning a module gave when it ran (its import from the cache), where it gave
@@ -2409,6 +2427,11 @@ pub const VM = struct {
         if (self.modules.getPtr(path_str)) |cached| {
             for (cached.params.items) |param| self.declareParam(param) catch |err| return self.allocationFailed(err);
             for (cached.warnings.items) |w| self.warnAgain(w);
+            // The parts it named, where it named them: its code doesn't run to name them
+            for (cached.part_sources.items) |named| {
+                const position: ?LinePosition = if (named.line > 0) .{ .line = named.line, .column = named.column } else null;
+                self.report.nameAt(self.allocator, named.message, position, named.module) catch {};
+            }
             self.push(cached.exports);
             return null;
         }

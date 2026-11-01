@@ -10,7 +10,12 @@
       "color": null,
       "opacity": 1,
       "volume": 15625,
-      "size": [25, 25, 25]
+      "size": [25, 25, 25],
+      "source": {
+        "line": 4,
+        "column": 2,
+        "file": null
+      }
     },
     {
       "name": "bolt",
@@ -19,7 +24,12 @@
       "color": "#cc3333",
       "opacity": 1,
       "volume": 54.728203772762086,
-      "size": [3.801937735804838, 3.899711648727295, 5]
+      "size": [3.801937735804838, 3.899711648727295, 5],
+      "source": {
+        "line": 3,
+        "column": 8,
+        "file": null
+      }
     }
   ],
   "warnings": [],

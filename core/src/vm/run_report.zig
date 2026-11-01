@@ -25,8 +25,18 @@ pub const Warning = struct {
     module: ?[]u8 = null,
 };
 
+/// Where a part's name was given (`named`): its call's line and column, in `module` (its path
+/// in the project, owned; null for the running document's own code).
+pub const Source = struct {
+    position: LinePosition,
+    module: ?[]u8 = null,
+};
+
 pub const RunReport = struct {
     warnings: std.ArrayList(Warning) = .empty,
+    /// Where each part's name was first given, by the name (owned): a viewer shows the part's
+    /// line, its source, from the part.
+    part_sources: std.StringHashMapUnmanaged(Source) = .empty,
     /// The name of the parameter whose value stopped the run, owned.
     refused_param: ?[]u8 = null,
     /// Where in its value, owned: `[1, "depth"]` for `:cutouts[1][:depth]`; empty for the whole.
@@ -39,6 +49,7 @@ pub const RunReport = struct {
     pub fn deinit(self: *RunReport, allocator: std.mem.Allocator) void {
         self.clear(allocator);
         self.warnings.deinit(allocator);
+        self.part_sources.deinit(allocator);
         self.output.deinit(allocator);
     }
 
@@ -48,6 +59,12 @@ pub const RunReport = struct {
             if (w.module) |m| allocator.free(m);
         }
         self.warnings.clearRetainingCapacity();
+        var sources = self.part_sources.iterator();
+        while (sources.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            if (entry.value_ptr.module) |m| allocator.free(m);
+        }
+        self.part_sources.clearRetainingCapacity();
         self.forgetRefusal(allocator);
         self.output.clearRetainingCapacity();
         self.output_cut = false;
@@ -87,6 +104,19 @@ pub const RunReport = struct {
         const owned_module = if (module) |m| try allocator.dupe(u8, m) else null;
         errdefer if (owned_module) |m| allocator.free(m);
         try self.warnings.append(allocator, .{ .message = message, .position = position, .module = owned_module });
+    }
+
+    /// Notes that the part `name` was named at `position` in `module` (copied; null: the
+    /// document's own), unless it was named before: its first naming is its source. Nothing
+    /// for a naming of no place.
+    pub fn nameAt(self: *RunReport, allocator: std.mem.Allocator, name: []const u8, position: ?LinePosition, module: ?[]const u8) !void {
+        const at = position orelse return;
+        if (self.part_sources.contains(name)) return;
+        const key = try allocator.dupe(u8, name);
+        errdefer allocator.free(key);
+        const owned_module = if (module) |m| try allocator.dupe(u8, m) else null;
+        errdefer if (owned_module) |m| allocator.free(m);
+        try self.part_sources.put(allocator, key, .{ .position = at, .module = owned_module });
     }
 
     fn has(self: *const RunReport, message: []const u8, module: ?[]const u8) bool {

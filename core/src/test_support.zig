@@ -22,7 +22,7 @@ pub const FrameHeader = struct {
     protocolVersion: u32,
     document: ?[]const u8,
     kind: []const u8,
-    parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64, volume: ?f64, size: ?[3]f64 },
+    parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64, volume: ?f64, size: ?[3]f64, source: ?struct { line: u32, column: u32, file: ?[]const u8 } },
     warnings: []const struct { message: []const u8, line: ?u32, column: ?u32, file: ?[]const u8 },
     output: []const u8,
     outputCut: bool,

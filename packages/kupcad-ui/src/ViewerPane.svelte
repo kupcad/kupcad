@@ -56,6 +56,8 @@
    *   parameters'), after the Panel button: at the end nearest them
    * @property {RunStatus | null} [status] how the run shown went, or none to say
    * @property {Problem[]} [problems] what the run shown said went wrong (`problemsOf(header)`)
+   * @property {(part: Part) => void} [onsource] a part's line clicked (where it is named, its
+   *   `source`): the host shows it; without it, no line is offered
    * @property {(problem: Problem) => void} [onproblem] a problem with a line clicked: the host
    *   shows the script there; without it, none can be clicked
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
@@ -82,6 +84,7 @@
     status = null,
     problems = [],
     onproblem,
+    onsource,
     onerror,
     settings = memorySettings(),
     shortcuts = [],
@@ -441,6 +444,15 @@
                   <span class="name">{part.name}</span>
                   {#if part.count > 1}<span class="count">×{part.count}</span>{/if}
                 </button>
+                {#if onsource && part.source}
+                  <button
+                    type="button"
+                    class="source"
+                    title="Show where {part.name} is named"
+                    onclick={() => onsource(part)}
+                    >{part.source.file ? `${part.source.file} ` : ''}line {part.source.line}</button
+                  >
+                {/if}
               </li>
             {/each}
           </ul>
@@ -624,6 +636,20 @@
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+  /* The part, and the line that names it beside it */
+  .parts li {
+    display: flex;
+  }
+  .parts li > button {
+    flex: 1;
+    min-width: 0;
+  }
+  .parts .source {
+    flex: none;
+    width: auto;
+    color: var(--kc-muted);
+    font-size: 0.92em;
   }
   .parts button {
     display: flex;

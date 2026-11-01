@@ -205,9 +205,17 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
             .opacity = if (part.material) |m| m.alpha else 1,
             .volume = if (measured) |m| m.volume else null,
             .size = if (measured) |m| m.size else null,
+            .source = try sourceOf(arena, vm, part.name),
         };
     }
     return out;
+}
+
+/// Where the part `name` was named, owned by `arena`; null for none, or a name never placed.
+fn sourceOf(arena: std.mem.Allocator, vm: *const VM, name: ?[]const u8) !?frame.Source {
+    const source = vm.report.part_sources.get(name orelse return null) orelse return null;
+    const file = if (source.module) |m| try arena.dupe(u8, m) else null;
+    return .{ .line = source.position.line, .column = source.position.column, .file = file };
 }
 
 /// "#rrggbb" of `material`'s colour.
