@@ -228,6 +228,11 @@ pub const Bounds = struct {
     min: [2]f64,
     max: [2]f64,
 
+    /// The extent along each axis, never negative.
+    pub fn size(self: Bounds) [2]f64 {
+        return .{ @max(0.0, self.max[0] - self.min[0]), @max(0.0, self.max[1] - self.min[1]) };
+    }
+
     pub fn include(box: *?Bounds, p: [2]f64) void {
         if (box.*) |*b| {
             b.min = .{ @min(b.min[0], p[0]), @min(b.min[1], p[1]) };

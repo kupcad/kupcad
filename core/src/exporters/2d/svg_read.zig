@@ -19,6 +19,7 @@
 //! their content not clipped to it. The writer is svg.zig.
 
 const std = @import("std");
+const units = @import("../../core/units.zig");
 const path = @import("../../core/path.zig");
 const affine2 = @import("../../core/affine2.zig");
 const bezier = @import("../../core/bezier.zig");
@@ -31,16 +32,16 @@ const lineOf = xml.lineOf;
 const css = @import("css.zig");
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
-const MM_PER_PX = 25.4 / 96.0;
+const MM_PER_PX = units.MM_PER_PX;
 /// The units a length can be given in, as pixels.
 const LENGTH_UNITS = [_]struct { suffix: []const u8, px: f64 }{
     .{ .suffix = "px", .px = 1 },
-    .{ .suffix = "mm", .px = 96.0 / 25.4 },
-    .{ .suffix = "cm", .px = 96.0 / 2.54 },
-    .{ .suffix = "in", .px = 96 },
-    .{ .suffix = "pt", .px = 96.0 / 72.0 },
-    .{ .suffix = "pc", .px = 16 },
-    .{ .suffix = "Q", .px = 96.0 / 25.4 / 4.0 },
+    .{ .suffix = "mm", .px = 1.0 / units.MM_PER_PX },
+    .{ .suffix = "cm", .px = 10.0 / units.MM_PER_PX },
+    .{ .suffix = "in", .px = units.CSS_PX_PER_INCH },
+    .{ .suffix = "pt", .px = units.CSS_PX_PER_INCH / 72.0 },
+    .{ .suffix = "pc", .px = units.CSS_PX_PER_INCH / 6.0 },
+    .{ .suffix = "Q", .px = 1.0 / units.MM_PER_PX / 4.0 },
 };
 /// Elements whose content isn't drawn as it stands (definitions, text, images, styles).
 const UNDRAWN = std.StaticStringMap(void).initComptime(.{ .{"defs"}, .{"clipPath"}, .{"mask"}, .{"symbol"}, .{"marker"}, .{"pattern"}, .{"metadata"}, .{"title"}, .{"desc"}, .{"style"}, .{"script"}, .{"linearGradient"}, .{"radialGradient"}, .{"filter"}, .{"foreignObject"}, .{"text"}, .{"image"} });

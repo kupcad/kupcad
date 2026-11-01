@@ -68,6 +68,14 @@ pub const Contours = struct {
 pub const BoundingBox = struct {
     min: [3]f64,
     max: [3]f64,
+
+    /// The extent along each axis, never negative (an empty box's is 0). Each reader
+    /// subtracted the corners itself, one of them clamping.
+    pub fn size(self: BoundingBox) [3]f64 {
+        var s: [3]f64 = undefined;
+        for (&s, self.min, self.max) |*out, lo, hi| out.* = @max(0.0, hi - lo);
+        return s;
+    }
 };
 
 pub const FaceHandle = struct {

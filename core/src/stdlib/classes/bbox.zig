@@ -2,6 +2,7 @@
 //! axis's bounds and extent (`x_min`, `z_size`, ...), and `to_s`. Bound by `core_classes.zig`.
 
 const value = @import("../../core/value.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
@@ -15,9 +16,7 @@ fn buildVec3(vm: *VM, v: [3]f64) !value.Value {
 
 /// The extent along each axis (never negative, even for an empty box).
 fn size(bbox: *const value.ObjBBox) [3]f64 {
-    var s: [3]f64 = undefined;
-    for (&s, bbox.min, bbox.max) |*out, lo, hi| out.* = @max(0.0, hi - lo);
-    return s;
+    return (geom.BoundingBox{ .min = bbox.min, .max = bbox.max }).size();
 }
 
 fn center(bbox: *const value.ObjBBox) [3]f64 {

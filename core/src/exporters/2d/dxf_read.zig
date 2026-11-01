@@ -14,6 +14,7 @@
 //! The writer is dxf.zig.
 
 const std = @import("std");
+const units_mod = @import("../../core/units.zig");
 const path = @import("../../core/path.zig");
 const bezier = @import("../../core/bezier.zig");
 const bspline = @import("../../core/bspline.zig");
@@ -39,16 +40,16 @@ const DRAWN = std.StaticStringMap(void).initComptime(.{ .{"LINE"}, .{"ARC"}, .{"
 /// Millimetres in each `$INSUNITS` unit, by its code; 0 (unitless) is read as millimetres.
 const UNIT_MM = [_]f64{
     1, // 0 unitless
-    25.4, // 1 inches
-    304.8, // 2 feet
-    1_609_344, // 3 miles
+    units_mod.MM_PER_INCH, // 1 inches
+    units_mod.MM_PER_FOOT, // 2 feet
+    units_mod.MM_PER_MILE, // 3 miles
     1, // 4 millimetres
     10, // 5 centimetres
-    1000, // 6 metres
-    1e6, // 7 kilometres
-    25.4e-6, // 8 microinches
-    0.0254, // 9 mils
-    914.4, // 10 yards
+    units_mod.MM_PER_METER, // 6 metres
+    1000 * units_mod.MM_PER_METER, // 7 kilometres
+    units_mod.MM_PER_INCH * 1e-6, // 8 microinches
+    units_mod.MM_PER_INCH / 1000.0, // 9 mils
+    units_mod.MM_PER_YARD, // 10 yards
     1e-7, // 11 angstroms
     1e-6, // 12 nanometres
     1e-3, // 13 microns

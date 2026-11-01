@@ -10,6 +10,7 @@
 //! transform turns its triangles around, so they still face out. The writer is threemf.zig.
 
 const std = @import("std");
+const units = @import("../../core/units.zig");
 const imported_mesh = @import("imported_mesh.zig");
 const zip = @import("../zip.zig");
 const xml = @import("../xml.zig");
@@ -28,9 +29,9 @@ const UNIT_MM = std.StaticStringMap(f64).initComptime(.{
     .{ "micron", 0.001 },
     .{ "millimeter", 1 },
     .{ "centimeter", 10 },
-    .{ "inch", 25.4 },
-    .{ "foot", 304.8 },
-    .{ "meter", 1000 },
+    .{ "inch", units.MM_PER_INCH },
+    .{ "foot", units.MM_PER_FOOT },
+    .{ "meter", units.MM_PER_METER },
 });
 
 /// The meshes the build places, each a copy of an object's mesh where it is placed, in

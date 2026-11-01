@@ -7,7 +7,8 @@
 
 const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
-const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const material = @import("../../core/material.zig");
+const MaterialDef = material.MaterialDef;
 const Placement = @import("../../core/placement.zig").Placement;
 const MeshPart = @import("mesh_part.zig").MeshPart;
 const zip = @import("../zip.zig");
@@ -92,7 +93,7 @@ fn writeMaterials(w: *std.Io.Writer, defs: []const MaterialDef) !void {
 }
 
 fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
-    try w.print("   <base name=\"{s}\" displaycolor=\"#{X:0>2}{X:0>2}{X:0>2}{X:0>2}\"/>\n", .{ name, color[0], color[1], color[2], color[3] });
+    try w.print("   <base name=\"{s}\" displaycolor=\"{s}\"/>\n", .{ name, &material.hexRgba(color) });
 }
 
 /// `part`'s mesh as the object `id`, its triangles in the materials they have (of

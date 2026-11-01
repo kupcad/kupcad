@@ -316,7 +316,8 @@ fn chordsOf(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn
 pub fn cubicChordsAt(vm: *VM, from: [2]f64, cubic: bezier.Cubic, to: [2]f64) u32 {
     var box: ?path_mod.Bounds = null;
     for ([_][2]f64{ from, cubic.c1, cubic.c2, to }) |p| path_mod.Bounds.include(&box, p);
-    const size = std.math.hypot(box.?.max[0] - box.?.min[0], box.?.max[1] - box.?.min[1]);
+    const extent = box.?.size();
+    const size = std.math.hypot(extent[0], extent[1]);
     return path_mod.cubicChords(from, cubic, to, vm.config().chordError(size / 2));
 }
 

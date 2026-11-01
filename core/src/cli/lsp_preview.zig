@@ -750,10 +750,8 @@ pub const HoverRun = struct {
                 // Only what the engine can measure: a B-Rep part would otherwise show zeros.
                 const engine = handle.engine;
                 if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
-                    const dx = bx.max[0] - bx.min[0];
-                    const dy = bx.max[1] - bx.min[1];
-                    const dz = bx.max[2] - bx.min[2];
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
+                    const extent = bx.size();
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ extent[0], extent[1], extent[2] });
                 };
 
                 if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});

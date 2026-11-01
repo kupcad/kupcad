@@ -179,7 +179,7 @@ test "3mf: a Solid on its own is placed too, and its colour is its triangles' ma
     defer got.model.deinit();
     defer testing.allocator.free(got.xml);
     try testing.expectEqual(@as(u32, 1), got.model.vertices.count());
-    try testing.expect(std.mem.find(u8, got.xml, "displaycolor=\"#FF800080\"") != null);
+    try testing.expect(std.mem.find(u8, got.xml, "displaycolor=\"#ff800080\"") != null);
     // Every triangle of the cube has it
     try testing.expectEqual(@as(usize, 12), got.model.colored_triangles);
 }

@@ -8,6 +8,7 @@
 //! each id different (names.zig: a second `plate` is `plate_2`).
 
 const std = @import("std");
+const material = @import("../../core/material.zig");
 const drawing_mod = @import("drawing.zig");
 const UniqueNames = @import("../names.zig").UniqueNames;
 
@@ -39,8 +40,8 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing, 
         var open = true;
         for (shape.outlines) |outline| open = open and !outline.closed;
         const fill = if (open) "none" else null;
-        var color_buf: [7]u8 = undefined;
-        const color: []const u8 = if (shape.rgb) |rgb| try std.fmt.bufPrint(&color_buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ rgb[0], rgb[1], rgb[2] }) else DEFAULT_FILL;
+        const color_hex = if (shape.rgb) |rgb| material.hexRgb(rgb) else undefined;
+        const color: []const u8 = if (shape.rgb != null) &color_hex else DEFAULT_FILL;
         try w.print(" fill=\"{s}\"", .{fill orelse color});
         if (shape.alpha < 1) try w.print(" fill-opacity=\"{d}\"", .{shape.alpha});
         try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ if (open and shape.rgb != null) color else STROKE, stroke_width });

@@ -16,7 +16,8 @@ const extractor = @import("../tools/doc/extractor.zig");
 const model_mod = @import("../exporters/model.zig");
 const export_mod = @import("../exporters/export.zig");
 const parts_mod = @import("../exporters/parts.zig");
-const MaterialDef = @import("../core/material.zig").MaterialDef;
+const material_mod = @import("../core/material.zig");
+const MaterialDef = material_mod.MaterialDef;
 const param_values = @import("../core/param_values.zig");
 const rules = @import("../core/param_rules.zig");
 const stopwatch = @import("../core/stopwatch.zig");
@@ -209,7 +210,7 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
 
 /// "#rrggbb" of `material`'s colour.
 fn hexColor(arena: std.mem.Allocator, material: MaterialDef) ![]const u8 {
-    return arena.print("#{x:0>2}{x:0>2}{x:0>2}", .{ material.rgb[0], material.rgb[1], material.rgb[2] });
+    return arena.dupe(u8, &material_mod.hexRgb(material.rgb));
 }
 
 /// The value each of the script's own parameters (its schema's, in its order) took in the

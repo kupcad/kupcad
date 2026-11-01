@@ -16,10 +16,6 @@ pub const StringMap = string_map.StringMap;
 pub const LOCKFILE_VERSION = "1.0.0";
 const LOCKFILE_MAJOR = (semver.Version.parse(LOCKFILE_VERSION) catch unreachable).major;
 
-/// JSON-escaped, quoted string formatter.
-fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
-    return std.json.fmt(s, .{});
-}
 pub const PackagesMap = std.StringHashMap(LockedPackage);
 
 pub const LockedPackage = struct {
@@ -147,61 +143,50 @@ pub const Lockfile = struct {
     pub fn save(self: *const Lockfile, fs: Vfs) !void {
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
         defer aw.deinit();
-        const w = &aw.writer;
-
+        // Written by the JSON writer, as the manifest is: ids, refs and aliases can come from
+        // downloaded manifests, and a `"` in an alias written raw injected lockfile entries.
+        // Saving always upgrades to the current format (integrities were recomputed by the
+        // resolver). The packages and each one's dependencies in sorted order, so the file is
+        // the same for the same lock.
+        var jw: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .whitespace = .indent_2 } };
+        try jw.beginObject();
+        try jw.objectField("version");
+        try jw.write(LOCKFILE_VERSION);
+        try jw.objectField("packages");
+        try jw.beginObject();
         var pkg_keys: std.ArrayList([]const u8) = .empty;
         defer pkg_keys.deinit(self.allocator);
-
         var pkg_it = self.packages.keyIterator();
         while (pkg_it.next()) |k| try pkg_keys.append(self.allocator, k.*);
         string_map.sortKeys(pkg_keys.items);
-
-        // Every string goes through the JSON string encoder: ids, refs and aliases
-        // can originate from downloaded manifests, and raw `{s}` interpolation let a
-        // `"` in an alias inject arbitrary lockfile entries.
-        // Saving always upgrades to the current format (integrities were recomputed by the resolver).
-        try w.print("{{\n  \"version\": {f},\n  \"packages\": {{", .{jsonStr(LOCKFILE_VERSION)});
-
-        if (pkg_keys.items.len > 0) {
-            try w.writeAll("\n");
-            for (pkg_keys.items, 0..) |pkg_id, i| {
-                const locked_pkg = self.packages.get(pkg_id).?;
-                const comma1 = if (i < pkg_keys.items.len - 1) "," else "";
-
-                try w.print("    {f}: {{\n      \"resolved\": {f},\n      \"ref\": {f},\n      \"integrity\": {f}", .{
-                    jsonStr(pkg_id),
-                    jsonStr(locked_pkg.resolved),
-                    jsonStr(locked_pkg.ref),
-                    jsonStr(locked_pkg.integrity),
-                });
-
-                if (locked_pkg.dependencies.count() > 0) {
-                    try w.writeAll(",\n      \"dependencies\": {\n");
-
-                    var dep_keys: std.ArrayList([]const u8) = .empty;
-                    defer dep_keys.deinit(self.allocator);
-                    var dep_it = locked_pkg.dependencies.keyIterator();
-                    while (dep_it.next()) |k| try dep_keys.append(self.allocator, k.*);
-                    string_map.sortKeys(dep_keys.items);
-
-                    for (dep_keys.items, 0..) |dep_key, j| {
-                        const dep_val = locked_pkg.dependencies.get(dep_key).?;
-                        const comma2 = if (j < dep_keys.items.len - 1) "," else "";
-                        try w.print("        {f}: {f}{s}\n", .{ jsonStr(dep_key), jsonStr(dep_val), comma2 });
-                    }
-                    try w.writeAll("      }\n    }");
-                } else {
-                    try w.writeAll("\n    }");
+        for (pkg_keys.items) |pkg_id| {
+            const locked_pkg = self.packages.get(pkg_id).?;
+            try jw.objectField(pkg_id);
+            try jw.beginObject();
+            try jw.objectField("resolved");
+            try jw.write(locked_pkg.resolved);
+            try jw.objectField("ref");
+            try jw.write(locked_pkg.ref);
+            try jw.objectField("integrity");
+            try jw.write(locked_pkg.integrity);
+            if (locked_pkg.dependencies.count() > 0) {
+                try jw.objectField("dependencies");
+                try jw.beginObject();
+                var dep_keys: std.ArrayList([]const u8) = .empty;
+                defer dep_keys.deinit(self.allocator);
+                var dep_it = locked_pkg.dependencies.keyIterator();
+                while (dep_it.next()) |k| try dep_keys.append(self.allocator, k.*);
+                string_map.sortKeys(dep_keys.items);
+                for (dep_keys.items) |dep_key| {
+                    try jw.objectField(dep_key);
+                    try jw.write(locked_pkg.dependencies.get(dep_key).?);
                 }
-
-                try w.writeAll(comma1);
-                try w.writeAll("\n");
+                try jw.endObject();
             }
-            try w.writeAll("  }\n}");
-        } else {
-            try w.writeAll("}\n}");
+            try jw.endObject();
         }
-
+        try jw.endObject();
+        try jw.endObject();
         try fs.writeFile("kupcad.lock", aw.written());
     }
 };

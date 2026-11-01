@@ -89,7 +89,7 @@ test "SVG: a hole is a second subpath, a name the path's id, a colour its fill" 
     try testing.expectEqual(@as(usize, 2), std.mem.count(u8, d, "M "));
     try testing.expectEqual(@as(usize, 2), std.mem.count(u8, d, " Z"));
     // The id is an XML name: the space becomes `_`
-    try testing.expect(std.mem.find(u8, svg, "<path id=\"plate_1\" fill=\"#FF0000\" fill-opacity=\"0.5\"") != null);
+    try testing.expect(std.mem.find(u8, svg, "<path id=\"plate_1\" fill=\"#ff0000\" fill-opacity=\"0.5\"") != null);
 }
 
 test "SVG: a Solid is drawn as its projection onto XY, named after its part, beside the Sketches" {
@@ -187,7 +187,7 @@ test "SVG: a Path is an open, unfilled path with its arcs exact, a closed one's 
     // The sketches come first, then the paths. The path: no Z, no fill, stroked in its
     // colour, the arc an A of radius 5
     try testing.expectEqualStrings("M 0 0 L 10 0 A 5 5 0 0 0 10 -10 L 0 -10", pathData(svg, 1).?);
-    try testing.expect(std.mem.find(u8, svg, "<path id=\"bracket\" fill=\"none\" fill-rule=\"evenodd\" stroke=\"#FF0000\"") != null);
+    try testing.expect(std.mem.find(u8, svg, "<path id=\"bracket\" fill=\"none\" fill-rule=\"evenodd\" stroke=\"#ff0000\"") != null);
     // Closed, the same outline is filled and its arc stays an arc
     const closed = pathData(svg, 0).?;
     try testing.expect(std.mem.endsWith(u8, closed, " Z"));

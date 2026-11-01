@@ -36,6 +36,21 @@ pub const MaterialDef = struct {
 
 /// The sRGB bytes of "#RRGGBB" or "#RGB" (each digit doubled), or null for anything else.
 /// Each digit is read as one (a number parse took "#+10000", its sign, as red).
+/// `#rrggbb`, lower case, as the preview's frame and an SVG name a colour (each wrote its own,
+/// one in capitals).
+pub fn hexRgb(rgb: [3]u8) [7]u8 {
+    var out: [7]u8 = undefined;
+    _ = std.fmt.bufPrint(&out, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+    return out;
+}
+
+/// `#rrggbbaa`, as 3MF names a colour with its alpha.
+pub fn hexRgba(rgba: [4]u8) [9]u8 {
+    var out: [9]u8 = undefined;
+    _ = std.fmt.bufPrint(&out, "#{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{ rgba[0], rgba[1], rgba[2], rgba[3] }) catch unreachable;
+    return out;
+}
+
 pub fn parseHexColor(text: []const u8) ?[3]u8 {
     if (text.len == 0 or text[0] != '#') return null;
     const digits = text[1..];
