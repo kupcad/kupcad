@@ -46,11 +46,14 @@ pub fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void
 
 // Exception construction under a collecting GC
 
-/// compileAndRun with a collection on every allocation. Stress is switched off
-/// again before returning so the test's `vm.deinit` runs normally.
+/// compileAndRun with a collection on every allocation, the stress put back as it was
+/// before returning.
 pub fn compileAndRunStressed(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    // Put back as it was: under -Dgc-stress every VM collects at each allocation, and turning
+    // it off after one run left the rest of the test unstressed
+    const was = vm.gc.stress;
     vm.gc.stress = true;
-    defer vm.gc.stress = false;
+    defer vm.gc.stress = was;
     return compileAndRun(vm, out_chunk, source);
 }
 

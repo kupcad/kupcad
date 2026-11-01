@@ -5,28 +5,25 @@ const GeometryHandle = @import("../core/geometry_handle.zig").GeometryHandle;
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 
-// --- Mock Callback Trackers ---
-var mock_destructor_called: bool = false;
-var mock_last_destroyed_handle: ?GeometryHandle = null;
-var mock_binary_called: bool = false;
-
-fn mockMeshDestructor(handle: GeometryHandle) void {
-    mock_destructor_called = true;
-    mock_last_destroyed_handle = handle;
-}
+/// A VM and whether its binary handler was called, kept beside it: the handler is given the
+/// VM alone, and finds the flag by it (@fieldParentPtr), so none outlives its test.
+const Handled = struct {
+    vm: VM,
+    called: bool = false,
+};
 
 fn mockBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
     _ = a;
     _ = b;
     _ = op;
-    mock_binary_called = true;
+    const handled: *Handled = @fieldParentPtr("vm", vm);
+    handled.called = true;
     return try vm.allocateString("mock_csg_result");
 }
 
 test "Host Interface: binary_handler intercepts custom operator overloading" {
-    mock_binary_called = false;
-
-    var vm = try VM.init(testing.allocator, testing.io);
+    var handled: Handled = .{ .vm = try VM.init(testing.allocator, testing.io) };
+    const vm = &handled.vm;
     defer vm.deinit();
     vm.host.binary_handler = mockBinaryHandler;
 
@@ -54,6 +51,6 @@ test "Host Interface: binary_handler intercepts custom operator overloading" {
 
     const result = vm.interpret(&test_chunk);
     try testing.expectEqual(.ok, result);
-    try testing.expect(mock_binary_called);
+    try testing.expect(handled.called);
     try testing.expect(vm.stack[0].isString());
 }

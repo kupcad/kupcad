@@ -2834,22 +2834,27 @@ test "Stdlib: Sketch transforms stay in the XY plane" {
     });
 }
 
-var debugger_opened: usize = 0;
+/// A VM and how often its debugger opened, kept beside it: the handler is given the VM alone,
+/// and finds the count by it (@fieldParentPtr), so none outlives its test.
+const Debugged = struct {
+    vm: VM,
+    opened: usize = 0,
+};
 
-fn countDebuggerOpen(_: *VM) void {
-    debugger_opened += 1;
+fn countDebuggerOpen(vm: *VM) void {
+    const debugged: *Debugged = @fieldParentPtr("vm", vm);
+    debugged.opened += 1;
 }
 
 test "Stdlib: debugger() opens the host's debugger, and does nothing without one" {
     // Without a handler (the LSP, the viewport) it must not touch stdin or stdout.
     try expectRuns(.ok, &.{"debugger()\nr = 1"});
 
-    var vm = try initVm();
-    defer vm.deinit();
-    debugger_opened = 0;
-    vm.debugger_handler = countDebuggerOpen;
-    try testing.expectEqual(.ok, try runOn(&vm, "debugger()\nKernel.debugger\nr = 1"));
-    try testing.expectEqual(@as(usize, 2), debugger_opened);
+    var debugged: Debugged = .{ .vm = try initVm() };
+    defer debugged.vm.deinit();
+    debugged.vm.debugger_handler = countDebuggerOpen;
+    try testing.expectEqual(.ok, try runOn(&debugged.vm, "debugger()\nKernel.debugger\nr = 1"));
+    try testing.expectEqual(@as(usize, 2), debugged.opened);
 }
 
 test "Stdlib: Array#compact drops the nils, Array#reject the items its block accepts" {

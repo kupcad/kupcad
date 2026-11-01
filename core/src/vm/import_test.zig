@@ -1,5 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
+const helpers = @import("vm_test_helpers.zig");
+const compileAndRun = helpers.compileAndRun;
+const expectGlobalString = helpers.expectGlobalString;
 const VM = @import("vm.zig").VM;
 const InterpretResult = @import("vm.zig").InterpretResult;
 const chunk = @import("chunk.zig");
@@ -1065,24 +1068,6 @@ test "VM: op_import supports chained aliased re-exports across modules" {
 }
 
 // --- op_import rooting, cache marking, chunk leak (Oct 2026 audit) ---
-
-/// Parses + compiles `source` into `out_chunk` and interprets it.
-fn compileAndRun(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
-
-    var comp = Compiler.forDocument(testing.allocator, &doc, out_chunk, vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-    return vm.interpret(out_chunk);
-}
-
-fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
-    const val = vm.globals.get(name) orelse return error.MissingGlobal;
-    try testing.expect(val.isString());
-    try testing.expectEqualStrings(expected, val.asString().chars);
-}
 
 test "VM: op_import cached module results survive GC and re-import" {
     var mem_vfs = MemoryVfs.init(testing.allocator);

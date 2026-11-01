@@ -1,11 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
 const affine2 = @import("affine2.zig");
 
-fn expectPoint(expected: [2]f64, actual: [2]f64) !void {
-    try testing.expectApproxEqAbs(expected[0], actual[0], 1e-12);
-    try testing.expectApproxEqAbs(expected[1], actual[1], 1e-12);
-}
+const expectPoint = support.pointChecker(1e-12);
 
 test "affine2: a move, a scale, a turn and a mirror place a point as their names say" {
     try expectPoint(.{ 4, 7 }, affine2.apply(affine2.translation(3, 5), .{ 1, 2 }));

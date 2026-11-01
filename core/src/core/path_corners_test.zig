@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
 const path = @import("path.zig");
 const path_corners = @import("path_corners.zig");
 
@@ -13,10 +14,7 @@ fn lines(comptime points: []const [2]f64, comptime closed: bool) [points.len - 1
     return out;
 }
 
-fn expectPoint(expected: [2]f64, actual: [2]f64) !void {
-    try testing.expectApproxEqAbs(expected[0], actual[0], 1e-12);
-    try testing.expectApproxEqAbs(expected[1], actual[1], 1e-12);
-}
+const expectPoint = support.pointChecker(1e-12);
 
 fn eased(start: [2]f64, segments: []const path.Segment, closed: bool, how: path_corners.Ease) !path_corners.Eased {
     var failure: path_corners.Failure = undefined;

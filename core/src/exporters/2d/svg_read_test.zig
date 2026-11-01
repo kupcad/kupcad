@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../../test_support.zig");
 const svg_read = @import("svg_read.zig");
 const path = @import("../../core/path.zig");
 /// A drawing in millimetres, a user unit each.
@@ -19,10 +20,7 @@ fn expectRefused(text: []const u8, message: []const u8) !void {
     try testing.expectEqualStrings(message, diag.message());
 }
 
-fn expectPoint(expected: [2]f64, actual: [2]f64) !void {
-    try testing.expectApproxEqAbs(expected[0], actual[0], 1e-9);
-    try testing.expectApproxEqAbs(expected[1], actual[1], 1e-9);
-}
+const expectPoint = support.pointChecker(1e-9);
 
 fn area(outline: path.Run) f64 {
     return @abs(path.signedArea(outline.start, outline.segments));

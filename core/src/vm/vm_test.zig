@@ -18,22 +18,28 @@ const executeAndAssertStack = helpers.executeAndAssertStack;
 const compileAndRun = helpers.compileAndRun;
 const expectGlobalString = helpers.expectGlobalString;
 
-// --- Mock Debugger Step Handler ---
-var mock_step_count: usize = 0;
+/// A VM and what its debugger callbacks counted, kept beside it: the callbacks are given the
+/// VM alone, and find the count by it (@fieldParentPtr), so no count outlives its test.
+const Debugged = struct {
+    vm: VM,
+    calls: usize = 0,
+
+    fn of(vm: *VM) *Debugged {
+        return @fieldParentPtr("vm", vm);
+    }
+};
+
+fn mockStepHandler(vm: *VM) void {
+    Debugged.of(vm).calls += 1;
+}
 
 /// A host's debugger for the tests below: on its first call it starts stepping, counts the
 /// line boundaries it is shown, and resumes after two of them, as `.step`, `.step`,
 /// `.continue` would at the prompt.
-var stepping_debugger_calls: usize = 0;
-
-fn mockStepHandler(vm: *VM) void {
-    _ = vm;
-    mock_step_count += 1;
-}
-
 fn steppingDebugger(vm: *VM) void {
-    stepping_debugger_calls += 1;
-    vm.hooks.setStep(stepping_debugger_calls <= 2);
+    const debugged = Debugged.of(vm);
+    debugged.calls += 1;
+    vm.hooks.setStep(debugged.calls <= 2);
 }
 
 test "VM: Comprehensive Ruby-like language features integration" {
@@ -363,13 +369,13 @@ test "VM: Lexical Constant Resolution Hierarchies" {
 }
 
 test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
-    var vm = try VM.init(testing.allocator, testing.io);
+    var debugged: Debugged = .{ .vm = try VM.init(testing.allocator, testing.io) };
+    const vm = &debugged.vm;
     defer vm.deinit();
 
     // Bind the mock debugger handler and enable stepping
     vm.debugger_step_handler = mockStepHandler;
     vm.hooks.setStep(true);
-    mock_step_count = 0;
 
     // A 3-line script should cross a line boundary exactly twice after the first instruction starts
     const source =
@@ -387,7 +393,7 @@ test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -397,7 +403,7 @@ test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
     try testing.expectEqual(.ok, result);
     // Line 1 -> Line 2 (Step 1)
     // Line 2 -> Line 3 (Step 2)
-    try testing.expectEqual(@as(usize, 2), mock_step_count);
+    try testing.expectEqual(@as(usize, 2), debugged.calls);
 }
 
 test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
@@ -581,12 +587,12 @@ test "VM: redefining a global on a reused VM after its defining chunk was freed"
 }
 
 test "VM Debugger: debugger() steps the following lines, then continues, and the run completes" {
-    var vm = try VM.init(testing.allocator, testing.io);
+    var debugged: Debugged = .{ .vm = try VM.init(testing.allocator, testing.io) };
+    const vm = &debugged.vm;
     defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+    try registry.registerStandardLibrary(vm);
     vm.host.print_handler = null;
     vm.debugger_handler = steppingDebugger;
-    stepping_debugger_calls = 0;
 
     const source =
         \\a = 1
@@ -601,13 +607,13 @@ test "VM Debugger: debugger() steps the following lines, then continues, and the
     vm.line_index = &doc.line_index;
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
     // The breakpoint, then two line steps (b = 2, c = 3); `.continue` ran the rest unseen.
-    try testing.expectEqual(@as(usize, 3), stepping_debugger_calls);
+    try testing.expectEqual(@as(usize, 3), debugged.calls);
     try testing.expect(!vm.hooks.step);
     try testing.expectEqual(@as(f64, 10), vm.globals.get("r").?.asNumber());
 }

@@ -85,6 +85,22 @@ pub fn initVmWith(allocator: std.mem.Allocator) !VM {
     return api.newVm(allocator, std.testing.io, null, .{ .muted = true, .silent = true });
 }
 
+/// `expected` and `actual` are one point, within `tolerance` in each coordinate.
+pub fn expectPointWithin(expected: [2]f64, actual: [2]f64, tolerance: f64) !void {
+    try std.testing.expectApproxEqAbs(expected[0], actual[0], tolerance);
+    try std.testing.expectApproxEqAbs(expected[1], actual[1], tolerance);
+}
+
+/// `expectPointWithin` at a fixed `tolerance`, for a file's tests to name once:
+/// `const expectPoint = support.pointChecker(1e-12);`. Five files each wrote their own.
+pub fn pointChecker(comptime tolerance: f64) fn ([2]f64, [2]f64) anyerror!void {
+    return struct {
+        fn check(expected: [2]f64, actual: [2]f64) anyerror!void {
+            return expectPointWithin(expected, actual, tolerance);
+        }
+    }.check;
+}
+
 /// Compiles and runs `source` on `vm`. A syntax error fails the test.
 pub fn runOn(vm: *VM, source: []const u8) !InterpretResult {
     return runWith(std.testing.allocator, vm, source);

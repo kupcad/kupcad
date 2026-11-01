@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const expectGlobalString = @import("vm_test_helpers.zig").expectGlobalString;
 const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
@@ -312,12 +313,6 @@ test "GC Edge Case: Sweep handles OutOfMemory gracefully without panicking" {
 }
 
 // --- Constants of a chunk under compilation must be GC roots ---
-
-fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
-    const val = vm.globals.get(name) orelse return error.MissingGlobal;
-    try testing.expect(val.isString());
-    try testing.expectEqualStrings(expected, val.asString().chars);
-}
 
 test "GC: string constants survive collections triggered during compilation" {
     var vm = try VM.init(testing.allocator, testing.io);

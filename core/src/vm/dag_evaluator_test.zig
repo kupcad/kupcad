@@ -1,5 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
+const initVm = support.initVm;
+const runOn = support.runOn;
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
 const dag = @import("dag.zig");
@@ -10,29 +13,6 @@ const InterpretResult = @import("vm.zig").InterpretResult;
 const chunk = @import("chunk.zig");
 const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-
-fn initVm() !VM {
-    var vm = try VM.init(testing.allocator, testing.io);
-    errdefer vm.deinit();
-    vm.mute_errors = true;
-    try registry.registerStandardLibrary(&vm);
-    return vm;
-}
-
-/// Compiles and runs `source` on an existing VM.
-fn runOn(vm: *VM, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    return vm.interpret(&out_chunk);
-}
 
 fn evalVolume(vm: *VM, source: []const u8) !f64 {
     try testing.expectEqual(InterpretResult.ok, try runOn(vm, source));
@@ -655,7 +635,6 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
 test "DAG: a simplify or decompose mesh is released after the run that drops its last shape" {
     // Concrete leaves kept their meshes until the VM went: in the editor's long-lived
     // worker, one more per run of a script that simplifies.
-    const support = @import("../test_support.zig");
     var vm = try support.initVm();
     defer vm.deinit();
     vm.runs_many_scripts = true;
@@ -675,7 +654,6 @@ test "DAG: a simplify or decompose mesh is released after the run that drops its
 test "DAG: a mesh is kept while the native that made it still builds on it" {
     // Releasing in a collection would free a simplify result the native had made but not
     // yet given an object; it happens after the run, when no native is running.
-    const support = @import("../test_support.zig");
     const cases = [_]struct { src: []const u8, expected: support.Expected }{
         .{ .src = "r = cube(2).simplify.translate(x: 1).volume", .expected = .{ .num = 8 } },
         .{ .src = "r = (cube(1) + cube(1).translate(x: 3)).decompose.map { |p| p.volume }", .expected = .{ .nums = &.{ 1, 1 } } },
@@ -692,7 +670,6 @@ test "DAG: a mesh is kept while the native that made it still builds on it" {
 }
 
 test "DAG: shapes kept across runs still build after the graph is compacted" {
-    const support = @import("../test_support.zig");
     var vm = try support.initVm();
     defer vm.deinit();
     vm.runs_many_scripts = true;
@@ -714,7 +691,6 @@ test "DAG: shapes kept across runs still build after the graph is compacted" {
 }
 
 test "DAG: only a VM that runs many scripts tidies its graph, and a mostly live one isn't copied" {
-    const support = @import("../test_support.zig");
     // One script and done (a build): tidying would be work for nothing.
     var once = try support.initVm();
     defer once.deinit();

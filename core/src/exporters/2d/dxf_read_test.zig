@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../../test_support.zig");
 const dxf_read = @import("dxf_read.zig");
 const path = @import("../../core/path.zig");
 
@@ -22,10 +23,7 @@ fn expectRefused(text: []const u8, message: []const u8) !void {
     try testing.expectEqualStrings(message, diag.message());
 }
 
-fn expectPoint(expected: [2]f64, actual: [2]f64) !void {
-    try testing.expectApproxEqAbs(expected[0], actual[0], 1e-9);
-    try testing.expectApproxEqAbs(expected[1], actual[1], 1e-9);
-}
+const expectPoint = support.pointChecker(1e-9);
 
 /// A slot: two lines (the top one drawn backwards) and two half circles, as separate entities.
 const SLOT =

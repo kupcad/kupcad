@@ -413,28 +413,24 @@ test "Language: puts and interpolation show an instance by its own to_s" {
         .{ .src = "class Q\nend\nr = \"#{Q.new}\".length > 0", .expected = .{ .boolean = true } },
     });
 
-    var vm = try support.initVm();
-    defer vm.deinit();
-    captured_output.clearRetainingCapacity();
-    defer captured_output.clearAndFree(testing.allocator);
-    vm.host.print_handler = capturePrint;
-    try testing.expectEqual(.ok, try support.runOn(&vm, TO_S_CLASS ++ "puts P.new(3)\nprint P.new(4)"));
-    try testing.expectEqualStrings("P(3)\nP(4)", captured_output.items);
+    var printing = try Printing.init();
+    defer printing.deinit();
+    printing.vm.host.print_handler = Printing.capture;
+    try testing.expectEqual(.ok, try support.runOn(&printing.vm, TO_S_CLASS ++ "puts P.new(3)\nprint P.new(4)"));
+    try testing.expectEqualStrings("P(3)\nP(4)", printing.output.items);
 }
 
 test "Language: inspect shows an instance by its inspect, inherited too, or else its to_s" {
     // inspect() looked in the instance's own class only, called only built-in methods and
     // swallowed their errors: a script's inspect or to_s was never shown
     const classes = "class A\n  def inspect\n    \"A!\"\n  end\nend\nclass B < A\nend\nclass C\n  def to_s\n    \"C()\"\n  end\nend\nclass D\nend\n";
-    var vm = try support.initVm();
-    defer vm.deinit();
-    captured_output.clearRetainingCapacity();
-    defer captured_output.clearAndFree(testing.allocator);
-    vm.host.print_handler = capturePrint;
-    try testing.expectEqual(.ok, try support.runOn(&vm, classes ++ "inspect(A.new)\ninspect(B.new)\ninspect(C.new)\ninspect(D.new)\ninspect(cube(1).bbox)\ninspect(\"s\")"));
+    var printing = try Printing.init();
+    defer printing.deinit();
+    printing.vm.host.print_handler = Printing.capture;
+    try testing.expectEqual(.ok, try support.runOn(&printing.vm, classes ++ "inspect(A.new)\ninspect(B.new)\ninspect(C.new)\ninspect(D.new)\ninspect(cube(1).bbox)\ninspect(\"s\")"));
     var shown: std.ArrayList([]const u8) = .empty;
     defer shown.deinit(testing.allocator);
-    var lines = std.mem.tokenizeScalar(u8, captured_output.items, '\n');
+    var lines = std.mem.tokenizeScalar(u8, printing.output.items, '\n');
     // Each line after its "[line, col] " prefix, when the run has a line index
     while (lines.next()) |line| try shown.append(testing.allocator, if (std.mem.find(u8, line, "] ")) |at| line[at + 2 ..] else line);
     const expected = [_][]const u8{ "A!", "A!", "C()", "#<D>", "BoundingBox(min: [0, 0, 0], max: [1, 1, 1])", "\"s\"" };
@@ -447,11 +443,11 @@ test "Language: inspect shows an instance by its inspect, inherited too, or else
         .{ .src = rescued("class Q\n  def inspect\n    raise \"boom\"\n  end\nend\ninspect(Q.new)"), .expected = "RuntimeError: boom" },
     };
     for (failing) |case| {
-        var printing = try support.initVm();
-        defer printing.deinit();
-        printing.host.print_handler = capturePrint;
-        try testing.expectEqual(.ok, try support.runOn(&printing, case.src));
-        try testing.expectEqualStrings(case.expected, printing.globals.get("r").?.asString().chars);
+        var failed = try Printing.init();
+        defer failed.deinit();
+        failed.vm.host.print_handler = Printing.capture;
+        try testing.expectEqual(.ok, try support.runOn(&failed.vm, case.src));
+        try testing.expectEqualStrings(case.expected, failed.vm.globals.get("r").?.asString().chars);
     }
 }
 
@@ -478,12 +474,26 @@ test "Language: a class, rescue, range or module used wrongly says how" {
     });
 }
 
-var captured_output: std.ArrayList(u8) = .empty;
+/// A VM and what it printed, kept beside it: the print handler is given the VM alone, and
+/// finds the output by it (@fieldParentPtr), so none outlives its test.
+const Printing = struct {
+    vm: @import("vm.zig").VM,
+    output: std.ArrayList(u8) = .empty,
 
-fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {
-    _ = vm;
-    captured_output.appendSlice(testing.allocator, message) catch @panic("out of memory capturing output");
-}
+    fn init() !Printing {
+        return .{ .vm = try support.initVm() };
+    }
+
+    fn deinit(self: *Printing) void {
+        self.output.deinit(testing.allocator);
+        self.vm.deinit();
+    }
+
+    fn capture(vm: *@import("vm.zig").VM, message: []const u8) void {
+        const self: *Printing = @fieldParentPtr("vm", vm);
+        self.output.appendSlice(testing.allocator, message) catch @panic("out of memory capturing output");
+    }
+};
 
 test "Language: rescue names a class by its scoped path, or lexically inside its module" {
     // `rescue Parts::MyError` was a syntax error, and `rescue MyError` inside module Parts

@@ -16,6 +16,8 @@ const executeAndAssertStack = helpers.executeAndAssertStack;
 const compileAndRunStressed = helpers.compileAndRunStressed;
 
 // --- Mock C++ Destructor for GC Tests ---
+// File-scope, as no other test state is: the destructor is given the handle alone, with no VM
+// to find a test's own by. The one test that reads them sets them first.
 var mock_destructor_called = false;
 
 var mock_last_destroyed_handle: ?geom.GeometryHandle = null;

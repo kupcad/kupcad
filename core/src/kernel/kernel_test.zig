@@ -1,5 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
+const initVm = support.initVm;
+const runOn = support.runOn;
 const kernel = @import("kernel.zig");
 const test_support = @import("../test_support.zig");
 const geom = @import("../core/geometry_handle.zig");
@@ -9,29 +12,6 @@ const chunk = @import("../vm/chunk.zig");
 const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
-
-fn initVm() !VM {
-    var vm = try VM.init(testing.allocator, testing.io);
-    errdefer vm.deinit();
-    vm.mute_errors = true;
-    try registry.registerStandardLibrary(&vm);
-    return vm;
-}
-
-/// Compiles and runs `source` on an existing VM.
-fn runOn(vm: *VM, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    return vm.interpret(&out_chunk);
-}
 
 fn runScript(source: []const u8) !InterpretResult {
     var vm = try initVm();

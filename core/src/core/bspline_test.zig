@@ -1,13 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
 const bspline = @import("bspline.zig");
 const path = @import("path.zig");
 const bezier = @import("bezier.zig");
 
-fn expectPoint(expected: [2]f64, actual: [2]f64, tolerance: f64) !void {
-    try testing.expectApproxEqAbs(expected[0], actual[0], tolerance);
-    try testing.expectApproxEqAbs(expected[1], actual[1], tolerance);
-}
+const expectPoint = support.expectPointWithin;
 
 fn free(spline: bspline.Spline) void {
     testing.allocator.free(spline.knots);

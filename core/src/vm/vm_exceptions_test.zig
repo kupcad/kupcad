@@ -18,7 +18,12 @@ const compileAndRun = helpers.compileAndRun;
 const expectGlobalString = helpers.expectGlobalString;
 const compileAndRunStressed = helpers.compileAndRunStressed;
 
-var probed_unwind_len: usize = 0;
+/// A VM and the deepest unwind stack its probe saw, kept beside it: a native is given the VM
+/// alone, and finds the probe by it (@fieldParentPtr), so none outlives its test.
+const Probed = struct {
+    vm: VM,
+    unwind_len: usize = 0,
+};
 
 // Double throw: a native that raised must not get a second "Native ... Error"
 const native_raise_message = "raised by native";
@@ -29,7 +34,8 @@ fn probeUnwindLen(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Valu
     _ = arg_count;
     _ = args;
     const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
-    probed_unwind_len = @max(probed_unwind_len, vm_ptr.unwind_stack.items.len);
+    const probed: *Probed = @fieldParentPtr("vm", vm_ptr);
+    probed.unwind_len = @max(probed.unwind_len, vm_ptr.unwind_stack.items.len);
     return value.Value.initNil();
 }
 
@@ -1340,14 +1346,14 @@ test "VM: stale unwind entry is not restored by an outer native boundary" {
 }
 
 test "VM: handled exceptions do not accumulate unwind entries" {
-    var vm = try VM.init(testing.allocator, testing.io);
+    var probed: Probed = .{ .vm = try VM.init(testing.allocator, testing.io) };
+    const vm = &probed.vm;
     defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+    try registry.registerStandardLibrary(vm);
     vm.mute_errors = true;
 
     const native_obj = try vm.gc.allocateNative("probe_unwind_len", probeUnwindLen);
     try vm.setGlobal("probe_unwind", value.Value.initObj(&native_obj.obj));
-    probed_unwind_len = 0;
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1363,10 +1369,10 @@ test "VM: handled exceptions do not accumulate unwind entries" {
         \\end
         \\probe_unwind()
     ;
-    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try testing.expectEqual(.ok, try compileAndRun(vm, &out_chunk, source));
     // Previously one entry per raise (200), each pinning its exception as a GC root.
     // Probed mid-run: interpret() clears the stack on exit, so checking afterwards proves nothing.
-    try testing.expect(probed_unwind_len <= 1);
+    try testing.expect(probed.unwind_len <= 1);
 }
 
 // Bound native methods must use the unwind protocol
