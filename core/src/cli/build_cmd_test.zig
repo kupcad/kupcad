@@ -355,8 +355,7 @@ test "build_cmd: -P reads a JSON object of values, and of two for one parameter 
         try args.appendSlice(testing.allocator, case);
         var res = try runBuild(args.items);
         defer res.deinit();
-        errdefer std.debug.print("{s}\n", .{res.text()});
-        try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+            try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     }
 }
 
@@ -379,8 +378,7 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
     for (cases) |case| {
         var res = try runBuild(&.{ fx.input, "-P", case.file, "-o", fx.output });
         defer res.deinit();
-        errdefer std.debug.print("{s}\n", .{res.text()});
-        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+            try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
         try testing.expect(std.mem.startsWith(u8, res.text(), "Error: "));
         try testing.expect(std.mem.endsWith(u8, res.text(), case.message));
         try testing.expect(std.mem.find(u8, res.text(), case.file) != null);
@@ -451,8 +449,7 @@ test "build_cmd: several -o refuse a --format, a .step beside a mesh, and an opt
         }
         var res = try runBuild(args.items);
         defer res.deinit();
-        errdefer std.debug.print("{s}\n", .{res.text()});
-        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+            try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
         try testing.expectEqualStrings(case.message, res.text());
     }
     try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // nothing was written
@@ -716,13 +713,31 @@ test "build_cmd: a project's settings that don't read are named, with where" {
     try testing.expectEqualStrings(expected, res.text());
 }
 
+test "build_cmd: -o, --mtl and --bom make the folders they need" {
+    // `-o out/model.stl` failed, FileNotFound, where `--split out` made its folder
+    var fx = try Fixture.init("cube(1).material(color: \"#FF0000\")\n");
+    defer fx.deinit();
+    const output = try fx.path("out/deeper/model.obj");
+    defer testing.allocator.free(output);
+    const bom = try fx.path("lists/bom.json");
+    defer testing.allocator.free(bom);
+    var res = try runBuild(&.{ fx.input, "-o", output, "--mtl", "--bom", bom });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    for ([_][]const u8{ "out/deeper/model.obj", "out/deeper/model.mtl", "lists/bom.json" }) |name| {
+        try fx.tmp.dir.access(testing.io, name, .{});
+    }
+}
+
 test "build_cmd: a file that can't be written is named, with why" {
-    // The error alone reached the top: `Error: FileNotFound`, for an output folder that isn't there
+    // The error alone reached the top: `Error: FileNotFound`, naming nothing
     var fx = try Fixture.init("cube(1)\n");
     defer fx.deinit();
-    const output = try fx.path("missing_dir/model.stl");
+    // A file where its folder would be
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "taken", .data = "" });
+    const output = try fx.path("taken/model.stl");
     defer testing.allocator.free(output);
-    const bom = try fx.path("missing_dir/bom.json");
+    const bom = try fx.path("taken/bom.json");
     defer testing.allocator.free(bom);
     const cases = [_]struct { args: []const []const u8, path: []const u8 }{
         .{ .args = &.{ fx.input, "-o", output }, .path = output },
@@ -732,7 +747,7 @@ test "build_cmd: a file that can't be written is named, with why" {
         var res = try runBuild(case.args);
         defer res.deinit();
         try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
-        const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not write '{s}': FileNotFound\n", .{case.path});
+        const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not write '{s}': NotDir\n", .{case.path});
         defer testing.allocator.free(expected);
         try testing.expect(std.mem.endsWith(u8, res.text(), expected));
     }
@@ -764,13 +779,14 @@ test "build_cmd: --split makes the folders it needs, and names a place it can't 
 
 test "build_cmd: --errors json tells a host why, one JSON line last, for each kind of failure" {
     // The hosts read the words (`error(vm): RuntimeError: ...`), and a wording changed under them
-    const Case = struct { source: []const u8, args: []const []const u8 = &.{}, project: ?[]const u8 = null, kind: []const u8, message: []const u8, line: ?i64 = null };
+    // `output_in_script`: `-o <script>/model.stl`, a folder that's a file
+    const Case = struct { source: []const u8, args: []const []const u8 = &.{}, output_in_script: bool = false, project: ?[]const u8 = null, kind: []const u8, message: []const u8, line: ?i64 = null };
     const cases = [_]Case{
         .{ .source = "x = undefined_var + 10\n", .kind = "runtime", .message = "NameError: Undefined variable 'undefined_var'", .line = 1 },
         .{ .source = "cube(\n", .kind = "syntax", .message = "Invalid expression starting with ''", .line = 2 },
         .{ .source = "cube = 5\n", .kind = "compile", .message = "'cube' is a built-in and can't be assigned", .line = 1 },
         .{ .source = "cube(1) - cube(2)\n", .kind = "export", .message = "the model is empty, there is nothing to write to '" },
-        .{ .source = "cube(1)\n", .args = &.{ "-o", "missing_dir/model.stl" }, .kind = "write", .message = "FileNotFound" },
+        .{ .source = "cube(1)\n", .output_in_script = true, .kind = "write", .message = "NotDir" },
         .{ .source = "cube(1)\n", .project = "{ \"lint\": }", .kind = "settings", .message = "invalid JSON", .line = 1 },
     };
     for (cases) |case| {
@@ -781,7 +797,9 @@ test "build_cmd: --errors json tells a host why, one JSON line last, for each ki
         var args: std.ArrayList([]const u8) = .empty;
         defer args.deinit(testing.allocator);
         try args.appendSlice(testing.allocator, &.{ fx.input, "--errors", "json" });
-        try args.appendSlice(testing.allocator, if (case.args.len > 0) case.args else &.{ "-o", fx.output });
+        const in_script = try std.fmt.allocPrint(testing.allocator, "{s}/model.stl", .{fx.input});
+        defer testing.allocator.free(in_script);
+        try args.appendSlice(testing.allocator, if (case.output_in_script) &.{ "-o", in_script } else if (case.args.len > 0) case.args else &.{ "-o", fx.output });
         var res = try runBuild(args.items);
         defer res.deinit();
         try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);

@@ -237,7 +237,7 @@ pub const ExportFlags = struct {
             return false;
         };
         defer allocator.free(bytes);
-        std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes }) catch |err| return reportWriteFailure(reporter, path, err);
+        if (!writeOutput(reporter, path, bytes)) return false;
         reporter.out("Successfully built {s} ({d} bytes)\n", .{ path, bytes.len });
         if (mtl_path) |p| return writeMaterialLibrary(allocator, vm, p, reporter);
         return true;
@@ -346,8 +346,17 @@ fn reportExportFailure(allocator: std.mem.Allocator, reporter: Reporter, err: an
 fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []const u8, reporter: Reporter) !bool {
     const bytes = try api.exportMaterialLibrary(allocator, vm);
     defer allocator.free(bytes);
-    std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes }) catch |err| return reportWriteFailure(reporter, path, err);
+    if (!writeOutput(reporter, path, bytes)) return false;
     reporter.out("Wrote {s} ({d} bytes)\n", .{ path, bytes.len });
+    return true;
+}
+
+/// Writes `bytes` to `path`, making the folders it's in first (as `--split` makes its
+/// own); false, the failure reported, when it can't be written.
+fn writeOutput(reporter: Reporter, path: []const u8, bytes: []const u8) bool {
+    const cwd = std.Io.Dir.cwd();
+    if (std.fs.path.dirname(path)) |dir| cwd.createDirPath(reporter.io, dir) catch |err| return reportWriteFailure(reporter, path, err);
+    cwd.writeFile(reporter.io, .{ .sub_path = path, .data = bytes }) catch |err| return reportWriteFailure(reporter, path, err);
     return true;
 }
 
@@ -369,7 +378,7 @@ fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: R
         return false;
     };
     defer allocator.free(parts);
-    std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = parts }) catch |err| return reportWriteFailure(reporter, path, err);
+    if (!writeOutput(reporter, path, parts)) return false;
     reporter.out("Wrote the parts list to {s}\n", .{path});
     return true;
 }
