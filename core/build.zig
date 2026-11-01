@@ -394,8 +394,10 @@ pub fn build(b: *std.Build) void {
             .flags = std.mem.concat(b.allocator, []const u8, &.{ tbb_common, tbb_macos, tbb_x86_64 }) catch @panic("OOM"),
         });
         // oneTBB checks the signature of a DLL before it loads one (dynamic_link.cpp) and asks
-        // for wintrust with `#pragma comment(lib)`, which only MSVC's linker reads
-        if (is_windows) native_mod.linkSystemLibrary("wintrust", .{});
+        // for wintrust with `#pragma comment(lib)`, which only MSVC's linker reads. A Windows
+        // library pkg-config never knows: asked first, the CI image's (Strawberry Perl's,
+        // broken) printed an error on every build, though the link went on without it
+        if (is_windows) native_mod.linkSystemLibrary("wintrust", .{ .use_pkg_config = .no });
     }
 
     const sqlite_flags: []const []const u8 = if (is_wasm)
