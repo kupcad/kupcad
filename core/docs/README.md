@@ -309,6 +309,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `builtin-redefined` | A built-in, such as `cube`, assigned or redefined. |
 | `import-collision` | An import named like a variable of the file. |
 | `export-before-definition` | An `export` of a name the file sets only further down (`export { w }` above `w = 1`): an export reads its names where it stands, so move it below them. |
+| `used-before-definition` | A name the top level reads where only a line further down sets it (`puts(w)` above `w = 1`), outside a loop, a method or a block, which may run after it. |
 | `too-many-parameters` | A method or block with more than 255 parameters. |
 | `too-many-arguments` | A call with more than 255 arguments. |
 | `too-many-variables` | A function with more than 65,535 variables, or more than 255 captured from outside. |

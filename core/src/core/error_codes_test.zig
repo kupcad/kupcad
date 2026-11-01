@@ -47,6 +47,7 @@ test "Error codes: a script for each code gets that code" {
         .{ .@"outside-loop", "break" },
         .{ .@"outside-method", "yield" },
         .{ .@"export-before-definition", "export { w }\nw = 1\n" },
+        .{ .@"used-before-definition", "puts(w)\nw = 1\n" },
         .{ .@"builtin-redefined", "cube = 5" },
         .{ .@"import-collision", "a = 1\nimport { a } from \"./a.kup\"\n" },
     };
@@ -125,6 +126,38 @@ test "Error codes: an export of a name set only further down, and nothing else" 
         "export { nothing }\n",
         // Set only inside a method or a block: not the file's
         "export { w }\ndef f\n  w = 1\nend\n[1].each { |x| w = x }\n",
+    }) |source| {
+        errdefer std.debug.print("source: {s}\n", .{source});
+        try testing.expectError(error.NoError, errorCodeOf(source));
+    }
+}
+
+test "Error codes: a read of a name set only further down, where it runs in order" {
+    // It ran to "NameError: Undefined variable 'w'", as though the file never set it
+    for ([_][]const u8{
+        "puts(size)\nsize = 3\n",
+        "box = cube(w)\nw = 1\n",
+        "x = f\ndef f = 1\n",
+        "if true\n  puts(w)\nend\nw = 1\n",
+        "puts(\"#{w}\")\nw = 1\n",
+    }) |source| try expectCode(.@"used-before-definition", source);
+
+    const diags = try api.checkCode(testing.allocator, testing.io, "puts(w)\nw = 1\n", .{});
+    defer api.freeDiagnostics(testing.allocator, diags);
+    try testing.expectEqualStrings("Cannot use 'w' before it is defined; it is set further down", diags[0].message);
+
+    for ([_][]const u8{
+        // Set before
+        "w = 1\nputs(w)\nw = 2\n",
+        // In a loop, the last pass set it
+        "i = 0\nwhile i < 2\n  puts(last) if i > 0\n  last = i\n  i += 1\nend\n",
+        "for i in [1, 2]\n  puts(prev) if i > 1\n  prev = i\nend\n",
+        // In a method, a lambda or a block, which may run later
+        "def f = w\nw = 1\nputs(f)\n",
+        "g = -> { w }\nw = 1\nputs(g.call)\n",
+        "h = [1].map { |x| w }\nw = 1\n",
+        // Never set: the run names it
+        "puts(nothing)\n",
     }) |source| {
         errdefer std.debug.print("source: {s}\n", .{source});
         try testing.expectError(error.NoError, errorCodeOf(source));

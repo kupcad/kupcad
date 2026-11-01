@@ -2,8 +2,9 @@
 //! upvalue, a global or an instance variable (`ResolvedSymbol`) and, for a local or an
 //! upvalue, the node that declared it (`declarations`: the assignment, the `def` or lambda
 //! whose parameter it is, the block parameter, the `for`), and which variables each
-//! closure captures; it also reports `break` and `next` outside a loop, and an `export` of
-//! a name the file sets only further down. Run by `frontend/document.zig`.
+//! closure captures; it also reports `break` and `next` outside a loop, and a name the top
+//! level reads or exports where only a line further down sets it. Run by
+//! `frontend/document.zig`.
 
 const std = @import("std");
 const ast = @import("ast.zig");
@@ -51,8 +52,9 @@ const Scope = struct {
     }
 };
 
-/// A plain `export`'s name that nothing has set yet where the export stands.
-const EarlyExport = struct { name: ast.StringId, node: ast.NodeIndex };
+/// A name the top level reads (`node` an identifier) or exports (an `export`) where nothing
+/// has set it yet.
+const EarlyUse = struct { name: ast.StringId, node: ast.NodeIndex, use: enum { read, @"export" } };
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
@@ -74,8 +76,9 @@ pub const Resolver = struct {
     loop_depth: usize = 0,
     /// The names the top level has set so far, in source order: assigned, defined, imported.
     top_level_names: std.AutoHashMapUnmanaged(ast.StringId, void) = .empty,
-    /// Exports that came before their names were set, an error if the file sets them later.
-    early_exports: std.ArrayList(EarlyExport) = .empty,
+    /// Reads and exports that came before their names were set, an error if the file sets
+    /// them later.
+    early_uses: std.ArrayList(EarlyUse) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, diagnostics: *errors.Diagnostics) !Resolver {
         const symbols = try allocator.alloc(ResolvedSymbol, tree.nodes.items.len);
@@ -102,7 +105,7 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.active_method_blocks.deinit(self.allocator);
         self.top_level_names.deinit(self.allocator);
-        self.early_exports.deinit(self.allocator);
+        self.early_uses.deinit(self.allocator);
 
         for (self.scopes.items) |*scope| {
             scope.deinit(self.allocator);
@@ -127,25 +130,43 @@ pub const Resolver = struct {
         try visitor.walk(ResolverContext, &ctx, self.tree, root);
 
         try self.popScope();
-        self.reportEarlyExports();
+        self.reportEarlyUses();
     }
 
-    /// Records `name` as set, when the top level sets it: not in a method, class or a
-    /// call's block (the bodies of the program, an `if` or a loop are blocks of its own).
+    /// Whether the walk is at the top level: not in a method, class or a call's block (the
+    /// bodies of the program, an `if` or a loop are blocks of its own).
+    fn atTopLevel(self: *const Resolver) bool {
+        for (self.scopes.items[1..]) |scope| if (scope.is_closure or scope.is_block) return false;
+        return true;
+    }
+
+    /// Records `name` as set, when the top level sets it.
     fn noteTopLevel(self: *Resolver, name: ast.StringId) !void {
-        for (self.scopes.items[1..]) |scope| if (scope.is_closure or scope.is_block) return;
-        try self.top_level_names.put(self.allocator, name, {});
+        if (self.atTopLevel()) try self.top_level_names.put(self.allocator, name, {});
     }
 
-    /// An export reads its names where it stands, so one set only further down was nil
-    /// there: "Undefined variable", which reads as though the file never set it.
-    fn reportEarlyExports(self: *Resolver) void {
-        for (self.early_exports.items) |early| {
-            if (!self.top_level_names.contains(early.name)) continue; // Never set: the run says so
+    /// Records the top level's read of `name` at `node` (an identifier, resolved) if nothing
+    /// has set it yet. Not in a loop, whose body may read what its last pass set, nor in a
+    /// method or block, which may run later.
+    fn noteRead(self: *Resolver, name: ast.StringId, node: ast.NodeIndex) !void {
+        if (self.loop_depth > 0 or !self.atTopLevel()) return;
+        if (self.symbols[@backingInt(node)].kind != .global or self.top_level_names.contains(name)) return;
+        try self.early_uses.append(self.allocator, .{ .name = name, .node = node, .use = .read });
+    }
+
+    /// A read or an export of a name set only further down found it unset where it stands:
+    /// "Undefined variable", which reads as though the file never set it. A name the file
+    /// never sets (a typo, a built-in) is left to the run, which says so.
+    fn reportEarlyUses(self: *Resolver) void {
+        for (self.early_uses.items) |early| {
+            if (!self.top_level_names.contains(early.name)) continue;
             const node = self.tree.getNode(early.node).?;
             const at: token.Location = .{ .offset = self.token_starts[node.main_token], .length = self.token_lengths[node.main_token], .file_id = 0 };
             const name = self.tree.getString(early.name);
-            self.diagnostics.add(at, .@"export-before-definition", "Cannot export '{s}' before it is defined; move the export below where '{s}' is set", .{ name, name });
+            switch (early.use) {
+                .read => self.diagnostics.add(at, .@"used-before-definition", "Cannot use '{s}' before it is defined; it is set further down", .{name}),
+                .@"export" => self.diagnostics.add(at, .@"export-before-definition", "Cannot export '{s}' before it is defined; move the export below where '{s}' is set", .{ name, name }),
+            }
         }
     }
 
@@ -415,7 +436,7 @@ const ResolverContext = struct {
                 // A re-export (`export { a } from "./a.kup"`) reads its names from the file it names
                 if (ex.path == .none) for (tree.getAliasPairs(ex.symbols)) |pair| {
                     if (!self.resolver.top_level_names.contains(pair.original)) {
-                        try self.resolver.early_exports.append(self.resolver.allocator, .{ .name = pair.original, .node = node_idx });
+                        try self.resolver.early_uses.append(self.resolver.allocator, .{ .name = pair.original, .node = node_idx, .use = .@"export" });
                     }
                 };
             },
@@ -436,6 +457,7 @@ const ResolverContext = struct {
             .identifier => {
                 const name_id: ast.StringId = @fromBackingInt(node.data);
                 try self.resolver.resolveUsage(name_id, node_idx);
+                try self.resolver.noteRead(name_id, node_idx);
             },
             else => {},
         }

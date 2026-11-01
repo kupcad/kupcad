@@ -46,6 +46,7 @@ pub const Code = enum {
     @"builtin-redefined",
     @"import-collision",
     @"export-before-definition",
+    @"used-before-definition",
     // A limit of the bytecode
     @"too-many-parameters",
     @"too-many-arguments",
@@ -89,6 +90,7 @@ pub const Code = enum {
             .@"builtin-redefined" => "A built-in, such as cube, assigned or redefined.",
             .@"import-collision" => "An import named like a variable of the file.",
             .@"export-before-definition" => "An export of a name the file sets only further down; an export reads its names where it stands.",
+            .@"used-before-definition" => "A name the top level reads where only a line further down sets it, outside a loop, method or block.",
             .@"too-many-parameters" => "A method or block with more parameters than the limit.",
             .@"too-many-arguments" => "A call with more arguments than the limit.",
             .@"too-many-variables" => "A function with more variables, or more captured from outside, than the limit.",

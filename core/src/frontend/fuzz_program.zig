@@ -422,6 +422,7 @@ const Generator = struct {
 
     /// `break`, `next` or `return` where one is allowed; an assignment elsewhere.
     fn jump(g: *Generator) Error!void {
+        const before = g.vars_len;
         if (g.in_loop and g.pick(2) == 0) {
             try g.emit(if (g.pick(2) == 0) "next" else "break");
         } else if (g.in_method) {
@@ -429,6 +430,10 @@ const Generator = struct {
             try g.expression(.number, 1);
         } else try g.assignment();
         if (g.pick(2) == 1) {
+            // As modified's: the condition runs first
+            const after = g.vars_len;
+            g.vars_len = before;
+            defer g.vars_len = after;
             try g.emit(" if ");
             try g.expression(.boolean, 1);
         }
@@ -436,13 +441,21 @@ const Generator = struct {
 
     fn benchmark(g: *Generator) Error!void {
         try g.emit("benchmark(\"step\") do");
+        // A block's scope of its own: what it sets first is gone after it
+        const saved_len = g.vars_len;
+        defer g.vars_len = saved_len;
         try g.body();
         try g.end();
     }
 
     /// A statement with an `if` or `unless` modifier.
     fn modified(g: *Generator) Error!void {
+        const before = g.vars_len;
         try g.output();
+        // The condition runs first: a variable the statement sets first isn't set in it
+        const after = g.vars_len;
+        g.vars_len = before;
+        defer g.vars_len = after;
         try g.emit(if (g.pick(2) == 0) " if " else " unless ");
         try g.expression(.boolean, 1);
     }
