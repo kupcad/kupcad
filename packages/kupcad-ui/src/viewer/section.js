@@ -2,13 +2,14 @@
 // cuts capped where the plane runs inside a solid, by three.js's stencil technique
 // (webgl_clipping_stencil): each solid's back faces count up in the stencil buffer and its front
 // faces down, both clipped, so where the count isn't 0 the plane is inside a solid, and a plane
-// drawn there in the cap's colour closes the cut.
+// drawn there in the cap's colour closes the cut. A face on the plane (a cut at the bottom, or
+// at a step's height) is kept: whether it was clipped was the rounding of each pixel's, so the
+// count, and the cap, came and went in streaks.
 
 import {
   AlwaysStencilFunc,
   BackSide,
   DecrementWrapStencilOp,
-  DoubleSide,
   FrontSide,
   Group,
   IncrementWrapStencilOp,
@@ -35,6 +36,11 @@ export const RENDER_ORDER = { stencil: 1, cap: 1.1, model: 2 };
 const AXES = { x: new Vector3(1, 0, 0), y: new Vector3(0, 1, 0), z: new Vector3(0, 0, 1) };
 /** The cap plane reaches this far past the model's bounding sphere's radius. */
 const CAP_REACH = 4;
+/**
+ * The plane lies this far (of the model's radius) past the offset, toward what is cut away, so
+ * a face at the offset is kept whatever the rounding: far past it, a hair to the eye.
+ */
+const KEEP_ON_PLANE = 1e-4;
 const PLANE_NORMAL = new Vector3(0, 0, 1);
 
 export class SectionView {
@@ -58,8 +64,9 @@ export class SectionView {
   constructor(theme) {
     const material = new MeshStandardMaterial({
       color: theme.cap,
-      // Seen from the side cut away, against the plane's normal, which points to what is kept
-      side: DoubleSide,
+      // Seen from the side cut away, its back: its normal is the plane's, which points to what
+      // is kept. From that side the solid hides it, so a face on the plane can't fight it there
+      side: BackSide,
       stencilWrite: true,
       stencilRef: 0,
       stencilFunc: NotEqualStencilFunc,
@@ -95,6 +102,7 @@ export class SectionView {
       // What lies past the offset, along the axis (against it when flipped), is cut away
       this.plane.normal.copy(AXES[cut.section.axis]).multiplyScalar(cut.section.flip ? 1 : -1);
       this.plane.constant = cut.section.flip ? -cut.section.offset : cut.section.offset;
+      this.plane.constant += bounds.radius * KEEP_ON_PLANE;
     }
     this.cap.visible = cut !== null && capped;
     for (const material of [...(model ? ownMaterials(model) : []), ...also]) {

@@ -105,7 +105,8 @@ For Svelte, the component around it (`@kupcad/ui`'s `Viewer`):
   SVG draws them (at z = 0 all, depth can't order them); the axes over it.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it
   runs inside a solid (three.js's stencil technique), but in a wireframe; a drawing isn't cut. A
-  part cut away isn't picked.
+  face at the offset is kept, so a cut at the bottom shows the footprint and one at the top the
+  top face. A part cut away isn't picked.
 * **Draco:** a model built with `--draco` needs `dracoDecoderPath`, where three.js's decoder files
   are; the decoder is loaded only when a model needs it.
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
@@ -289,8 +290,9 @@ The viewer's scene logic in Node (jsdom), with a stand-in for WebGL and models t
 makes through `@kupcad/wasm`; the components mounted under jsdom (the `testing` setup and its
 `stubRenderer`), with the schemas and models the real core gives. And a smoke test in headless
 Chromium (`pnpm test:browser`) that draws what the core makes in the page and reads the pixels
-back: the part's colour, the background, a section cutting it all away, and a cap; a
-drawing's shapes in order over the grid; the view
+back: the part's colour, the background, a section cutting it all away, and a cap, and one
+on a face (at the bottom, the top, and from below) without streaks; a drawing's shapes in
+order over the grid; the view
 cube, which turns the camera to the part clicked; and the `ViewerPane` laid out by the browser,
 its panel beside the model and, in a pane narrower than 36em, under it (a container query,
 which jsdom doesn't apply).
