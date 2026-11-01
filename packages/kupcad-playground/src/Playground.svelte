@@ -27,6 +27,7 @@
     linesOfLog,
     linesOfRun,
     localSettings,
+    paneKeys,
     ParamsPanel,
     plainValues,
     problemsOf,
@@ -88,14 +89,7 @@
    * The settings' keys: the editor's and the parameters' widths, whether the parameters and the
    * view's panel show, the console's height and state.
    */
-  const KEYS = {
-    editor: 'playground.editor',
-    params: 'playground.params',
-    paramsOpen: 'playground.paramsOpen',
-    panelOpen: 'playground.panelOpen',
-    console: 'playground.console',
-    open: 'playground.consoleOpen',
-  };
+  const KEYS = { editor: 'playground.editor', ...paneKeys('playground') };
   /** The least the model is given, however wide the editor is made. */
   const MIN_VIEW = 320;
   const id = $props.id();

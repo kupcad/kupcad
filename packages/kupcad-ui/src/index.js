@@ -15,7 +15,14 @@ export { default as ViewerPane } from './ViewerPane.svelte';
 export { appendLines, linesOfLog, linesOfRun } from './console.js';
 export { fillOf } from './range.js';
 export { problemsOf, runStatusOf } from './run-status.js';
-export { localSettings, memorySettings, sizeSetting } from './settings.js';
+export {
+  keptSettings,
+  localSettings,
+  memorySettings,
+  paneKeys,
+  settingsObject,
+  sizeSetting,
+} from './settings.js';
 export { VIEWER_SHORTCUTS } from './shortcuts.js';
 export { watchTokens } from './theme.js';
 export { plainValues } from './values.svelte.js';

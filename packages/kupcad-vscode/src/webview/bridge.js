@@ -4,7 +4,7 @@
 // extension kept them, and each change goes out for it to keep.
 
 import { isHostMessage, isSettingValue } from '@kupcad/protocol';
-import { memorySettings } from '@kupcad/ui';
+import { keptSettings, settingsObject } from '@kupcad/ui';
 
 /** @import { ViewerHost } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
@@ -38,27 +38,9 @@ export function connectHost(api, window = globalThis.window) {
  * @returns {Settings}
  */
 export function hostSettings(api, document = globalThis.document) {
-  const settings = memorySettings(keptSettings(document));
-  return {
-    get: settings.get,
-    set(key, value) {
-      settings.set(key, value);
-      if (isSettingValue(value)) api.postMessage({ type: 'setting', key, value });
-    },
-  };
-}
-
-/**
- * The settings the extension wrote in the page; none where it wrote no object of them.
- * @param {Document} document
- * @returns {Record<string, unknown>}
- */
-function keptSettings(document) {
-  const text = document.querySelector('meta[name="kupcad-settings"]')?.getAttribute('content');
-  try {
-    const kept = JSON.parse(text || '{}');
-    return typeof kept === 'object' && kept !== null && !Array.isArray(kept) ? kept : {};
-  } catch {
-    return {};
-  }
+  // Those the extension wrote in the page; none where it wrote no object of them
+  const written = document.querySelector('meta[name="kupcad-settings"]')?.getAttribute('content');
+  return keptSettings(settingsObject(written), (key, value) => {
+    if (isSettingValue(value)) api.postMessage({ type: 'setting', key, value });
+  });
 }

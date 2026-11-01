@@ -14,7 +14,7 @@ import { readDir, writeFile } from '@tauri-apps/plugin-fs';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { load } from '@tauri-apps/plugin-store';
 import { check } from '@tauri-apps/plugin-updater';
-import { memorySettings } from '@kupcad/ui';
+import { keptSettings } from '@kupcad/ui';
 import { files, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
@@ -167,14 +167,9 @@ export const tauri = {
   async settings() {
     const store = await load(SETTINGS_FILE, { defaults: {}, autoSave: SETTINGS_SAVE_MS });
     // Reactive as memorySettings are, each change written to the file too
-    const settings = memorySettings(Object.fromEntries(await store.entries()));
-    return {
-      get: settings.get,
-      set(key, value) {
-        settings.set(key, value);
-        void store.set(key, value);
-      },
-    };
+    return keptSettings(Object.fromEntries(await store.entries()), (key, value) => {
+      void store.set(key, value);
+    });
   },
   async checkUpdate() {
     const update = await check();

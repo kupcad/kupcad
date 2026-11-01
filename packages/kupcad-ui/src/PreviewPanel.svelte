@@ -22,7 +22,7 @@
   import { appendLines, linesOfLog, linesOfRun } from './console.js';
   import { plainValues } from './values.svelte.js';
   import ParamsPanel from './ParamsPanel.svelte';
-  import { memorySettings, sizeSetting } from './settings.js';
+  import { memorySettings, paneKeys, sizeSetting } from './settings.js';
   import Splitter from './Splitter.svelte';
   import ViewerPane from './ViewerPane.svelte';
   import { toBase64 } from './base64.js';
@@ -67,13 +67,7 @@
    * The settings' keys: the parameters' width and whether they show, whether the view's panel
    * shows, the console's height and whether it is open.
    */
-  const KEYS = {
-    params: 'preview.params',
-    paramsOpen: 'preview.paramsOpen',
-    panelOpen: 'preview.panelOpen',
-    console: 'preview.console',
-    open: 'preview.consoleOpen',
-  };
+  const KEYS = paneKeys('preview');
   const id = $props.id();
   // As the settings have them; a size dragged is the pane's own until the drag is done
   let paramsWidth = $derived(sizeSetting(settings, KEYS.params, 288));

@@ -1,7 +1,7 @@
 // What a person set in a host's panels (the panes' sizes, whether they show), kept where the
 // host keeps such things. The playground keeps it in the page's localStorage (localSettings),
-// the VS Code extension and the desktop app their own way, each on memorySettings; a host that
-// keeps nothing gives memorySettings alone.
+// the VS Code extension and the desktop app their own way, each on keptSettings (memorySettings
+// that tell the host each change); a host that keeps nothing gives memorySettings alone.
 //
 // Settings are reactive: a pane reads its value in a $derived, and follows it as it is set,
 // wherever from. A size dragged is the pane's own until the drag is done, and set then, once.
@@ -31,6 +31,25 @@ export function memorySettings(values = {}) {
 }
 
 /**
+ * Settings a host keeps: `memorySettings` from `values`, the host told each change through
+ * `keep` (the VS Code extension's page sends it to the extension, the desktop app writes it to
+ * its settings file). Each host wrapped memorySettings this way itself.
+ * @param {Record<string, unknown>} values what the host kept
+ * @param {(key: string, value: unknown) => void} keep
+ * @returns {Settings}
+ */
+export function keptSettings(values, keep) {
+  const settings = memorySettings(values);
+  return {
+    get: settings.get,
+    set(key, value) {
+      settings.set(key, value);
+      keep(key, value);
+    },
+  };
+}
+
+/**
  * Settings kept in `storage` (the page's localStorage) as one JSON object under `name`. A page
  * that may not keep anything there (a private window's quota, a policy), or finds no JSON
  * object under the name, keeps them in memory for the page's life.
@@ -39,35 +58,50 @@ export function memorySettings(values = {}) {
  * @returns {Settings}
  */
 export function localSettings(name = 'kupcad.settings', storage = globalThis.localStorage) {
-  const settings = memorySettings(read(storage, name));
-  return {
-    get: settings.get,
-    set(key, value) {
-      settings.set(key, value);
-      try {
-        const all = { ...read(storage, name), [key]: value };
-        storage?.setItem(name, JSON.stringify(all));
-      } catch {
-        // Kept in memory: the page may not store anything
-      }
-    },
+  const read = () => {
+    try {
+      return settingsObject(storage?.getItem(name));
+    } catch {
+      return {};
+    }
   };
+  return keptSettings(read(), (key, value) => {
+    try {
+      storage?.setItem(name, JSON.stringify({ ...read(), [key]: value }));
+    } catch {
+      // Kept in memory: the page may not store anything
+    }
+  });
 }
 
 /**
- * The JSON object `storage` keeps under `name`; an empty one for none, or for what isn't one.
- * @param {Pick<Storage, 'getItem'> | undefined} storage
- * @param {string} name
+ * The settings `text` holds as JSON: its object; an empty one for no text, text that isn't
+ * JSON, or JSON that isn't an object (the extension's page and the playground each read it so).
+ * @param {string | null | undefined} text
  * @returns {Record<string, unknown>}
  */
-function read(storage, name) {
+export function settingsObject(text) {
   try {
-    const parsed = JSON.parse(storage?.getItem(name) ?? '{}');
+    const parsed = JSON.parse(text || '{}');
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
+
+/**
+ * The keys a preview panel keeps its layout under, each with `prefix` (the preview's are
+ * `preview.params`, the playground's `playground.params`): the parameters pane's width, whether
+ * it and the panel show, the console's height and whether it is open. Two panels listed them.
+ * @param {string} prefix
+ */
+export const paneKeys = (prefix) => ({
+  params: `${prefix}.params`,
+  paramsOpen: `${prefix}.paramsOpen`,
+  panelOpen: `${prefix}.panelOpen`,
+  console: `${prefix}.console`,
+  open: `${prefix}.consoleOpen`,
+});
 
 /**
  * A pane's size kept under `key`: a finite number of pixels, else `fallback` (none kept, or

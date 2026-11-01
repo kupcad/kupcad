@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { BRAND } from './viewer/brand.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -138,4 +139,12 @@ it("maps every colour token to VS Code's, so the brand never shows in its webvie
     (name) => !/^--kc-(font|font-size|radius|gap)$/.test(name),
   );
   expect(colours.filter((name) => !(name in mapped))).toEqual([]);
+});
+
+it("paints the panels in the brand's colours, as the viewer's theme does", () => {
+  // Both named the hex themselves; a change to one left the other behind
+  expect(TOKENS).toContain(`--kc-accent: ${BRAND.orange};`);
+  expect(TOKENS).toContain(`--kc-accent-fg: ${BRAND.black};`);
+  expect(TOKENS).toContain(`--kc-bg: light-dark(${BRAND.white}, ${BRAND.black});`);
+  expect(TOKENS).toContain(`--kc-fg: light-dark(${BRAND.black}, ${BRAND.gainsboro});`);
 });
