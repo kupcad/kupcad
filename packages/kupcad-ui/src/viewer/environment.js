@@ -15,6 +15,12 @@ import {
 /** @import { Box3 } from 'three' */
 /** @import { Environment, Plate, Theme } from './types.js' */
 
+/**
+ * Groups drawn in this order, whatever their objects' own: the floor, a drawing lying on it,
+ * then the axes over both. A drawing is flat on the floor, where depth can't tell its shapes
+ * apart, so they are drawn in order too (model.js).
+ */
+export const LAYERS = { floor: 0, drawing: 1, axes: 2 };
 /** A grid has this many cells along its side. */
 const GRID_CELLS = 20;
 /** A plate's grid has a line every this many millimetres. */
@@ -40,6 +46,7 @@ const AXIS_COLORS = /** @type {const} */ (['#e5484d', '#30a46c', '#3e63dd']);
  */
 export function environmentOf(kind, box, plate, theme) {
   const group = new Group();
+  group.renderOrder = LAYERS.floor;
   if (kind === 'grid') {
     const side = gridSide(box);
     group.add(lines(side, side, side / GRID_CELLS, theme.grid));
@@ -71,6 +78,7 @@ export function axesOf(kind, box, plate) {
     [0, 0, AXES_LIFT_MM, 0, 0, side * Z_AXIS_SHARE],
   ];
   const group = new Group();
+  group.renderOrder = LAYERS.axes;
   for (const [i, positions] of ends.entries()) {
     const geometry = new BufferGeometry().setAttribute(
       'position',

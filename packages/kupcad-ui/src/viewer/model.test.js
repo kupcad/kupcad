@@ -8,6 +8,7 @@ import {
   sceneOf,
   SEEN_THROUGH_OPACITY,
 } from './model.js';
+import { LAYERS } from './environment.js';
 import { dracoModelOf, HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { LIGHT } from './theme.js';
 
@@ -119,9 +120,27 @@ describe('sceneOf an SVG', () => {
     const box = new Box3().setFromObject(plate.mesh);
     expect(mm(box.min)).toEqual([0, 0, 0]);
     expect(mm(box.max)).toEqual([10, 10, 0]);
-    expect(/** @type {MeshBasicMaterial} */ (plate.mesh.material).polygonOffset).toBe(true);
     // The open line is drawn, not filled: no shape of its own
     expect(scene.shapes).toHaveLength(1);
+  });
+
+  it('draws its paths in the order of the file, over the floor and the ones before them', async () => {
+    // All at z = 0, by depth the letters were lost in streaks of the plate under them
+    const scene = await sceneOfScript(
+      '[square(10).named("a"), line([0, 0], [5, 5]), square(4).named("b")]',
+    );
+    expect(scene.root.renderOrder).toBe(LAYERS.drawing);
+    // Each path as the file has it (the core writes the line last), its outline after its fill
+    const order = scene.root.children.flatMap((child) => [child, ...child.children]);
+    expect(order).toHaveLength(5);
+    const orders = order.map((object) => object.renderOrder);
+    expect(orders).toEqual([0, 1, 2, 3, 4]);
+    const [a, b] = scene.shapes;
+    for (const shape of [a, b]) {
+      expect(/** @type {MeshBasicMaterial} */ (shape.mesh.material).depthTest).toBe(false);
+    }
+    expect(LAYERS.floor).toBeLessThan(LAYERS.drawing);
+    expect(LAYERS.drawing).toBeLessThan(LAYERS.axes);
   });
 });
 

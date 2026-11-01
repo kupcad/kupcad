@@ -100,7 +100,9 @@ For Svelte, the component around it (`@kupcad/ui`'s `Viewer`):
   Cmd it turns the view, as a drag does. Ctrl is a pinch's: a browser sends one as the wheel
   with Ctrl, so Ctrl and the wheel zoom too.
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
-  solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone.
+  solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone. A
+  drawing's shapes are drawn in the SVG's order, each over the floor and the ones before it, as
+  SVG draws them (at z = 0 all, depth can't order them); the axes over it.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it
   runs inside a solid (three.js's stencil technique), but in a wireframe; a drawing isn't cut. A
   part cut away isn't picked.
@@ -287,7 +289,8 @@ The viewer's scene logic in Node (jsdom), with a stand-in for WebGL and models t
 makes through `@kupcad/wasm`; the components mounted under jsdom (the `testing` setup and its
 `stubRenderer`), with the schemas and models the real core gives. And a smoke test in headless
 Chromium (`pnpm test:browser`) that draws what the core makes in the page and reads the pixels
-back: the part's colour, the background, a section cutting it all away, and a cap; the view
+back: the part's colour, the background, a section cutting it all away, and a cap; a
+drawing's shapes in order over the grid; the view
 cube, which turns the camera to the part clicked; and the `ViewerPane` laid out by the browser,
 its panel beside the model and, in a pane narrower than 36em, under it (a container query,
 which jsdom doesn't apply).

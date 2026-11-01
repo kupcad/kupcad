@@ -306,7 +306,10 @@ export class Viewer extends EventTarget {
     }
     this.#model = built;
     if (built) {
-      for (const shape of built.shapes) shape.mesh.renderOrder = RENDER_ORDER.model;
+      // A drawing's shapes keep their own order (model.js); a section cuts solids alone
+      if (built.kind === '3d') {
+        for (const shape of built.shapes) shape.mesh.renderOrder = RENDER_ORDER.model;
+      }
       this.#content.add(built.root);
     }
     const dropped =

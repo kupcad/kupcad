@@ -20,6 +20,7 @@ import {
 } from 'three';
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
 import { disposeGeometries } from './dispose.js';
+import { LAYERS } from './environment.js';
 import { featureEdgesOf } from './topology.js';
 
 /** @import { Material, Object3D } from 'three' */
@@ -202,7 +203,9 @@ function partAbove(object, partOf, nodeName) {
 /**
  * A drawing (export_svg's) on the XY plane: each filled path a shape named by its id, with its
  * outline; an open path its outline alone. The core negated every y, SVG's running down the
- * page; the group turns it back.
+ * page; the group turns it back. Its paths are drawn in the file's order, each over the floor
+ * and the ones before it, as SVG draws them: all at z = 0, by depth they fought, a shape's
+ * letters lost in streaks of the plate under them, and the floor's grid over both.
  * @param {string} svg
  * @param {Theme} theme
  * @returns {SceneModel}
@@ -210,6 +213,8 @@ function partAbove(object, partOf, nodeName) {
 function drawing(svg, theme) {
   const root = new Group();
   root.scale.y = -1;
+  root.renderOrder = LAYERS.drawing;
+  let order = 0;
   // Outlines on the background
   const edgeMaterial = new LineBasicMaterial({ color: theme.wire });
   /** @type {Shape[]} */
@@ -220,6 +225,7 @@ function drawing(svg, theme) {
     const filled = style.fill !== undefined && style.fill !== 'none';
     const edges = new LineSegments(outlineOf(path, filled), edgeMaterial);
     if (!filled) {
+      edges.renderOrder = order++;
       root.add(edges);
       continue;
     }
@@ -229,9 +235,12 @@ function drawing(svg, theme) {
       side: DoubleSide,
       transparent: opacity < 1,
       opacity,
-      ...FACES_BEHIND_EDGES,
+      // Over what is drawn before it; it writes no depth then, so its outline, after it, shows
+      depthTest: false,
     });
     const mesh = new Mesh(new ShapeGeometry(path.toShapes()), material);
+    mesh.renderOrder = order++;
+    edges.renderOrder = order++;
     mesh.add(edges);
     root.add(mesh);
     const id = /** @type {Element | undefined} */ (path.userData?.node)?.getAttribute('id');
