@@ -43,6 +43,7 @@ import { disposeObject } from './dispose.js';
 import { axesOf, environmentOf } from './environment.js';
 import { faceAt } from './faces.js';
 import { HoverMark } from './hover-mark.js';
+import { intersectMeshes } from './hits.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
 import { RENDER_ORDER, SectionView } from './section.js';
@@ -866,16 +867,15 @@ export class Viewer extends EventTarget {
     this.#camera.updateMatrixWorld();
     const pointer = new Vector2((x / this.#width) * 2 - 1, 1 - (y / this.#height) * 2);
     this.#raycaster.setFromCamera(pointer, this.#camera);
+    const solid = this.#model.shapes.filter((shape) => !shape.ghost);
     /** @type {Map<import('three').Object3D, Shape>} */
-    const solid = new Map();
-    for (const shape of this.#model.shapes) {
-      if (!shape.ghost) solid.set(shape.mesh, shape);
-    }
-    for (const hit of this.#raycaster.intersectObjects([...solid.keys()], false)) {
+    const shapeOf = new Map(solid.map((shape) => [shape.mesh, shape]));
+    const meshes = solid.map((shape) => shape.mesh);
+    for (const hit of intersectMeshes(this.#raycaster, meshes)) {
       if (this.#sectionView.clipping && this.#sectionView.plane.distanceToPoint(hit.point) < 0) {
         continue;
       }
-      const shape = /** @type {Shape} */ (solid.get(hit.object));
+      const shape = /** @type {Shape} */ (shapeOf.get(hit.object));
       return { shape, triangle: hit.faceIndex ?? null };
     }
     return null;
