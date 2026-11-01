@@ -221,7 +221,8 @@ measured values. A host that ignores diagnostics still gets a precise error; one
 reads them gets the entity (KupCAD's error line can then name the face).
 
 `Options` is per operation and always has `tolerance: ?Tolerance` (null: the bodies'),
-`limits: Limits`, `cancel: ?*const std.atomic.Value(bool)` and `parallel: ?Parallel`.
+`limits: Limits`, `cancel: ?*const std.atomic.Value(bool)`, `parallel: ?Parallel` and
+`trace: ?[]const u8` (§12).
 `Limits` bounds every iteration a bad input could lengthen: Newton trials, marching
 steps, subdivision depth, curve-fit points, faces per body, entities per arena (KupCAD's
 `max_newton_trials` and `max_marching_steps` come from here; the loops are bounded by
@@ -737,7 +738,7 @@ retargeted, and the docs updated. Line counts are estimates of the delta includi
 
 | # | Milestone | Scope | Unlocks in KupCAD | ~lines |
 |---|---|---|---|---|
-| M0 | Foundations | Package (`build.zig`, zon, standalone tests); pure Zig (LM, Jacobi, exact predicates ported; `Parallel` interface); the §5 model (edge records with intervals, coedge partners, intrusive loop lists, flags, tags, `Tolerance`); geometry kinds incl. ellipse, extrusion, revolution, with the full parametric contract; NURBS core algorithms; hashed-grid interning; transforms over all kinds (uniform scale and rigid moves exact, non-uniform scale turns analytic faces into NURBS or is refused, mirror flips `same_sense`); checker v1; body JSON; rewritten README | `transform` | 7k |
+| M0 | Foundations | Package (`build.zig`, zon, standalone tests); pure Zig (LM, Jacobi, exact predicates ported; `Parallel` interface); the §5 model (edge records with intervals, coedge partners, intrusive loop lists, flags, tags, `Tolerance`); geometry kinds incl. ellipse, extrusion, revolution, with the full parametric contract; NURBS core algorithms; hashed-grid interning; transforms over all kinds (uniform scale and rigid moves exact, non-uniform scale turns analytic faces into NURBS or is refused, mirror flips `same_sense`); checker v1; body JSON; `Diagnostics`, `Options`, `Limits`, cancel (§4.1); `body.hash()`, trace mode, bench skeleton (§12); rewritten README | `transform` | 7k |
 | M1 | Exact primitives and sweeps | Sphere, cone, torus exact (D7 split, degenerate edges); extrude and revolve of sketches of lines and arcs; bbox, volume, area, genus; STEP for every kind | `sphere`, `cone`, `extrude`, `revolve`, `volume`, `surface_area`, `genus`, `bounding_box` | 5k |
 | M2 | 2D kernel | Overlay engine; sketch booleans, offset, hull, contours, measures; planar tessellation (monotone + Lawson) | `sketch_boolean`, `offset` (sketch), `sketch_hull`, `sketch_measure`, `sketch_contours`, `polygon` | 5k |
 | M3 | Meshing and queries | Edges-first tessellation of curved faces with per-face ranges; point-in-body; ray cast; min gap; face queries; plane section (`slice`) via imprint; per-face material attribute | `mesh`, `contains_point`, `ray_cast`, `min_gap`, `faces`, `slice`, `materials` | 5k |
