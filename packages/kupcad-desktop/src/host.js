@@ -8,17 +8,14 @@ import {
   buildFailure,
   EXPORT_FORMATS,
   errorText,
+  formatOf,
   paramText,
   ScriptValues,
+  stemOf,
   whyBuildFailed,
 } from '@kupcad/protocol';
 
 /** @import { ExportFormat, HostMessage, ParamValues, ViewerHost, ViewerMessage } from '@kupcad/protocol/types' */
-
-/** A file's extensions as each format writes it; `.stp` is a STEP file too. */
-const EXTENSIONS = new Map(
-  EXPORT_FORMATS.map(({ format }) => [format, format === 'step' ? ['step', 'stp'] : [format]]),
-);
 
 /**
  * A script the app shows: its document as the server knows it, and where it is.
@@ -78,7 +75,7 @@ export function createHost(services) {
    * @param {ExportFormat} chosen
    */
   async function exportScript(script, chosen) {
-    const stem = script.name.replace(/\.kup$/, '');
+    const stem = stemOf(script.name);
     // The page's message was checked to name one
     const choice = EXPORT_FORMATS.find(({ format }) => format === chosen);
     if (!choice) return;
@@ -88,14 +85,14 @@ export function createHost(services) {
       filters: [
         {
           name: `${choice.label}: ${choice.detail}`,
-          extensions: /** @type {string[]} */ (EXTENSIONS.get(chosen)),
+          extensions: [...choice.extensions],
         },
       ],
     });
     if (!output) return;
     const format = formatOf(output);
     if (!format) {
-      const known = [...EXTENSIONS.values()].flat().map((ext) => `.${ext}`);
+      const known = EXPORT_FORMATS.flatMap((f) => f.extensions).map((ext) => `.${ext}`);
       await services.tell(
         `${output} names no format kupcad writes: save it as ${known.join(', ')}`,
       );
@@ -117,7 +114,7 @@ export function createHost(services) {
 
   /** @param {string} png the image's bytes in base64 */
   async function saveScreenshot(png) {
-    const stem = shown?.name.replace(/\.kup$/, '') ?? 'model';
+    const stem = shown ? stemOf(shown.name) : 'model';
     const path = await services.save({
       title: 'Save the screenshot',
       defaultPath: `${stem}.png`,
@@ -197,15 +194,4 @@ export function createHost(services) {
       tell({ type: 'log', text });
     },
   };
-}
-
-/**
- * The format a file named `path` is written in, by its extension; null for none kupcad writes.
- * @param {string} path
- * @returns {ExportFormat | null}
- */
-export function formatOf(path) {
-  const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  for (const [format, extensions] of EXTENSIONS) if (extensions.includes(extension)) return format;
-  return null;
 }

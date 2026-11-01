@@ -10,7 +10,7 @@ import {
   nameProblem,
   parentOf,
   renamedName,
-  scriptName,
+  scriptFileName,
   shownEntries,
   within,
 } from './tree.js';
@@ -172,12 +172,12 @@ describe('a new entry', () => {
   });
 
   it('is a script by its extension, given it where it has none', () => {
-    expect([scriptName('part'), scriptName('part.kup'), scriptName('part.KUP')]).toEqual([
-      'part.kup',
-      'part.kup',
-      'part.KUP',
-    ]);
-    expect(scriptName('notes.txt')).toBe('notes.txt.kup');
+    expect([
+      scriptFileName('part'),
+      scriptFileName('part.kup'),
+      scriptFileName('part.KUP'),
+    ]).toEqual(['part.kup', 'part.kup', 'part.KUP']);
+    expect(scriptFileName('notes.txt')).toBe('notes.txt.kup');
   });
 
   it("is in a folder, which a path under it is within and a sibling's isn't", () => {

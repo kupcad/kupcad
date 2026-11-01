@@ -38,7 +38,8 @@ export {
 export { characterAt } from './places.js';
 export { errorText } from './error-text.js';
 export { buildFailure, whyBuildFailed } from './build-output.js';
-export { EXPORT_FORMATS, exportFormatsFor } from './formats.js';
+export { extensionOf, isScriptName, SCRIPT_EXTENSION, stemOf } from './names.js';
+export { EXPORT_FORMATS, exportFormatsFor, formatOf } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
 export {
   anotherDocument,

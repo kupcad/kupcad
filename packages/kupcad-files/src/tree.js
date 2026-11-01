@@ -1,3 +1,4 @@
+import { extensionOf, SCRIPT_EXTENSION } from '@kupcad/protocol';
 // A project's files as a tree, whatever keeps them (the disk, a browser's private file system):
 // its folders, scripts and the files they read, listed through the host's `readDir`, which of
 // them a tree shows with some folders closed, the names a new entry may take, and the paths of
@@ -16,7 +17,7 @@ export const DATA_EXTENSIONS = new Set([
   'ttf',
   'otf',
 ]);
-export const SCRIPT_EXTENSION = 'kup';
+export { SCRIPT_EXTENSION } from '@kupcad/protocol';
 /** A package's lockfile, JSON though its extension doesn't say so. */
 export const LOCK_FILE = 'kupcad.lock';
 /** Folders that hold no file of the user's: hidden ones (.git, .kupcad's packages) and build output. */
@@ -155,12 +156,6 @@ export function languageOf(name) {
   return extension === 'json' ? 'json' : null;
 }
 
-/** A file's extension, lower case; none for a name without one (or a hidden name's dot). @param {string} name */
-function extensionOf(name) {
-  const dot = name.lastIndexOf('.');
-  return dot <= 0 ? null : name.slice(dot + 1).toLowerCase();
-}
-
 /**
  * What is wrong with `name` as a new entry's, or null: one the system takes in any folder, not
  * one the tree leaves out (a hidden one).
@@ -179,10 +174,10 @@ export function nameProblem(name) {
 }
 
 /**
- * The name a new script takes for `name`: with its extension, which the tree knows it by.
+ * The file name a new script takes for `name`: with its extension, which the tree knows it by.
  * @param {string} name
  */
-export function scriptName(name) {
+export function scriptFileName(name) {
   return kindOf(name) === 'script' ? name : `${name}.${SCRIPT_EXTENSION}`;
 }
 
@@ -194,7 +189,7 @@ export function scriptName(name) {
  * @param {string} given
  */
 export function renamedName(entry, given) {
-  if (entry.kind === 'script') return scriptName(given);
+  if (entry.kind === 'script') return scriptFileName(given);
   if (entry.kind === 'data' && !kindOf(given)) {
     const dot = entry.name.lastIndexOf('.');
     return dot > 0 ? `${given}${entry.name.slice(dot)}` : given;

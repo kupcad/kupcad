@@ -294,7 +294,7 @@ function read(rule, input, path) {
   if (!('value' in result)) return result;
   // Once read, as the core compares a choice: 20.0 is the choice 20, " 20" no number
   const choices = rule.in;
-  if (choices && !choices.includes(result.value)) {
+  if (choices && !choices.some((listed) => listed === result.value)) {
     return { error: `must be one of ${choices.join(', ')}`, path };
   }
   return result;

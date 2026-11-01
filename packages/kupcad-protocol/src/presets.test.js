@@ -5,6 +5,8 @@ describe('presets', () => {
   it('are kept beside their script, under its name', () => {
     expect(presetsPathOf('/work/bracket.kup')).toBe('/work/bracket.presets.json');
     expect(presetsPathOf('/work/parts/lid')).toBe('/work/parts/lid.presets.json');
+    // In any case: it was `A.KUP.presets.json`
+    expect(presetsPathOf('/work/A.KUP')).toBe('/work/A.presets.json');
   });
 
   it('read back as they were written, in their order', () => {

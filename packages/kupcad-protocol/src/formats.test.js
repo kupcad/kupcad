@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { EXPORT_FORMATS, exportFormatsFor } from './index.js';
+import { EXPORT_FORMATS, exportFormatsFor, formatOf } from './index.js';
 
 it('offers each format the core writes, once', () => {
   expect(EXPORT_FORMATS.map((f) => f.format).toSorted()).toEqual([
@@ -32,4 +32,13 @@ it("offers a 2D model its drawings alone, a 3D one or none every format, as the 
   );
   const drawn = /\s([.\w@", ]+) => \.@"2d"/.exec(source)?.[1] ?? '';
   expect(drawn.split(',').map((name) => name.trim().replace(/^\./, ''))).toEqual(formats('2d'));
+});
+
+it('reads an export file name as the format it is written in, by its extension in any case', () => {
+  // The desktop app read it with a table of extensions of its own
+  expect(
+    ['a.STL', 'a.stp', 'a.step', 'a.3mf', 'a.txt', 'stl', '/w.3mf/part'].map(formatOf),
+  ).toEqual(['stl', 'step', 'step', '3mf', null, null, null]);
+  // Each format names files by its first extension, which is its own name
+  for (const choice of EXPORT_FORMATS) expect(choice.extensions[0]).toBe(choice.format);
 });

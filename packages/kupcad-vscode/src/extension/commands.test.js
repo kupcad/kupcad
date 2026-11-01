@@ -37,6 +37,34 @@ function registered(world = {}) {
 beforeEach(() => resetFake());
 
 describe('export', () => {
+  it('writes the format a name typed names, in any case, over the one picked', async () => {
+    // kupcad refused `part.stl` chosen in the STEP dialog as at odds with -f step
+    fake.activeDocument = documentAt('/work/part.kup');
+    const { builds } = registered();
+    fake.pick = 'STEP';
+    fake.saveAnswer = Uri.file('/out/part.STL');
+    await commands.executeCommand(EXPORT_COMMAND);
+    expect(builds[0].args.slice(0, 6)).toEqual([
+      'build',
+      '/work/part.kup',
+      '-o',
+      '/out/part.STL',
+      '-f',
+      'stl',
+    ]);
+    // A name of no format is written in the one picked, which -f says
+    fake.saveAnswer = Uri.file('/out/part.export');
+    await commands.executeCommand(EXPORT_COMMAND);
+    expect(builds[1].args.slice(0, 6)).toEqual([
+      'build',
+      '/work/part.kup',
+      '-o',
+      '/out/part.export',
+      '-f',
+      'step',
+    ]);
+  });
+
   it("builds the editor's script with its values to the file and format the user picks", async () => {
     fake.activeDocument = documentAt('/work/part.kup');
     const { builds, values } = registered();

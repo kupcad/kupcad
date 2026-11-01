@@ -4,9 +4,9 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { EXPORT_FORMATS, errorText } from '@kupcad/protocol';
+import { EXPORT_FORMATS, errorText, formatOf } from '@kupcad/protocol';
 import { buildArguments, runBuild } from './export.js';
-import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
+import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptStem } from './scripts.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { ScriptValues } from '@kupcad/protocol' */
@@ -52,25 +52,31 @@ async function exportScript(options, given, format) {
   const ready = await scriptToBuild(options, given);
   if (!ready) return;
   const { document, kupcad } = ready;
-  const name = scriptName(document.uri);
-  const choice =
-    EXPORT_FORMATS.find((f) => f.format === format) ??
-    (await vscode.window.showQuickPick(
-      EXPORT_FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
-      { title: `Export ${name}`, placeHolder: 'The format' },
-    ));
+  const name = scriptStem(document.uri);
+  const picked =
+    format ??
+    (
+      await vscode.window.showQuickPick(
+        EXPORT_FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
+        { title: `Export ${name}`, placeHolder: 'The format' },
+      )
+    )?.format;
+  const choice = EXPORT_FORMATS.find((f) => f.format === picked);
   if (!choice) return;
   const target = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.joinPath(document.uri, '..', `${name}.${choice.format}`),
-    filters: { [choice.label]: [choice.format] },
+    filters: { [choice.label]: [...choice.extensions] },
     saveLabel: 'Export',
   });
   if (!target) return;
+  // The name typed may end in another format's extension (`.stp`, `.stl` in the STEP dialog),
+  // which the build writes rather than refusing the name as at odds with the format chosen
+  const written = formatOf(target.fsPath) ?? choice.format;
   const built = await build(options, {
     kupcad,
     document,
     output: target.fsPath,
-    format: choice.format,
+    format: written,
     title: `Exporting ${name} as ${choice.label}`,
   });
   if (!built) return;
@@ -96,7 +102,7 @@ async function scriptToBuild(options, given) {
   }
   if (document.uri.scheme !== FILE_SCHEME) {
     void vscode.window.showInformationMessage(
-      `Save ${scriptName(document.uri)} to a file first: kupcad builds files.`,
+      `Save ${scriptStem(document.uri)} to a file first: kupcad builds files.`,
     );
     return null;
   }
@@ -107,7 +113,7 @@ async function scriptToBuild(options, given) {
   }
   if (document.isDirty) {
     const chosen = await vscode.window.showWarningMessage(
-      `${scriptName(document.uri)} has changes not saved, and kupcad builds the file: save it first?`,
+      `${scriptStem(document.uri)} has changes not saved, and kupcad builds the file: save it first?`,
       { modal: true },
       SAVE,
     );
@@ -168,7 +174,7 @@ function build(options, { kupcad, document, output, format, title }) {
         if (stop.signal.aborted) return false;
         options.log.error(`kupcad ${args.join(' ')}: ${errorText(error)}`);
         void vscode.window.showErrorMessage(
-          `${scriptName(document.uri)} couldn't be built: ${errorText(error)}`,
+          `${scriptStem(document.uri)} couldn't be built: ${errorText(error)}`,
         );
         return false;
       }

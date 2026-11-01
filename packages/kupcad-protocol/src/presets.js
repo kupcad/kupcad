@@ -4,6 +4,7 @@
 // writes it with its own file system.
 
 import { errorText } from './error-text.js';
+import { isScriptName, stemOf } from './names.js';
 import { isParamValues } from './messages.js';
 
 /** @import { Presets } from './types.js' */
@@ -23,7 +24,8 @@ export class PresetsError extends Error {
  * The path of the presets file of the script at `scriptPath`.
  * @param {string} scriptPath
  */
-export const presetsPathOf = (scriptPath) => scriptPath.replace(/(\.kup)?$/, '.presets.json');
+export const presetsPathOf = (scriptPath) =>
+  `${isScriptName(scriptPath) ? stemOf(scriptPath) : scriptPath}.presets.json`;
 
 /**
  * The presets a file's text holds.

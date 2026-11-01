@@ -17,7 +17,7 @@ import {
   nameProblem,
   parentOf,
   renamedName,
-  scriptName,
+  scriptFileName,
   within,
 } from './tree.js';
 
@@ -208,7 +208,7 @@ export class Project {
    * @param {string} given
    */
   async #make(dir, kind, given) {
-    const named = kind === 'script' ? scriptName(given) : given;
+    const named = kind === 'script' ? scriptFileName(given) : given;
     const path = childPath(dir, named);
     if (await this.#fs.exists(path)) {
       this.nameError = `${named} is there already.`;

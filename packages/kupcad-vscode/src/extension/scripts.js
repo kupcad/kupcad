@@ -1,12 +1,13 @@
 // What the extension says of the KupCAD scripts it works on: their language, that they are
 // files, their names, and that there is no kupcad to run them with.
 
+import { stemOf } from '@kupcad/protocol';
+
 /** @import { TextDocument, Uri } from 'vscode' */
 
 export const LANGUAGE_ID = 'kupcad';
 /** The scheme of the documents kupcad runs: files, not an untitled one or a diff's. */
 export const FILE_SCHEME = 'file';
-const EXTENSION = /\.kup$/;
 
 /**
  * Whether `document` is a KupCAD script in a file: one the language server runs.
@@ -22,10 +23,10 @@ export const isScriptFile = (document) =>
 export const fileName = (uri) => uri.path.slice(uri.path.lastIndexOf('/') + 1);
 
 /**
- * A script's name: its file's without `.kup`, what an export or a screenshot is named after.
+ * A script's stem: its file's name without `.kup`, what an export or a screenshot is named after.
  * @param {Uri} uri
  */
-export const scriptName = (uri) => fileName(uri).replace(EXTENSION, '');
+export const scriptStem = (uri) => stemOf(fileName(uri));
 
 /** What a command that needs kupcad says when none runs. */
 export const NOT_RUNNING =

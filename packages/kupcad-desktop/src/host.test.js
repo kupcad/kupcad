@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createHost, formatOf } from './host.js';
+import { createHost } from './host.js';
 
 /** @import { ExportFormat, HostMessage, ParamValues } from '@kupcad/protocol/types' */
 /** @typedef {{ defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }} SaveOptions */
@@ -182,15 +182,4 @@ it("gives the panel's console the server's log", () => {
   const { log, told } = hostOn();
   log('info(lsp): ready\n');
   expect(told).toEqual([{ type: 'log', text: 'info(lsp): ready\n' }]);
-});
-
-it('reads an export file name as the format it is written in', () => {
-  expect(['a.STL', 'a.stp', 'a.step', 'a.3mf', 'a.txt', 'stl'].map(formatOf)).toEqual([
-    'stl',
-    'step',
-    'step',
-    '3mf',
-    null,
-    'stl',
-  ]);
 });

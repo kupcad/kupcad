@@ -11,7 +11,7 @@ import * as vscode from 'vscode';
 import { anotherDocument, characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
-import { fileName, isScriptFile, scriptName } from './scripts.js';
+import { fileName, isScriptFile, scriptStem } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, Presets, SettingValue, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
@@ -348,7 +348,7 @@ export class ViewerPanel {
 
   /** @param {string} png the image's bytes in base64 */
   async #saveScreenshot(png) {
-    const name = this.#shown ? scriptName(vscode.Uri.parse(this.#shown.uri)) : 'model';
+    const name = this.#shown ? scriptStem(vscode.Uri.parse(this.#shown.uri)) : 'model';
     const target = await vscode.window.showSaveDialog({
       defaultUri: vscode.Uri.joinPath(this.#folder(), `${name}.png`),
       filters: { 'PNG image': ['png'] },

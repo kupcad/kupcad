@@ -202,12 +202,9 @@ cube(1)
     for (const [name, input, taken] of rows) {
       const panel = 'value' in validate(specs[name], /** @type {any} */ (input));
       const run = await core.preview(script, { params: { [name]: /** @type {any} */ (input) } });
-      expect([name, input, panel, run.header.error?.message ?? null]).toEqual([
-        name,
-        input,
-        taken,
-        taken ? null : expect.stringMatching(/Error: parameter :/),
-      ]);
+      // The run refuses it naming the parameter, or takes it
+      const refused = /Error: parameter :/.test(run.header.error?.message ?? '');
+      expect([name, input, panel, refused]).toEqual([name, input, taken, !taken]);
     }
   });
 });

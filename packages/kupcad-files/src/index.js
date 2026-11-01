@@ -27,7 +27,7 @@ export {
   parentOf,
   renamedName,
   SCRIPT_EXTENSION,
-  scriptName,
+  scriptFileName,
   SKIPPED_FOLDER,
   within,
 } from './tree.js';

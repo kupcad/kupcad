@@ -68,6 +68,10 @@ client.sendRequest('workspace/executeCommand', {
   an array's as JSON); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
   names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
   message names when it isn't the one shown, which a host refuses.
+* `extensionOf(name)`, `stemOf(name)` and `isScriptName(name)`: a file name's (or path's) extension, lower
+  case, its stem, and whether it is a script's (`.kup` in any case), split one way for every host;
+  `formatOf(path)`, the export format a file name is written in, by its extension (`EXPORT_FORMATS`
+  lists each format's `extensions`).
 * `buildFailure(stderr)`: why a `kupcad build` run with `--errors json` failed, from the JSON line
   it writes last (its kind, message, and the file, line and column when known), for a host that
   runs it to tell the person; null without one. `whyBuildFailed(stderr)` reads the words instead
