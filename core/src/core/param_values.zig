@@ -7,64 +7,16 @@
 
 const std = @import("std");
 const json_input = @import("json_input.zig");
-const MAX_DEPTH = @import("param_rules.zig").MAX_DEPTH;
+const param_rules = @import("param_rules.zig");
+const Literal = param_rules.Literal;
+const MAX_DEPTH = param_rules.MAX_DEPTH;
 
-/// A value for one parameter. Text is what `-p name=text` gives, and what a JSON string is:
-/// `param()` reads it by the parameter's rules, so "10.5" is a number for a number parameter,
-/// "true" a boolean for a boolean one, "m4" the symbol :m4 for a symbol one, and "[10, 20]"
-/// an Array for an Array one.
-pub const ParamValue = union(enum) {
-    number: f64,
-    boolean: bool,
-    text: []const u8,
-    /// An Array parameter's elements, as JSON gives them (a `-P` file, a host's values).
-    array: []const ParamValue,
-    /// A Map parameter's fields, in order.
-    object: []const Field,
-
-    pub const Field = struct { name: []const u8, value: ParamValue };
-
-    /// `json` as a parameter's value, its strings borrowed and its arrays and objects in
-    /// `arena`; null for what no parameter takes (a null in an array or an object, values
-    /// nested past param_rules.MAX_DEPTH, a number past 1.8e308), which `refused` then
-    /// receives.
-    pub fn ofJson(arena: std.mem.Allocator, json: std.json.Value, refused: *std.json.Value) !?ParamValue {
-        return ofJsonAt(arena, json, refused, MAX_DEPTH);
-    }
-
-    fn ofJsonAt(arena: std.mem.Allocator, json: std.json.Value, refused: *std.json.Value, depth: usize) !?ParamValue {
-        const taken: ?ParamValue = switch (json) {
-            .integer => |n| .{ .number = @floatFromInt(n) },
-            .float => |f| .{ .number = f },
-            // Digits too many for an i64; past 1.8e308 they are no number a script holds
-            .number_string => |text| blk: {
-                const f = std.fmt.parseFloat(f64, text) catch break :blk null;
-                break :blk if (std.math.isFinite(f)) .{ .number = f } else null;
-            },
-            .bool => |b| .{ .boolean = b },
-            .string => |text| .{ .text = text },
-            .array => |items| blk: {
-                if (depth == 0) break :blk null;
-                const elements = try arena.alloc(ParamValue, items.items.len);
-                for (items.items, elements) |item, *element| {
-                    element.* = try ofJsonAt(arena, item, refused, depth - 1) orelse return null;
-                }
-                break :blk .{ .array = elements };
-            },
-            .object => |object| blk: {
-                if (depth == 0) break :blk null;
-                const fields = try arena.alloc(Field, object.count());
-                for (object.keys(), object.values(), fields) |name, item, *field| {
-                    field.* = .{ .name = name, .value = try ofJsonAt(arena, item, refused, depth - 1) orelse return null };
-                }
-                break :blk .{ .object = fields };
-            },
-            .null => null,
-        };
-        if (taken == null) refused.* = json;
-        return taken;
-    }
-};
+/// A value for one parameter: a Literal (param_rules.zig) without nil or a Symbol. Text is
+/// what `-p name=text` gives, and what a JSON string is: `param()` reads it by the
+/// parameter's rules, so "10.5" is a number for a number parameter, "true" a boolean for a
+/// boolean one, "m4" the symbol :m4 for a symbol one, and "[10, 20]" an Array for an Array
+/// one. It was a tree of its own, with converters of its own beside the Literal's.
+pub const ParamValue = Literal;
 
 /// Parameter values by name, each name and text owned; a later value for a name replaces
 /// the earlier one, so of `-P file.json -p width=50` the `-p` wins, and of `-p` then `-P`
@@ -75,7 +27,7 @@ pub const ParamValues = struct {
     pub fn deinit(self: *ParamValues, allocator: std.mem.Allocator) void {
         for (self.map.keys(), self.map.values()) |name, v| {
             allocator.free(name);
-            freeValue(allocator, v);
+            v.free(allocator);
         }
         self.map.deinit(allocator);
         self.* = .{};
@@ -83,11 +35,11 @@ pub const ParamValues = struct {
 
     /// Sets `name` to `v`, copying both, over any value it had.
     pub fn put(self: *ParamValues, allocator: std.mem.Allocator, name: []const u8, v: ParamValue) !void {
-        const owned = try copyValue(allocator, v);
-        errdefer freeValue(allocator, owned);
+        const owned = try v.copy(allocator);
+        errdefer owned.free(allocator);
         const gop = try self.map.getOrPut(allocator, name);
         if (gop.found_existing) {
-            freeValue(allocator, gop.value_ptr.*);
+            gop.value_ptr.free(allocator);
         } else {
             gop.key_ptr.* = allocator.dupe(u8, name) catch |err| {
                 self.map.swapRemoveAt(gop.index);
@@ -101,7 +53,7 @@ pub const ParamValues = struct {
     pub fn remove(self: *ParamValues, allocator: std.mem.Allocator, name: []const u8) void {
         const entry = self.map.fetchOrderedRemove(name) orelse return;
         allocator.free(entry.key);
-        freeValue(allocator, entry.value);
+        entry.value.free(allocator);
     }
 
     /// A copy, owned by `allocator`.
@@ -117,7 +69,7 @@ pub const ParamValues = struct {
     pub fn eql(self: ParamValues, other: ParamValues) bool {
         if (self.map.count() != other.map.count()) return false;
         for (self.map.keys(), self.map.values(), other.map.keys(), other.map.values()) |name, v, other_name, other_v| {
-            if (!std.mem.eql(u8, name, other_name) or !valueEql(v, other_v)) return false;
+            if (!std.mem.eql(u8, name, other_name) or !v.deepEql(other_v)) return false;
         }
         return true;
     }
@@ -128,7 +80,7 @@ pub const ParamValues = struct {
         try jw.beginObject();
         for (self.map.keys(), self.map.values()) |name, v| {
             try jw.objectField(name);
-            try writeValue(jw, v);
+            try v.jsonStringify(jw);
         }
         try jw.endObject();
     }
@@ -172,7 +124,7 @@ pub const ParamValues = struct {
                 continue;
             }
             var refused: std.json.Value = undefined;
-            const param = try ParamValue.ofJson(arena.allocator(), v, &refused) orelse {
+            const param = try Literal.ofJsonValue(arena.allocator(), v, MAX_DEPTH, &refused) orelse {
                 why.* = allocator.print("parameter '{s}' {s} {s}; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most", .{ name, if (v == .array or v == .object) "holds" else "is", kindOf(refused) }) catch null;
                 return error.InvalidParams;
             };
@@ -180,97 +132,6 @@ pub const ParamValues = struct {
         }
     }
 };
-
-fn valueEql(a: ParamValue, b: ParamValue) bool {
-    return switch (a) {
-        .number => |n| b == .number and b.number == n,
-        .boolean => |flag| b == .boolean and b.boolean == flag,
-        .text => |t| b == .text and std.mem.eql(u8, b.text, t),
-        .array => |items| b == .array and items.len == b.array.len and for (items, b.array) |x, y| {
-            if (!valueEql(x, y)) break false;
-        } else true,
-        .object => |fields| b == .object and fields.len == b.object.len and for (fields, b.object) |x, y| {
-            if (!std.mem.eql(u8, x.name, y.name) or !valueEql(x.value, y.value)) break false;
-        } else true,
-    };
-}
-
-/// `v` owned by `allocator`, its text and arrays copied.
-fn copyValue(allocator: std.mem.Allocator, v: ParamValue) !ParamValue {
-    switch (v) {
-        .text => |t| return .{ .text = try allocator.dupe(u8, t) },
-        .array => |items| {
-            const copies = try allocator.alloc(ParamValue, items.len);
-            var made: usize = 0;
-            errdefer {
-                for (copies[0..made]) |copy| freeValue(allocator, copy);
-                allocator.free(copies);
-            }
-            for (items, copies) |item, *copy| {
-                copy.* = try copyValue(allocator, item);
-                made += 1;
-            }
-            return .{ .array = copies };
-        },
-        .object => |fields| {
-            const copies = try allocator.alloc(ParamValue.Field, fields.len);
-            var made: usize = 0;
-            errdefer {
-                for (copies[0..made]) |copy| freeField(allocator, copy);
-                allocator.free(copies);
-            }
-            for (fields, copies) |field, *copy| {
-                const name = try allocator.dupe(u8, field.name);
-                errdefer allocator.free(name);
-                copy.* = .{ .name = name, .value = try copyValue(allocator, field.value) };
-                made += 1;
-            }
-            return .{ .object = copies };
-        },
-        else => return v,
-    }
-}
-
-fn freeField(allocator: std.mem.Allocator, field: ParamValue.Field) void {
-    allocator.free(field.name);
-    freeValue(allocator, field.value);
-}
-
-fn freeValue(allocator: std.mem.Allocator, v: ParamValue) void {
-    switch (v) {
-        .text => |t| allocator.free(t),
-        .array => |items| {
-            for (items) |item| freeValue(allocator, item);
-            allocator.free(items);
-        },
-        .object => |fields| {
-            for (fields) |field| freeField(allocator, field);
-            allocator.free(fields);
-        },
-        else => {},
-    }
-}
-
-fn writeValue(jw: *std.json.Stringify, v: ParamValue) !void {
-    switch (v) {
-        .number => |n| try jw.write(n),
-        .boolean => |b| try jw.write(b),
-        .text => |t| try jw.write(t),
-        .array => |items| {
-            try jw.beginArray();
-            for (items) |item| try writeValue(jw, item);
-            try jw.endArray();
-        },
-        .object => |fields| {
-            try jw.beginObject();
-            for (fields) |field| {
-                try jw.objectField(field.name);
-                try writeValue(jw, field.value);
-            }
-            try jw.endObject();
-        },
-    }
-}
 
 /// What kind of JSON value `v`, which no parameter takes, is, for a refusal ("null").
 fn kindOf(v: std.json.Value) []const u8 {

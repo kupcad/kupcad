@@ -264,7 +264,7 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
         const key = try vm.allocateSymbol(name);
         vm.push(key);
         defer _ = vm.pop();
-        const val = try params_mod.scriptValueOf(vm, v);
+        const val = try params_mod.valueOf(vm, v);
         vm.push(val);
         defer _ = vm.pop();
         try params_map.table.put(vm.gc.trackingAllocator(), key, val);

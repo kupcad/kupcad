@@ -13,16 +13,18 @@ fn expectParamValue(expected: ParamValue, got: ParamValue) !void {
     switch (expected) {
         .number => |n| try testing.expectEqual(n, got.number),
         .boolean => |b| try testing.expectEqual(b, got.boolean),
-        .text => |t| try testing.expectEqualStrings(t, got.text),
+        .string => |t| try testing.expectEqualStrings(t, got.string),
+        .symbol => |t| try testing.expectEqualStrings(t, got.symbol),
+        .nil => try testing.expect(got == .nil),
         .array => |items| {
             try testing.expectEqual(items.len, got.array.len);
             for (items, got.array) |item, element| try expectParamValue(item, element);
         },
-        .object => |fields| {
-            try testing.expectEqual(fields.len, got.object.len);
-            for (fields, got.object) |field, given| {
-                try testing.expectEqualStrings(field.name, given.name);
-                try expectParamValue(field.value, given.value);
+        .map => |entries| {
+            try testing.expectEqual(entries.len, got.map.len);
+            for (entries, got.map) |entry, given| {
+                try testing.expectEqualStrings(entry.key, given.key);
+                try expectParamValue(entry.value, given.value);
             }
         },
     }
@@ -33,16 +35,16 @@ test "ParamValues: put copies the name and the text, and a later value replaces 
     defer values.deinit(testing.allocator);
     var name = "width".*;
     var text = "40".*;
-    try values.put(testing.allocator, &name, .{ .text = &text });
+    try values.put(testing.allocator, &name, .{ .string = &text });
     // The caller's buffers can change: the values hold their own copies
     name[0] = 'x';
     text[0] = '9';
-    try expectValue(.{ .text = "40" }, &values, "width");
+    try expectValue(.{ .string = "40" }, &values, "width");
     try values.put(testing.allocator, "width", .{ .number = 50 });
-    try values.put(testing.allocator, "label", .{ .text = "A" });
-    try values.put(testing.allocator, "label", .{ .text = "B" });
+    try values.put(testing.allocator, "label", .{ .string = "A" });
+    try values.put(testing.allocator, "label", .{ .string = "B" });
     try expectValue(.{ .number = 50 }, &values, "width");
-    try expectValue(.{ .text = "B" }, &values, "label");
+    try expectValue(.{ .string = "B" }, &values, "label");
     try testing.expectEqual(@as(usize, 2), values.map.count());
 }
 
@@ -57,9 +59,9 @@ test "ParamValues: a JSON object gives numbers, strings and booleans, in its ord
     try testing.expect(why == null);
     try expectValue(.{ .number = 40 }, &values, "width");
     try expectValue(.{ .number = 2.5 }, &values, "height");
-    try expectValue(.{ .text = "Gear A" }, &values, "label");
+    try expectValue(.{ .string = "Gear A" }, &values, "label");
     try expectValue(.{ .boolean = true }, &values, "hollow");
-    try expectValue(.{ .text = "m4" }, &values, "size");
+    try expectValue(.{ .string = "m4" }, &values, "size");
     try expectValue(.{ .number = 1.2345678901234568e29 }, &values, "big");
     const order = [_][]const u8{ "width", "height", "label", "hollow", "size", "big" };
     for (order, values.map.keys()) |want, got| try testing.expectEqualStrings(want, got);
@@ -104,7 +106,7 @@ test "ParamValues: written as JSON, they read back the same, in their order" {
     defer values.deinit(testing.allocator);
     try values.put(testing.allocator, "width", .{ .number = 12.5 });
     try values.put(testing.allocator, "hollow", .{ .boolean = true });
-    try values.put(testing.allocator, "material", .{ .text = "PETG \"pro\"" });
+    try values.put(testing.allocator, "material", .{ .string = "PETG \"pro\"" });
     const text = try std.json.Stringify.valueAlloc(testing.allocator, values, .{});
     defer testing.allocator.free(text);
     try testing.expectEqualStrings("{\"width\":12.5,\"hollow\":true,\"material\":\"PETG \\\"pro\\\"\"}", text);
@@ -115,28 +117,28 @@ test "ParamValues: written as JSON, they read back the same, in their order" {
     try back.putJson(testing.allocator, text, &why);
     try testing.expectEqual(values.map.count(), back.map.count());
     for (values.map.keys(), back.map.keys()) |a, b| try testing.expectEqualStrings(a, b);
-    try testing.expectEqualStrings("PETG \"pro\"", back.map.get("material").?.text);
+    try testing.expectEqualStrings("PETG \"pro\"", back.map.get("material").?.string);
 }
 
 test "ParamValues: a copy is equal, and a value, a name or the order changed isn't" {
     var values: ParamValues = .{};
     defer values.deinit(testing.allocator);
     try values.put(testing.allocator, "width", .{ .number = 12.5 });
-    try values.put(testing.allocator, "label", .{ .text = "A" });
+    try values.put(testing.allocator, "label", .{ .string = "A" });
     var copy = try values.clone(testing.allocator);
     defer copy.deinit(testing.allocator);
     try testing.expect(copy.eql(values));
-    try testing.expect(values.map.get("label").?.text.ptr != copy.map.get("label").?.text.ptr);
+    try testing.expect(values.map.get("label").?.string.ptr != copy.map.get("label").?.string.ptr);
     try testing.expect(!values.eql(.{}));
 
-    try copy.put(testing.allocator, "label", .{ .text = "B" });
+    try copy.put(testing.allocator, "label", .{ .string = "B" });
     try testing.expect(!copy.eql(values));
     try copy.put(testing.allocator, "label", .{ .boolean = true });
     try testing.expect(!copy.eql(values));
 
     var reordered: ParamValues = .{};
     defer reordered.deinit(testing.allocator);
-    try reordered.put(testing.allocator, "label", .{ .text = "A" });
+    try reordered.put(testing.allocator, "label", .{ .string = "A" });
     try reordered.put(testing.allocator, "width", .{ .number = 12.5 });
     try testing.expect(!reordered.eql(values));
 }
@@ -151,7 +153,7 @@ test "ParamValues: a parsed JSON object gives its values, and refuses one no par
     try testing.expectEqualStrings("parameter 'holes' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most", why.?);
     // Its strings are copies: the parse goes, the values stay
     parsed.deinit();
-    try expectValue(.{ .text = "A" }, &values, "label");
+    try expectValue(.{ .string = "A" }, &values, "label");
     try expectValue(.{ .number = 40 }, &values, "width");
 }
 
@@ -164,11 +166,11 @@ test "ParamValues: arrays and objects give Array and Map parameters their values
     try expectValue(.{ .array = &.{ .{ .number = 10 }, .{ .number = 20.5 } } }, &values, "size");
     try expectValue(.{ .array = &.{
         .{ .array = &.{ .{ .number = 0 }, .{ .number = 0 } } },
-        .{ .array = &.{ .{ .number = 10 }, .{ .text = "x" }, .{ .boolean = true } } },
+        .{ .array = &.{ .{ .number = 10 }, .{ .string = "x" }, .{ .boolean = true } } },
     } }, &values, "holes");
     try expectValue(.{ .array = &.{} }, &values, "none");
-    try expectValue(.{ .array = &.{.{ .object = &.{ .{ .name = "type", .value = .{ .text = "slot" } }, .{ .name = "depth", .value = .{ .number = 5 } } } }} }, &values, "cuts");
-    try expectValue(.{ .object = &.{.{ .name = "x", .value = .{ .number = 1 } }} }, &values, "origin");
+    try expectValue(.{ .array = &.{.{ .map = &.{ .{ .key = "type", .value = .{ .string = "slot" } }, .{ .key = "depth", .value = .{ .number = 5 } } } }} }, &values, "cuts");
+    try expectValue(.{ .map = &.{.{ .key = "x", .value = .{ .number = 1 } }} }, &values, "origin");
 
     // Written out and read back, copied: the same values
     const json = try std.json.Stringify.valueAlloc(testing.allocator, values, .{});
@@ -189,10 +191,10 @@ test "ParamValues: null gives a parameter no value, dropping one given before" {
     var values: ParamValues = .{};
     defer values.deinit(testing.allocator);
     try values.put(testing.allocator, "width", .{ .number = 5 });
-    try values.put(testing.allocator, "label", .{ .text = "A" });
+    try values.put(testing.allocator, "label", .{ .string = "A" });
     var why: ?[]u8 = null;
     try values.putJson(testing.allocator, "{\"width\": null, \"depth\": null}", &why);
     try testing.expect(why == null);
     try testing.expectEqual(1, values.map.count());
-    try expectValue(.{ .text = "A" }, &values, "label");
+    try expectValue(.{ .string = "A" }, &values, "label");
 }

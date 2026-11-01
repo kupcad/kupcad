@@ -29,9 +29,9 @@ test "kupcad watch: takes the file and parameter values, as build does, the late
     var options = (try parse(&.{ "-P", params_path, "model.kup", "-p", "width=50" }, &output)) orelse return error.TestRefused;
     defer options.deinit(testing.allocator);
     try testing.expectEqualStrings("model.kup", options.input_path);
-    try testing.expectEqualStrings("50", options.params.map.get("width").?.text);
+    try testing.expectEqualStrings("50", options.params.map.get("width").?.string);
     // The file's other values stay
-    try testing.expectEqualStrings("A", options.params.map.get("label").?.text);
+    try testing.expectEqualStrings("A", options.params.map.get("label").?.string);
 }
 
 test "kupcad watch: options it can't take are refused, saying why" {

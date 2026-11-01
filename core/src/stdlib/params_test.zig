@@ -50,16 +50,16 @@ fn expectRefused(cases: []const Refused) !void {
 test "param: text from the host is read as the parameter's type" {
     // `-p` gives text: it used to have to be a number, whatever the parameter was.
     try expectTaken(&.{
-        .{ .v = .{ .text = "10.5" }, .source = "r = param(:p, default: 1)", .expected = .{ .num = 10.5 } },
-        .{ .v = .{ .text = "true" }, .source = "r = param(:p, default: false)", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "0" }, .source = "r = param(:p, default: true)", .expected = .{ .boolean = false } },
-        .{ .v = .{ .text = "1" }, .source = "r = param(:p, default: false)", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "Gear A" }, .source = "r = param(:p, default: \"x\")", .expected = .{ .str = "Gear A" } },
-        .{ .v = .{ .text = "" }, .source = "r = param(:p, default: \"x\")", .expected = .{ .str = "" } },
-        .{ .v = .{ .text = "m4" }, .source = "s = param(:p, default: :m3, validate: { in: [:m3, :m4] })\nr = s == :m4 && s.class == Symbol", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "-1000" }, .source = "r = param(:p, default: 1)", .expected = .{ .num = -1000 } },
-        .{ .v = .{ .text = "10" }, .source = "r = param(:p, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 10 } },
-        .{ .v = .{ .text = "20" }, .source = "r = param(:p, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 20 } },
+        .{ .v = .{ .string = "10.5" }, .source = "r = param(:p, default: 1)", .expected = .{ .num = 10.5 } },
+        .{ .v = .{ .string = "true" }, .source = "r = param(:p, default: false)", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "0" }, .source = "r = param(:p, default: true)", .expected = .{ .boolean = false } },
+        .{ .v = .{ .string = "1" }, .source = "r = param(:p, default: false)", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "Gear A" }, .source = "r = param(:p, default: \"x\")", .expected = .{ .str = "Gear A" } },
+        .{ .v = .{ .string = "" }, .source = "r = param(:p, default: \"x\")", .expected = .{ .str = "" } },
+        .{ .v = .{ .string = "m4" }, .source = "s = param(:p, default: :m3, validate: { in: [:m3, :m4] })\nr = s == :m4 && s.class == Symbol", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "-1000" }, .source = "r = param(:p, default: 1)", .expected = .{ .num = -1000 } },
+        .{ .v = .{ .string = "10" }, .source = "r = param(:p, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 10 } },
+        .{ .v = .{ .string = "20" }, .source = "r = param(:p, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 20 } },
     });
 }
 
@@ -73,7 +73,7 @@ test "param: text a host gives that isn't UTF-8 is an error where a String must 
         errdefer std.debug.print("{s}\n", .{case.source});
         var vm = try support.initVm();
         defer vm.deinit();
-        try testing.expectEqual(.ok, try runWith("label", .{ .text = "a\xff" }, case.source, &vm));
+        try testing.expectEqual(.ok, try runWith("label", .{ .string = "a\xff" }, case.source, &vm));
         try support.expectValue(.{ .str = case.expected }, vm.globals.get("r").?);
     }
 }
@@ -89,17 +89,17 @@ test "param: a symbol parameter's value is a Symbol, so its in: choices are symb
 
 test "param: a value the parameter can't take is an error naming it, what it expects and what was given" {
     try expectRefused(&.{
-        .{ .v = .{ .text = "wide" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"wide\"" },
+        .{ .v = .{ .string = "wide" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"wide\"" },
         // A script's numbers are finite: parseFloat would read these
-        .{ .v = .{ .text = "inf" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"inf\"" },
-        .{ .v = .{ .text = "nan" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"nan\"" },
+        .{ .v = .{ .string = "inf" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"inf\"" },
+        .{ .v = .{ .string = "nan" }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got \"nan\"" },
         .{ .v = .{ .boolean = true }, .source = "param(:p, default: 1)", .message = "TypeError: parameter :p expects a number, got true" },
-        .{ .v = .{ .text = "yes" }, .source = "param(:p, default: false)", .message = "TypeError: parameter :p expects true or false, got \"yes\"" },
+        .{ .v = .{ .string = "yes" }, .source = "param(:p, default: false)", .message = "TypeError: parameter :p expects true or false, got \"yes\"" },
         .{ .v = .{ .number = 5 }, .source = "param(:p, default: \"x\")", .message = "TypeError: parameter :p expects a String, got 5" },
         .{ .v = .{ .number = 42 }, .source = "param(:p, default: false)", .message = "TypeError: parameter :p expects true or false, got 42" },
-        .{ .v = .{ .text = "m5" }, .source = "param(:p, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :p expects one of :m3, :m4, got :m5" },
-        .{ .v = .{ .text = "M3" }, .source = "param(:p, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :p expects one of :m3, :m4, got :M3" },
-        .{ .v = .{ .text = "200" }, .source = "param(:p, default: 1, validate: { max: 100 })", .message = "ValueError: parameter :p expects a number at most 100, got 200" },
+        .{ .v = .{ .string = "m5" }, .source = "param(:p, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :p expects one of :m3, :m4, got :m5" },
+        .{ .v = .{ .string = "M3" }, .source = "param(:p, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :p expects one of :m3, :m4, got :M3" },
+        .{ .v = .{ .string = "200" }, .source = "param(:p, default: 1, validate: { max: 100 })", .message = "ValueError: parameter :p expects a number at most 100, got 200" },
         .{ .v = .{ .number = 5 }, .source = "param(:p, default: 15, validate: { min: 10, max: 20 })", .message = "ValueError: parameter :p expects a number at least 10, got 5" },
     });
 }
@@ -118,7 +118,7 @@ test "param: step, unit, group, title and description are a host's hints, checke
         .{ .src = comptime support.rescued("param(:w, default: 1, colour: \"x\")"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'colour' (it accepts: default, type, validate, step, unit, group, title, description)" } },
     });
     // A value off the step is the host's to give: -p 10.3 with step: 0.5 stays 10.3
-    try expectTaken(&.{.{ .v = .{ .text = "10.3" }, .source = "r = param(:p, default: 10, step: 0.5)", .expected = .{ .num = 10.3 } }});
+    try expectTaken(&.{.{ .v = .{ .string = "10.3" }, .source = "r = param(:p, default: 10, step: 0.5)", .expected = .{ .num = 10.3 } }});
 }
 
 test "param: one with no default is nil until a host gives it a value, a String unless typed" {
@@ -132,14 +132,14 @@ test "param: one with no default is nil until a host gives it a value, a String 
         .{ .src = "r = param(:key, type: :number, validate: { min: 1, in: [2, 3] })", .expected = .nil },
     });
     try expectTaken(&.{
-        .{ .v = .{ .text = "5" }, .source = "r = param(:p, title: \"Key\")", .expected = .{ .str = "5" } },
-        .{ .v = .{ .text = "5" }, .source = "r = param(:p, default: nil)", .expected = .{ .str = "5" } },
-        .{ .v = .{ .text = "5" }, .source = "r = param(:p, type: :number)", .expected = .{ .num = 5 } },
-        .{ .v = .{ .text = "true" }, .source = "r = param(:p, type: :boolean)", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "m4" }, .source = "r = param(:p, type: :symbol) == :m4", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "5" }, .source = "r = param(:p, title: \"Key\")", .expected = .{ .str = "5" } },
+        .{ .v = .{ .string = "5" }, .source = "r = param(:p, default: nil)", .expected = .{ .str = "5" } },
+        .{ .v = .{ .string = "5" }, .source = "r = param(:p, type: :number)", .expected = .{ .num = 5 } },
+        .{ .v = .{ .string = "true" }, .source = "r = param(:p, type: :boolean)", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "m4" }, .source = "r = param(:p, type: :symbol) == :m4", .expected = .{ .boolean = true } },
         // Of choices all Symbols, it is a Symbol, or no value could be one of them
-        .{ .v = .{ .text = "m4" }, .source = "r = param(:p, validate: { in: [:m3, :m4] }) == :m4", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "7" }, .source = "r = param(:p, type: :number, default: 1)", .expected = .{ .num = 7 } },
+        .{ .v = .{ .string = "m4" }, .source = "r = param(:p, validate: { in: [:m3, :m4] }) == :m4", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "7" }, .source = "r = param(:p, type: :number, default: 1)", .expected = .{ .num = 7 } },
     });
 }
 
@@ -205,22 +205,22 @@ test "param: a list takes a host's array of any length, each element as its rule
         .{ .src = "d = [1]\nxs = param(:xs, default: d)\nxs.push(2)\nr = d", .expected = .{ .nums = &.{1} } },
     });
     try expectTaken(&.{
-        .{ .v = .{ .text = "[1, 2.5]" }, .source = "r = param(:p, default: [10, 20, 30])", .expected = .{ .nums = &.{ 1, 2.5 } } },
+        .{ .v = .{ .string = "[1, 2.5]" }, .source = "r = param(:p, default: [10, 20, 30])", .expected = .{ .nums = &.{ 1, 2.5 } } },
         .{ .v = .{ .array = &.{ .{ .number = 4 }, .{ .number = 5 } } }, .source = "r = param(:p, default: [1])", .expected = .{ .nums = &.{ 4, 5 } } },
-        .{ .v = .{ .text = "[]" }, .source = "r = param(:p, default: [1], validate: { max_items: 3 })", .expected = .{ .nums = &.{} } },
+        .{ .v = .{ .string = "[]" }, .source = "r = param(:p, default: [1], validate: { max_items: 3 })", .expected = .{ .nums = &.{} } },
         // A list of Symbols makes a host's strings Symbols
-        .{ .v = .{ .text = "[\"m4\", \"m3\"]" }, .source = "r = param(:p, default: [:m3], validate: { items: { type: :symbol, in: [:m3, :m4] } }) == [:m4, :m3]", .expected = .{ .boolean = true } },
-        .{ .v = .{ .text = "[\"a\", \"b\"]" }, .source = "r = param(:p, type: :array).inspect", .expected = .{ .str = "[\"a\", \"b\"]" } },
-        .{ .v = .{ .text = "[5, 50]" }, .source = "r = param(:p, default: [1, 2], validate: { items: { type: :number, max: 100 }, min_items: 2 })", .expected = .{ .nums = &.{ 5, 50 } } },
+        .{ .v = .{ .string = "[\"m4\", \"m3\"]" }, .source = "r = param(:p, default: [:m3], validate: { items: { type: :symbol, in: [:m3, :m4] } }) == [:m4, :m3]", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "[\"a\", \"b\"]" }, .source = "r = param(:p, type: :array).inspect", .expected = .{ .str = "[\"a\", \"b\"]" } },
+        .{ .v = .{ .string = "[5, 50]" }, .source = "r = param(:p, default: [1, 2], validate: { items: { type: :number, max: 100 }, min_items: 2 })", .expected = .{ .nums = &.{ 5, 50 } } },
     });
     try expectRefused(&.{
-        .{ .v = .{ .text = "[1, \"x\"]" }, .source = "param(:p, default: [1, 2])", .message = "TypeError: parameter :p[1] expects a number, got \"x\"" },
-        .{ .v = .{ .text = "[500]" }, .source = "param(:p, default: [1], validate: { items: { type: :number, max: 100 } })", .message = "ValueError: parameter :p[0] expects a number at most 100, got 500" },
-        .{ .v = .{ .text = "[\"m5\"]" }, .source = "param(:p, default: [:m3], validate: { items: { in: [:m3, :m4] } })", .message = "ValueError: parameter :p[0] expects one of :m3, :m4, got :m5" },
-        .{ .v = .{ .text = "[1]" }, .source = "param(:p, default: [1, 2], validate: { min_items: 2 })", .message = "ValueError: parameter :p expects at least 2 items, got 1" },
-        .{ .v = .{ .text = "[1, 2, 3]" }, .source = "param(:p, default: [1], validate: { max_items: 2 })", .message = "ValueError: parameter :p expects at most 2 items, got 3" },
-        .{ .v = .{ .text = "wide" }, .source = "param(:p, default: [1])", .message = "TypeError: parameter :p expects an Array (as JSON: [10, 20]), got \"wide\"" },
-        .{ .v = .{ .text = "{\"a\": 1}" }, .source = "param(:p, default: [1])", .message = "TypeError: parameter :p expects an Array (as JSON: [10, 20]), got \"{\"a\": 1}\"" },
+        .{ .v = .{ .string = "[1, \"x\"]" }, .source = "param(:p, default: [1, 2])", .message = "TypeError: parameter :p[1] expects a number, got \"x\"" },
+        .{ .v = .{ .string = "[500]" }, .source = "param(:p, default: [1], validate: { items: { type: :number, max: 100 } })", .message = "ValueError: parameter :p[0] expects a number at most 100, got 500" },
+        .{ .v = .{ .string = "[\"m5\"]" }, .source = "param(:p, default: [:m3], validate: { items: { in: [:m3, :m4] } })", .message = "ValueError: parameter :p[0] expects one of :m3, :m4, got :m5" },
+        .{ .v = .{ .string = "[1]" }, .source = "param(:p, default: [1, 2], validate: { min_items: 2 })", .message = "ValueError: parameter :p expects at least 2 items, got 1" },
+        .{ .v = .{ .string = "[1, 2, 3]" }, .source = "param(:p, default: [1], validate: { max_items: 2 })", .message = "ValueError: parameter :p expects at most 2 items, got 3" },
+        .{ .v = .{ .string = "wide" }, .source = "param(:p, default: [1])", .message = "TypeError: parameter :p expects an Array (as JSON: [10, 20]), got \"wide\"" },
+        .{ .v = .{ .string = "{\"a\": 1}" }, .source = "param(:p, default: [1])", .message = "TypeError: parameter :p expects an Array (as JSON: [10, 20]), got \"{\"a\": 1}\"" },
     });
 }
 
@@ -231,17 +231,17 @@ test "param: a tuple takes as many as its places, each by its own rule; a list o
         .{ .src = "r = param(:pts, default: [[0, 0], [10, 0]]).flatten", .expected = .{ .nums = &.{ 0, 0, 10, 0 } } },
     });
     try expectTaken(&.{
-        .{ .v = .{ .text = "[1, 2]" }, .source = "r = param(:p, default: [0, 0], " ++ point ++ ")", .expected = .{ .nums = &.{ 1, 2 } } },
-        .{ .v = .{ .text = "[[1, 2], [3, 4], [5, 6]]" }, .source = "r = param(:p, default: [[0, 0], [10, 0]]).flatten", .expected = .{ .nums = &.{ 1, 2, 3, 4, 5, 6 } } },
+        .{ .v = .{ .string = "[1, 2]" }, .source = "r = param(:p, default: [0, 0], " ++ point ++ ")", .expected = .{ .nums = &.{ 1, 2 } } },
+        .{ .v = .{ .string = "[[1, 2], [3, 4], [5, 6]]" }, .source = "r = param(:p, default: [[0, 0], [10, 0]]).flatten", .expected = .{ .nums = &.{ 1, 2, 3, 4, 5, 6 } } },
         // Places of their own kinds, read as each says
-        .{ .v = .{ .text = "[[1, \"b\"]]" }, .source = "r = param(:p, default: [[0, :a]])[0][1] == :b", .expected = .{ .boolean = true } },
+        .{ .v = .{ .string = "[[1, \"b\"]]" }, .source = "r = param(:p, default: [[0, :a]])[0][1] == :b", .expected = .{ .boolean = true } },
     });
     try expectRefused(&.{
-        .{ .v = .{ .text = "[1]" }, .source = "param(:p, default: [0, 0], " ++ point ++ ")", .message = "ValueError: parameter :p expects 2 items, got 1" },
-        .{ .v = .{ .text = "[1, -5]" }, .source = "param(:p, default: [0, 0], " ++ point ++ ")", .message = "ValueError: parameter :p[1] expects a number at least 0, got -5" },
-        .{ .v = .{ .text = "[[1, 2], [3, 250]]" }, .source = "param(:p, default: [[0, 0]], validate: { items: { tuple: [:number, { type: :number, max: 200 }] } })", .message = "ValueError: parameter :p[1][1] expects a number at most 200, got 250" },
-        .{ .v = .{ .text = "[1]" }, .source = "param(:p, default: [[1, 2]])", .message = "TypeError: parameter :p[0] expects an Array, got 1" },
-        .{ .v = .{ .text = "[[1]]" }, .source = "param(:p, default: [[1, 2]])", .message = "ValueError: parameter :p[0] expects 2 items, got 1" },
+        .{ .v = .{ .string = "[1]" }, .source = "param(:p, default: [0, 0], " ++ point ++ ")", .message = "ValueError: parameter :p expects 2 items, got 1" },
+        .{ .v = .{ .string = "[1, -5]" }, .source = "param(:p, default: [0, 0], " ++ point ++ ")", .message = "ValueError: parameter :p[1] expects a number at least 0, got -5" },
+        .{ .v = .{ .string = "[[1, 2], [3, 250]]" }, .source = "param(:p, default: [[0, 0]], validate: { items: { tuple: [:number, { type: :number, max: 200 }] } })", .message = "ValueError: parameter :p[1][1] expects a number at most 200, got 250" },
+        .{ .v = .{ .string = "[1]" }, .source = "param(:p, default: [[1, 2]])", .message = "TypeError: parameter :p[0] expects an Array, got 1" },
+        .{ .v = .{ .string = "[[1]]" }, .source = "param(:p, default: [[1, 2]])", .message = "ValueError: parameter :p[0] expects 2 items, got 1" },
     });
 }
 
@@ -254,16 +254,16 @@ test "param: a Map takes its fields, keyed by Symbols in its order; a list of th
         .{ .src = "r = param(:cuts, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")[0][:depth]", .expected = .{ .num = 5 } },
     });
     try expectTaken(&.{
-        .{ .v = .{ .text = "{\"y\": 2, \"x\": 1}" }, .source = "r = param(:p, default: { x: 0, y: 0 }).inspect", .expected = .{ .str = "{x: 1, y: 2}" } },
-        .{ .v = .{ .object = &.{ .{ .name = "x", .value = .{ .number = 3 } }, .{ .name = "y", .value = .{ .number = 4 } } } }, .source = "r = param(:p, default: { x: 0, y: 0 }).values", .expected = .{ .nums = &.{ 3, 4 } } },
-        .{ .v = .{ .text = "[{\"type\": \"hole\", \"depth\": 2}]" }, .source = "r = param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")[0].inspect", .expected = .{ .str = "{type: \"hole\", depth: 2}" } },
+        .{ .v = .{ .string = "{\"y\": 2, \"x\": 1}" }, .source = "r = param(:p, default: { x: 0, y: 0 }).inspect", .expected = .{ .str = "{x: 1, y: 2}" } },
+        .{ .v = .{ .map = &.{ .{ .key = "x", .value = .{ .number = 3 } }, .{ .key = "y", .value = .{ .number = 4 } } } }, .source = "r = param(:p, default: { x: 0, y: 0 }).values", .expected = .{ .nums = &.{ 3, 4 } } },
+        .{ .v = .{ .string = "[{\"type\": \"hole\", \"depth\": 2}]" }, .source = "r = param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")[0].inspect", .expected = .{ .str = "{type: \"hole\", depth: 2}" } },
     });
     try expectRefused(&.{
-        .{ .v = .{ .text = "[{\"type\": \"slot\", \"depth\": 0}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p[0][:depth] expects a number at least 0.1, got 0" },
-        .{ .v = .{ .text = "[{\"type\": \"slot\"}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "TypeError: parameter :p[0][:depth] expects a number, got nothing" },
-        .{ .v = .{ .text = "[{\"type\": \"pocket\", \"depth\": 1}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p[0][:type] expects one of \"slot\", \"hole\", got \"pocket\"" },
-        .{ .v = .{ .text = "{\"x\": 1, \"z\": 2}" }, .source = "param(:p, default: { x: 0 })", .message = "ValueError: parameter :p expects only its fields :x, got :z" },
-        .{ .v = .{ .text = "[]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p expects at least 1 items, got 0" },
-        .{ .v = .{ .text = "[1]" }, .source = "param(:p, default: { x: 0 })", .message = "TypeError: parameter :p expects a Map (as JSON: {\"x\": 1}), got \"[1]\"" },
+        .{ .v = .{ .string = "[{\"type\": \"slot\", \"depth\": 0}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p[0][:depth] expects a number at least 0.1, got 0" },
+        .{ .v = .{ .string = "[{\"type\": \"slot\"}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "TypeError: parameter :p[0][:depth] expects a number, got nothing" },
+        .{ .v = .{ .string = "[{\"type\": \"pocket\", \"depth\": 1}]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p[0][:type] expects one of \"slot\", \"hole\", got \"pocket\"" },
+        .{ .v = .{ .string = "{\"x\": 1, \"z\": 2}" }, .source = "param(:p, default: { x: 0 })", .message = "ValueError: parameter :p expects only its fields :x, got :z" },
+        .{ .v = .{ .string = "[]" }, .source = "param(:p, default: [{ type: \"slot\", depth: 5 }], " ++ cuts ++ ")", .message = "ValueError: parameter :p expects at least 1 items, got 0" },
+        .{ .v = .{ .string = "[1]" }, .source = "param(:p, default: { x: 0 })", .message = "TypeError: parameter :p expects a Map (as JSON: {\"x\": 1}), got \"[1]\"" },
     });
 }

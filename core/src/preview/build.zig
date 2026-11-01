@@ -18,6 +18,7 @@ const export_mod = @import("../exporters/export.zig");
 const parts_mod = @import("../exporters/parts.zig");
 const MaterialDef = @import("../core/material.zig").MaterialDef;
 const param_values = @import("../core/param_values.zig");
+const rules = @import("../core/param_rules.zig");
 const stopwatch = @import("../core/stopwatch.zig");
 const LinePosition = @import("../vm/run_report.zig").LinePosition;
 
@@ -228,27 +229,15 @@ fn valuesOf(arena: std.mem.Allocator, vm: *const VM, schema: extractor.UiSchema)
 }
 
 /// `v` as JSON gives a parameter's value (its text borrowed, its arrays and objects in
-/// `arena`); null for nil and for what JSON can't hold.
+/// `arena`); null for nil, and for what JSON can't hold (a Solid, an infinite number).
 fn paramValue(arena: std.mem.Allocator, v: value.Value) !?param_values.ParamValue {
-    if (v.isNumber()) return if (std.math.isFinite(v.asNumber())) .{ .number = v.asNumber() } else null;
-    if (v.isBool()) return .{ .boolean = v.asBool() };
-    if (v.nameChars()) |text| return .{ .text = text };
+    var unheld: value.Value = undefined;
     // param() read it, so it nests no deeper than a parameter's may
-    if (v.isArray()) {
-        const items = v.asArray().items.items;
-        const elements = try arena.alloc(param_values.ParamValue, items.len);
-        for (items, elements) |item, *element| element.* = try paramValue(arena, item) orelse return null;
-        return .{ .array = elements };
-    }
-    if (!v.isMap()) return null;
-    const map = v.asMap();
-    const fields = try arena.alloc(param_values.ParamValue.Field, map.count());
-    var entries = map.entries();
-    var i: usize = 0;
-    while (entries.next()) |entry| : (i += 1) {
-        fields[i] = .{ .name = entry.key.nameChars() orelse return null, .value = try paramValue(arena, entry.value) orelse return null };
-    }
-    return .{ .object = fields };
+    const literal = rules.Literal.ofValue(arena, v, rules.MAX_LITERAL_DEPTH, &unheld) catch |err| switch (err) {
+        error.Unheld => return null,
+        error.OutOfMemory => |e| return e,
+    };
+    return if (literal.jsonSafe()) literal else null;
 }
 
 /// A warning of the run as a frame places it, at its line and column (null for none).

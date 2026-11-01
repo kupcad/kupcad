@@ -10,7 +10,6 @@ const vm_mod = @import("../vm/vm.zig");
 const VM = vm_mod.VM;
 const rules = @import("../core/param_rules.zig");
 const Literal = rules.Literal;
-const ParamValue = @import("../core/param_values.zig").ParamValue;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const arguments = @import("arguments.zig");
 
@@ -98,39 +97,6 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     return result;
 }
 
-/// A host's value, `v`, as the script value `param()` reads: text as a String (read by the
-/// parameter's rules there), an array as an Array of such values, an object as a Map keyed by
-/// Symbols. Unrooted: the caller roots it before allocating again.
-pub fn scriptValueOf(vm: *VM, v: ParamValue) !value.Value {
-    switch (v) {
-        .number => |n| return value.Value.initNumber(n),
-        .boolean => |b| return value.Value.initBool(b),
-        .text => |t| return vm.allocateString(t),
-        .array => |items| {
-            var scope = HandleScope.init(vm);
-            defer scope.deinit();
-            const array = try scope.array();
-            try array.items.ensureTotalCapacity(vm.gc.trackingAllocator(), items.len);
-            // Each element is in the Array before another is made, which may collect
-            for (items) |item| array.items.appendAssumeCapacity(try scriptValueOf(vm, item));
-            return value.Value.initObj(&array.obj);
-        },
-        .object => |fields| {
-            var scope = HandleScope.init(vm);
-            defer scope.deinit();
-            const map = try scope.map();
-            for (fields) |field| {
-                const key = try vm.allocateSymbol(field.name);
-                vm.push(key);
-                const item = try scriptValueOf(vm, field.value);
-                vm.push(item);
-                try vm.mapSet(map, key, item);
-            }
-            return value.Value.initObj(&map.obj);
-        },
-    }
-}
-
 /// The value the host gave the parameter `key`, if it gave one.
 fn hostValue(vm: *VM, key: value.Value) ?value.Value {
     const params = vm.globals.get("params") orelse return null;
@@ -143,7 +109,7 @@ fn hostValue(vm: *VM, key: value.Value) ?value.Value {
 /// ArgumentError for one holding what no parameter's value is made of (a Solid, a Range).
 fn declarationPart(vm: *VM, arena: std.mem.Allocator, name: []const u8, comptime what: []const u8, v: value.Value) !Literal {
     var unheld: value.Value = undefined;
-    return literalOfAt(arena, v, rules.MAX_LITERAL_DEPTH, &unheld) catch |err| switch (err) {
+    return Literal.ofValue(arena, v, rules.MAX_LITERAL_DEPTH, &unheld) catch |err| switch (err) {
         error.Unheld => {
             if (unheld.isEqual(v)) return vm.fail(.ArgumentError, "parameter :{s}'s " ++ what ++ " is {s}; " ++ HELD, .{ name, described(vm, unheld) });
             return vm.fail(.ArgumentError, "parameter :{s}'s " ++ what ++ " holds {s}; " ++ HELD, .{ name, described(vm, unheld) });
@@ -154,45 +120,13 @@ fn declarationPart(vm: *VM, arena: std.mem.Allocator, name: []const u8, comptime
 
 fn literalOf(arena: std.mem.Allocator, v: value.Value, depth: usize) error{ Unheld, OutOfMemory }!Literal {
     var unheld: value.Value = undefined;
-    return literalOfAt(arena, v, depth, &unheld);
+    return Literal.ofValue(arena, v, depth, &unheld);
 }
 
-/// `v` as a Literal, its text borrowed; error.Unheld, `unheld` the value, for what no
-/// parameter's value is made of (or a Map keyed by what is no name, or values nested past
-/// `depth`).
-fn literalOfAt(arena: std.mem.Allocator, v: value.Value, depth: usize, unheld: *value.Value) error{ Unheld, OutOfMemory }!Literal {
-    if (v.isNumber()) return .{ .number = v.asNumber() };
-    if (v.isBool()) return .{ .boolean = v.asBool() };
-    if (v.isNil()) return .nil;
-    if (v.isString()) return .{ .string = v.asString().chars };
-    if (v.isSymbol()) return .{ .symbol = v.asSymbol().chars };
-    if (depth > 0 and v.isArray()) {
-        const items = v.asArray().items.items;
-        const out = try arena.alloc(Literal, items.len);
-        for (items, out) |item, *o| o.* = try literalOfAt(arena, item, depth - 1, unheld);
-        return .{ .array = out };
-    }
-    if (depth > 0 and v.isMap()) {
-        const map = v.asMap();
-        const out = try arena.alloc(Literal.Entry, map.count());
-        var entries = map.entries();
-        var i: usize = 0;
-        while (entries.next()) |entry| : (i += 1) {
-            const key = entry.key.nameChars() orelse {
-                unheld.* = entry.key;
-                return error.Unheld;
-            };
-            out[i] = .{ .key = key, .value = try literalOfAt(arena, entry.value, depth - 1, unheld) };
-        }
-        return .{ .map = out };
-    }
-    unheld.* = v;
-    return error.Unheld;
-}
-
-/// A Literal (a value `param()` read) as the script holds it: a Map keyed by Symbols.
-/// Unrooted: the caller roots it before allocating again.
-fn valueOf(vm: *VM, literal: Literal) !value.Value {
+/// A Literal (a value `param()` read, or a host's for a parameter, read there by its rules)
+/// as the script holds it: text as a String, a Map keyed by Symbols. Unrooted: the caller
+/// roots it before allocating again.
+pub fn valueOf(vm: *VM, literal: Literal) !value.Value {
     switch (literal) {
         .number => |n| return value.Value.initNumber(n),
         .boolean => |b| return value.Value.initBool(b),

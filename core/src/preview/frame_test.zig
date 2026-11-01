@@ -8,7 +8,7 @@ test "frame: a header and a body come apart as they went in, the header's fields
     var values: ParamValues = .{};
     defer values.deinit(testing.allocator);
     try values.put(testing.allocator, "width", .{ .number = 20 });
-    try values.put(testing.allocator, "material", .{ .text = "PLA" });
+    try values.put(testing.allocator, "material", .{ .string = "PLA" });
     const header: frame.Header = .{
         .document = "file:///work/box.kup",
         .kind = .@"3d",

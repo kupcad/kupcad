@@ -44,7 +44,7 @@ pub fn take(allocator: std.mem.Allocator, arg: []const u8, args: anytype, params
             }
             return .refused;
         };
-        try params.put(allocator, param.name, .{ .text = param.text });
+        try params.put(allocator, param.name, .{ .string = param.text });
         return .taken;
     }
     if (std.mem.eql(u8, arg, "-P") or std.mem.eql(u8, arg, "--params")) {

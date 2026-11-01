@@ -12,7 +12,8 @@
 
 const std = @import("std");
 const json_input = @import("json_input.zig");
-const fmtNumber = @import("value.zig").fmtNumber;
+const value_mod = @import("value.zig");
+const fmtNumber = value_mod.fmtNumber;
 
 /// How deep a value nests: a list of points, or of flat Maps, is two deep.
 pub const MAX_DEPTH = 2;
@@ -146,35 +147,167 @@ pub const Literal = union(enum) {
     /// JSON as a Literal, its text borrowed from `json`; null for what no value holds (a
     /// number past 1.8e308, arrays and objects nested past MAX_LITERAL_DEPTH).
     pub fn ofJson(arena: std.mem.Allocator, json: std.json.Value) !?Literal {
-        return ofJsonAt(arena, json, MAX_LITERAL_DEPTH);
+        var ignored: std.json.Value = undefined;
+        return ofJsonAt(arena, json, MAX_LITERAL_DEPTH, .held, &ignored);
     }
 
-    fn ofJsonAt(arena: std.mem.Allocator, json: std.json.Value, depth: usize) !?Literal {
-        switch (json) {
-            .integer => |n| return .{ .number = @floatFromInt(n) },
-            .float => |f| return .{ .number = f },
-            .number_string => |t| {
-                const f = std.fmt.parseFloat(f64, t) catch return null;
-                return if (std.math.isFinite(f)) .{ .number = f } else null;
+    /// JSON as a parameter's value (a `-P` file's, a host's): as `ofJson`, but nested `depth`
+    /// deep at most and with no null (a parameter takes none), `refused` receiving the part
+    /// that was refused.
+    pub fn ofJsonValue(arena: std.mem.Allocator, json: std.json.Value, depth: usize, refused: *std.json.Value) !?Literal {
+        return ofJsonAt(arena, json, depth, .refused, refused);
+    }
+
+    fn ofJsonAt(arena: std.mem.Allocator, json: std.json.Value, depth: usize, nil: enum { held, refused }, refused: *std.json.Value) !?Literal {
+        const taken: ?Literal = switch (json) {
+            .integer => |n| .{ .number = @floatFromInt(n) },
+            .float => |f| .{ .number = f },
+            // Digits too many for an i64; past 1.8e308 they are no number a script holds
+            .number_string => |t| blk: {
+                const f = std.fmt.parseFloat(f64, t) catch break :blk null;
+                break :blk if (std.math.isFinite(f)) .{ .number = f } else null;
             },
-            .bool => |b| return .{ .boolean = b },
-            .string => |t| return .{ .string = t },
-            .null => return .nil,
-            .array => |items| {
-                if (depth == 0) return null;
+            .bool => |b| .{ .boolean = b },
+            .string => |t| .{ .string = t },
+            .null => if (nil == .held) .nil else null,
+            .array => |items| blk: {
+                if (depth == 0) break :blk null;
                 const out = try arena.alloc(Literal, items.items.len);
-                for (items.items, out) |item, *o| o.* = try ofJsonAt(arena, item, depth - 1) orelse return null;
-                return .{ .array = out };
+                // A part refused deeper has named itself
+                for (items.items, out) |item, *o| o.* = try ofJsonAt(arena, item, depth - 1, nil, refused) orelse return null;
+                break :blk .{ .array = out };
             },
-            .object => |object| {
-                if (depth == 0) return null;
+            .object => |object| blk: {
+                if (depth == 0) break :blk null;
                 const out = try arena.alloc(Entry, object.count());
                 for (object.keys(), object.values(), out) |key, item, *o| {
-                    o.* = .{ .key = key, .value = try ofJsonAt(arena, item, depth - 1) orelse return null };
+                    o.* = .{ .key = key, .value = try ofJsonAt(arena, item, depth - 1, nil, refused) orelse return null };
                 }
-                return .{ .map = out };
+                break :blk .{ .map = out };
             },
+        };
+        if (taken == null) refused.* = json;
+        return taken;
+    }
+
+    /// A script value as a Literal, its text borrowed, nested `depth` deep at most;
+    /// error.Unheld, `unheld` the value, for what no parameter's value is made of (a Solid, a
+    /// Range, a Map keyed by what is no name, values nested deeper).
+    pub fn ofValue(arena: std.mem.Allocator, v: value_mod.Value, depth: usize, unheld: *value_mod.Value) error{ Unheld, OutOfMemory }!Literal {
+        if (v.isNumber()) return .{ .number = v.asNumber() };
+        if (v.isBool()) return .{ .boolean = v.asBool() };
+        if (v.isNil()) return .nil;
+        if (v.isString()) return .{ .string = v.asString().chars };
+        if (v.isSymbol()) return .{ .symbol = v.asSymbol().chars };
+        if (depth > 0 and v.isArray()) {
+            const items = v.asArray().items.items;
+            const out = try arena.alloc(Literal, items.len);
+            for (items, out) |item, *o| o.* = try ofValue(arena, item, depth - 1, unheld);
+            return .{ .array = out };
         }
+        if (depth > 0 and v.isMap()) {
+            const map = v.asMap();
+            const out = try arena.alloc(Entry, map.count());
+            var entries = map.entries();
+            var i: usize = 0;
+            while (entries.next()) |entry| : (i += 1) {
+                const key = entry.key.nameChars() orelse {
+                    unheld.* = entry.key;
+                    return error.Unheld;
+                };
+                out[i] = .{ .key = key, .value = try ofValue(arena, entry.value, depth - 1, unheld) };
+            }
+            return .{ .map = out };
+        }
+        unheld.* = v;
+        return error.Unheld;
+    }
+
+    /// Whether JSON holds it whole: no nil anywhere, every number finite.
+    pub fn jsonSafe(self: Literal) bool {
+        return switch (self) {
+            .number => |n| std.math.isFinite(n),
+            .nil => false,
+            .array => |items| for (items) |item| {
+                if (!item.jsonSafe()) break false;
+            } else true,
+            .map => |entries| for (entries) |entry| {
+                if (!entry.value.jsonSafe()) break false;
+            } else true,
+            .string, .symbol, .boolean => true,
+        };
+    }
+
+    /// Whether two values are the same throughout, arrays and maps element by element (`eql`
+    /// compares scalars alone, as a choice against what was given).
+    pub fn deepEql(a: Literal, b: Literal) bool {
+        return switch (a) {
+            .array => |items| b == .array and items.len == b.array.len and for (items, b.array) |x, y| {
+                if (!deepEql(x, y)) break false;
+            } else true,
+            .map => |entries| b == .map and entries.len == b.map.len and for (entries, b.map) |x, y| {
+                if (!std.mem.eql(u8, x.key, y.key) or !deepEql(x.value, y.value)) break false;
+            } else true,
+            else => a.eql(b),
+        };
+    }
+
+    /// A copy owned by `allocator`: its text, arrays and maps too (`free` takes it back).
+    pub fn copy(self: Literal, allocator: std.mem.Allocator) std.mem.Allocator.Error!Literal {
+        switch (self) {
+            .string => |t| return .{ .string = try allocator.dupe(u8, t) },
+            .symbol => |t| return .{ .symbol = try allocator.dupe(u8, t) },
+            .array => |items| {
+                const copies = try allocator.alloc(Literal, items.len);
+                var made: usize = 0;
+                errdefer {
+                    for (copies[0..made]) |c| c.free(allocator);
+                    allocator.free(copies);
+                }
+                for (items, copies) |item, *c| {
+                    c.* = try item.copy(allocator);
+                    made += 1;
+                }
+                return .{ .array = copies };
+            },
+            .map => |entries| {
+                const copies = try allocator.alloc(Entry, entries.len);
+                var made: usize = 0;
+                errdefer {
+                    for (copies[0..made]) |c| freeEntry(allocator, c);
+                    allocator.free(copies);
+                }
+                for (entries, copies) |entry, *c| {
+                    const key = try allocator.dupe(u8, entry.key);
+                    errdefer allocator.free(key);
+                    c.* = .{ .key = key, .value = try entry.value.copy(allocator) };
+                    made += 1;
+                }
+                return .{ .map = copies };
+            },
+            .number, .boolean, .nil => return self,
+        }
+    }
+
+    /// Frees what `copy` made.
+    pub fn free(self: Literal, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .string, .symbol => |t| allocator.free(t),
+            .array => |items| {
+                for (items) |item| item.free(allocator);
+                allocator.free(items);
+            },
+            .map => |entries| {
+                for (entries) |entry| freeEntry(allocator, entry);
+                allocator.free(entries);
+            },
+            .number, .boolean, .nil => {},
+        }
+    }
+
+    fn freeEntry(allocator: std.mem.Allocator, entry: Entry) void {
+        allocator.free(entry.key);
+        entry.value.free(allocator);
     }
 };
 
