@@ -8,13 +8,19 @@
 // each page it makes.
 
 import * as vscode from 'vscode';
-import { anotherDocument, characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
+import {
+  characterAt,
+  createPreviewHost,
+  errorText,
+  isViewerMessage,
+  pngBytes,
+} from '@kupcad/protocol';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptStem } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
-/** @import { HostMessage, ParamValues, Presets, SettingValue, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
+/** @import { HostMessage, ParamValues, Presets, SettingValue } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
 /** @import { ScriptValues } from '@kupcad/protocol' */
 
@@ -47,8 +53,8 @@ export class ViewerPanel {
   #panel;
   /** @type {PanelOptions} */
   #options;
-  /** @type {ShownDocument | null} */
-  #shown = null;
+  /** The page's host (@kupcad/protocol's), the messages done with VS Code's services. */
+  #host;
   /** @type {vscode.Disposable[]} */
   #disposables = [];
   /** The watch of the shown document's presets file. @type {vscode.Disposable | null} */
@@ -77,6 +83,20 @@ export class ViewerPanel {
   constructor(panel, options) {
     this.#panel = panel;
     this.#options = options;
+    this.#host = createPreviewHost({
+      server: options.server,
+      values: options.values,
+      warn: (text) => options.log.warn(text),
+      fail: (text) => options.log.error(text),
+      export: (uri, format) => void vscode.commands.executeCommand(EXPORT_COMMAND, uri, format),
+      screenshot: (png) => void this.#saveScreenshot(png),
+      reveal: (uri, line, column) => void this.#revealPlace(uri, line, column),
+      presets: () => void this.#tellPresets(),
+      applyPreset: (uri, name) => void this.#applyPreset(uri, name),
+      savePreset: (uri, values) => void this.#savePreset(uri, values),
+      keepSetting: (key, value) => this.#keepSetting(key, value),
+    });
+    this.#host.listen((message) => this.#post(message));
     this.#disposables.push(
       panel.webview.onDidReceiveMessage((message) => this.#receive(message)),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -93,7 +113,7 @@ export class ViewerPanel {
 
   /** The document shown, or null. */
   get shown() {
-    return this.#shown;
+    return this.#host.shown;
   }
 
   /** Whether the panel was closed. */
@@ -113,14 +133,13 @@ export class ViewerPanel {
   show(document) {
     if (!isScriptFile(document)) return;
     const uri = document.uri.toString();
-    if (this.#shown?.uri === uri) return;
-    this.#shown = { uri, name: fileName(document.uri) };
-    this.#panel.title = `${TITLE}: ${this.#shown.name}`;
+    if (this.#host.shown?.uri === uri) return;
+    const name = fileName(document.uri);
+    this.#panel.title = `${TITLE}: ${name}`;
     // Its presets file edited, made or removed outside the panel
     this.#presetsWatch?.dispose();
     this.#presetsWatch = new PresetsFile(document.uri).watch(() => void this.#tellPresets());
-    this.#tellDocument();
-    this.#ask(this.#options.server.preview(uri), 'show');
+    this.#host.show({ uri, name });
   }
 
   dispose() {
@@ -151,50 +170,7 @@ export class ViewerPanel {
       );
       return;
     }
-    this.#handle(message);
-  }
-
-  /** @param {ViewerMessage} message */
-  #handle(message) {
-    // The page acts on the document the panel shows, and on no other: a page naming another
-    // would have the host write beside it, build it or open it
-    const another = anotherDocument(message, this.#shown);
-    if (another !== null) {
-      this.#options.log.warn(`The viewer named ${another}, which it isn't shown: refused`);
-      return;
-    }
-    switch (message.type) {
-      case 'ready':
-        // A page loaded again (a new port, a reload) knows nothing yet
-        this.#tellDocument();
-        if (this.#shown) this.#ask(this.#options.server.preview(this.#shown.uri), 'ready');
-        return;
-      case 'setParams':
-        this.#options.values.set(message.uri, message.values);
-        this.#ask(this.#options.server.setParams(message.uri, message.values), 'setParams');
-        return;
-      case 'applyPreset':
-        void this.#applyPreset(message.uri, message.name);
-        return;
-      case 'savePreset':
-        void this.#savePreset(message.uri, message.values);
-        return;
-      case 'export':
-        void vscode.commands.executeCommand(EXPORT_COMMAND, message.uri, message.format);
-        return;
-      case 'screenshot':
-        void this.#saveScreenshot(message.png);
-        return;
-      case 'problem':
-        this.#options.log.warn(`The viewer: ${message.message}`);
-        return;
-      case 'reveal':
-        void this.#revealPlace(message.uri, message.line, message.column);
-        return;
-      case 'setting':
-        this.#keepSetting(message.key, message.value);
-        return;
-    }
+    this.#host.post(message);
   }
 
   /**
@@ -244,21 +220,11 @@ export class ViewerPanel {
     }
   }
 
-  /** Tells the page the document shown, the values its panel holds for it, and its presets. */
-  #tellDocument() {
-    this.#post({ type: 'document', document: this.#shown });
-    if (this.#shown && this.#options.values.has(this.#shown.uri)) {
-      const { uri } = this.#shown;
-      this.#post({ type: 'overrides', uri, values: this.#options.values.of(uri) });
-    }
-    void this.#tellPresets();
-  }
-
   /** Tells the page the names of the shown document's presets: none when its file can't be read (logged). */
   async #tellPresets() {
-    if (!this.#shown) return;
-    const { uri } = this.#shown;
-    const file = presetsFileOf(uri);
+    const shown = this.#host.shown;
+    if (!shown) return;
+    const file = presetsFileOf(shown.uri);
     /** @type {string[]} */
     let names = [];
     try {
@@ -266,7 +232,7 @@ export class ViewerPanel {
     } catch (error) {
       this.#options.log.warn(`${file.uri.path} can't be read: ${errorText(error)}`);
     }
-    this.#post({ type: 'presets', uri, names });
+    this.#host.tellPresets(shown.uri, names);
   }
 
   /**
@@ -286,10 +252,7 @@ export class ViewerPanel {
     }
     // Gone meanwhile, or a name no preset has (`constructor` is none)
     if (!Object.hasOwn(presets, name)) return;
-    const values = presets[name];
-    this.#options.values.set(uri, values);
-    this.#post({ type: 'overrides', uri, values });
-    this.#ask(this.#options.server.setParams(uri, values), 'applyPreset');
+    this.#host.setValues(uri, presets[name]);
   }
 
   /**
@@ -337,25 +300,17 @@ export class ViewerPanel {
     void this.#panel.webview.postMessage(message);
   }
 
-  /**
-   * Logs why a request to the server failed.
-   * @param {Promise<void>} request
-   * @param {string} what
-   */
-  #ask(request, what) {
-    request.catch((error) => this.#options.log.error(`${what}: ${errorText(error)}`));
-  }
-
   /** @param {string} png the image's bytes in base64 */
   async #saveScreenshot(png) {
-    const name = this.#shown ? scriptStem(vscode.Uri.parse(this.#shown.uri)) : 'model';
+    const shown = this.#host.shown;
+    const name = shown ? scriptStem(vscode.Uri.parse(shown.uri)) : 'model';
     const target = await vscode.window.showSaveDialog({
       defaultUri: vscode.Uri.joinPath(this.#folder(), `${name}.png`),
       filters: { 'PNG image': ['png'] },
     });
     if (!target) return;
     try {
-      await vscode.workspace.fs.writeFile(target, Buffer.from(png, 'base64'));
+      await vscode.workspace.fs.writeFile(target, pngBytes(png));
     } catch (error) {
       void vscode.window.showErrorMessage(
         `The screenshot wasn't saved in ${fileName(target)}: ${errorText(error)}`,
@@ -365,7 +320,8 @@ export class ViewerPanel {
 
   /** The folder of the document shown, else the workspace's. */
   #folder() {
-    if (this.#shown) return vscode.Uri.joinPath(vscode.Uri.parse(this.#shown.uri), '..');
+    const shown = this.#host.shown;
+    if (shown) return vscode.Uri.joinPath(vscode.Uri.parse(shown.uri), '..');
     return vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file('.');
   }
 

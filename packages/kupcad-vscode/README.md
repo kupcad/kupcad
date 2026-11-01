@@ -122,10 +122,11 @@ Two programs, built separately by Vite:
   restarts and stops one after another, the values every script was given sent again to a server
   that (re)started, the viewport's port from `kupcad/viewportReady`, and the server's
   `kupcad.preview` and `kupcad.setParams` commands), `viewer-panel.js` is the viewer's webview
-  panel (`ViewerPanel`: it follows the editor to a script in a file, tells the page the document
-  it shows and asks the server for its frame, gives the server the panel's values, saves a
-  screenshot, and shows the script at a place a run named, its column of UTF-8 bytes counted
-  as VS Code counts: `@kupcad/protocol`'s `characterAt`), `presets-file.js` reads (the file's format is `@kupcad/protocol`'s),
+  panel (`ViewerPanel`: it follows the editor to a script in a file and runs `@kupcad/protocol`'s
+  preview host over VS Code's services, which tells the page the document shown and asks the
+  server for its frame, gives the server the panel's values, saves a screenshot, and shows the
+  script at a place a run named, its column of UTF-8 bytes counted as VS Code counts:
+  `@kupcad/protocol`'s `characterAt`), `presets-file.js` reads (the file's format is `@kupcad/protocol`'s),
   writes and watches it (the panel lists, applies and saves them), `commands.js` exports (over
   `export.js`: `kupcad build`'s arguments, why a build failed; the formats are
   `@kupcad/protocol`'s `EXPORT_FORMATS`), `@kupcad/protocol`'s `ScriptValues` keeps the values

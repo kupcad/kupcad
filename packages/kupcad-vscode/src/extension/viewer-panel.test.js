@@ -195,7 +195,9 @@ describe('ViewerPanel', () => {
     webview.receive({ type: 'setParams', uri: PART_URI, values: { w: [null] } });
     expect(server.asked).toEqual([]);
     expect(log.lines[0]).toMatch(/^warn: The viewer sent a message of no known shape/);
-    await vi.waitFor(() => expect(log.lines).toContain('error: show: the server stopped'));
+    await vi.waitFor(() =>
+      expect(log.lines).toContain('error: Showing the script failed: the server stopped'),
+    );
   });
 
   it('acts on the document it shows alone: a message naming another is refused, and logged', async () => {

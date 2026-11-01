@@ -46,16 +46,14 @@ describe('the host', () => {
   it('tells the panel the script shown and its values, and has its frame sent', () => {
     const { host, show, services, told } = hostOn();
     show(PART);
-    expect(told).toEqual([
-      { type: 'document', document: { uri: PART.uri, name: PART.name } },
-      { type: 'overrides', uri: PART.uri, values: {} },
-    ]);
+    // Its values only once it was given some: the page starts each document with none
+    expect(told).toEqual([{ type: 'document', document: { uri: PART.uri, name: PART.name } }]);
     expect(services.server.preview).toHaveBeenCalledWith(PART.uri);
     // The same script again changes nothing; a panel just connected asks, and is told again
     show(PART);
     expect(services.server.preview).toHaveBeenCalledOnce();
     host.post({ type: 'ready' });
-    expect(told).toHaveLength(4);
+    expect(told).toHaveLength(2);
     expect(services.server.preview).toHaveBeenCalledTimes(2);
   });
 

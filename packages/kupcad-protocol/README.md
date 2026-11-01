@@ -68,6 +68,12 @@ client.sendRequest('workspace/executeCommand', {
   an array's as JSON); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
   names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
   message names when it isn't the one shown, which a host refuses.
+* `createPreviewHost(services)`: the host of a preview page, as the VS Code extension's panel
+  and the desktop app's page have one: `post` takes the page's messages, done through the
+  host's services (the server, an export, a screenshot, a place to show, the presets and
+  settings a host keeps), and `listen` gives it the host's (the document shown, its values,
+  presets, the log); `pngBytes(base64)`, a screenshot's bytes. Each host handled the messages
+  itself, and the two drifted.
 * `extensionOf(name)`, `stemOf(name)` and `isScriptName(name)`: a file name's (or path's) extension, lower
   case, its stem, and whether it is a script's (`.kup` in any case), split one way for every host;
   `formatOf(path)`, the export format a file name is written in, by its extension (`EXPORT_FORMATS`

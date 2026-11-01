@@ -1,21 +1,21 @@
 // The preview's host, in the page itself (@kupcad/ui's PreviewPanel talks to it as a ViewerHost):
-// what the panel asks is done with the language server, the dialogs and the native side's
-// export, and the panel is told the script shown, the values its parameters were given, and the
-// server's log, for its console.
+// @kupcad/protocol's preview host over the app's services, so what the panel asks is done with
+// the language server, the dialogs and the native side's export, and the panel is told the
+// script shown, the values its parameters were given, and the server's log, for its console.
 
 import {
-  anotherDocument,
   buildFailure,
+  createPreviewHost,
   EXPORT_FORMATS,
   errorText,
   formatOf,
   paramText,
-  ScriptValues,
+  pngBytes,
   stemOf,
   whyBuildFailed,
 } from '@kupcad/protocol';
 
-/** @import { ExportFormat, HostMessage, ParamValues, ViewerHost, ViewerMessage } from '@kupcad/protocol/types' */
+/** @import { ExportFormat, ParamValues, ViewerHost } from '@kupcad/protocol/types' */
 
 /**
  * A script the app shows: its document as the server knows it, and where it is.
@@ -45,21 +45,20 @@ import {
  * @param {HostServices} services
  */
 export function createHost(services) {
-  /** @type {Set<(message: HostMessage) => void>} */
-  const listeners = new Set();
-  /** The values each script's parameters were given, kept while the app runs. */
-  const values = new ScriptValues();
   /** @type {ShownScript | null} */
-  let shown = null;
-
-  /** @param {HostMessage} message */
-  const tell = (message) => {
-    for (const listener of listeners) listener(message);
-  };
-  const tellDocument = () => {
-    tell({ type: 'document', document: shown && { uri: shown.uri, name: shown.name } });
-    if (shown) tell({ type: 'overrides', uri: shown.uri, values: values.of(shown.uri) });
-  };
+  let script = null;
+  const host = createPreviewHost({
+    server: services.server,
+    warn: services.log,
+    fail: services.log,
+    export: (_uri, format) => {
+      if (script) report(exportScript(script, format), 'The export');
+    },
+    screenshot: (png) => report(saveScreenshot(png), 'Saving the screenshot'),
+    reveal: services.reveal,
+    // Presets aren't offered (PreviewPanel's `presets`), and the panel keeps its settings in
+    // the app's settings file itself (App's `settings`)
+  });
   /**
    * @param {Promise<unknown>} asked
    * @param {string} what
@@ -68,19 +67,19 @@ export function createHost(services) {
     void asked.catch((error) => services.log(`${what} failed: ${errorText(error)}`));
 
   /**
-   * Exports `script` in the format the page's menu chose, where the person says. The dialog is
+   * Exports `shown` in the format the page's menu chose, where the person says. The dialog is
    * of that format alone: one of every format offered no choice of them on macOS, whose save
    * panel lists the file types as one.
-   * @param {ShownScript} script
+   * @param {ShownScript} shown
    * @param {ExportFormat} chosen
    */
-  async function exportScript(script, chosen) {
-    const stem = stemOf(script.name);
+  async function exportScript(shown, chosen) {
+    const stem = stemOf(shown.name);
     // The page's message was checked to name one
     const choice = EXPORT_FORMATS.find(({ format }) => format === chosen);
     if (!choice) return;
     const output = await services.save({
-      title: `Export ${script.name} as ${choice.label}`,
+      title: `Export ${shown.name} as ${choice.label}`,
       defaultPath: `${stem}.${chosen}`,
       filters: [
         {
@@ -98,100 +97,48 @@ export function createHost(services) {
       );
       return;
     }
-    const params = Object.entries(values.of(script.uri)).map(
+    const params = Object.entries(host.values.of(shown.uri)).map(
       ([name, value]) => /** @type {[string, string]} */ ([name, paramText(value)]),
     );
     try {
-      await services.exportModel(script.path, output, format, params, services.memoryLimit());
+      await services.exportModel(shown.path, output, format, params, services.memoryLimit());
     } catch (error) {
       // kupcad is asked for its reason as JSON (the native side's build_args); its words are
       // read only when there is none
       const said = errorText(error);
       const why = buildFailure(said)?.message ?? whyBuildFailed(said) ?? said;
-      await services.tell(`${script.name} wasn't exported: ${why}`);
+      await services.tell(`${shown.name} wasn't exported: ${why}`);
     }
   }
 
   /** @param {string} png the image's bytes in base64 */
   async function saveScreenshot(png) {
-    const stem = shown ? stemOf(shown.name) : 'model';
+    const stem = script ? stemOf(script.name) : 'model';
     const path = await services.save({
       title: 'Save the screenshot',
       defaultPath: `${stem}.png`,
       filters: [{ name: 'PNG image', extensions: ['png'] }],
     });
-    if (path)
-      await services.writeFile(
-        path,
-        Uint8Array.from(atob(png), (c) => c.charCodeAt(0)),
-      );
+    if (path) await services.writeFile(path, pngBytes(png));
   }
-
-  /** @param {ViewerMessage} message */
-  function handle(message) {
-    // The panel acts on the script shown and on no other
-    const another = anotherDocument(message, shown);
-    if (another !== null) {
-      services.log(`The preview named ${another}, which it isn't shown: refused`);
-      return;
-    }
-    switch (message.type) {
-      case 'ready':
-        tellDocument();
-        if (shown) report(services.server.preview(shown.uri), 'Showing the script');
-        return;
-      case 'setParams':
-        values.set(message.uri, message.values);
-        report(services.server.setParams(message.uri, message.values), 'Giving the values');
-        return;
-      case 'export':
-        if (shown) report(exportScript(shown, message.format), 'The export');
-        return;
-      case 'screenshot':
-        report(saveScreenshot(message.png), 'Saving the screenshot');
-        return;
-      case 'problem':
-        services.log(`The preview: ${message.message}`);
-        return;
-      case 'reveal':
-        services.reveal(message.uri, message.line, message.column);
-        return;
-      // Presets aren't offered (PreviewPanel's `presets`), and the panel keeps its settings in
-      // the app's settings file itself (App's `settings`)
-      case 'applyPreset':
-      case 'savePreset':
-      case 'setting':
-        return;
-    }
-  }
-
-  /** @type {ViewerHost} */
-  const host = {
-    post: handle,
-    listen(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
 
   return {
-    host,
+    /** @type {ViewerHost} */
+    host: { post: host.post, listen: host.listen },
     /**
-     * Shows `script` from now on (none for null), and has its frame sent.
-     * @param {ShownScript | null} script
+     * Shows `next` from now on (none for null), and has its frame sent.
+     * @param {ShownScript | null} next
      */
-    show(script) {
-      if (script?.uri === shown?.uri) return;
-      shown = script;
-      tellDocument();
-      if (shown) report(services.server.preview(shown.uri), 'Showing the script');
+    show(next) {
+      script = next;
+      host.show(next ? { uri: next.uri, name: next.name } : null);
     },
     /**
      * Gives the panel's console `text`, lines of the server's log.
      * @param {string} text
      */
     log(text) {
-      tell({ type: 'log', text });
+      host.log(text);
     },
   };
 }
