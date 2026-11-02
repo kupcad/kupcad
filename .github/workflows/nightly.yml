@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
 
@@ -108,7 +108,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
 
@@ -137,7 +137,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
 
