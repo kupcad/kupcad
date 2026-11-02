@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@kupcad/protocol": "workspace:*",
-    "three": "^0.186.1",
+    "three": "^0.187.0",
     "three-mesh-bvh": "^0.9.17"
   },
   "devDependencies": {

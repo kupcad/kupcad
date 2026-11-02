@@ -289,11 +289,11 @@ importers:
         specifier: workspace:*
         version: link:../kupcad-protocol
       three:
-        specifier: ^0.186.1
-        version: 0.186.1
+        specifier: ^0.187.0
+        version: 0.187.0
       three-mesh-bvh:
         specifier: ^0.9.17
-        version: 0.9.17(three@0.186.1)
+        version: 0.9.17(three@0.187.0)
     devDependencies:
       '@kupcad/wasm':
         specifier: workspace:*
@@ -1879,8 +1879,8 @@ packages:
     peerDependencies:
       three: '>= 0.159.0'
 
-  three@0.186.1:
-    resolution: {integrity: sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==}
+  three@0.187.0:
+    resolution: {integrity: sha512-Qiu7R+Cmh8CstZsY1uJOSWnVlfo7ZtNLV7mF8Jltk3LB3AtDu9cRZlcnRKkAk8Y4z6KKw35z7Y7Urd7jWY8etA==}
 
   tinybench@6.2.2:
     resolution: {integrity: sha512-nIZ2N2dFpjBsg2hgitKu7mA+FvsIJuGJOwysRngmVRRmWgR/UyPjwJj8c/fT/dhm8EkHnF5EOogRf+0Z2qrimA==}
@@ -3401,11 +3401,11 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  three-mesh-bvh@0.9.17(three@0.186.1):
+  three-mesh-bvh@0.9.17(three@0.187.0):
     dependencies:
-      three: 0.186.1
+      three: 0.187.0
 
-  three@0.186.1: {}
+  three@0.187.0: {}
 
   tinybench@6.2.2: {}
 
