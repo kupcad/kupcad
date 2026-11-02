@@ -24,7 +24,7 @@
     "@tauri-apps/plugin-fs": "^2.7.1",
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-store": "^2.5.0",
-    "@tauri-apps/plugin-updater": "^2.14.0"
+    "@tauri-apps/plugin-updater": "^2.14.1"
   },
   "devDependencies": {
     "@codemirror/view": "^6.43.15",
