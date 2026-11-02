@@ -29,8 +29,8 @@
   "devDependencies": {
     "@changesets/cli": "3.0.3",
     "gltf-validator": "2.0.0-dev.3.10",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.90.0",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "catalog:",
