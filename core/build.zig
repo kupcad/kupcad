@@ -3,6 +3,7 @@ const std = @import("std");
 /// The example models in ../examples, built and fingerprinted by src/examples_test.zig
 /// (which also checks that every example there is listed here).
 const EXAMPLES = [_][]const u8{
+    "cable_clip",
     "coffee_mug",
     "cup",
     "fan_wheel",

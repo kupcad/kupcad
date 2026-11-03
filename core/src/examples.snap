@@ -1,9 +1,14 @@
+cable_clip
+  part 1 manifold volume=2108.980493164472 area=1155.7314901354057 min=-4,-21,3.25 max=4,21,11.25 genus=0 vertices=160 triangles=316
+  part 2 manifold volume=1989.240763322644 area=1690.9923991044398 min=-17.75,-6,0 max=17.75,6,13.374152500511958 genus=2 vertices=1092 triangles=2188
+  group 1 name=cable clip copies=1 material=#2e86abff
+  exports glb
 coffee_mug
   part 1 manifold volume=114164.58043441118 area=56434.157641676255 min=-40,-40,0 max=66.4,40,95 genus=1 vertices=15024 triangles=30048
   group 1 name=mug copies=1 material=#f4f1eaff
   exports glb
 cup
-  sketch 1 manifold area=1457.6294655467268 min=-39.8,-1.8 max=56.8,97.8 vertices=2083
+  sketch 1 manifold area=1457.6294655467261 min=-39.8,-1.8 max=56.8,97.8 vertices=2083
   exports svg
   drawn 1 id=cup fill=#000000 stroke=#000000
 fan_wheel
@@ -57,7 +62,7 @@ planetary_gearbox
 project_box
   part 1 manifold volume=6399.999999999998 area=8416 min=0,0,7 max=80,50,8.6 genus=0 vertices=8 triangles=12
   part 2 manifold volume=23708.007605635634 area=24541.289843611325 min=-3,-3,0 max=83,53,28.6 genus=3 vertices=1564 triangles=3136
-  part 3 manifold volume=9678.984437876787 area=11646.743061851872 min=-3,-3,55.6 max=83,53,60.6 genus=5 vertices=3042 triangles=6100
+  part 3 manifold volume=9678.984437876787 area=11646.743061851872 min=-3,-3,55.6 max=83,53,60.6 genus=5 vertices=3043 triangles=6102
   part 4 manifold volume=57.986940218968044 area=104.29920319243242 min=1.75,1.75,2.5999999999999996 max=6.25,6.25,10.399999999999999 genus=0 vertices=256 triangles=508
   part 5 manifold volume=57.98694021896806 area=104.29920319243243 min=73.75,1.75,2.5999999999999996 max=78.25,6.25,10.399999999999999 genus=0 vertices=256 triangles=508
   part 6 manifold volume=57.98694021896801 area=104.29920319243239 min=1.75,43.75,2.5999999999999996 max=6.25,48.25,10.399999999999999 genus=0 vertices=256 triangles=508
@@ -68,7 +73,7 @@ project_box
   exports glb
 screw_top_jar
   part 1 manifold volume=36523.76787174918 area=36947.99876967389 min=-32,-32,0 max=32,32,80 genus=0 vertices=15630 triangles=31256
-  part 2 manifold volume=17776.618785081784 area=15242.71924240176 min=-33.5,-33.5,89 max=33.5,33.5,107.3 genus=0 vertices=19430 triangles=38856
+  part 2 manifold volume=17776.618785081773 area=15242.719242401758 min=-33.5,-33.5,89 max=33.5,33.5,107.3 genus=0 vertices=19431 triangles=38858
   group 1 name=jar copies=1 material=#e8e4daff
   group 2 name=lid copies=1 material=#ff5f14ff
   exports glb
