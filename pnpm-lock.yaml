@@ -337,9 +337,6 @@ importers:
       '@kupcad/ui':
         specifier: workspace:*
         version: link:../kupcad-ui
-      '@kupcad/wasm':
-        specifier: workspace:*
-        version: link:../kupcad-wasm
       '@sigstore/bundle':
         specifier: 5.0.0
         version: 5.0.0

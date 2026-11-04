@@ -178,10 +178,10 @@ the window reloaded, which starts the language server again. The webview's own d
 are `Developer: Open Webview Developer Tools`; the host logs to the `KupCAD` output.
 
 The host's tests run against a stand-in for VS Code's API (`src/extension/testing/vscode.js`,
-which Vitest gives the code as `vscode`); the page's mount it on models the real core makes
-(`@kupcad/wasm`). `test:integration` runs the built extension in a real VS Code, the newest
-stable (downloaded into `.vscode-test/` the first time), on the `kupcad` in `core/zig-out` (or the
-one `KUPCAD` names; build it with `zig build` in `core/`): `test/run.js` starts VS Code on a copy
-of `test/workspace/`, which runs `test/suite.cjs` in its extension host. It checks a script's
+which Vitest gives the code as `vscode`); the page's, its bridge to the host, under jsdom.
+`test:integration` runs the built extension in a real VS Code, the newest stable (downloaded into
+`.vscode-test/` the first time), on the `kupcad` in `core/zig-out` (or the one `KUPCAD` names;
+build it with `zig build` in `core/`): `test/run.js` starts VS Code on a copy of
+`test/workspace/`, which runs `test/suite.cjs` in its extension host. It checks a script's
 diagnostics, formatting and hover, and that the viewer opens; on Linux it needs a display
 (`xvfb-run -a`, as CI runs it).
