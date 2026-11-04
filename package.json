@@ -17,11 +17,13 @@
     "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug --summary all",
     "test:wasm:safe": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=safe --summary all",
     "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all",
-    "check": "pnpm lint && pnpm fmt:check && pnpm -r check",
-    "lint": "oxlint --deny-warnings packages vitest.svelte.js",
-    "fmt": "oxfmt packages vitest.svelte.js && prettier --write 'packages/**/*.svelte'",
-    "fmt:check": "oxfmt --check packages vitest.svelte.js && prettier --check 'packages/**/*.svelte'",
+    "check": "pnpm lint && pnpm fmt:check && tsc -p scripts/jsconfig.json && pnpm -r check",
+    "lint": "oxlint --deny-warnings packages scripts vitest.svelte.js",
+    "fmt": "oxfmt packages scripts vitest.svelte.js && prettier --write 'packages/**/*.svelte'",
+    "fmt:check": "oxfmt --check packages scripts vitest.svelte.js && prettier --check 'packages/**/*.svelte'",
+    "bump": "node scripts/version.js bump",
     "test:packages": "pnpm -r test",
+    "test:scripts": "vitest run --dir scripts",
     "test:browser": "pnpm -r --if-present test:browser",
     "dev:vscode": "pnpm build:core:native && pnpm --filter kupcad-vscode build && code --extensionDevelopmentPath=\"$PWD/packages/kupcad-vscode\" examples",
     "dev:playground": "pnpm build:core:wasm && pnpm --filter @kupcad/wasm build && pnpm --filter @kupcad/playground dev",
@@ -29,12 +31,14 @@
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
+    "@types/node": "catalog:",
     "gltf-validator": "2.0.0-dev.3.10",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "catalog:",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "catalog:"
   }
 }

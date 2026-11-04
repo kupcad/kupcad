@@ -36,49 +36,21 @@ jobs:
         with:
           persist-credentials: false
 
-      # `kupcad --version` reads build.zig.zon: a tag that says otherwise would release
-      # binaries reporting another version
-      - name: The tag is the version in build.zig.zon
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .tool-versions
+
+      # Every file that carries the version has the tag's (scripts/version.js lists them): the
+      # core's build.zig.zon, which `kupcad --version` reads, the npm packages' (@kupcad/wasm's
+      # tests hold it to the module's), the VS Code extension's, the desktop app's, the Ruby gem's
+      # and the Python package's. A tag that says otherwise would release them under another.
+      - name: The tag is the version of the core, its packages and its bindings
         id: version
         run: |
-          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' core/build.zig.zon)
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME, but core/build.zig.zon has version $version: tag v$version, or change the version first"
-            exit 1
-          fi
+          version=${GITHUB_REF_NAME#v}
+          node scripts/version.js check "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      # The npm packages and the VS Code extension carry the core's version too (@kupcad/wasm's
-      # tests hold it to the module's): a tag that says otherwise would publish them under another
-      - name: The packages' versions are the tag's
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          status=0
-          for name in $NPM_PACKAGES vscode; do
-            version=$(jq -r .version "packages/kupcad-$name/package.json")
-            if [ "$version" != "$VERSION" ]; then
-              echo "::error::packages/kupcad-$name/package.json has version $version, the tag $VERSION"
-              status=1
-            fi
-          done
-          exit $status
-
-      # The Ruby gem and the Python package carry it as well, and the libkupcad of the release
-      - name: The bindings' versions are the tag's
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          status=0
-          gem=$(sed -n "s/^ *VERSION = '\(.*\)'$/\1/p" bindings/ruby/lib/kupcad/version.rb)
-          wheel=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' bindings/python/src/kupcad/_version.py)
-          for found in "bindings/ruby/lib/kupcad/version.rb:$gem" "bindings/python/src/kupcad/_version.py:$wheel"; do
-            if [ "${found##*:}" != "$VERSION" ]; then
-              echo "::error::${found%%:*} has version ${found##*:}, the tag $VERSION"
-              status=1
-            fi
-          done
-          exit $status
 
   build:
     name: Build ${{ matrix.platform }}

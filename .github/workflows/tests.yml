@@ -10,8 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  # The front ends (packages/): oxlint, oxfmt and tsc over every package, then their tests,
-  # @kupcad/wasm's against the module built from this commit.
+  # The front ends (packages/) and the repository's scripts (scripts/): oxlint, oxfmt and tsc over
+  # every package and the scripts, then their tests, @kupcad/wasm's against the module built from
+  # this commit.
   packages:
     name: Packages
     runs-on: ubuntu-latest
@@ -49,8 +50,10 @@ jobs:
           pnpm build:core:wasm
           pnpm -r build
 
-      - name: Run the packages' tests
-        run: pnpm test:packages
+      - name: Run the packages' and the scripts' tests
+        run: |
+          pnpm test:packages
+          pnpm test:scripts
 
       # Chromium for the browser tests, kept between runs while Playwright's version is the same
       - name: Read Playwright's version

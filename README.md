@@ -106,13 +106,13 @@ brew install binaryen wabt wasmtime
 wasm-opt -Oz --enable-bulk-memory-opt --enable-nontrapping-float-to-int core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
 ```
 
-To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints) and, to the
-same, the `version` of the npm packages and the VS Code extension
-(`packages/kupcad-{protocol,wasm,ui,editor,playground,files,vscode}`), the gem's `VERSION` in
-`bindings/ruby/lib/kupcad/version.rb` (then `bundle install` in `bindings/ruby/`, for its
-`Gemfile.lock`) and the Python package's `__version__` in `bindings/python/src/kupcad/_version.py`;
-commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
-The Release workflow checks the tag matches all of them, builds the CLI on a runner of each system and architecture it ships for
+To release, set the version with `pnpm bump patch` (or `minor` or `major`, counted as
+`npm version` counts them, or the version itself, as `pnpm bump 0.2.0-rc.1`):
+[scripts/version.js](scripts/version.js) writes it into every file that carries it (the core's
+`build.zig.zon`, what `kupcad --version` prints, the npm packages', the VS Code extension's, the
+desktop app's, the Ruby gem's and the Python package's), then has Bundler (`bundle lock`) update the
+gem's `Gemfile.lock`. Commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
+The Release workflow checks the tag matches all of them (`node scripts/version.js check 0.2.0`), builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
 built), builds the desktop app around each (`kupcad-desktop_<version>_<os>_<arch>`: a `.dmg`
 on macOS, `.deb` and `.rpm` on Linux and an `.AppImage` for x86_64, a `_setup.exe` on Windows),
