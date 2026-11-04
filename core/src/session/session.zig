@@ -349,8 +349,10 @@ pub const ScriptSession = struct {
 
     /// Step 3: Lazy Re-evaluation & Early Cutoff (Pull Phase)
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
-        // A `cancel` from before this evaluation doesn't stop it.
+        // A `cancel` from before this evaluation doesn't stop it, and its time limit, if any,
+        // is its own (`kupcad watch` gives each build the whole of it).
         self.vm.cancel_token.store(false, .release);
+        self.vm.restartTimeLimit();
         return self.evaluateModules(null);
     }
 

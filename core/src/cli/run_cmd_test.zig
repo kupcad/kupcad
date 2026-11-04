@@ -32,6 +32,19 @@ test "kupcad run: runs the script with its parameters and writes no model" {
     try testing.expectEqual(@as(usize, 1), entries);
 }
 
+test "kupcad run: --timeout ends a script that runs past it, as build's does" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = "while true\nend\ncube(1)\n" });
+    const input = try tmp.dir.realPathFileAlloc(testing.io, "forever.kup", testing.allocator);
+    defer testing.allocator.free(input);
+
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectEqual(run_cmd.Outcome.failure, try runWith(&.{ input, "--timeout", "100ms", "--errors", "json" }, &output));
+    try testing.expect(std.mem.find(u8, output.written(), "Time limit: the run took longer than 100 ms") != null);
+}
+
 test "kupcad run: a script that doesn't compile fails as build reports it, and so do bad arguments" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

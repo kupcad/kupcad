@@ -32,6 +32,7 @@ describe('createKupcad', () => {
       protocolVersion: PROTOCOL_VERSION,
       os: 'wasi',
       arch: 'wasm32',
+      formats: ['stl', 'glb', 'gltf', 'step', '3mf', 'obj', 'svg', 'dxf'],
     });
     const zon = readFileSync(new URL('../../../core/build.zig.zon', import.meta.url), 'utf8');
     expect(zon).toContain(`.version = "${PACKAGE.version}"`);

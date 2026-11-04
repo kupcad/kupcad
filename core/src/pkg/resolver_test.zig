@@ -254,6 +254,9 @@ test "Resolver: resolve propagates install errors instead of reporting success" 
 
 test "Resolver: a file: archive is read from the project, and may not leave it" {
     // A cloned project's manifest named any archive on the disk, and install copied it in
+    // The archives refused are warned of as they are
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();

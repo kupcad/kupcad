@@ -216,6 +216,8 @@ export interface VersionInfo {
   protocolVersion: number;
   os: string;
   arch: string;
+  /** The formats a model builds in, by the names `kupcad build -f` takes; from 0.1.10 */
+  formats?: string[];
 }
 
 /** The language server's `kupcad/viewportReady` notification. */

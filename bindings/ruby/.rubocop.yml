@@ -1,0 +1,45 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rspec
+  - rubocop-rake
+
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 3.2
+  Exclude:
+    - 'pkg/**/*'
+    - 'tmp/**/*'
+    - 'vendor/**/*'
+
+# Text is LF on every platform (the repository's .gitattributes), where `native` wants CRLF on Windows
+Layout/EndOfLine:
+  EnforcedStyle: lf
+
+Style/FrozenStringLiteralComment:
+  EnforcedStyle: always
+
+Style/StringLiterals:
+  EnforcedStyle: single_quotes
+
+Style/HashSyntax:
+  EnforcedShorthandSyntax: always
+
+Layout/LineLength:
+  Max: 120
+  AllowedPatterns: ['^ *# ']
+
+Metrics/MethodLength:
+  Max: 16
+
+# Kupcad.build's options are keywords, each with its default
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/AbcSize:
+  Max: 30
+
+RSpec/ExampleLength:
+  Max: 12
+
+RSpec/MultipleExpectations:
+  Max: 5

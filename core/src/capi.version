@@ -1,0 +1,6 @@
+/* libkupcad's exports on ELF systems (build.zig): the C API that include/kupcad.h declares,
+   and nothing else of what it is built from */
+{
+  global: kupcad_*;
+  local: *;
+};

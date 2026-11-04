@@ -3,6 +3,7 @@
 
 #if KUPCAD_TBB
 #include <memory>
+#include <new>
 #include <tbb/global_control.h>
 #endif
 
@@ -30,6 +31,20 @@ extern "C" {
         if (threads > 0) control = std::make_unique<tbb::global_control>(tbb::global_control::max_allowed_parallelism, threads);
 #else
         (void)threads;
+#endif
+    }
+
+    // Ends the calling thread's use of oneTBB, and its worker threads when no other thread
+    // uses them (the last build to end does): a host that builds may fork after (a preforking
+    // web server, multiprocessing), and the workers don't survive a fork, the child's first
+    // parallel algorithm waking threads that weren't there (it trapped). A thread that used
+    // them holds them until it ends, so ending them at the fork itself failed while one that
+    // had built was alive. The next build starts them again. Windows has no fork; the CLI never
+    // forks with workers it needs.
+    void kupcad_release_workers() {
+#if KUPCAD_TBB && !defined(_WIN32)
+        tbb::task_scheduler_handle handle{tbb::attach{}};
+        tbb::finalize(handle, std::nothrow);
 #endif
     }
 

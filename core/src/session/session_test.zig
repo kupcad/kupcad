@@ -134,6 +134,20 @@ test "ScriptSession: stores its own copy of the module output" {
     try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(second), 1e-6);
 }
 
+test "ScriptSession: each evaluation gets the whole time limit, however long the session waited" {
+    // `kupcad watch --timeout` sets it once and builds on every edit: the time it waits for
+    // one isn't a build's
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    session.vm.setTimeLimit(50);
+    try testing.io.sleep(.fromMilliseconds(60), .awake);
+    // Past the instructions between two looks at the clock
+    _ = try session.workspace.addModule("main.kup", "i = 0\nwhile i < 2000\n  i += 1\nend\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+}
+
 test "ScriptSession: evaluateWorkspace processes multi-file dependencies and propagates early cutoffs" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();

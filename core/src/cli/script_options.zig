@@ -1,13 +1,14 @@
 //! What `kupcad build`, `run` and `watch` read from their arguments: the script, the
 //! parameters' values (`-p`, `-P`), the memory limit (`--memory-limit`, else
-//! `KUPCAD_MEMORY_LIMIT` in `environ`), how a failure is told (`--errors`) and, for a command
-//! that writes the model, its exports.
+//! `KUPCAD_MEMORY_LIMIT` in `environ`), the time limit (`--timeout`, else `KUPCAD_TIMEOUT`),
+//! how a failure is told (`--errors`) and, for a command that writes the model, its exports.
 //! Read here once: each command had its own copy of the loop and its messages.
 
 const std = @import("std");
 const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
 const memory_flag = @import("memory_flag.zig");
+const time_flag = @import("time_flag.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const reporter_mod = @import("reporter.zig");
 const Reporter = reporter_mod.Reporter;
@@ -37,6 +38,9 @@ pub const ScriptOptions = struct {
     /// `--memory-limit`, else `KUPCAD_MEMORY_LIMIT`, which win over the project's own
     /// (memory_flag.zig); null when neither is given.
     memory_limit: ?usize = null,
+    /// `--timeout`, else `KUPCAD_TIMEOUT`, in milliseconds (time_flag.zig); null when neither
+    /// is given.
+    timeout_ms: ?u64 = null,
     /// `--errors`: how a failure is told (Reporter.fail).
     errors: reporter_mod.ErrorsFormat = .text,
 
@@ -58,6 +62,11 @@ pub const ScriptOptions = struct {
                 .other => {},
             }
             switch (memory_flag.take(arg, args, &options.memory_limit, reporter)) {
+                .taken => continue,
+                .refused => return options.refuse(allocator),
+                .other => {},
+            }
+            switch (time_flag.take(arg, args, &options.timeout_ms, reporter)) {
                 .taken => continue,
                 .refused => return options.refuse(allocator),
                 .other => {},
@@ -100,6 +109,7 @@ pub const ScriptOptions = struct {
         };
         if (settles and !try options.exports.settle(allocator, reporter)) return options.refuse(allocator);
         options.memory_limit = memory_flag.given(options.memory_limit, environ, reporter) catch return options.refuse(allocator);
+        options.timeout_ms = time_flag.given(options.timeout_ms, environ, reporter) catch return options.refuse(allocator);
         return options;
     }
 

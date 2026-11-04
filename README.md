@@ -8,6 +8,9 @@ for fast mesh CSG and previews, and the native B-Rep kernel (Locus, in progress)
 * Runtime, memory model, limits and sandboxing: [core/docs/architecture.md](core/docs/architecture.md)
 * Examples: [examples/](examples/)
 * VS Code extension: [packages/kupcad-vscode](packages/kupcad-vscode/README.md)
+* Ruby and Python: the [`kupcad` gem](bindings/ruby/README.md) and the
+  [`kupcad` package](bindings/python/README.md), over libkupcad, the core as a C library
+  ([core/include/kupcad.h](core/include/kupcad.h))
 
 ## Work in progress
 
@@ -33,6 +36,7 @@ git clone --recurse-submodules https://github.com/kupcad/kupcad
 pnpm install
 cd core && zig build                     # -> core/zig-out/bin/kupcad
 zig build -Doptimize=ReleaseFast         # release build
+zig build lib                            # -> core/zig-out/lib/libkupcad.*, include/kupcad.h
 ```
 
 ```sh
@@ -54,6 +58,8 @@ pnpm dev:desktop     # kupcad built and bundled, the desktop app (Tauri, needs R
 The [extension's README](packages/kupcad-vscode/README.md#development), the
 [playground's](packages/kupcad-playground/README.md#running-it) and the
 [desktop app's](packages/kupcad-desktop/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
+The Ruby gem and the Python package test against the library `zig build lib` builds: their
+READMEs' Development sections say how.
 
 ## Usage
 
@@ -65,6 +71,7 @@ kupcad build part.kup --bom bom.json               # also write the parts list (
 kupcad build part.kup -o part.3mf                  # 3MF: each part once, placed per copy, with colours
 kupcad build part.kup --split parts/               # one STL per part, as made, for printing
 kupcad build part.kup --memory-limit 2GB           # cap the script's memory (else KUPCAD_MEMORY_LIMIT, else the project's)
+kupcad build part.kup --timeout 30s                # cap the run's time (else KUPCAD_TIMEOUT; none without either)
 kupcad check part.kup                              # lint
 kupcad fmt part.kup                                # format
 kupcad watch part.kup -P bracket.json              # rebuild on change, with parameter values
@@ -85,6 +92,7 @@ and `kupcad --version` prints the version. Environment variables:
 | `KUPCAD_HOME` | Package cache directory, an absolute path (default `~/.kupcad`; empty is unset) |
 | `KUPCAD_VIEWPORT_PORT` | Preferred port for the LSP viewport WebSocket (default `9001`, falls back to a free port) |
 | `KUPCAD_MEMORY_LIMIT` | Most memory a script may hold, as `512MB` or `8GB`, when `--memory-limit` isn't given; wins over the project's `vm_memory_limit` (empty is unset) |
+| `KUPCAD_TIMEOUT` | Most time a run of `build`, `run` or `watch` may take, as `500ms`, `30s` or `2m` (a number alone is seconds), when `--timeout` isn't given (empty is unset) |
 
 ## Developer notes
 
@@ -98,9 +106,12 @@ brew install binaryen wabt wasmtime
 wasm-opt -Oz --enable-bulk-memory-opt --enable-nontrapping-float-to-int core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
 ```
 
-To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints) and the
-`version` of the npm packages (`packages/kupcad-{protocol,wasm,viewer,panels,editor,playground}`) to
-the same, commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
+To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints) and, to the
+same, the `version` of the npm packages and the VS Code extension
+(`packages/kupcad-{protocol,wasm,ui,editor,playground,files,vscode}`), the gem's `VERSION` in
+`bindings/ruby/lib/kupcad/version.rb` (then `bundle install` in `bindings/ruby/`, for its
+`Gemfile.lock`) and the Python package's `__version__` in `bindings/python/src/kupcad/_version.py`;
+commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
 The Release workflow checks the tag matches all of them, builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
 built), builds the desktop app around each (`kupcad-desktop_<version>_<os>_<arch>`: a `.dmg`

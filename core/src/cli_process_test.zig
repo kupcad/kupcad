@@ -307,6 +307,25 @@ test "kupcad: run in a subfolder of the project keeps the memory limit of its .k
     try testing.expect(std.mem.find(u8, run.stdout, "200000") == null);
 }
 
+test "kupcad: --timeout, else KUPCAD_TIMEOUT, ends a script that never does, and the run fails" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = "while true\nend\ncube(1)\n" });
+
+    const flagged = try kupcad(sb.path, &.{ "build", "forever.kup", "-o", "forever.stl", "--timeout", "100ms" });
+    defer flagged.deinit();
+    try testing.expectEqual(@as(u8, 1), flagged.code);
+    try testing.expect(std.mem.find(u8, flagged.stderr, "Time limit: the run took longer than 100 ms") != null);
+
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_TIMEOUT", "100ms");
+    const from_env = try kupcadIn(sb.path, &.{ "run", "forever.kup" }, &env);
+    defer from_env.deinit();
+    try testing.expectEqual(@as(u8, 1), from_env.code);
+    try testing.expect(std.mem.find(u8, from_env.stderr, "Time limit: the run took longer than 100 ms") != null);
+}
+
 test "kupcad: -p gives an Array or a Map parameter JSON, -P arrays, objects and null, and an unset one is nil" {
     var sb = try Sandbox.init();
     defer sb.deinit();

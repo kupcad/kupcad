@@ -4,6 +4,7 @@ const testing = std.testing;
 const version_cmd = @import("version_cmd.zig");
 const Args = @import("args.zig").Args;
 const frame = @import("../preview/frame.zig");
+const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 
 /// What `kupcad version` with `items` prints, and how it ends.
 fn ran(items: []const []const u8, out: *std.Io.Writer.Allocating) version_cmd.Outcome {
@@ -20,13 +21,16 @@ test "version: the text --version prints, or with --json the version, protocol a
     out.clearRetainingCapacity();
     try testing.expectEqual(.success, ran(&.{"--json"}, &out));
     // Parsed strictly: what a front end reads, field for field
-    const Info = struct { version: []const u8, protocolVersion: u32, os: []const u8, arch: []const u8 };
+    const Info = struct { version: []const u8, protocolVersion: u32, os: []const u8, arch: []const u8, formats: []const []const u8 };
     const parsed = try std.json.parseFromSlice(Info, testing.allocator, out.written(), .{});
     defer parsed.deinit();
     try testing.expectEqualStrings(@import("build_info").version, parsed.value.version);
     try testing.expectEqual(frame.PROTOCOL_VERSION, parsed.value.protocolVersion);
     try testing.expectEqualStrings(@tagName(builtin.os.tag), parsed.value.os);
     try testing.expectEqualStrings(@tagName(builtin.cpu.arch), parsed.value.arch);
+    // The names `build -f` takes, each
+    try testing.expectEqual(8, parsed.value.formats.len);
+    for (parsed.value.formats) |format| try testing.expect(ExportFormat.parse(format) != null);
 }
 
 test "version: an option it doesn't take fails, saying so" {

@@ -78,12 +78,20 @@ pub const Shapes = struct {
 
 /// `shapes` in `format`, as `options` say. error.NoGeometry when there is nothing to write
 /// (no triangle, or no point), for the caller to say where it was going; what the format
-/// can't hold (a Sketch in STL, a mesh in STEP) is raised in the VM.
+/// can't hold (a Sketch in STL, a mesh in STEP) is raised in the VM. error.Canceled, the run
+/// failed, when it ends past the run's time limit.
 pub fn exportShapes(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, shapes: Shapes) ![]const u8 {
-    return switch (format.dimension()) {
+    const bytes = try switch (format.dimension()) {
         .@"3d" => exportSolids(allocator, vm, format, options, shapes.solids, shapes.ghosts, shapes.title),
         .@"2d" => exportDrawing(allocator, vm, format, options, shapes.sketches, shapes.solids, shapes.paths),
     };
+    // The kernel computes a chain of booleans as it meshes them, in one call the evaluator's
+    // look at the clock before each node doesn't see: a run past its limit fails here
+    if (vm.pastDeadline()) {
+        allocator.free(bytes);
+        return vm.failTimeLimit();
+    }
+    return bytes;
 }
 
 /// `sketches`, `solids` and `paths` (rooted by the caller) as a drawing in `format`

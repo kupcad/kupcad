@@ -56,6 +56,9 @@ pub const materialLibraryPath = export_mod.materialLibraryPath;
 
 /// The preview frame previewScript gives: its format and the protocol version.
 pub const preview_frame = @import("preview/frame.zig");
+/// What a run tells its host besides its model: its warnings and what it printed
+/// (BuildOptions.report).
+pub const RunReport = @import("vm/run_report.zig").RunReport;
 
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
@@ -307,6 +310,16 @@ pub const BuildOptions = struct {
     /// Under the interactive limits (instructions and memory), as a preview runs: a build in
     /// a browser, where a page waits on it and a runaway script would hang its worker.
     interactive: bool = false,
+    /// The script heap's cap in bytes, as `--memory-limit` sets it; null for none (or the
+    /// interactive one).
+    memory_limit: ?usize = null,
+    /// The most time the run may take, in milliseconds (VM.setTimeLimit); null for no limit.
+    time_limit_ms: ?u64 = null,
+    /// When given (empty), the run's report is moved here, owned by the allocator passed to
+    /// buildModel: what the script printed, kept instead of written to stderr, and its
+    /// warnings, kept off the log. For a host that has no console of the script's (a library's
+    /// caller); deinit it.
+    report: ?*RunReport = null,
 };
 
 /// Runs `source` and exports the resulting geometry as `options.format`. Caller owns the
@@ -324,8 +337,20 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         return error.SyntaxError;
     }
 
-    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .engine = format.requiredEngine(), .interactive = options.interactive });
+    const keeps_report = options.report != null;
+    var vm = try runVm(allocator, io, &doc, .{
+        .vfs = options.vfs,
+        .params = options.params,
+        .engine = format.requiredEngine(),
+        .interactive = options.interactive,
+        .memory_limit = options.memory_limit,
+        .time_limit_ms = options.time_limit_ms,
+        .keep_output = keeps_report,
+        .muted = keeps_report,
+    });
     defer vm.deinit();
+    // Moved out before the VM goes (defers run last first), whether the build succeeds or not
+    defer if (options.report) |report| std.mem.swap(RunReport, report, &vm.report);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
@@ -333,11 +358,18 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     var comp = Compiler.forDocument(allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
-        // Reported like a syntax error: `cube = 5` used to give only "error.ProtectedSymbol".
-        if (diagnostic) |d| if (comp.errorDiagnostic()) |compile_error| {
-            d.message = formatDiagnostic(allocator, &doc.line_index, compile_error) catch null;
-        };
-        return err;
+        // The script's constants are its memory too: a limit too small for them fails the
+        // script as its run would, not the host
+        const limit = if (err == error.OutOfMemory) vm.gc.max_memory_limit else null;
+        if (diagnostic) |d| {
+            if (limit) |bytes| {
+                d.message = std.fmt.allocPrint(allocator, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes (compiling it)", .{bytes}) catch null;
+            } else if (comp.errorDiagnostic()) |compile_error| {
+                // Reported like a syntax error: `cube = 5` used to give only "error.ProtectedSymbol".
+                d.message = formatDiagnostic(allocator, &doc.line_index, compile_error) catch null;
+            }
+        }
+        return if (limit != null) error.MemoryLimitExceeded else err;
     };
 
     const result = vm.interpret(&out_chunk);
@@ -365,6 +397,8 @@ pub const RunSetup = struct {
     interactive: bool = false,
     /// The script heap's cap, in place of the interactive one (a host's --memory-limit).
     memory_limit: ?usize = null,
+    /// The most time the run may take, in milliseconds; null for no limit.
+    time_limit_ms: ?u64 = null,
     /// A preview's run: `CAD.preview?` true, what it prints kept for its frame.
     preview: bool = false,
     /// Its errors stay off the log: whoever runs it reads them (a tool, a hover, a test). A
@@ -372,6 +406,8 @@ pub const RunSetup = struct {
     muted: bool = false,
     /// What the script prints (puts, print, inspect, benchmark) is dropped.
     silent: bool = false,
+    /// What the script prints is kept in its report, as a preview's is, not written to stderr.
+    keep_output: bool = false,
 };
 
 /// A VM set up as `setup` says, its errors placed by `line_index` when there is one (which
@@ -385,13 +421,17 @@ pub fn newVm(allocator: std.mem.Allocator, io: std.Io, line_index: ?*const LineI
     vm.vfs = setup.vfs;
     vm.line_index = line_index;
     if (setup.muted) vm.mute_errors = true;
-    if (setup.interactive) vm.useInteractiveLimits();
-    if (setup.memory_limit) |bytes| vm.setMemoryLimit(bytes);
     vm.previewing = setup.preview;
     try registry.registerStandardLibrary(&vm);
+    if (setup.keep_output) vm.host.print_handler = registry.keepPrinted;
     if (setup.silent) vm.host.print_handler = null;
     if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);
+    // The limits last: they hold the script, not the standard library and the parameters
+    // set up for it (a cap below what those take failed the host's allocation instead)
+    if (setup.interactive) vm.useInteractiveLimits();
+    if (setup.memory_limit) |bytes| vm.setMemoryLimit(bytes);
+    vm.setTimeLimit(setup.time_limit_ms);
     return vm;
 }
 

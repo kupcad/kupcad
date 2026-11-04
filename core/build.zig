@@ -62,6 +62,10 @@ const manifold_sources = &[_][]const u8{
     "vendor/manifold/src/tree2d.cpp",
 };
 
+/// The vendored C and C++ libraries' symbols stay inside the binary: libkupcad exports the C
+/// API alone (include/kupcad.h), so a host's own TBB or HarfBuzz never meets ours.
+const HIDDEN_SYMBOLS: []const []const u8 = &.{"-fvisibility=hidden"};
+
 const tbb_sources = &[_][]const u8{
     "vendor/oneTBB/src/tbb/address_waiter.cpp",
     "vendor/oneTBB/src/tbb/allocator.cpp",
@@ -243,14 +247,14 @@ fn withCoreImports(b: *std.Build, own: []const std.Build.Module.Import, core: []
     return std.mem.concat(b.allocator, std.Build.Module.Import, &.{ own, core }) catch @panic("OOM");
 }
 
-/// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C and C++ libraries' asserts
-/// (Manifold has many, some costly) are compiled out of release binaries, as their own
-/// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
-/// Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every arithmetic
-/// check of UBSan and aborted the process on a finding. Debug builds keep both.
+/// `base` with HIDDEN_SYMBOLS, plus, outside Debug builds, -DNDEBUG, so the vendored C and
+/// C++ libraries' asserts (Manifold has many, some costly) are compiled out of release
+/// binaries, as their own release builds do, and -fno-sanitize=undefined: Zig compiles C and
+/// C++ with UBSan in Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every
+/// arithmetic check of UBSan and aborted the process on a finding. Debug builds keep both.
 fn vendoredFlags(b: *std.Build, optimize: std.lang.Optimize, base: []const []const u8) []const []const u8 {
-    if (optimize == .debug) return base;
-    return std.mem.concat(b.allocator, []const u8, &.{ base, &.{ "-DNDEBUG", "-fno-sanitize=undefined" } }) catch @panic("out of memory");
+    const release: []const []const u8 = if (optimize == .debug) &.{} else &.{ "-DNDEBUG", "-fno-sanitize=undefined" };
+    return std.mem.concat(b.allocator, []const u8, &.{ base, HIDDEN_SYMBOLS, release }) catch @panic("out of memory");
 }
 
 pub fn build(b: *std.Build) void {
@@ -392,7 +396,7 @@ pub fn build(b: *std.Build) void {
         const tbb_x86_64: []const []const u8 = if (is_x86_64) &.{ "-Xclang", "-target-feature", "-Xclang", "+waitpkg" } else &.{};
         native_mod.addCSourceFiles(.{
             .files = tbb_sources,
-            .flags = std.mem.concat(b.allocator, []const u8, &.{ tbb_common, tbb_macos, tbb_x86_64 }) catch @panic("OOM"),
+            .flags = std.mem.concat(b.allocator, []const u8, &.{ tbb_common, tbb_macos, tbb_x86_64, HIDDEN_SYMBOLS }) catch @panic("OOM"),
         });
         // oneTBB checks the signature of a DLL before it loads one (dynamic_link.cpp) and asks
         // for wintrust with `#pragma comment(lib)`, which only MSVC's linker reads. A Windows
@@ -409,7 +413,7 @@ pub fn build(b: *std.Build) void {
             "-DSQLITE_OS_OTHER=1", // Tells SQLite not to use POSIX/Windows OS calls on WASM
         }
     else
-        &.{ "-std=c99", "-DNDEBUG", "-DSQLITE_THREADSAFE=1", "-DSQLITE_OMIT_LOAD_EXTENSION" };
+        std.mem.concat(b.allocator, []const u8, &.{ &.{ "-std=c99", "-DNDEBUG", "-DSQLITE_THREADSAFE=1", "-DSQLITE_OMIT_LOAD_EXTENSION" }, HIDDEN_SYMBOLS }) catch @panic("OOM");
 
     native_mod.addCSourceFile(.{
         .file = b.path("vendor/sqlite/sqlite3.c"),
@@ -566,11 +570,15 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addOptions("build_info", build_info);
         b.installArtifact(exe);
 
+        // libkupcad, the core for a host in another language (../bindings): the C API that
+        // include/kupcad.h declares, in src/capi.zig. `zig build lib` installs it and its
+        // header; into lib/ on Windows too, where its kupcad.pdb would overwrite the CLI's in
+        // bin/.
         const lib = b.addLibrary(.{
             .linkage = .dynamic,
-            .name = "kupcad_lib",
+            .name = "kupcad",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/api.zig"),
+                .root_source_file = b.path("src/capi.zig"),
                 .target = target,
                 .optimize = optimize,
                 .imports = withCoreImports(b, &.{
@@ -580,7 +588,19 @@ pub fn build(b: *std.Build) void {
             }),
         });
         lib.root_module.addOptions("build_info", build_info);
-        b.installArtifact(lib);
+        lib.installHeader(b.path("include/kupcad.h"), "kupcad.h");
+        // ELF has one namespace for every library a process loads: there the C API alone is
+        // exported, and what HIDDEN_SYMBOLS leaves (oneTBB's API, which its __TBB_BUILD
+        // exports; libc++'s operator new and delete) is hidden too. Zig has no such list for
+        // Mach-O, where it needs none: a library's calls bind within it (two-level namespace),
+        // and either library's operator new pairs with its delete, both malloc's
+        if (target.result.ofmt == .elf) lib.setVersionScript(b.path("src/capi.version"));
+        const install_lib = b.addInstallArtifact(lib, .{
+            .dest_dir = .{ .override = .lib },
+            .pdb_dir = if (is_windows) .{ .override = .lib } else .default,
+        });
+        const lib_step = b.step("lib", "Build libkupcad, the C API (include/kupcad.h), into lib/ and include/");
+        lib_step.dependOn(&install_lib.step);
 
         const run_step = b.step("run", "Run the app");
         const run_cmd = b.addRunArtifact(exe);
@@ -654,8 +674,31 @@ pub fn build(b: *std.Build) void {
         });
         const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
 
+        // The C API's tests call it through include/kupcad.h, translated: a header that says
+        // other than the exports do fails to compile, or fails them
+        const capi_header = b.addTranslateC(.{
+            .root_source_file = b.path("include/kupcad.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        const capi_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/capi_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = withCoreImports(b, &.{
+                    .{ .name = "kupcad", .module = mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
+                    .{ .name = "kupcad_h", .module = capi_header.createModule() },
+                }, module_imports),
+            }),
+            .filters = test_filters,
+        });
+        capi_tests.root_module.addOptions("build_info", build_info);
+        const run_capi_tests = b.addRunArtifact(capi_tests);
+
         const test_step = b.step("test", "Run tests");
-        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests }) |run| {
+        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests, run_capi_tests }) |run| {
             test_step.dependOn(&run.step);
         }
 
