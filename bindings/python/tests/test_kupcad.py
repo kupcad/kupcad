@@ -165,22 +165,25 @@ def test_the_timeout_stops_a_script_that_never_ends() -> None:
 
 
 def test_other_threads_run_while_it_builds() -> None:
-    ticks = 0
+    ticks: list[float] = []
     building = True
 
     def tick() -> None:
-        nonlocal ticks
         while building:
-            ticks += 1
+            ticks.append(time.monotonic())
             time.sleep(0.01)
 
     ticker = threading.Thread(target=tick)
     ticker.start()
+    started = time.monotonic()
     with pytest.raises(kupcad.ScriptError):
         kupcad.build(FOREVER, timeout=0.3)
+    ended = time.monotonic()
     building = False
     ticker.join()
-    assert ticks > 10
+    # A build holding the GIL would let the ticker tick only as the build began or ended, however
+    # often a runner's timers wake it
+    assert any(started + 0.05 < at < ended - 0.05 for at in ticks)
 
 
 def test_threads_build_at_once() -> None:

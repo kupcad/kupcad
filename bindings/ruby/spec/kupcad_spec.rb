@@ -168,16 +168,16 @@ RSpec.describe Kupcad do
     end
 
     it 'lets other threads run while it builds' do
-      ticks = 0
-      ticker = Thread.new do
-        loop do
-          ticks += 1
-          sleep 0.01
-        end
+      builder = Thread.new do
+        described_class.build(forever, timeout: 0.3)
+      rescue Kupcad::ScriptError => e
+        e
       end
-      expect { described_class.build(forever, timeout: 0.3) }.to raise_error(Kupcad::ScriptError)
-      ticker.kill
-      expect(ticks).to be > 10
+      # A thread waiting outside Ruby with the GVL let go shows as "sleep": seeing the builder so,
+      # this thread ran while it built. A build holding the GVL would show it running, then ended.
+      Thread.pass while (status = builder.status) == 'run'
+      expect(status).to eq('sleep')
+      expect(builder.value).to be_a(Kupcad::ScriptError)
     end
 
     it 'builds on several threads at once' do
