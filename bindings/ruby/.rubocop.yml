@@ -11,6 +11,10 @@ AllCops:
     - 'tmp/**/*'
     - 'vendor/**/*'
 
+# Text is LF on every platform (the repository's .gitattributes), where `native` wants CRLF on Windows
+Layout/EndOfLine:
+  EnforcedStyle: lf
+
 Style/FrozenStringLiteralComment:
   EnforcedStyle: always
 
