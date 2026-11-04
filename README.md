@@ -8,6 +8,9 @@ for fast mesh CSG and previews, and the native B-Rep kernel (Locus, in progress)
 * Runtime, memory model, limits and sandboxing: [core/docs/architecture.md](core/docs/architecture.md)
 * Examples: [examples/](examples/)
 * VS Code extension: [packages/kupcad-vscode](packages/kupcad-vscode/README.md)
+* Ruby and Python: the [`kupcad` gem](bindings/ruby/README.md) and the
+  [`kupcad` package](bindings/python/README.md), over libkupcad, the core as a C library
+  ([core/include/kupcad.h](core/include/kupcad.h))
 
 ## Work in progress
 
@@ -33,6 +36,7 @@ git clone --recurse-submodules https://github.com/kupcad/kupcad
 pnpm install
 cd core && zig build                     # -> core/zig-out/bin/kupcad
 zig build -Doptimize=ReleaseFast         # release build
+zig build lib                            # -> core/zig-out/lib/libkupcad.*, include/kupcad.h
 ```
 
 ```sh
@@ -54,6 +58,8 @@ pnpm dev:desktop     # kupcad built and bundled, the desktop app (Tauri, needs R
 The [extension's README](packages/kupcad-vscode/README.md#development), the
 [playground's](packages/kupcad-playground/README.md#running-it) and the
 [desktop app's](packages/kupcad-desktop/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
+The Ruby gem and the Python package test against the library `zig build lib` builds: their
+READMEs' Development sections say how.
 
 ## Usage
 

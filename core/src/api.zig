@@ -56,6 +56,9 @@ pub const materialLibraryPath = export_mod.materialLibraryPath;
 
 /// The preview frame previewScript gives: its format and the protocol version.
 pub const preview_frame = @import("preview/frame.zig");
+/// What a run tells its host besides its model: its warnings and what it printed
+/// (BuildOptions.report).
+pub const RunReport = @import("vm/run_report.zig").RunReport;
 
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
@@ -307,6 +310,14 @@ pub const BuildOptions = struct {
     /// Under the interactive limits (instructions and memory), as a preview runs: a build in
     /// a browser, where a page waits on it and a runaway script would hang its worker.
     interactive: bool = false,
+    /// The script heap's cap in bytes, as `--memory-limit` sets it; null for none (or the
+    /// interactive one).
+    memory_limit: ?usize = null,
+    /// When given (empty), the run's report is moved here, owned by the allocator passed to
+    /// buildModel: what the script printed, kept instead of written to stderr, and its
+    /// warnings, kept off the log. For a host that has no console of the script's (a library's
+    /// caller); deinit it.
+    report: ?*RunReport = null,
 };
 
 /// Runs `source` and exports the resulting geometry as `options.format`. Caller owns the
@@ -324,8 +335,19 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         return error.SyntaxError;
     }
 
-    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .engine = format.requiredEngine(), .interactive = options.interactive });
+    const keeps_report = options.report != null;
+    var vm = try runVm(allocator, io, &doc, .{
+        .vfs = options.vfs,
+        .params = options.params,
+        .engine = format.requiredEngine(),
+        .interactive = options.interactive,
+        .memory_limit = options.memory_limit,
+        .keep_output = keeps_report,
+        .muted = keeps_report,
+    });
     defer vm.deinit();
+    // Moved out before the VM goes (defers run last first), whether the build succeeds or not
+    defer if (options.report) |report| std.mem.swap(RunReport, report, &vm.report);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
@@ -372,6 +394,8 @@ pub const RunSetup = struct {
     muted: bool = false,
     /// What the script prints (puts, print, inspect, benchmark) is dropped.
     silent: bool = false,
+    /// What the script prints is kept in its report, as a preview's is, not written to stderr.
+    keep_output: bool = false,
 };
 
 /// A VM set up as `setup` says, its errors placed by `line_index` when there is one (which
@@ -389,6 +413,7 @@ pub fn newVm(allocator: std.mem.Allocator, io: std.Io, line_index: ?*const LineI
     if (setup.memory_limit) |bytes| vm.setMemoryLimit(bytes);
     vm.previewing = setup.preview;
     try registry.registerStandardLibrary(&vm);
+    if (setup.keep_output) vm.host.print_handler = registry.keepPrinted;
     if (setup.silent) vm.host.print_handler = null;
     if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);

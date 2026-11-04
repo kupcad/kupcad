@@ -6,27 +6,14 @@
 # holding that build's kupcad or kupcad.exe, and its debug information in symbols/. Each becomes
 # OUT/kupcad_VERSION_<os>_<arch> (.zip for Windows, .tar.gz for the rest), with LICENSE,
 # README.md, THIRD_PARTY_NOTICES.md and the license texts that file names, at the paths it
-# gives, and its symbols OUT/kupcad_VERSION_<os>_<arch>_symbols; OUT/checksums.txt has the
-# SHA-256 of each.
+# gives (collect-licenses.sh), and its symbols OUT/kupcad_VERSION_<os>_<arch>_symbols;
+# OUT/checksums.txt has the SHA-256 of each.
 # Run from the repository root, with the vendored libraries' submodules checked out.
 set -euo pipefail
 
 version=$1
 binaries=$2
 out=$3
-
-# The license files of the vendored libraries, and where THIRD_PARTY_NOTICES.md says they are
-licenses=(
-  "core/vendor/manifold/LICENSE:manifold"
-  "core/vendor/oneTBB/LICENSE.txt:onetbb"
-  "core/vendor/oneTBB/third-party-programs.txt:onetbb"
-  "core/vendor/draco/LICENSE:draco"
-  "core/vendor/eigen/LICENSE:eigen"
-  "core/vendor/tatfi/LICENSE:tatfi"
-  "core/vendor/harfbuzz/COPYING:harfbuzz"
-  "core/vendor/harfbuzz/src/ms-use/COPYING:harfbuzz/ms-use"
-  "core/vendor/sheenbidi/LICENSE:sheenbidi"
-)
 
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
@@ -37,7 +24,7 @@ for build in "$binaries"/*/; do
   platform=$(basename "$build")
   name="kupcad_${version}_${platform}"
   dir="$stage/$name"
-  mkdir -p "$dir/licenses"
+  mkdir -p "$dir"
 
   binary=$(find "$build" -maxdepth 1 -type f \( -name kupcad -o -name kupcad.exe \) | head -n 1)
   if [ -z "$binary" ]; then
@@ -47,14 +34,8 @@ for build in "$binaries"/*/; do
   cp "$binary" "$dir/"
   chmod +x "$dir/$(basename "$binary")"
 
-  cp LICENSE README.md core/THIRD_PARTY_NOTICES.md "$dir/"
-  cp core/licenses/* "$dir/licenses/"
-  for entry in "${licenses[@]}"; do
-    mkdir -p "$dir/licenses/${entry#*:}"
-    cp "${entry%%:*}" "$dir/licenses/${entry#*:}/"
-  done
-  mkdir -p "$dir/licenses/eigen/LICENSES"
-  cp core/vendor/eigen/LICENSES/* "$dir/licenses/eigen/LICENSES/"
+  cp LICENSE README.md "$dir/"
+  core/scripts/collect-licenses.sh "$dir"
 
   # The files at the archive's top level, by name (no "./" before each)
   if [[ $platform == windows_* ]]; then

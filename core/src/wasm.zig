@@ -1,14 +1,12 @@
-//! The exports of the WebAssembly build, over `api.zig`: `format_code_wasm`, `check_code_wasm`,
-//! `extract_params_wasm`, `build_model_wasm` and `preview_wasm` (a build and a preview read
-//! the files given with the call, packed as vfs/packed.zig has them, from an in-memory VFS of
-//! that call alone), plus `version_wasm`, `wasm_alloc`/`wasm_free` and `get_last_error`.
+//! The exports of the WebAssembly build, over `embed.zig` (which the C library, capi.zig,
+//! shares): `format_code_wasm`, `check_code_wasm`, `extract_params_wasm`, `build_model_wasm`
+//! and `preview_wasm` (a build and a preview read the files given with the call, packed as
+//! vfs/packed.zig has them, from an in-memory VFS of that call alone), plus `version_wasm`,
+//! `wasm_alloc`/`wasm_free` and `get_last_error`.
 
 const std = @import("std");
-const api = @import("api.zig");
+const embed = @import("embed.zig");
 const version = @import("version.zig");
-const lint_finding = @import("tools/lint/finding.zig");
-const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
-const packed_files = @import("vfs/packed.zig");
 
 // Use the thread-safe C allocator provided by wasi-libc
 // This prevents spinlock deadlocks in multi-threaded wasm and gracefully
@@ -62,99 +60,6 @@ pub export fn wasm_free(ptr: [*]u8, len: usize) void {
     allocator.free(ptr[0..len]);
 }
 
-/// The files a call was given (vfs/packed.zig's buffer; empty for none), as the file system
-/// its script reads and writes: in memory, this call's alone, so no script sees another's
-/// files, and a script's exports go nowhere. The caller deinits it.
-fn filesOf(files: []const u8) !MemoryVfs {
-    var vfs = MemoryVfs.init(allocator);
-    errdefer vfs.deinit();
-    try packed_files.unpack(vfs.vfs(), files);
-    return vfs;
-}
-
-// --- Inner Zig Native Functions ---
-
-fn inner_format(source: []const u8) ![]const u8 {
-    // Return the raw slice directly. No null-termination needed
-    // because we pass the explicit length back to JavaScript.
-    return try api.formatCode(allocator, source, .{});
-}
-
-/// The findings of `source` as a JSON array, each in the shape `check --format json` gives
-/// it (tools/lint/finding.zig) without a path: syntax errors among them.
-fn inner_check(source: []const u8) ![]const u8 {
-    const diags = try api.checkCode(allocator, wasmIo(), source, .{});
-    defer api.freeDiagnostics(allocator, diags);
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const line_index = try api.LineIndex.init(arena.allocator(), source);
-    const findings = try arena.allocator().alloc(lint_finding.Finding, diags.len);
-    for (diags, findings) |d, *f| f.* = try .place(arena.allocator(), &line_index, d);
-
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer out.deinit();
-    try std.json.Stringify.value(findings, .{}, &out.writer);
-    return try out.toOwnedSlice();
-}
-
-fn inner_extract_params(source: []const u8) ![]const u8 {
-    var doc = try api.Document.parse(allocator, source);
-    defer doc.deinit();
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const schema = try api.extractSchema(arena.allocator(), &doc);
-
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer out.deinit();
-
-    try out.writer.print("{f}", .{std.json.fmt(schema, .{})});
-    return try out.toOwnedSlice();
-}
-
-fn inner_build_model(source: []const u8, params_json: []const u8, files: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
-    // The Io is only used for clocks/stdio by stdlib diagnostics and the debugger: the files
-    // are the call's own.
-    const export_format = api.ExportFormat.parse(format) orelse return error.UnsupportedFormat;
-    var params: api.ParamValues = .{};
-    defer params.deinit(allocator);
-    if (try putParams(&params, params_json)) |refusal| {
-        diagnostic.message = refusal;
-        return error.InvalidParams;
-    }
-    var vfs = try filesOf(files);
-    defer vfs.deinit();
-    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = vfs.vfs(), .diagnostic = diagnostic, .interactive = true });
-}
-
-fn inner_preview(source: []const u8, params_json: []const u8, files: []const u8) ![]const u8 {
-    var params: api.ParamValues = .{};
-    defer params.deinit(allocator);
-    if (try putParams(&params, params_json)) |refusal| {
-        defer allocator.free(refusal);
-        return api.previewFailure(allocator, source, refusal);
-    }
-    var vfs = try filesOf(files);
-    defer vfs.deinit();
-    return api.previewScript(allocator, wasmIo(), source, .{ .params = &params, .vfs = vfs.vfs() });
-}
-
-/// Sets `params` from `json`, a JSON object of names and values (empty for none). Null when
-/// it took them; else why it refused them, owned, told apart from a script's own errors:
-/// "parameters: line 1, column 3: invalid JSON".
-fn putParams(params: *api.ParamValues, json: []const u8) !?[]u8 {
-    if (json.len == 0) return null;
-    var why: ?[]u8 = null;
-    params.putJson(allocator, json, &why) catch |err| {
-        defer if (why) |w| allocator.free(w);
-        if (err != error.InvalidParams) return err;
-        return try allocator.print("parameters: {s}", .{why orelse "they aren't one JSON object of names and values"});
-    };
-    return null;
-}
-
 // --- WASM Export Boundaries ---
 
 /// What the module says of itself (version.zig), as `kupcad version --json` prints it:
@@ -175,7 +80,9 @@ pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_l
     std.debug.assert(@intFromPtr(source_ptr) != 0);
 
     const source = source_ptr[0..source_len];
-    if (inner_format(source)) |res| {
+    var diagnostic: embed.Diagnostic = .{};
+    defer diagnostic.deinit(allocator);
+    if (embed.format(allocator, source, &diagnostic)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
@@ -187,7 +94,7 @@ pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_l
 
 pub export fn extract_params_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
     const source = source_ptr[0..source_len];
-    if (inner_extract_params(source)) |res| {
+    if (embed.params(allocator, source)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |_| {
@@ -199,7 +106,7 @@ pub export fn extract_params_wasm(source_ptr: [*]const u8, source_len: usize, ou
 
 pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
     const source = source_ptr[0..source_len];
-    if (inner_check(source)) |res| {
+    if (embed.check(allocator, wasmIo(), source)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |_| {
@@ -224,7 +131,7 @@ pub export fn preview_wasm(
     files_len: usize,
     out_len: *usize,
 ) ?[*]const u8 {
-    if (inner_preview(source_ptr[0..source_len], params_ptr[0..params_len], files_ptr[0..files_len])) |res| {
+    if (embed.preview(allocator, wasmIo(), source_ptr[0..source_len], params_ptr[0..params_len], files_ptr[0..files_len])) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
@@ -256,10 +163,13 @@ pub export fn build_model_wasm(
     const files = files_ptr[0..files_len];
     const format = format_ptr[0..format_len];
 
-    var diagnostic: api.BuildDiagnostic = .{};
+    var diagnostic: embed.Diagnostic = .{};
     defer diagnostic.deinit(allocator);
 
-    if (inner_build_model(source, params, files, format, use_draco, &diagnostic)) |res| {
+    // Under the interactive limits: a page waits on the build, and a runaway script would hang
+    // its worker
+    const options: embed.Build = .{ .format = format, .params = params, .files = files, .draco = use_draco, .interactive = true };
+    if (embed.build(allocator, wasmIo(), source, options, &diagnostic)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {

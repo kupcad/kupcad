@@ -23,8 +23,9 @@ fn defaultPrintHandler(vm: *VM, message: []const u8) void {
 }
 
 /// What a preview's run prints is kept in its report, for its frame (the console beside the
-/// model), not written where no one reads it (a language server's worker's stderr).
-fn keepPrinted(vm: *VM, message: []const u8) void {
+/// model), not written where no one reads it (a language server's worker's stderr); so is a
+/// run's whose host asks (api.RunSetup.keep_output).
+pub fn keepPrinted(vm: *VM, message: []const u8) void {
     vm.report.addOutput(vm.allocator, message) catch return;
 }
 

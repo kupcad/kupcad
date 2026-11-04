@@ -1,0 +1,7 @@
+/pkg/
+/tmp/
+/.bundle/
+/.rspec_status
+/.rubocop_cache/
+# The library a platform gem carries (rake native:gem puts it in the gem, not here)
+/lib/kupcad/native/

@@ -10,6 +10,18 @@ updates:
         patterns:
           - '*'
 
+  # The Ruby gem's development tools (bindings/ruby/Gemfile.lock)
+  - package-ecosystem: bundler
+    directory: /bindings/ruby
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      development:
+        patterns:
+          - '*'
+
   - package-ecosystem: npm
     directory: /
     schedule:

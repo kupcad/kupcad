@@ -1,8 +1,10 @@
 # Third-party notices
 
-The `kupcad` binary is KupCAD's own code (`LICENSE`) built together with the software and
-fonts below. Each is used under its own license, whose text is in the `licenses` folder of a
-release archive at the path given (in the repository: under `core/vendor/` and `core/licenses/`).
+The `kupcad` binary, and libkupcad (the core as a C library, which the Ruby gem and the Python
+wheels carry), are KupCAD's own code (`LICENSE`) built together with the software and fonts
+below. Each is used under its own license, whose text is in the `licenses` folder beside this
+file in a release archive, a gem or a wheel, at the path given (in the repository: under
+`core/vendor/` and `core/licenses/`).
 
 | Component | Used for | License | Copyright | License text |
 |---|---|---|---|---|

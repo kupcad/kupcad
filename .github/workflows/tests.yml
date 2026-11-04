@@ -77,6 +77,60 @@ jobs:
           fi
           pnpm test:browser
 
+  # libkupcad, the core as a C library (core/include/kupcad.h), under the Ruby gem and the
+  # Python package (bindings/): each one's tests on the library built from this commit, and its
+  # lint. The C API's own tests run with the core's (core/src/capi_test.zig); the release tests
+  # each platform's gem and wheel on that platform.
+  bindings:
+    name: Bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: bindings-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        with:
+          zig-version-file: .tool-versions
+
+      # ReleaseSafe, as the release builds it: the examples the bindings build run at its speed
+      - name: Build libkupcad
+        working-directory: core
+        run: zig build lib -Doptimize=ReleaseSafe
+
+      - name: Install Ruby
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          working-directory: bindings/ruby
+          bundler-cache: true
+
+      # The specs, RuboCop and the RBS signatures
+      - name: Test and lint the Ruby gem
+        working-directory: bindings/ruby
+        run: bundle exec rake
+
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .tool-versions
+
+      - name: Test and lint the Python package
+        working-directory: bindings/python
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e . --group dev
+          .venv/bin/pytest
+          .venv/bin/ruff check
+          .venv/bin/ruff format --check
+          .venv/bin/mypy
+
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

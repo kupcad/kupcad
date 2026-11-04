@@ -1,0 +1,78 @@
+# KupCAD for Ruby
+
+Builds the model of a [KupCAD](https://kupcad.org) script, with its parameters, as STL, 3MF,
+glTF, OBJ, STEP, SVG or DXF, and formats, lints and reads the parameters of scripts. It runs
+libkupcad, the KupCAD core as a C library, in your process: nothing to install besides the gem.
+
+```sh
+gem install kupcad
+```
+
+```ruby
+require 'kupcad'
+
+source = File.read('bracket.kup')
+model = Kupcad.build(source, format: :stl, params: { width: 60, label: 'A' })
+File.binwrite('bracket.stl', model.data)
+puts model.report.output        # what the script printed
+model.report.warnings.each { |w| warn "#{w.line}: #{w.message}" }
+```
+
+## What it does
+
+- `Kupcad.build(source, format:, params:, files:, memory_limit:, draco:)` runs the script and
+  returns a `Kupcad::Model`: its `data` (binary) in the `format` (one of `Kupcad::FORMATS`:
+  `:stl`, `:"3mf"`, `:glb`, `:gltf`, `:obj`, `:step`, `:svg`, `:dxf`), and the run's `report`,
+  what the script printed and what it warned of, where.
+  - `params:` the parameters' values by name, as `kupcad build -p` takes them:
+    `{ width: 60, thread: :m4, holes: [[5, 5], [35, 5]] }`. Values are checked against each
+    parameter's rules.
+  - `files:` the files the script imports, by their path from its folder:
+    `{ 'lib/gears.kup' => File.read('lib/gears.kup'), 'data/sizes.json' => '...' }`. A script
+    reads no other file, and its exports (`export_stl`) write nothing.
+  - `memory_limit:` the most memory, in bytes, the script may hold; no limit by default.
+  - `draco: true` compresses a GLB's or a glTF's meshes.
+- `Kupcad.format(source)`: the source as `kupcad fmt` formats it.
+- `Kupcad.check(source)`: what `kupcad check` finds, an Array of `Kupcad::Finding` (severity,
+  rule, message, where, and the fix if there is one). Syntax errors are findings here.
+- `Kupcad.params(source)`: the parameters the script declares and its metadata, the schema
+  `kupcad doc` prints, to build a form from.
+- `Kupcad.library_version`: the version of libkupcad loaded.
+
+## Errors
+
+- `Kupcad::ScriptError` when the script doesn't parse or compile, raises, or leaves no model;
+  its message says where and why (`"2:5: Invalid expression ..."`,
+  `"RuntimeError: Plate too thin"`), and its `report` holds what the script printed until then.
+- `ArgumentError` for a format that isn't one, or parameter values a parameter refuses.
+- `NoMemoryError` when the process runs out of memory.
+
+## Threads and processes
+
+A build releases the GVL while it runs, so other threads go on, and builds on several threads
+run at once: libkupcad's calls share nothing. The core runs in your process, so a bug it stops
+on stops the process too. To run scripts you don't trust, or keep a crash away from a web
+server, run the [`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process
+of its own.
+
+## Platforms
+
+Each platform gem carries its libkupcad: Linux (x86_64, aarch64; glibc 2.28 or later), macOS
+(arm64, x86_64) and Windows (x64, aarch64), with `THIRD_PARTY_NOTICES.md` and the license texts
+of what it is built from beside it, in `lib/kupcad/native/`. Elsewhere, build libkupcad with
+`zig build lib` in the kupcad repository's `core/` and point `KUPCAD_LIBRARY` at it.
+
+## Development
+
+In the kupcad repository:
+
+```sh
+(cd core && zig build lib -Doptimize=safe)   # core/zig-out/lib/libkupcad.*
+cd bindings/ruby
+bundle install
+bundle exec rake                             # specs, RuboCop, RBS
+```
+
+The specs load the checkout's library (`KUPCAD_LIBRARY` names another). `rake
+native:gem[PLATFORM,LIBRARY]` packs a platform gem around a library built for it, as the release
+does.

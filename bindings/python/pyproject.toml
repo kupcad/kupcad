@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kupcad"
+dynamic = ["version"]
+description = "KupCAD for Python: build parametric CAD models from KupCAD scripts"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Oleksii Vasyliev" }]
+keywords = ["cad", "3d printing", "parametric", "kupcad"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://kupcad.org"
+Documentation = "https://docs.kupcad.org"
+Source = "https://github.com/kupcad/kupcad/tree/main/bindings/python"
+Changelog = "https://github.com/kupcad/kupcad/releases"
+Issues = "https://github.com/kupcad/kupcad/issues"
+
+[dependency-groups]
+# hatchling too, so mypy checks the build hook against it
+dev = ["build>=1.2", "hatchling>=1.27", "mypy>=1.15", "pytest>=8", "ruff>=0.11"]
+
+[tool.hatch.version]
+path = "src/kupcad/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kupcad"]
+
+# Puts the library into the wheel and tags it with the library's platform
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PT"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests", "hatch_build.py"]

@@ -1,0 +1,61 @@
+module Kupcad
+  VERSION: String
+  FORMATS: Array[Symbol]
+
+  class Error < StandardError
+  end
+
+  class ScriptError < Error
+    attr_reader report: Report?
+
+    def initialize: (String message, ?Report? report) -> void
+  end
+
+  class Warning < Data
+    attr_reader message: String
+    attr_reader line: Integer?
+    attr_reader column: Integer?
+    attr_reader file: String?
+
+    def self.new: (message: String, line: Integer?, column: Integer?, file: String?) -> Warning
+  end
+
+  class Report < Data
+    attr_reader output: String
+    attr_reader output_cut: bool
+    attr_reader warnings: Array[Warning]
+
+    def self.new: (output: String, output_cut: bool, warnings: Array[Warning]) -> Report
+    def self.from_json: (String json) -> Report
+  end
+
+  class Model < Data
+    attr_reader data: String
+    attr_reader format: Symbol
+    attr_reader report: Report
+
+    def self.new: (data: String, format: Symbol, report: Report) -> Model
+  end
+
+  class Finding < Data
+    attr_reader severity: String
+    attr_reader rule: String?
+    attr_reader code: String?
+    attr_reader message: String
+    attr_reader line: Integer
+    attr_reader column: Integer
+    attr_reader end_line: Integer
+    attr_reader end_column: Integer
+    attr_reader fix: Hash[Symbol, untyped]?
+
+    def self.new: (severity: String, rule: String?, code: String?, message: String, line: Integer, column: Integer,
+                   end_line: Integer, end_column: Integer, fix: Hash[Symbol, untyped]?) -> Finding
+  end
+
+  def self.library_version: () -> String
+  def self.format: (String source) -> String
+  def self.check: (String source) -> Array[Finding]
+  def self.params: (String source) -> Hash[Symbol, untyped]
+  def self.build: (String source, ?format: Symbol | String, ?params: Hash[Symbol | String, untyped],
+                   ?files: Hash[String, String], ?memory_limit: Integer?, ?draco: bool) -> Model
+end

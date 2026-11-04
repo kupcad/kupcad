@@ -10,7 +10,7 @@ const testing = std.testing;
 const CORE_DIR = @import("test_paths").core_dir;
 
 /// Test roots the build runs on their own.
-const OWN_ROOTS = [_][]const u8{ "main_test.zig", "wasm_test.zig", "cli_process_test.zig" };
+const OWN_ROOTS = [_][]const u8{ "main_test.zig", "wasm_test.zig", "cli_process_test.zig", "capi_test.zig" };
 /// Locus's tree, whose test files its root imports by paths from there.
 const LOCUS_TREE = "locus/src/";
 
