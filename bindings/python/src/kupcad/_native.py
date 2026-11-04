@@ -29,15 +29,23 @@ def _load() -> ctypes.CDLL:
     path = os.environ.get("KUPCAD_LIBRARY") or str(Path(__file__).with_name(LIBRARY))
     if not os.path.isfile(path):
         raise ImportError(
-            f"{path} not found: the kupcad package has no prebuilt library for {sys.platform}. "
-            "Set KUPCAD_LIBRARY to a libkupcad you built (`zig build lib` in the kupcad "
-            "repository's core/), or run the kupcad CLI."
+            f"{path} not found: this kupcad came without libkupcad, which only a wheel carries "
+            f"(this is {sys.platform}). Set KUPCAD_LIBRARY to a libkupcad you built (`zig build "
+            "lib` in the kupcad repository's core/), or run the kupcad CLI."
         )
     lib = ctypes.CDLL(path)
+    # First, so a library of another ABI is refused as one, not for a function it lacks
+    lib.kupcad_abi_version.argtypes = []
+    lib.kupcad_abi_version.restype = ctypes.c_uint32
+    abi = lib.kupcad_abi_version()
+    if abi != ABI_VERSION:
+        raise ImportError(
+            f"{path} is libkupcad of ABI {abi}; this package speaks ABI {ABI_VERSION}: use the "
+            "libkupcad of its own KupCAD version"
+        )
     text = [ctypes.c_char_p, ctypes.c_size_t]
     # Each function's argument and result types, as kupcad.h declares them
     declarations: dict[str, tuple[list[Any], Any]] = {
-        "kupcad_abi_version": ([], ctypes.c_uint32),
         "kupcad_version": ([], ctypes.c_void_p),
         "kupcad_format": (text, ctypes.c_void_p),
         "kupcad_check": (text, ctypes.c_void_p),
@@ -62,12 +70,6 @@ def _load() -> ctypes.CDLL:
         function = getattr(lib, name)
         function.argtypes = arguments
         function.restype = result
-    abi = lib.kupcad_abi_version()
-    if abi != ABI_VERSION:
-        raise ImportError(
-            f"{path} is libkupcad of ABI {abi}; this package speaks ABI {ABI_VERSION}: use the "
-            "libkupcad of its own KupCAD version"
-        )
     return lib
 
 
@@ -80,9 +82,9 @@ def take(result: int) -> tuple[int, bytes, str | None, str | None]:
     escapes one)."""
     try:
         length = ctypes.c_size_t()
-        data = ctypes.string_at(lib.kupcad_result_data(result, ctypes.byref(length)), length.value)
+        data = _bytes_at(lib.kupcad_result_data(result, ctypes.byref(length)), length.value)
         pointer = lib.kupcad_result_message(result, ctypes.byref(length))
-        message = ctypes.string_at(pointer, length.value).decode() if pointer else None
+        message = _bytes_at(pointer, length.value).decode() if pointer else None
         report = lib.kupcad_result_report(result)
         return (
             lib.kupcad_result_status(result),
@@ -92,3 +94,11 @@ def take(result: int) -> tuple[int, bytes, str | None, str | None]:
         )
     finally:
         lib.kupcad_result_free(result)
+
+
+def _bytes_at(pointer: int | None, length: int) -> bytes:
+    """The `length` bytes at `pointer`, copied. ctypes.string_at takes the length as a C int,
+    which a model past 2 GiB overflows."""
+    if not length or pointer is None:
+        return b""
+    return (ctypes.c_char * length).from_address(pointer).raw

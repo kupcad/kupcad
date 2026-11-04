@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import math
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 import kupcad
+
+FOREVER = "while true\nend\ncube(1)"
 
 
 def test_the_library_is_the_package_version() -> None:
@@ -27,10 +32,12 @@ def test_build_builds_the_model_in_every_format() -> None:
 def test_build_takes_the_parameters_by_name_and_keeps_what_the_script_prints() -> None:
     source = """width = param(:width, default: 5)
 thread = param(:thread, default: :m3, validate: { in: [:m3, :m4] })
-puts width, thread
+holes = param(:holes, default: [[0, 0]])
+puts width, thread, holes[1][0]
 cube(width)"""
-    model = kupcad.build(source, params={"width": 20, "thread": "m4"})
-    assert model.report.output == "20\nm4\n"
+    values = MappingProxyType({"width": 20, "thread": "m4", "holes": [[5, 5], [35, 5]]})
+    model = kupcad.build(source, params=values)
+    assert model.report.output == "20\nm4\n35\n"
 
 
 def test_a_value_a_parameter_refuses_fails_the_script_saying_which() -> None:
@@ -45,9 +52,10 @@ def test_build_reads_the_files_given_with_it_text_and_bytes() -> None:
 block = import_stl("parts/block.stl")
 puts side, block.volume
 block + cube(side)"""
-    files: dict[str, str | bytes] = {
+    # A Path by its forward slashes, whatever the system writes it with
+    files: dict[str | Path, str | bytes] = {
         "lib/sizes.kup": "def side = 12\nexport side",
-        "parts/block.stl": block,
+        Path("parts") / "block.stl": block,
     }
     assert kupcad.build(source, files=files).report.output == "12\n8\n"
 
@@ -94,14 +102,51 @@ def test_arguments_a_build_refuses_are_value_errors() -> None:
         kupcad.build("cube(1)", format="stp")
     with pytest.raises(ValueError, match="isn't a format"):
         kupcad.build("cube(1)", format="stl\0")
-    with pytest.raises(ValueError, match="memory_limit"):
-        kupcad.build("cube(1)", memory_limit=-1)
-    with pytest.raises(ValueError, match="timeout"):
-        kupcad.build("cube(1)", timeout=0)
     with pytest.raises(ValueError, match="JSON"):
         kupcad.build("cube(1)", params={"width": math.nan})
     with pytest.raises(TypeError):
         kupcad.build("cube(1)", params={"widths": {1, 2}})
+    # Values not by name, refused by the library itself
+    with pytest.raises(ValueError, match="object"):
+        kupcad.build("cube(1)", params=[["width", 1]])  # type: ignore[arg-type]
+
+
+def test_a_limit_that_is_not_a_positive_number_is_a_value_error() -> None:
+    for memory_limit in (-1, 1.5):
+        with pytest.raises(ValueError, match="memory_limit"):
+            kupcad.build("cube(1)", memory_limit=memory_limit)  # type: ignore[arg-type]
+    for timeout in (0, math.nan, complex(1, 0)):
+        with pytest.raises(ValueError, match="timeout"):
+            kupcad.build("cube(1)", timeout=timeout)  # type: ignore[arg-type]
+
+
+def test_a_limit_past_what_the_library_holds_is_none() -> None:
+    assert kupcad.build("cube(1)", timeout=math.inf).data
+    assert kupcad.build("cube(1)", timeout=10**30).data
+    assert kupcad.build("cube(1)", memory_limit=2**70).data
+
+
+def test_a_source_or_a_file_that_is_not_text_or_bytes_is_a_type_error() -> None:
+    with pytest.raises(TypeError, match="source is NoneType"):
+        kupcad.build(None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="source is bytes"):
+        kupcad.format(b"cube(1)")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"a\.kup is PosixPath|a\.kup is WindowsPath"):
+        kupcad.build("cube(1)", files={"a.kup": Path("a.kup")})  # type: ignore[dict-item]
+    with pytest.raises(TypeError, match="1 is int"):
+        kupcad.build("cube(1)", files={1: "cube(1)"})  # type: ignore[type-var]
+
+
+class _Huge(bytes):
+    """Bytes that say they are 4 GiB long, which no test can afford to be."""
+
+    def __len__(self) -> int:
+        return 2**32
+
+
+def test_a_file_past_4_gib_the_most_its_length_holds_is_a_value_error() -> None:
+    with pytest.raises(ValueError, match=r"big\.kup is past 4 GiB"):
+        kupcad.build("cube(1)", files={"big.kup": _Huge(b"cube(1)")})
 
 
 def test_the_memory_limit_stops_a_script_that_holds_more_however_small() -> None:
@@ -112,7 +157,30 @@ def test_the_memory_limit_stops_a_script_that_holds_more_however_small() -> None
 
 def test_the_timeout_stops_a_script_that_never_ends() -> None:
     with pytest.raises(kupcad.ScriptError, match=r"^Time limit: the run took longer than 100 ms"):
-        kupcad.build("while true\nend\ncube(1)", timeout=0.1)
+        kupcad.build(FOREVER, timeout=0.1)
+    # Rounded to whole milliseconds, so a float's error can't add one (2.007 s is
+    # 2007.0000000000002 ms)
+    with pytest.raises(kupcad.ScriptError, match=" 14 ms"):
+        kupcad.build(FOREVER, timeout=0.0141)
+
+
+def test_other_threads_run_while_it_builds() -> None:
+    ticks = 0
+    building = True
+
+    def tick() -> None:
+        nonlocal ticks
+        while building:
+            ticks += 1
+            time.sleep(0.01)
+
+    ticker = threading.Thread(target=tick)
+    ticker.start()
+    with pytest.raises(kupcad.ScriptError):
+        kupcad.build(FOREVER, timeout=0.3)
+    building = False
+    ticker.join()
+    assert ticks > 10
 
 
 def test_threads_build_at_once() -> None:
@@ -139,8 +207,10 @@ def test_errors_are_kupcad_errors() -> None:
 def test_format_formats_as_kupcad_fmt_does() -> None:
     assert kupcad.format("cube( 1 )") == "cube(1)\n"
     assert kupcad.format("") == ""
-    with pytest.raises(kupcad.ScriptError, match=r"^1:5: "):
+    with pytest.raises(kupcad.ScriptError, match=r"^1:5: ") as failure:
         kupcad.format("x = )")
+    # Nothing ran
+    assert failure.value.report is None
 
 
 def test_check_finds_what_kupcad_check_finds() -> None:

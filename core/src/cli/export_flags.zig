@@ -233,7 +233,7 @@ pub const ExportFlags = struct {
 
         const exporting = self.exportOptions(output.format, if (mtl_path) |p| std.fs.path.basename(p) else null);
         const bytes = api.exportModelFromVm(allocator, vm, output.format, exporting) catch |err| {
-            try reportExportFailure(allocator, reporter, err, path);
+            try reportExportFailure(allocator, vm, reporter, err, path);
             return false;
         };
         defer allocator.free(bytes);
@@ -249,7 +249,7 @@ pub const ExportFlags = struct {
     fn writeSplit(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, dir: []const u8, reporter: Reporter) !bool {
         const exporting = self.exportOptions(self.split_format, if (self.use_mtl) SPLIT_MTL_NAME else null);
         const files = api.exportPartsFromVm(allocator, vm, self.split_format, exporting) catch |err| {
-            try reportExportFailure(allocator, reporter, err, dir);
+            try reportExportFailure(allocator, vm, reporter, err, dir);
             return false;
         };
         defer {
@@ -327,9 +327,10 @@ fn flagValue(args: anytype, arg: []const u8, comptime what: []const u8, reporter
     };
 }
 
-/// Why the model wasn't written to `path`: empty (the export's error.NoGeometry), or the
-/// error (a script error the VM has already reported is error.RuntimeError).
-fn reportExportFailure(allocator: std.mem.Allocator, reporter: Reporter, err: anyerror, path: []const u8) !void {
+/// Why the model wasn't written to `path`: empty (the export's error.NoGeometry), past the
+/// run's time limit (error.Canceled, said as the VM said it), or the error (a script error the
+/// VM has already reported is error.RuntimeError).
+fn reportExportFailure(allocator: std.mem.Allocator, vm: *const VM, reporter: Reporter, err: anyerror, path: []const u8) !void {
     if (err == error.NoGeometry) {
         reporter.err("Error: the model is empty, there is nothing to write to '{s}'\n", .{path});
         const said = try std.fmt.allocPrint(allocator, "the model is empty, there is nothing to write to '{s}'", .{path});
@@ -338,7 +339,9 @@ fn reportExportFailure(allocator: std.mem.Allocator, reporter: Reporter, err: an
         return;
     }
     reporter.err("Export failed: {}\n", .{err});
-    reporter.fail(.{ .kind = "export", .message = @errorName(err), .file = path });
+    // Past the run's time limit: the VM said so, as it says a runtime error (VM.failTimeLimit)
+    const message = if (err == error.Canceled) vm.last_error orelse @errorName(err) else @errorName(err);
+    reporter.fail(.{ .kind = "export", .message = message, .file = path });
 }
 
 /// Writes the model's material library (`--mtl`) to `path`; false, the failure reported, when

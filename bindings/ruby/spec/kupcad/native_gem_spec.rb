@@ -27,7 +27,8 @@ RSpec.describe Kupcad::NativeGem, :source_tree do
     end
     gem = Gem::Package.new(path)
     expect(gem.spec.platform.to_s).to eq('arm64-darwin')
-    expect(gem.contents).to include('lib/kupcad/native/libkupcad.dylib', 'lib/kupcad.rb', 'LICENSE',
+    expect(gem.contents).to include('lib/kupcad/native/libkupcad.dylib', 'lib/kupcad.rb', 'lib/kupcad/native.rb',
+                                    'lib/kupcad/version.rb', 'sig/kupcad.rbs', 'README.md', 'LICENSE',
                                     'lib/kupcad/native/THIRD_PARTY_NOTICES.md',
                                     'lib/kupcad/native/licenses/manifold/LICENSE')
   end

@@ -641,7 +641,7 @@ pub const VM = struct {
             if (self.debugger_step_handler) |handler| {
                 // A new line: the debugger takes over, then the step goes on from it.
                 self.paused_at_step = true;
-                handler(self);
+                self.openDebugger(handler);
                 self.paused_at_step = false;
                 previous_line.* = current_line;
             } else {
@@ -1687,9 +1687,6 @@ pub const VM = struct {
         return if (self.stack_top > 0) self.stack[0] else value.Value.initNil();
     }
 
-    /// The limits of a run someone waits on (an editor's preview and hovers, the browser's,
-    /// a check's comparing of its fixes): a script that loops or grows forever stops with
-    /// an error instead of hanging them.
     /// Stops the run once `ms` milliseconds have passed from now (a host's timeout): the
     /// interpreter looks at the clock every TIME_CHECK_INTERVAL instructions, the geometry
     /// evaluator at every node (failTimeLimit). Null lifts the limit.
@@ -1719,6 +1716,19 @@ pub const VM = struct {
         return error.Canceled;
     }
 
+    /// Opens `handler`, the host's debugger, with the run's time limit stopped: the time a
+    /// person spends at its prompt isn't the run's.
+    pub fn openDebugger(self: *VM, handler: *const fn (vm: *VM) void) void {
+        const opened = std.Io.Clock.now(.awake, self.io);
+        handler(self);
+        const deadline = self.hooks.deadline orelse return;
+        const paused = opened.durationTo(std.Io.Clock.now(.awake, self.io));
+        self.hooks.setDeadline(deadline.addDuration(paused), self.hooks.time_limit_ms);
+    }
+
+    /// The limits of a run someone waits on (an editor's preview and hovers, the browser's,
+    /// a check's comparing of its fixes): a script that loops or grows forever stops with
+    /// an error instead of hanging them.
     pub fn useInteractiveLimits(self: *VM) void {
         self.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
@@ -3788,8 +3798,10 @@ pub const VM = struct {
         // --- Save Unwind State for Native FFI Restoration ---
         // Any older entry belongs to an exception whose handler already runs (see UnwindFrame).
         self.clearUnwindState();
-        // Handled: what was reported on the way here (e.g. by a native) failed nothing.
-        self.clearLastError();
+        // Handled: what was reported on the way here (e.g. by a native) failed nothing; but a
+        // canceled run (past its time limit, or by its host) stops at the next instruction,
+        // and what was reported says why.
+        if (!self.cancel_token.load(.monotonic)) self.clearLastError();
         self.unwind_stack.append(self.allocator, .{
             .err_val = err_val,
             .stack_top = r_frame.stack_top,

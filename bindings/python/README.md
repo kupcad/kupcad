@@ -32,13 +32,15 @@ for warning in model.report.warnings:
   - `params`: the parameters' values by name, as `kupcad build -p` takes them:
     `{"width": 60, "thread": "m4", "holes": [[5, 5], [35, 5]]}`. Values are checked against
     each parameter's rules.
-  - `files`: the files the script imports, by their path from its folder, text or bytes:
+  - `files`: the files the script imports, by their path from its folder (a `str`, or a `Path`
+    by its forward slashes), text or bytes:
     `{"lib/gears.kup": Path("lib/gears.kup").read_text(encoding="utf-8"), "a.ttf": font}`. A
     script reads no other file, and its exports (`export_stl`) write nothing.
-  - `memory_limit`: the most memory, in bytes, the script may hold; no limit by default.
-  - `timeout`: the most time, in seconds, the build may take; no limit by default. A script
-    that never ends otherwise holds its thread for good: a native call can't be interrupted,
-    by Ctrl-C or a signal.
+  - `memory_limit`: the most memory, in bytes, the script may hold: its values and its geometry
+    graph, not the kernel's meshes; no limit by default.
+  - `timeout`: the most time, in seconds, the build may take, to the millisecond; no limit by
+    default (or `math.inf`). A script that never ends otherwise holds its thread for good: a
+    native call can't be interrupted, by Ctrl-C or a signal.
   - `draco=True` compresses a GLB's or a glTF's meshes.
 - `kupcad.format(source)`: the source as `kupcad fmt` formats it.
 - `kupcad.check(source)`: what `kupcad check` finds, a list of `kupcad.Finding` (severity, rule,
@@ -55,26 +57,28 @@ for warning in model.report.warnings:
   message says where and why (`"2:5: Invalid expression ..."`, `"RuntimeError: Plate too
   thin"`), and its `report` holds what the script printed until then.
 - `ValueError` for a format that isn't one, a limit that isn't positive, or parameter values
-  JSON can't hold (NaN); `TypeError` for values JSON has no type for (a set).
-- `MemoryError` when the process itself runs out of memory.
+  JSON can't hold (NaN) or that aren't by name (a list); `TypeError` for values JSON has no type
+  for (a set), or a source or a file that isn't text or bytes.
+- `MemoryError` when the process itself runs out of memory, and `kupcad.Error` itself when
+  libkupcad fails on its own, a bug of KupCAD's.
 
 ## Threads and processes
 
 A build releases the GIL while it runs, so other threads go on, and builds on several threads
-run at once: libkupcad's calls share nothing. A process that has built may fork (gunicorn's
-`--preload`, multiprocessing's fork): libkupcad ends its worker threads before a fork, and
-each process starts its own. The core runs in your process, so a bug it stops on stops the
-process too. To run scripts you don't trust, or keep a crash away from a web
-server, run the [`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process
-of its own.
+run at once: libkupcad's calls share nothing. A process may fork between builds (gunicorn's
+`--preload`, multiprocessing's fork), whatever threads built before: the last build to end ends
+the worker threads the builds started, and each process starts its own; but not while a build
+runs on another thread. The core runs in your process, so a bug it stops on stops the process
+too. To run scripts you don't trust, or keep a crash away from a web server, run the
+[`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process of its own.
 
 ## Platforms
 
 Each wheel carries its libkupcad: Linux (x86_64, aarch64; glibc 2.28 or later), macOS 15 or
 later (arm64, x86_64) and Windows (x64, arm64), for any Python from 3.10, with
 `THIRD_PARTY_NOTICES.md` and the license texts of what it is built from beside it, in the
-`kupcad` package. Elsewhere, build libkupcad with `zig build lib` in the kupcad repository's
-`core/` and point `KUPCAD_LIBRARY` at it.
+`kupcad` package. Elsewhere (musl, BSD), build libkupcad with `zig build lib` in the kupcad
+repository's `core/` and a wheel with it, as the Development section says.
 
 ## Development
 
@@ -89,6 +93,8 @@ python -m venv .venv
 .venv/bin/ruff check && .venv/bin/ruff format --check && .venv/bin/mypy
 ```
 
-A wheel carries the library it is built with: `KUPCAD_LIBRARY=<library>
-KUPCAD_WHEEL_PLATFORM=<platform tag> python -m build --wheel`, as the release builds one for
-each platform.
+A wheel carries the library it is built with, and the notices
+`core/scripts/collect-licenses.sh <the library's folder>` (run from the repository root) puts
+beside it:
+`KUPCAD_LIBRARY=<library> KUPCAD_WHEEL_PLATFORM=<platform tag> python -m build --wheel`, as the
+release builds one for each platform (a relative `KUPCAD_LIBRARY` is from `bindings/python/`).

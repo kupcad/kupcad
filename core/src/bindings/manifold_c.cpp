@@ -6,9 +6,6 @@
 #include <new>
 #include <tbb/global_control.h>
 #endif
-#if KUPCAD_TBB && !defined(_WIN32)
-#include <pthread.h>
-#endif
 
 // Reason why we have this method here
 // The Zig compiler incorrectly calculates register exhaustion when calling C functions with a large number of mixed arguments (specifically floating-point values and structs). Instead of utilizing remaining available hardware registers, Zig prematurely spills the arguments onto the stack. When the C++ function pops them off expecting the strict x86_64 System V ABI layout, the memory offsets are misaligned, causing the values to scramble or merge with adjacent variables
@@ -37,28 +34,17 @@ extern "C" {
 #endif
     }
 
+    // Ends the calling thread's use of oneTBB, and its worker threads when no other thread
+    // uses them (the last build to end does): a host that builds may fork after (a preforking
+    // web server, multiprocessing), and the workers don't survive a fork, the child's first
+    // parallel algorithm waking threads that weren't there (it trapped). A thread that used
+    // them holds them until it ends, so ending them at the fork itself failed while one that
+    // had built was alive. The next build starts them again. Windows has no fork; the CLI never
+    // forks with workers it needs.
+    void kupcad_release_workers() {
 #if KUPCAD_TBB && !defined(_WIN32)
-    // oneTBB's worker threads don't survive a fork: the child has none of them, and the first
-    // parallel algorithm there woke threads that weren't there (it trapped). So they end before
-    // the fork, and each process starts its own when it next needs them. With a build running
-    // on another thread then, finalize can't end them, and leaves them.
-    static void kupcad_end_workers() {
         tbb::task_scheduler_handle handle{tbb::attach{}};
         tbb::finalize(handle, std::nothrow);
-    }
-
-    static void kupcad_end_workers_at_fork() {
-        pthread_atfork(kupcad_end_workers, nullptr, nullptr);
-    }
-#endif
-
-    // Ends oneTBB's worker threads before every fork of the process from now on, for a host
-    // that loads libkupcad and may fork (a preforking web server); once, however often called.
-    // Not the CLI's: it never forks with workers it needs to keep.
-    void kupcad_end_workers_before_fork() {
-#if KUPCAD_TBB && !defined(_WIN32)
-        static pthread_once_t once = PTHREAD_ONCE_INIT;
-        pthread_once(&once, kupcad_end_workers_at_fork);
 #endif
     }
 

@@ -23,6 +23,19 @@ test "SVG: every named shape's id is a valid one of its own, a repeated or clash
     for (expected, ids.items) |want, got| try testing.expectEqualStrings(want, got);
 }
 
+test "SVG: an export that ends past the run's time limit fails, saying so" {
+    // The kernel computes a chain of booleans as it meshes the model, after the evaluator's
+    // last look at the clock: a build that took a hundred times its limit succeeded. A Path,
+    // which the evaluator doesn't see at all, shows the look after the export alone.
+    var vm = try @import("../../test_support.zig").initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try @import("../../test_support.zig").runOn(&vm, "line([0, 0], [3, 4])"));
+    vm.setTimeLimit(0);
+    try testing.io.sleep(.fromMilliseconds(1), .awake);
+    try testing.expectError(error.Canceled, api.exportModelFromVm(testing.allocator, &vm, .svg, .{}));
+    try testing.expect(std.mem.startsWith(u8, vm.last_error.?, "Time limit: the run took longer than 0 ms"));
+}
+
 test "SVG: the outline is 0.1 mm wide unless the export asks for another width" {
     var vm = try @import("../../test_support.zig").initVm();
     defer vm.deinit();

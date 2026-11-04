@@ -22,7 +22,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 class CustomBuildHook(BuildHookInterface[BuilderConfig]):
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        if self.target_name != "wheel" or version == "editable":
+        if version == "editable":
             return
         library = os.environ.get("KUPCAD_LIBRARY")
         platform = os.environ.get("KUPCAD_WHEEL_PLATFORM")
@@ -31,9 +31,12 @@ class CustomBuildHook(BuildHookInterface[BuilderConfig]):
                 "a kupcad wheel carries libkupcad: set KUPCAD_LIBRARY to the library (`zig build "
                 "lib` in core/) and KUPCAD_WHEEL_PLATFORM to its wheel platform tag"
             )
-        path = Path(library)
+        path = Path(library).resolve()
         if not path.is_file():
-            raise RuntimeError(f"{library} not found: build it with `zig build lib` in core/")
+            raise RuntimeError(f"{path} not found: build it with `zig build lib` in core/")
+        name = _library_name(platform)
+        if path.name != name:
+            raise RuntimeError(f"{path} isn't named {name}, as kupcad loads it on {platform}")
         notices = path.parent / "THIRD_PARTY_NOTICES.md"
         if not notices.is_file():
             raise RuntimeError(
@@ -44,3 +47,12 @@ class CustomBuildHook(BuildHookInterface[BuilderConfig]):
         build_data["force_include"][str(path.parent / "licenses")] = "kupcad/licenses"
         build_data["pure_python"] = False
         build_data["tag"] = f"py3-none-{platform}"
+
+
+def _library_name(platform: str) -> str:
+    """The file name libkupcad has on `platform`, as kupcad._native loads it."""
+    if platform.startswith("macosx_"):
+        return "libkupcad.dylib"
+    if platform.startswith("win"):
+        return "kupcad.dll"
+    return "libkupcad.so"

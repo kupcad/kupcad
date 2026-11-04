@@ -20,7 +20,8 @@ module Kupcad
   # The message says where and why: "2:5: Invalid expression ...", "RuntimeError: Plate too
   # thin".
   class ScriptError < Error
-    # What the script printed and warned of before it failed (a Report); nil when it didn't run
+    # What the script printed and warned of before it failed (a Report); nil when nothing ran
+    # (Kupcad.format's, check's and params')
     attr_reader :report
 
     def initialize(message, report = nil)
@@ -54,6 +55,15 @@ module Kupcad
   # where it starts and ends (1-based), and its fix (a Hash, or nil)
   Finding = Data.define(:severity, :rule, :code, :message, :line, :column, :end_line, :end_column, :fix)
 
+  # The most a limit, or a file's length, can be as libkupcad takes it
+  UINT64_MAX = (2**64) - 1
+  UINT32_MAX = (2**32) - 1
+
+  # The encodings a String is passed in as it is: UTF-8, and those File.binread and File.read in
+  # a C locale tag whatever bytes they read with
+  RAW_ENCODINGS = [Encoding::UTF_8, Encoding::BINARY, Encoding::US_ASCII].freeze
+  private_constant :UINT64_MAX, :UINT32_MAX, :RAW_ENCODINGS
+
   class << self
     # The version of the libkupcad loaded: the gem's own, unless KUPCAD_LIBRARY names another
     def library_version
@@ -62,14 +72,12 @@ module Kupcad
 
     # `source` formatted, as `kupcad fmt` formats it. Raises ScriptError when it doesn't parse.
     def format(source)
-      pointer, length = Native.buffer(source)
-      text(Native.kupcad_format(pointer, length))
+      text(:kupcad_format, source)
     end
 
     # The findings of `source`: lint findings and syntax errors, an Array of Finding
     def check(source)
-      pointer, length = Native.buffer(source)
-      JSON.parse(text(Native.kupcad_check(pointer, length)), symbolize_names: true).map do |finding|
+      JSON.parse(text(:kupcad_check, source), symbolize_names: true).map do |finding|
         Finding.new(severity: finding[:severity], rule: finding[:rule], code: finding[:code],
                     message: finding[:message], line: finding[:line], column: finding[:column],
                     end_line: finding[:endLine], end_column: finding[:endColumn], fix: finding[:fix])
@@ -79,8 +87,7 @@ module Kupcad
     # The parameters `source` declares and its metadata, the schema `kupcad doc` prints:
     # { meta: { title: ... }, parameters: [{ name: ..., type: ..., default: ... }] }
     def params(source)
-      pointer, length = Native.buffer(source)
-      JSON.parse(text(Native.kupcad_params(pointer, length)), symbolize_names: true)
+      JSON.parse(text(:kupcad_params, source), symbolize_names: true)
     end
 
     # Runs `source` and builds its model in `format` (one of FORMATS), a Model.
@@ -90,25 +97,23 @@ module Kupcad
     # files: the files the script imports, by their path from its folder, text or binary
     #   ({ 'lib/gears.kup' => File.read('lib/gears.kup'), 'parts/base.stl' => File.binread(...) }).
     # memory_limit: the most memory, in bytes, the script may hold; nil for no limit.
-    # timeout: the most time, in seconds, the build may take; nil for no limit. The time is
-    #   checked every few thousand instructions and between geometry operations.
+    # timeout: the most time, in seconds, the build may take; nil (or Float::INFINITY) for no
+    #   limit. The time is checked every few thousand instructions and between geometry
+    #   operations.
     # draco: compress a GLB's or a glTF's meshes with Draco.
     #
     # Raises ScriptError when the script fails, with what it printed and warned of until then,
-    # and ArgumentError for a format that isn't one, a limit that isn't positive, or parameter
-    # values JSON can't hold.
+    # ArgumentError for a format that isn't one, a limit that isn't positive, or parameter
+    # values JSON can't hold, and TypeError for a source or a file's content that isn't a String.
     def build(source, format: :stl, params: {}, files: {}, memory_limit: nil, timeout: nil, draco: false)
       format = format.to_sym
       unless FORMATS.include?(format)
         raise ArgumentError, "#{format.inspect} isn't a format: one of #{FORMATS.join(', ')}"
       end
 
-      source_pointer, source_length = Native.buffer(source)
-      params_pointer, params_length = Native.buffer(params_json(params))
-      files_pointer, files_length = Native.buffer(pack(files))
-      data, report = take(Native.kupcad_build(source_pointer, source_length, format.to_s, params_pointer, params_length,
-                                              files_pointer, files_length, positive(memory_limit, 'memory_limit'),
-                                              milliseconds(timeout), draco))
+      data, report = call(:kupcad_build, *Native.buffer(utf8(source, 'source')), format.to_s,
+                          *Native.buffer(params_json(params)), *Native.buffer(pack(files)),
+                          limit(memory_limit, 'memory_limit'), milliseconds(timeout), draco ? true : false)
       Model.new(data:, format:, report: Report.from_json(report))
     end
 
@@ -116,17 +121,21 @@ module Kupcad
 
     # What the library says of itself: { version:, protocolVersion:, os:, arch:, formats: }
     def library_info
-      JSON.parse(text(Native.kupcad_version), symbolize_names: true)
+      JSON.parse(Native.utf8(call(:kupcad_version).first), symbolize_names: true)
     end
 
-    # The data of a call's result, as UTF-8 text; raises what failed
-    def text(result)
-      take(result).first.force_encoding(Encoding::UTF_8)
+    # The data of libkupcad's `function` for `source`, as UTF-8 text; raises what failed
+    def text(function, source)
+      Native.utf8(call(function, *Native.buffer(utf8(source, 'source'))).first)
     end
 
-    # [data, report] of a call's result, the data binary; raises what failed
-    def take(result)
-      status, data, message, report = Native.take(result)
+    # [data, report] of libkupcad's `function` called with `arguments`, the data binary; raises
+    # what failed. An interrupt that comes while it runs (Timeout, Ctrl-C, Thread#raise) is
+    # raised once the result is read and freed: raised as the call returned, it lost the result.
+    def call(function, *arguments)
+      status, data, message, report = Thread.handle_interrupt(Object => :never) do
+        Native.take(Native.public_send(function, *arguments))
+      end
       case status
       when :ok then [data, report]
       when :script_error then raise ScriptError.new(message, report && Report.from_json(report))
@@ -136,37 +145,51 @@ module Kupcad
       end
     end
 
+    # `text` as libkupcad reads it, UTF-8: transcoded from the encoding it says it is in
+    def utf8(text, name)
+      raise TypeError, "#{name} is #{text.class}: a String" unless text.is_a?(String)
+
+      RAW_ENCODINGS.include?(text.encoding) ? text : text.encode(Encoding::UTF_8)
+    end
+
     def params_json(params)
-      params.empty? ? nil : JSON.generate(params)
-    rescue JSON::GeneratorError => e
+      params.empty? ? '' : JSON.generate(params)
+    rescue JSON::GeneratorError, JSON::NestingError => e
       raise ArgumentError, "parameters: #{e.message}"
     end
 
-    # A limit as the library takes it, 0 for none
-    def positive(limit, name)
-      return 0 if limit.nil?
-      unless limit.is_a?(Integer) && limit.positive?
-        raise ArgumentError, "#{name} is #{limit.inspect}: a positive Integer, or nil for none"
+    # A limit as the library takes it, 0 for none; one past what it holds is none either
+    def limit(value, name)
+      return 0 if value.nil?
+      unless value.is_a?(Integer) && value.positive?
+        raise ArgumentError, "#{name} is #{value.inspect}: a positive Integer, or nil for none"
       end
 
-      limit
+      [value, UINT64_MAX].min
     end
 
-    # Seconds as the library's milliseconds, at least 1; 0 for no limit
+    # Seconds as the library's whole milliseconds, at least 1; 0 for no limit
     def milliseconds(seconds)
       return 0 if seconds.nil?
-      unless seconds.is_a?(Numeric) && seconds.positive?
+      unless seconds.is_a?(Numeric) && seconds.real? && seconds.positive?
         raise ArgumentError, "timeout is #{seconds.inspect}: positive seconds, or nil for none"
       end
 
-      [(seconds * 1000).ceil, 1].max
+      milliseconds = seconds * 1000
+      milliseconds >= UINT64_MAX ? UINT64_MAX : [milliseconds.round, 1].max
     end
 
-    # The files packed as kupcad.h describes: each its path's length, its path, its content's
-    # length and its content, each length 4 bytes, little-endian
+    # The files packed as kupcad.h describes: each its path's length, its path (UTF-8), its
+    # content's length and its content (its bytes), each length 4 bytes, little-endian
     def pack(files)
       files.each_with_object(String.new(encoding: Encoding::BINARY)) do |(path, content), packed|
-        [path.to_s, content.to_s].each { |field| packed << [field.bytesize].pack('V') << field.b }
+        raise TypeError, "files: #{path} is #{content.class}, not its content as a String" unless content.is_a?(String)
+
+        [utf8(path.to_s, 'a path'), content].each do |field|
+          raise ArgumentError, "files: #{path} is past 4 GiB, the most a file holds" if field.bytesize > UINT32_MAX
+
+          packed << [field.bytesize].pack('V') << field.b
+        end
       end
     end
   end

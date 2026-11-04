@@ -98,6 +98,6 @@ pub fn nativeBenchmark(vm: *VM, label_str: ?*value.ObjString, block: *value.ObjC
 pub fn nativeDebugger(vm: *VM) !value.Value {
     const open = vm.debugger_handler orelse return value.Value.initNil();
     vm.debugger_step_handler = open;
-    open(vm);
+    vm.openDebugger(open);
     return value.Value.initNil();
 }

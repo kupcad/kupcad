@@ -719,6 +719,18 @@ test "build_cmd: --timeout ends a script that runs past it, saying so" {
     try testing.expectEqual(build_cmd.Outcome.success, built.outcome);
 }
 
+test "build_cmd: --timeout holds the export too, a failure past it saying so" {
+    // The kernel computes this chain of booleans as it meshes the model: the build ran a
+    // hundred times its limit and succeeded, then failed as "Canceled"
+    var fx = try Fixture.init("m = cube(1)\n(1..10).each { |i| m = m + sphere(r: 1, segments: 32).translate(x: i * 0.5) }\nm\n");
+    defer fx.deinit();
+    var stopped = try runBuild(&.{ fx.input, "-o", fx.output, "--timeout", "5ms", "--errors", "json" });
+    defer stopped.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, stopped.outcome);
+    try testing.expect(std.mem.find(u8, stopped.text(), "\"message\":\"Time limit: the run took longer than 5 ms") != null);
+    try testing.expect(!fx.outputExists());
+}
+
 test "build_cmd: KUPCAD_TIMEOUT stands in for --timeout, which wins over it" {
     var environ: std.process.Environ.Map = .init(testing.allocator);
     defer environ.deinit();

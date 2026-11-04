@@ -57,5 +57,5 @@ module Kupcad
   def self.check: (String source) -> Array[Finding]
   def self.params: (String source) -> Hash[Symbol, untyped]
   def self.build: (String source, ?format: Symbol | String, ?params: Hash[Symbol | String, untyped],
-                   ?files: Hash[String, String], ?memory_limit: Integer?, ?timeout: Numeric?, ?draco: bool) -> Model
+                   ?files: Hash[_ToS, String], ?memory_limit: Integer?, ?timeout: Numeric?, ?draco: boolish) -> Model
 end

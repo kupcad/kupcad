@@ -66,13 +66,14 @@ fn resultOf(ptr: *const kupcad_result) *const Result {
     return @ptrCast(@alignCast(ptr));
 }
 
-/// A result holding `data`, owned, taken.
-fn succeeded(data: []const u8) *kupcad_result {
+/// A result holding `data` and `report`, owned, taken.
+fn succeeded(data: []const u8, report: ?[:0]const u8) *kupcad_result {
     const result = allocator.create(Result) catch {
         allocator.free(data);
+        if (report) |r| allocator.free(r);
         return handle(&out_of_memory);
     };
-    result.* = .{ .status = .ok, .data = data };
+    result.* = .{ .status = .ok, .data = data, .report = report };
     return handle(result);
 }
 
@@ -106,7 +107,7 @@ pub export fn kupcad_abi_version() u32 {
 
 pub export fn kupcad_version() *kupcad_result {
     const json = std.json.Stringify.valueAlloc(allocator, version.Info{}, .{}) catch return handle(&out_of_memory);
-    return succeeded(json);
+    return succeeded(json, null);
 }
 
 pub export fn kupcad_format(source: ?[*]const u8, source_len: usize) *kupcad_result {
@@ -120,17 +121,17 @@ pub export fn kupcad_format(source: ?[*]const u8, source_len: usize) *kupcad_res
         error.FormatChangedProgram => failed(.internal_error, "the formatter would change what the script does: please report it, with the script", null),
         else => failed(.internal_error, @errorName(err), null),
     };
-    return succeeded(formatted);
+    return succeeded(formatted, null);
 }
 
 pub export fn kupcad_check(source: ?[*]const u8, source_len: usize) *kupcad_result {
     const findings = embed.check(allocator, io(), bytesOf(source, source_len)) catch |err| return internal(err);
-    return succeeded(findings);
+    return succeeded(findings, null);
 }
 
 pub export fn kupcad_params(source: ?[*]const u8, source_len: usize) *kupcad_result {
     const schema = embed.params(allocator, bytesOf(source, source_len)) catch |err| return internal(err);
-    return succeeded(schema);
+    return succeeded(schema, null);
 }
 
 fn internal(err: anyerror) *kupcad_result {
@@ -140,7 +141,7 @@ fn internal(err: anyerror) *kupcad_result {
 pub export fn kupcad_build(
     source: ?[*]const u8,
     source_len: usize,
-    format: [*:0]const u8,
+    format: ?[*:0]const u8,
     params_json: ?[*]const u8,
     params_json_len: usize,
     files: ?[*]const u8,
@@ -149,9 +150,9 @@ pub export fn kupcad_build(
     timeout_ms: u64,
     draco: bool,
 ) *kupcad_result {
-    // A host that loads the library may fork (a preforking web server)
-    manifold.endWorkersBeforeFork();
-    const format_name = std.mem.span(format);
+    // A host that loads the library may fork between builds (a preforking web server)
+    defer manifold.releaseWorkers();
+    const format_name = std.mem.span(format orelse return failed(.invalid_argument, "no format: one of " ++ api.ExportFormat.NAMES, null));
     var diagnostic: embed.Diagnostic = .{};
     defer diagnostic.deinit(allocator);
     var report: api.RunReport = .{};
@@ -186,13 +187,7 @@ pub export fn kupcad_build(
         allocator.free(model);
         return handle(&out_of_memory);
     };
-    const result = allocator.create(Result) catch {
-        allocator.free(model);
-        allocator.free(report_json);
-        return handle(&out_of_memory);
-    };
-    result.* = .{ .status = .ok, .data = model, .report = report_json };
-    return handle(result);
+    return succeeded(model, report_json);
 }
 
 /// The report as kupcad.h describes it, NUL-terminated; null when it can't be allocated.
@@ -212,9 +207,9 @@ pub export fn kupcad_result_status(result: *const kupcad_result) Status {
     return resultOf(result).status;
 }
 
-pub export fn kupcad_result_data(result: *const kupcad_result, len: *usize) [*]const u8 {
+pub export fn kupcad_result_data(result: *const kupcad_result, len: ?*usize) [*]const u8 {
     const data = resultOf(result).data;
-    len.* = data.len;
+    if (len) |l| l.* = data.len;
     return data.ptr;
 }
 

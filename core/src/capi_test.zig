@@ -12,6 +12,9 @@ const c = @import("kupcad_h");
 const capi = @import("capi.zig");
 const packed_files = @import("vfs/packed.zig");
 
+/// A model heavy enough for Manifold's parallel algorithms, which start oneTBB's worker threads.
+const HEAVY = "sphere(r: 50, segments: 512) - cube(60, center: true).translate(x: 30)";
+
 comptime {
     // The exports the header's declarations link to, whichever tests a filter keeps
     testing.refAllDecls(capi);
@@ -270,6 +273,21 @@ test "C API: a build's arguments refused before it runs: the format, the paramet
         defer result.deinit();
         try testing.expectEqual(@as(c_int, c.KUPCAD_INVALID_ARGUMENT), result.status());
     }
+    {
+        // No format at all: it crashed
+        const result = Result.of(c.kupcad_build("cube(1)", 7, null, null, 0, null, 0, 0, 0, false));
+        defer result.deinit();
+        try testing.expectEqual(@as(c_int, c.KUPCAD_INVALID_ARGUMENT), result.status());
+        try testing.expectEqualStrings("no format: one of stl, glb, gltf, step, 3mf, obj, svg, dxf", result.message().?);
+    }
+}
+
+test "C API: a result's data and message may be read without their lengths" {
+    // kupcad_result_message took a NULL length, and kupcad_result_data crashed on one
+    const result = build("cube(1)", "stl", .{});
+    defer result.deinit();
+    try testing.expect(c.kupcad_result_data(result.ptr, null) != null);
+    try testing.expectEqual(null, c.kupcad_result_message(result.ptr, null));
 }
 
 test "C API: a build imports the files given with it, text and binary" {
@@ -308,6 +326,17 @@ test "C API: a build's time limit stops a script that never ends" {
     defer result.deinit();
     try testing.expectEqual(@as(c_int, c.KUPCAD_SCRIPT_ERROR), result.status());
     try testing.expect(std.mem.startsWith(u8, result.message().?, "Time limit: the run took longer than 100 ms"));
+}
+
+test "C API: a build past its time limit fails, though the kernel spent it meshing the model" {
+    // The evaluator walks this chain of booleans in a few milliseconds, and the kernel computes
+    // them as it meshes the model, in one call: the build took a hundred times its limit, and
+    // succeeded
+    const chain = "m = cube(1)\n(1..10).each { |i| m = m + sphere(r: 1, segments: 32).translate(x: i * 0.5) }\nm";
+    const result = build(chain, "stl", .{ .timeout_ms = 5 });
+    defer result.deinit();
+    try testing.expectEqual(@as(c_int, c.KUPCAD_SCRIPT_ERROR), result.status());
+    try testing.expect(std.mem.startsWith(u8, result.message().?, "Time limit: the run took longer than 5 ms"));
 }
 
 test "C API: a build compresses a GLB's meshes with Draco when asked" {
@@ -437,24 +466,50 @@ test "C API: threads build at once, each its own script" {
 
 test "C API: a process forked after a build that ran on worker threads builds too" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    // Heavy enough for Manifold's parallel algorithms, which start oneTBB's worker threads
-    const heavy = "sphere(r: 50, segments: 512) - cube(60, center: true).translate(x: 30)";
     {
-        const result = build(heavy, "stl", .{});
+        const result = build(HEAVY, "stl", .{});
         defer result.deinit();
         try testing.expectEqual(@as(c_int, c.KUPCAD_OK), result.status());
     }
+    try expectForkBuilds();
+    // And the parent builds on, its workers started again
+    const after = build(HEAVY, "stl", .{});
+    defer after.deinit();
+    try testing.expectEqual(@as(c_int, c.KUPCAD_OK), after.status());
+}
+
+test "C API: a process forked while another thread that built is alive builds too" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // A thread holds oneTBB's workers until it ends: ending them at the fork failed while one
+    // that had built waited in a host's pool, and the child trapped
+    const Pooled = struct {
+        fn run(built: *std.Io.Event, done: *std.Io.Event, status: *c_int) void {
+            const result = build(HEAVY, "stl", .{});
+            status.* = result.status();
+            result.deinit();
+            built.set(testing.io);
+            done.waitUncancelable(testing.io);
+        }
+    };
+    var built: std.Io.Event = .unset;
+    var done: std.Io.Event = .unset;
+    var status: c_int = -1;
+    const thread = try std.Thread.spawn(.{}, Pooled.run, .{ &built, &done, &status });
+    defer thread.join();
+    defer done.set(testing.io);
+    built.waitUncancelable(testing.io);
+    try testing.expectEqual(@as(c_int, c.KUPCAD_OK), status);
+    try expectForkBuilds();
+}
+
+/// Forks, and expects the child to build HEAVY and exit with 0, not be killed by a signal.
+fn expectForkBuilds() !void {
     const pid = std.c.fork();
     if (pid == 0) {
-        const result = build(heavy, "stl", .{});
+        const result = build(HEAVY, "stl", .{});
         std.c._exit(if (result.status() == c.KUPCAD_OK) 0 else 1);
     }
     var status: c_int = undefined;
     try testing.expectEqual(pid, std.c.waitpid(pid, &status, 0));
-    // Exited, with 0: not killed by a signal
     try testing.expectEqual(@as(c_int, 0), status);
-    // And the parent builds on, its workers started again
-    const after = build(heavy, "stl", .{});
-    defer after.deinit();
-    try testing.expectEqual(@as(c_int, c.KUPCAD_OK), after.status());
 }

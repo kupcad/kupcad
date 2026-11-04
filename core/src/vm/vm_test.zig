@@ -42,6 +42,11 @@ fn steppingDebugger(vm: *VM) void {
     vm.hooks.setStep(debugged.calls <= 2);
 }
 
+/// A host's debugger a person answers after a while: longer than the run's time limit.
+fn slowDebugger(_: *VM) void {
+    testing.io.sleep(.fromMilliseconds(80), .awake) catch {};
+}
+
 test "VM: Comprehensive Ruby-like language features integration" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -616,6 +621,35 @@ test "VM Debugger: debugger() steps the following lines, then continues, and the
     try testing.expectEqual(@as(usize, 3), debugged.calls);
     try testing.expect(!vm.hooks.step);
     try testing.expectEqual(@as(f64, 10), vm.globals.get("r").?.asNumber());
+}
+
+test "VM Debugger: the time at the debugger's prompt isn't the run's" {
+    // `kupcad build --timeout` with a person at the prompt failed the run once it went on
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.debugger_handler = slowDebugger;
+    vm.setTimeLimit(50);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // Past the instructions between two looks at the clock, after the prompt
+    const source = "debugger()\ni = 0\nwhile i < 2000\n  i += 1\nend";
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+}
+
+test "VM: a script that rescues its time limit's error stops anyway, saying why" {
+    // The rescue cleared the message, and the run stopped saying "RuntimeError"
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    // A limit already past: the evaluator stops at the first node, in `volume`
+    vm.setTimeLimit(0);
+    try testing.io.sleep(.fromMilliseconds(1), .awake);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    const source = "begin\n  cube(1).volume\nrescue => e\n  puts e\nend\ncube(1)";
+    try testing.expectEqual(.runtime_error, try compileAndRun(&vm, &out_chunk, source));
+    try testing.expect(std.mem.startsWith(u8, vm.last_error.?, "Time limit: the run took longer than 0 ms"));
 }
 
 test "VM Debugger: stepping with no one to answer runs the script to the end" {

@@ -12,11 +12,12 @@ library, in the process; a script reads only the files given with it.
 from __future__ import annotations
 
 import json
-import math
+import os
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from pathlib import PurePath
+from typing import Any, TypeVar
 
 from . import _native
 from ._version import __version__
@@ -36,6 +37,14 @@ __all__ = [
     "library_version",
     "params",
 ]
+
+
+# The most a limit, or a file's length, can be as libkupcad takes it
+_UINT64_MAX = 2**64 - 1
+_UINT32_MAX = 2**32 - 1
+
+# A file's path: a str, or a Path (any of them, as Mapping takes its keys as they are)
+_PathT = TypeVar("_PathT", bound="str | os.PathLike[str]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +124,8 @@ class ScriptError(Error):
 
     def __init__(self, message: str, report: Report | None = None) -> None:
         super().__init__(message)
-        # What the script printed and warned of before it failed; None when it didn't run
+        # What the script printed and warned of before it failed; None when nothing ran
+        # (format's, check's and params')
         self.report = report
 
 
@@ -127,14 +137,12 @@ def library_version() -> str:
 
 def format(source: str) -> str:
     """`source` formatted, as `kupcad fmt` formats it. Raises ScriptError when it doesn't parse."""
-    encoded = source.encode()
-    return _text(_native.lib.kupcad_format(encoded, len(encoded)))
+    return _text(_native.lib.kupcad_format, source)
 
 
 def check(source: str) -> list[Finding]:
     """The findings of `source`: lint findings and syntax errors."""
-    encoded = source.encode()
-    findings = json.loads(_text(_native.lib.kupcad_check(encoded, len(encoded))))
+    findings = json.loads(_text(_native.lib.kupcad_check, source))
     return [
         Finding(
             severity=finding["severity"],
@@ -154,8 +162,7 @@ def check(source: str) -> list[Finding]:
 def params(source: str) -> dict[str, Any]:
     """The parameters `source` declares and its metadata, the schema `kupcad doc` prints:
     {"meta": {"title": ...}, "parameters": [{"name": ..., "type": ..., "default": ...}]}."""
-    encoded = source.encode()
-    schema: dict[str, Any] = json.loads(_text(_native.lib.kupcad_params(encoded, len(encoded))))
+    schema: dict[str, Any] = json.loads(_text(_native.lib.kupcad_params, source))
     return schema
 
 
@@ -164,7 +171,7 @@ def build(
     *,
     format: str = "stl",
     params: Mapping[str, Any] | None = None,
-    files: Mapping[str, str | bytes] | None = None,
+    files: Mapping[_PathT, str | bytes] | None = None,
     memory_limit: int | None = None,
     timeout: float | None = None,
     draco: bool = False,
@@ -173,21 +180,25 @@ def build(
 
     params: the parameters' values by name, as `kupcad build -p` takes them
         ({"width": 60, "label": "A", "holes": [[5, 5], [35, 5]]}).
-    files: the files the script imports, by their path from its folder, text or bytes
-        ({"lib/gears.kup": Path("lib/gears.kup").read_text(encoding="utf-8")}).
+    files: the files the script imports, by their path from its folder (a str, or a Path),
+        text or bytes ({"lib/gears.kup": Path("lib/gears.kup").read_text(encoding="utf-8")}).
     memory_limit: the most memory, in bytes, the script may hold; None for no limit.
-    timeout: the most time, in seconds, the build may take; None for no limit. The time is
-        checked every few thousand instructions and between geometry operations.
+    timeout: the most time, in seconds, the build may take, to the millisecond; None (or
+        math.inf) for no limit. The time is checked every few thousand instructions and between
+        geometry operations.
     draco: compress a GLB's or a glTF's meshes with Draco.
 
     Raises ScriptError when the script fails, with what it printed and warned of until then;
     ValueError for a format that isn't one, a limit that isn't positive, or parameter values
-    JSON can't hold (NaN); and TypeError for values JSON has no type for (a set).
+    JSON can't hold (NaN) or that aren't by name (a list); and TypeError for values JSON has no
+    type for (a set), or a source or a file that isn't text or bytes.
     """
     if format not in FORMATS:
         raise ValueError(f"{format!r} isn't a format: one of {', '.join(FORMATS)}")
-    encoded = source.encode()
-    values = json.dumps(params, allow_nan=False).encode() if params else b""
+    encoded = _encoded(source)
+    # Any Mapping as the object it is; anything else as given, for the library to refuse
+    names = dict(params) if isinstance(params, Mapping) else params
+    values = json.dumps(names, allow_nan=False).encode() if params else b""
     packed = _pack(files or {})
     result = _native.lib.kupcad_build(
         encoded,
@@ -197,7 +208,7 @@ def build(
         len(values),
         packed,
         len(packed),
-        _positive(memory_limit, "memory_limit"),
+        _limit(memory_limit, "memory_limit"),
         _milliseconds(timeout),
         draco,
     )
@@ -209,30 +220,40 @@ def build(
 
 def _library_info() -> dict[str, Any]:
     """What the library says of itself: its version, protocolVersion, os, arch and formats."""
-    info: dict[str, Any] = json.loads(_text(_native.lib.kupcad_version()))
+    info: dict[str, Any] = json.loads(_take(_native.lib.kupcad_version())[0].decode())
     return info
 
 
-def _positive(limit: int | None, name: str) -> int:
-    """A limit as the library takes it, 0 for none."""
-    if limit is None:
+def _encoded(text: str) -> bytes:
+    """`text` as libkupcad reads it, UTF-8."""
+    if not isinstance(text, str):
+        raise TypeError(f"source is {type(text).__name__}: a str")
+    return text.encode()
+
+
+def _text(function: Callable[[bytes, int], int], source: str) -> str:
+    """The data of libkupcad's `function` for `source`, as text; raises what failed."""
+    encoded = _encoded(source)
+    return _take(function(encoded, len(encoded)))[0].decode()
+
+
+def _limit(value: int | None, name: str) -> int:
+    """A limit as the library takes it, 0 for none; one past what it holds is none either."""
+    if value is None:
         return 0
-    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-        raise ValueError(f"{name} is {limit!r}: a positive int, or None for none")
-    return limit
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} is {value!r}: a positive int, or None for none")
+    return min(value, _UINT64_MAX)
 
 
 def _milliseconds(seconds: float | None) -> int:
-    """Seconds as the library's milliseconds, at least 1; 0 for no limit."""
+    """Seconds as the library's whole milliseconds, at least 1; 0 for no limit."""
     if seconds is None:
         return 0
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not seconds > 0:
         raise ValueError(f"timeout is {seconds!r}: positive seconds, or None for none")
-    return max(math.ceil(seconds * 1000), 1)
-
-
-def _text(result: int) -> str:
-    return _take(result)[0].decode()
+    milliseconds = seconds * 1000
+    return _UINT64_MAX if milliseconds >= _UINT64_MAX else max(round(milliseconds), 1)
 
 
 def _take(result: int) -> tuple[bytes, str | None]:
@@ -250,12 +271,25 @@ def _take(result: int) -> tuple[bytes, str | None]:
     raise Error(message)
 
 
-def _pack(files: Mapping[str, str | bytes]) -> bytes:
-    """The files packed as kupcad.h describes: each its path's length, its path, its content's
-    length and its content, each length 4 bytes, little-endian."""
+def _pack(files: Mapping[_PathT, str | bytes]) -> bytes:
+    """The files packed as kupcad.h describes: each its path's length, its path (UTF-8, with
+    forward slashes when it is a Path), its content's length and its content, each length 4
+    bytes, little-endian."""
     packed = bytearray()
-    for path, content in files.items():
-        for field in (path.encode(), content.encode() if isinstance(content, str) else content):
+    for key, content in files.items():
+        path = PurePath(key).as_posix() if isinstance(key, os.PathLike) else key
+        if not isinstance(path, str):
+            raise TypeError(
+                f"files: {key!r} is {type(key).__name__}, not a path as a str or a Path"
+            )
+        data = content.encode() if isinstance(content, str) else content
+        if not isinstance(data, bytes):
+            raise TypeError(
+                f"files: {path} is {type(content).__name__}, not its content as text or bytes"
+            )
+        for field in (path.encode(), data):
+            if len(field) > _UINT32_MAX:
+                raise ValueError(f"files: {path} is past 4 GiB, the most a file holds")
             packed += struct.pack("<I", len(field)) + field
     return bytes(packed)
 
