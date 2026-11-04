@@ -2,6 +2,8 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: true
+  # vsce's signing tool: packaging the extension doesn't sign it
+  '@vscode/vsce-sign': false
 minimumReleaseAge: 4320
 # The versions the packages share: a package's dev dependency on one is `catalog:`. A peer
 # range stays the package's own, what a host may bring.

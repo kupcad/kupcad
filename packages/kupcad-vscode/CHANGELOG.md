@@ -1,1 +1,1 @@
-# @kupcad/vscode
+# kupcad-vscode

@@ -7,7 +7,8 @@ name: Release
 # latest.json the installed apps update from, as the tag's GitHub release, each file attested
 # (actions/attest-build-provenance). Once the release is out, the
 # npm packages a site or a tool installs (@kupcad/playground and what it runs on, the core's
-# module shrunk by wasm-opt among them, and @kupcad/files, the browser IDE's tree) go to npm at the same version, with provenance.
+# module shrunk by wasm-opt among them, and @kupcad/files, the browser IDE's tree) go to npm at the same version, with provenance,
+# and the VS Code extension, its .vsix on the release too, to the Visual Studio Marketplace.
 on:
   push:
     tags:
@@ -44,14 +45,14 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # The npm packages carry the core's version too (@kupcad/wasm's tests hold it to the
-      # module's): a tag that says otherwise would publish them under another
+      # The npm packages and the VS Code extension carry the core's version too (@kupcad/wasm's
+      # tests hold it to the module's): a tag that says otherwise would publish them under another
       - name: The packages' versions are the tag's
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           status=0
-          for name in $NPM_PACKAGES; do
+          for name in $NPM_PACKAGES vscode; do
             version=$(jq -r .version "packages/kupcad-$name/package.json")
             if [ "$version" != "$VERSION" ]; then
               echo "::error::packages/kupcad-$name/package.json has version $version, the tag $VERSION"
@@ -383,10 +384,50 @@ jobs:
           path: npm/
           if-no-files-found: error
 
+  # The VS Code extension, tested and packed beside the binaries; published only once the
+  # release is out (the marketplace job). It ships no kupcad: it downloads the release's
+  vscode:
+    name: Build the VS Code extension
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
+        with:
+          version: '^12.15'
+          node-version-file: .tool-versions
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter 'kupcad-vscode...'
+
+      - name: Test it
+        run: pnpm --filter kupcad-vscode test
+
+      # kupcad-vscode-<version>.vsix, packed by vsce from the bundles alone (--no-dependencies: the
+      # build bundles what it runs)
+      - name: Build and pack it
+        run: |
+          pnpm --filter kupcad-vscode build
+          pnpm --filter kupcad-vscode package
+
+      - name: Keep the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vscode-extension
+          path: packages/kupcad-vscode/kupcad-vscode-${{ needs.version.outputs.version }}.vsix
+          if-no-files-found: error
+
   release:
     name: Publish the release
     # The packages too: a release whose packages can't ship waits for a tag that fixes them
-    needs: [version, build, desktop, packages]
+    needs: [version, build, desktop, packages, vscode]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -430,6 +471,13 @@ jobs:
           rm dist/*.sig
           (cd dist && sha256sum kupcad-desktop_* latest.json >> checksums.txt)
 
+      # The VS Code extension the Marketplace gets, for an editor that installs one from a file
+      # (VSCodium, Cursor), and a pre-release's, which the Marketplace doesn't take
+      - name: Add the VS Code extension
+        run: |
+          mv artifacts/vscode-extension/*.vsix dist/
+          (cd dist && sha256sum *.vsix >> checksums.txt)
+
       # Each file the release ships attested as built by this workflow from the tag (a Sigstore
       # signature, kept with the repository): `gh attestation verify <file> --repo
       # kupcad/kupcad` checks one, as the VS Code extension does before it installs a kupcad.
@@ -440,6 +488,7 @@ jobs:
           subject-path: |
             dist/kupcad_*
             dist/kupcad-desktop_*
+            dist/*.vsix
             dist/latest.json
             dist/checksums.txt
 
@@ -451,7 +500,7 @@ jobs:
         run: |
           prerelease=()
           if [[ $TAG == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" dist/kupcad_* dist/kupcad-desktop_* dist/latest.json dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
+          gh release create "$TAG" dist/kupcad_* dist/kupcad-desktop_* dist/*.vsix dist/latest.json dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
 
   # npm's trusted publishing: the job's OIDC token is the credential, which npm takes from this
   # workflow (release.yml) in the npm environment only, and signs each package's provenance.
@@ -504,3 +553,48 @@ jobs:
             fi
             npm publish "./npm/kupcad-$name-$VERSION.tgz" --provenance --access public --tag "$tag"
           done
+
+  # The Visual Studio Marketplace's trusted publishing: the job's OIDC token is the credential,
+  # which the Marketplace takes from this workflow (release.yml) in the vscode environment only.
+  # It publishes what the vscode job packed, with the vsce the extension packs with, running
+  # nothing of the repository's. The Marketplace has no semver pre-releases (0.2.0-rc.1), so a
+  # pre-release tag publishes nothing there: its .vsix is on the GitHub release
+  marketplace:
+    name: Publish the VS Code extension
+    needs: [version, vscode, release]
+    if: ${{ !contains(needs.version.outputs.version, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: vscode
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout .tool-versions and the extension's package.json
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .tool-versions
+            packages/kupcad-vscode/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .tool-versions
+
+      - name: Collect the extension
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vscode-extension
+          path: vsix
+
+      # The version already on the Marketplace is skipped, so a run stopped halfway can be re-run
+      - name: Publish it
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          vsce=$(jq -r '.devDependencies["@vscode/vsce"]' packages/kupcad-vscode/package.json)
+          npx --yes "@vscode/vsce@$vsce" publish --oidc --packagePath "vsix/kupcad-vscode-$VERSION.vsix" --skip-duplicate

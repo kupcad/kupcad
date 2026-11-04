@@ -164,11 +164,11 @@ checkout's `kupcad`, not a release (a `kupcad.serverPath` you set still comes fi
 While you work on it:
 
 ```sh
-pnpm --filter @kupcad/vscode watch     # the host and the page, rebuilt as they change
-pnpm --filter @kupcad/vscode test      # the host's tests in Node, the page's under jsdom
-pnpm --filter @kupcad/vscode test:integration  # built, in a real VS Code, on core's kupcad
-pnpm --filter @kupcad/vscode check     # svelte-check over both
-pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/, once
+pnpm --filter kupcad-vscode watch     # the host and the page, rebuilt as they change
+pnpm --filter kupcad-vscode test      # the host's tests in Node, the page's under jsdom
+pnpm --filter kupcad-vscode test:integration  # built, in a real VS Code, on core's kupcad
+pnpm --filter kupcad-vscode check     # svelte-check over both
+pnpm --filter kupcad-vscode build     # dist/extension.cjs and dist-webview/, once
 ```
 
 With `watch` running, a change to the host needs the window reloaded (`Developer: Reload

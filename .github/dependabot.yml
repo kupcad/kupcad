@@ -17,6 +17,10 @@ updates:
     # Matches npmMinimalAgeGate in pnpm config
     cooldown:
       default-days: 3
+    # The VS Code API's types are those of the oldest VS Code the extension runs on (its
+    # engines.vscode): they move with it, by hand, or the Marketplace refuses the extension
+    ignore:
+      - dependency-name: '@types/vscode'
     groups:
       development:
         dependency-type: development

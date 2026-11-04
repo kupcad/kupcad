@@ -1,7 +1,7 @@
 {
-  "name": "@kupcad/vscode",
+  "name": "kupcad-vscode",
   "displayName": "KupCAD",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "description": "KupCAD - code to CAD language",
   "categories": [
@@ -10,6 +10,20 @@
     "Programming Languages",
     "Visualization"
   ],
+  "keywords": [
+    "3d printing",
+    "cad",
+    "kupcad",
+    "parametric"
+  ],
+  "homepage": "https://kupcad.org",
+  "bugs": "https://github.com/kupcad/kupcad/issues",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-vscode"
+  },
   "publisher": "kupcad",
   "type": "module",
   "main": "./dist/extension.cjs",
@@ -18,7 +32,8 @@
     "watch": "concurrently \"vite build --config vite.config.extension.js --watch\" \"vite build --config vite.config.webview.js --watch\"",
     "test": "vitest run",
     "test:integration": "node test/run.js",
-    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings"
+    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@kupcad/protocol": "workspace:*",
@@ -31,8 +46,9 @@
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@testing-library/svelte": "catalog:",
     "@types/node": "catalog:",
-    "@types/vscode": "~1.144.0",
+    "@types/vscode": "1.125.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "4.1.0",
     "concurrently": "^10.0.6",
     "jsdom": "catalog:",
     "svelte": "catalog:",
@@ -144,6 +160,7 @@
     ]
   },
   "activationEvents": [],
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.125.0"
   },

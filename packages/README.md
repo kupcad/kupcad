@@ -18,7 +18,7 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 | `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting by the core's vocabulary, indentation, completion, the findings of `check` marked with their fixes, or a client of `kupcad lsp` (`@codemirror/lsp-client`). For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
 | `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the browser IDE. | wasm, editor, ui |
 | `kupcad-files` | `@kupcad/files` | A project's files as a tree, for any host of them: the tree with its bar (new script, new folder), its rows' menu (as data, and as a page's popover), the folder listed through the host's `readDir`, and the scripts read with their unsaved changes and undo histories. The desktop app's on the disk, the browser IDE's in OPFS. | — |
-| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, ui |
+| `kupcad-vscode` | `kupcad-vscode` (private; the Marketplace's `kupcad.kupcad-vscode`) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, ui |
 | `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol, files |
 
 The site (Astro: the playground's page) and the browser IDE (kupcad.dev, an installable PWA: the
@@ -37,11 +37,11 @@ pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into
 pnpm -r build                      # what builds: the module copied into @kupcad/wasm, the extension
 pnpm test:packages                 # every package's Vitest suite
 pnpm test:browser                  # the viewer's, the pane's and the playground's smoke tests, headless Chromium
-pnpm --filter @kupcad/vscode test:integration  # the built extension in a real VS Code, on core's kupcad
+pnpm --filter kupcad-vscode test:integration  # the built extension in a real VS Code, on core's kupcad
 pnpm check                         # oxlint, oxfmt --check, and tsc over every package (CI's gate)
 pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
-pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
+pnpm --filter kupcad-vscode watch # the extension and its webview, rebuilt as they change
 pnpm dev:vscode                    # kupcad and the extension built, a VS Code window to try it in
 pnpm dev:playground                # the core built to WebAssembly, the playground at 127.0.0.1:4321
 pnpm dev:desktop                  # kupcad built and bundled, the desktop app on examples/ (Rust needed)

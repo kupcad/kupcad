@@ -21,7 +21,7 @@ flowchart BT
 
     subgraph hosts ["Hosts"]
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
-        vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: @kupcad/ui"]
+        vscode["kupcad-vscode<br/>host: LSP client, binary manager<br/>webview: @kupcad/ui"]
         desktop["@kupcad/desktop (Tauri)<br/>bundled kupcad + LSP"]
         docs["the site (own repository)<br/>Astro: the playground"]
         pwa["the browser IDE (own repository)<br/>Astro PWA: files in OPFS"]
@@ -403,7 +403,7 @@ the host's `readDir` (the disk's, Tauri's; OPFS's), the names an entry may take 
 it, and the scripts read (`Scripts`: unsaved changes, what the disk changed under them, each
 script's undo history). It holds no file system of its own, so the same tree runs on both.
 
-### The VS Code extension (`@kupcad/vscode`)
+### The VS Code extension (`kupcad-vscode`, the Marketplace's `kupcad.kupcad-vscode`)
 
 Two programs in one package, built separately by Vite:
 

@@ -4,6 +4,9 @@
 .gitignore
 src/**
 *.config.js
+vite.config.*.js
+# A package made before: never packed into the next
+*.vsix
 jsconfig.json
 node_modules/**
 **/*.map

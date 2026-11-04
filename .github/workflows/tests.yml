@@ -194,13 +194,15 @@ jobs:
           pnpm --filter @kupcad/desktop test:integration
 
       # The VS Code extension in a real VS Code (the newest stable, downloaded), on the same kupcad
-      # lsp: its diagnostics, formatting and hover, and the viewer opening; xvfb gives it a display
+      # lsp: its diagnostics, formatting and hover, and the viewer opening; xvfb gives it a display.
+      # Then packed as a release packs it, so what the Marketplace refuses fails here, not at a tag
       - name: Run the VS Code extension in VS Code on the real kupcad lsp
         if: matrix.name == 'linux debug'
         run: |
-          pnpm install --frozen-lockfile --filter '@kupcad/vscode...'
-          pnpm --filter @kupcad/vscode build
-          xvfb-run -a pnpm --filter @kupcad/vscode test:integration
+          pnpm install --frozen-lockfile --filter 'kupcad-vscode...'
+          pnpm --filter kupcad-vscode build
+          xvfb-run -a pnpm --filter kupcad-vscode test:integration
+          pnpm --filter kupcad-vscode package
 
       # The desktop app's native side, on the kupcad check:examples built as its sidecar: macOS
       # needs no WebKit packages to build it

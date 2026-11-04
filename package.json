@@ -1,5 +1,6 @@
 {
   "name": "kupcad",
+  "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -22,7 +23,7 @@
     "fmt:check": "oxfmt --check packages vitest.svelte.js && prettier --check 'packages/**/*.svelte'",
     "test:packages": "pnpm -r test",
     "test:browser": "pnpm -r --if-present test:browser",
-    "dev:vscode": "pnpm build:core:native && pnpm --filter @kupcad/vscode build && code --extensionDevelopmentPath=\"$PWD/packages/kupcad-vscode\" examples",
+    "dev:vscode": "pnpm build:core:native && pnpm --filter kupcad-vscode build && code --extensionDevelopmentPath=\"$PWD/packages/kupcad-vscode\" examples",
     "dev:playground": "pnpm build:core:wasm && pnpm --filter @kupcad/wasm build && pnpm --filter @kupcad/playground dev",
     "dev:desktop": "pnpm build:core:native && pnpm --filter @kupcad/desktop sidecar && pnpm --filter @kupcad/desktop tauri dev -- -- \"$PWD/examples\""
   },
