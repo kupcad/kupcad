@@ -30,11 +30,11 @@ module Kupcad
     attach_function :kupcad_format, %i[pointer size_t], :pointer, blocking: true
     attach_function :kupcad_check, %i[pointer size_t], :pointer, blocking: true
     attach_function :kupcad_params, %i[pointer size_t], :pointer, blocking: true
-    attach_function :kupcad_build, %i[pointer size_t string pointer size_t pointer size_t uint64 bool], :pointer,
+    attach_function :kupcad_build, %i[pointer size_t string pointer size_t pointer size_t uint64 uint64 bool], :pointer,
                     blocking: true
     attach_function :kupcad_result_status, [:pointer], :status
     attach_function :kupcad_result_data, %i[pointer pointer], :pointer
-    attach_function :kupcad_result_message, [:pointer], :string
+    attach_function :kupcad_result_message, %i[pointer pointer], :pointer
     attach_function :kupcad_result_report, [:pointer], :string
     attach_function :kupcad_result_free, [:pointer], :void
 
@@ -57,11 +57,14 @@ module Kupcad
     end
 
     # What a call gave, read and freed: [status, data, message, report]. The data is binary;
-    # the message and the report, UTF-8
+    # the message and the report, UTF-8. The data and the message are read by their length:
+    # a message can quote a NUL (the report is JSON, which escapes one)
     def take(result)
       length = FFI::MemoryPointer.new(:size_t)
       data = kupcad_result_data(result, length).read_bytes(length.read(:size_t))
-      [kupcad_result_status(result), data, utf8(kupcad_result_message(result)), utf8(kupcad_result_report(result))]
+      message = kupcad_result_message(result, length)
+      message = message.null? ? nil : utf8(message.read_bytes(length.read(:size_t)))
+      [kupcad_result_status(result), data, message, utf8(kupcad_result_report(result))]
     ensure
       kupcad_result_free(result)
     end

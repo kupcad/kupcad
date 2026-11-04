@@ -697,7 +697,7 @@ test "WASM Interop: version_wasm says what kupcad version --json says, of this m
     const res = wasm.version_wasm(&len) orelse return error.VersionFailed;
     defer wasm.wasm_free(@constCast(res), len);
     // Parsed strictly: what a page reads, field for field
-    const Info = struct { version: []const u8, protocolVersion: u32, os: []const u8, arch: []const u8 };
+    const Info = struct { version: []const u8, protocolVersion: u32, os: []const u8, arch: []const u8, formats: []const []const u8 };
     const parsed = try std.json.parseFromSlice(Info, testing.allocator, res[0..len], .{});
     defer parsed.deinit();
     const built: kupcad.version.Info = .{};
@@ -705,4 +705,5 @@ test "WASM Interop: version_wasm says what kupcad version --json says, of this m
     try testing.expectEqual(preview_frame.PROTOCOL_VERSION, parsed.value.protocolVersion);
     try testing.expectEqualStrings("wasi", parsed.value.os);
     try testing.expectEqualStrings("wasm32", parsed.value.arch);
+    try testing.expectEqual(built.formats.len, parsed.value.formats.len);
 }

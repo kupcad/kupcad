@@ -11,21 +11,21 @@ module Kupcad
     def initialize: (String message, ?Report? report) -> void
   end
 
-  class Warning < Data
+  class RunWarning < Data
     attr_reader message: String
     attr_reader line: Integer?
     attr_reader column: Integer?
     attr_reader file: String?
 
-    def self.new: (message: String, line: Integer?, column: Integer?, file: String?) -> Warning
+    def self.new: (message: String, line: Integer?, column: Integer?, file: String?) -> RunWarning
   end
 
   class Report < Data
     attr_reader output: String
     attr_reader output_cut: bool
-    attr_reader warnings: Array[Warning]
+    attr_reader warnings: Array[RunWarning]
 
-    def self.new: (output: String, output_cut: bool, warnings: Array[Warning]) -> Report
+    def self.new: (output: String, output_cut: bool, warnings: Array[RunWarning]) -> Report
     def self.from_json: (String json) -> Report
   end
 
@@ -57,5 +57,5 @@ module Kupcad
   def self.check: (String source) -> Array[Finding]
   def self.params: (String source) -> Hash[Symbol, untyped]
   def self.build: (String source, ?format: Symbol | String, ?params: Hash[Symbol | String, untyped],
-                   ?files: Hash[String, String], ?memory_limit: Integer?, ?draco: bool) -> Model
+                   ?files: Hash[String, String], ?memory_limit: Integer?, ?timeout: Numeric?, ?draco: bool) -> Model
 end

@@ -37,6 +37,11 @@ pub const Host = host_mod.Host;
 
 /// Stack slots every native call may push (GC roots) without reserving them (see VM.push).
 const NATIVE_STACK_RESERVE = 16;
+/// Instructions between two looks at the clock under a time limit: a clock read costs tens of
+/// nanoseconds, these instructions tens of microseconds.
+const TIME_CHECK_INTERVAL = 4096;
+/// What stops a run past its time limit (VM.setTimeLimit), with the limit in milliseconds.
+const TIME_LIMIT_MESSAGE = "Time limit: the run took longer than {d} ms, the limit where this host runs scripts; a loop that never ends, or a model too heavy for it.";
 
 /// Names an error lists (a module's exports, a JsonObject's keys) before "...".
 pub const MAX_NAMES_LISTED = 8;
@@ -612,12 +617,14 @@ pub const VM = struct {
     /// The instruction hooks that are on (see InstructionHooks): the budget, zealous GC and
     /// the debugger's stop at a new line. A result ends the run.
     fn beforeInstruction(self: *VM, frame: *const CallFrame, exec_chunk: *const chunk.Chunk, previous_line: *?u32) ?InterpretResult {
-        if (self.hooks.limit > 0) {
-            self.instruction_count += 1;
-            if (self.instruction_count > self.hooks.limit) {
-                self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.hooks.limit});
-                return .execution_limit_exceeded;
-            }
+        if (self.hooks.limit > 0 or self.hooks.deadline != null) self.instruction_count += 1;
+        if (self.hooks.limit > 0 and self.instruction_count > self.hooks.limit) {
+            self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.hooks.limit});
+            return .execution_limit_exceeded;
+        }
+        if (self.instruction_count % TIME_CHECK_INTERVAL == 0 and self.pastDeadline()) {
+            self.runtimeError(TIME_LIMIT_MESSAGE, .{self.hooks.time_limit_ms});
+            return .execution_limit_exceeded;
         }
         // A full collection before the instruction: a value a native forgot to root is
         // swept now, and the next instruction to use it fails.
@@ -1683,6 +1690,29 @@ pub const VM = struct {
     /// The limits of a run someone waits on (an editor's preview and hovers, the browser's,
     /// a check's comparing of its fixes): a script that loops or grows forever stops with
     /// an error instead of hanging them.
+    /// Stops the run once `ms` milliseconds have passed from now (a host's timeout): the
+    /// interpreter looks at the clock every TIME_CHECK_INTERVAL instructions, the geometry
+    /// evaluator at every node (failTimeLimit). Null lifts the limit.
+    pub fn setTimeLimit(self: *VM, ms: ?u64) void {
+        const limit = ms orelse return self.hooks.setDeadline(null, 0);
+        const now = std.Io.Clock.now(.awake, self.io);
+        self.hooks.setDeadline(now.addDuration(.fromMilliseconds(@intCast(@min(limit, std.math.maxInt(i64))))), limit);
+    }
+
+    /// Whether the run is past its time limit; false without one.
+    pub fn pastDeadline(self: *const VM) bool {
+        const deadline = self.hooks.deadline orelse return false;
+        return std.Io.Clock.now(.awake, self.io).compare(.gt, deadline);
+    }
+
+    /// Stops the run past its time limit from the geometry evaluator: the message recorded and
+    /// the run canceled, so no `rescue` in the script goes on past it.
+    pub fn failTimeLimit(self: *VM) error{Canceled} {
+        self.reportError(TIME_LIMIT_MESSAGE, .{self.hooks.time_limit_ms});
+        self.cancel_token.store(true, .release);
+        return error.Canceled;
+    }
+
     pub fn useInteractiveLimits(self: *VM) void {
         self.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);

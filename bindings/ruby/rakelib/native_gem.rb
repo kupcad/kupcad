@@ -12,35 +12,16 @@ module Kupcad
   class NativeGem
     class Error < StandardError; end
 
-    # Gem platform => the library's file name, its binary format and its CPU
+    # Gem platform => the library's file name there. Whether a library is built for its
+    # platform the release checks by installing the gem there and running the specs on it.
     PLATFORMS = {
-      'x86_64-linux-gnu' => ['libkupcad.so', :elf, 'x86_64'],
-      'aarch64-linux-gnu' => ['libkupcad.so', :elf, 'aarch64'],
-      'x86_64-darwin' => ['libkupcad.dylib', :macho, 'x86_64'],
-      'arm64-darwin' => ['libkupcad.dylib', :macho, 'aarch64'],
-      'x64-mingw-ucrt' => ['kupcad.dll', :pe, 'x86_64'],
-      'aarch64-mingw-ucrt' => ['kupcad.dll', :pe, 'aarch64']
+      'x86_64-linux-gnu' => 'libkupcad.so',
+      'aarch64-linux-gnu' => 'libkupcad.so',
+      'x86_64-darwin' => 'libkupcad.dylib',
+      'arm64-darwin' => 'libkupcad.dylib',
+      'x64-mingw-ucrt' => 'kupcad.dll',
+      'aarch64-mingw-ucrt' => 'kupcad.dll'
     }.freeze
-
-    ELF_MACHINES = { 0x3E => 'x86_64', 0xB7 => 'aarch64' }.freeze
-    MACHO_CPU_TYPES = { 0x01000007 => 'x86_64', 0x0100000C => 'aarch64' }.freeze
-    PE_MACHINES = { 0x8664 => 'x86_64', 0xAA64 => 'aarch64' }.freeze
-
-    # [:elf, :macho or :pe, "x86_64" or "aarch64"] from a 64-bit library's header, or nil when
-    # the file is something else
-    def self.binary_format(path)
-      header = File.binread(path, 64).to_s
-      return nil if header.bytesize < 64
-
-      if header.start_with?("\x7FELF".b)
-        [:elf, ELF_MACHINES[header.byteslice(18, 2).unpack1('v')]]
-      elsif header.start_with?("\xCF\xFA\xED\xFE".b)
-        [:macho, MACHO_CPU_TYPES[header.byteslice(4, 4).unpack1('V')]]
-      elsif header.start_with?('MZ')
-        pe = File.binread(path, 6, header.byteslice(0x3C, 4).unpack1('V')).to_s
-        [:pe, PE_MACHINES[pe.byteslice(4, 2).unpack1('v')]] if pe.start_with?("PE\0\0".b)
-      end
-    end
 
     attr_reader :platform
 
@@ -56,7 +37,7 @@ module Kupcad
 
     # Where the gem carries the library, which lib/kupcad/native.rb loads
     def library_path
-      "lib/kupcad/native/#{PLATFORMS.fetch(platform).first}"
+      "lib/kupcad/native/#{PLATFORMS.fetch(platform)}"
     end
 
     # The files beside the library that go with it, by their path in the gem
@@ -83,13 +64,8 @@ module Kupcad
       notices = File.join(File.dirname(@library), 'THIRD_PARTY_NOTICES.md')
       raise Error, "#{notices} not found: collect-licenses.sh puts it beside the library" unless File.file?(notices)
 
-      name, *expected = PLATFORMS.fetch(platform)
+      name = PLATFORMS.fetch(platform)
       raise Error, "#{@library} isn't named #{name}, as #{platform}'s library is" unless File.basename(@library) == name
-
-      actual = self.class.binary_format(@library)
-      return true if actual == expected
-
-      raise Error, "#{@library} is built for #{actual ? actual.join(' ') : 'an unknown format'}, not #{platform}"
     end
 
     # Writes pkg/kupcad-VERSION-PLATFORM.gem and returns its path

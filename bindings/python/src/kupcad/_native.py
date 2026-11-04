@@ -43,7 +43,7 @@ def _load() -> ctypes.CDLL:
         "kupcad_check": (text, ctypes.c_void_p),
         "kupcad_params": (text, ctypes.c_void_p),
         "kupcad_build": (
-            [*text, ctypes.c_char_p, *text, *text, ctypes.c_uint64, ctypes.c_bool],
+            [*text, ctypes.c_char_p, *text, *text, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_bool],
             ctypes.c_void_p,
         ),
         "kupcad_result_status": ([ctypes.c_void_p], ctypes.c_int),
@@ -51,7 +51,10 @@ def _load() -> ctypes.CDLL:
             [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)],
             ctypes.c_void_p,
         ),
-        "kupcad_result_message": ([ctypes.c_void_p], ctypes.c_char_p),
+        "kupcad_result_message": (
+            [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)],
+            ctypes.c_void_p,
+        ),
         "kupcad_result_report": ([ctypes.c_void_p], ctypes.c_char_p),
         "kupcad_result_free": ([ctypes.c_void_p], None),
     }
@@ -72,17 +75,19 @@ lib = _load()
 
 
 def take(result: int) -> tuple[int, bytes, str | None, str | None]:
-    """What a call gave, read and freed: its status, data, message and report."""
+    """What a call gave, read and freed: its status, data, message and report. The data and the
+    message are read by their length: a message can quote a NUL (the report is JSON, which
+    escapes one)."""
     try:
         length = ctypes.c_size_t()
-        pointer = lib.kupcad_result_data(result, ctypes.byref(length))
-        data = ctypes.string_at(pointer, length.value) if length.value else b""
-        message = lib.kupcad_result_message(result)
+        data = ctypes.string_at(lib.kupcad_result_data(result, ctypes.byref(length)), length.value)
+        pointer = lib.kupcad_result_message(result, ctypes.byref(length))
+        message = ctypes.string_at(pointer, length.value).decode() if pointer else None
         report = lib.kupcad_result_report(result)
         return (
             lib.kupcad_result_status(result),
             data,
-            message.decode() if message is not None else None,
+            message,
             report.decode() if report is not None else None,
         )
     finally:

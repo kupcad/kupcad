@@ -10,7 +10,9 @@
  *
  * A script reads only the files given with its call, and its exports go nowhere. It runs in
  * the calling process: a bug the core stops on stops the host too. Where that matters, run
- * the `kupcad` CLI as a process of its own.
+ * the `kupcad` CLI as a process of its own. A process that has built may fork (a preforking
+ * web server): the library ends its worker threads before a fork, and each process starts its
+ * own again; but not while a build runs on another thread.
  */
 #ifndef KUPCAD_H
 #define KUPCAD_H
@@ -47,7 +49,9 @@ typedef struct kupcad_result kupcad_result;
 uint32_t kupcad_abi_version(void);
 
 /* What the library says of itself, as `kupcad version --json` does, in its data:
- * {"version": "0.1.9", "protocolVersion": 1, "os": "linux", "arch": "x86_64"}. */
+ * {"version": "0.1.9", "protocolVersion": 1, "os": "linux", "arch": "x86_64",
+ *  "formats": ["stl", "glb", "gltf", "step", "3mf", "obj", "svg", "dxf"]}: the formats are
+ * those kupcad_build takes. */
 kupcad_result *kupcad_version(void);
 
 /* `source` formatted, as `kupcad fmt` formats it, in the data. KUPCAD_SCRIPT_ERROR when it
@@ -64,8 +68,8 @@ kupcad_result *kupcad_check(const char *source, size_t source_len);
  * `kupcad doc` prints, {"meta": {...}, "parameters": [...]}. */
 kupcad_result *kupcad_params(const char *source, size_t source_len);
 
-/* Runs `source` and exports its model as `format` ("stl", "3mf", "glb", "gltf", "obj", "step",
- * "svg" or "dxf"), its bytes in the data, as `kupcad build` writes them. Its report (below)
+/* Runs `source` and exports its model as `format` (one of kupcad_version's "formats": "stl",
+ * "3mf", "glb"...), its bytes in the data, as `kupcad build` writes them. Its report (below)
  * comes with it, whether the build succeeds or not.
  *
  * params_json: the parameter values, a JSON object of names and values as `kupcad build -P`
@@ -74,13 +78,16 @@ kupcad_result *kupcad_params(const char *source, size_t source_len);
  *   path, its path (UTF-8, from the script's folder: "lib/gears.kup"), the length of its
  *   content and its content, each length 4 bytes, little-endian; NULL for none.
  * memory_limit: the most memory, in bytes, the script may hold (`--memory-limit`); 0 for no
- *   limit.
+ *   limit. A script that needs more fails with "OutOfMemoryError: ...".
+ * timeout_ms: the most time, in milliseconds, the build may take; 0 for no limit. A script
+ *   that runs longer fails with "Time limit: ...": the time is checked every few thousand
+ *   instructions and between geometry operations, so one long operation finishes first.
  * draco: compress a GLB's or a glTF's meshes with Draco.
  */
 kupcad_result *kupcad_build(const char *source, size_t source_len, const char *format,
                             const char *params_json, size_t params_json_len,
                             const uint8_t *files, size_t files_len,
-                            uint64_t memory_limit, bool draco);
+                            uint64_t memory_limit, uint64_t timeout_ms, bool draco);
 
 /* KUPCAD_OK, or what failed. */
 kupcad_status kupcad_result_status(const kupcad_result *result);
@@ -89,8 +96,9 @@ kupcad_status kupcad_result_status(const kupcad_result *result);
  * NUL-terminated. Empty (length 0) when the call failed. Valid until the result is freed. */
 const uint8_t *kupcad_result_data(const kupcad_result *result, size_t *len);
 
-/* What failed, NUL-terminated UTF-8; NULL when the call succeeded. */
-const char *kupcad_result_message(const kupcad_result *result);
+/* What failed, NUL-terminated UTF-8, its length in bytes in `len` (which may be NULL): a
+ * message can hold a NUL of its own, quoting the script. NULL, and 0, when the call succeeded. */
+const char *kupcad_result_message(const kupcad_result *result, size_t *len);
 
 /* A build's report, NUL-terminated JSON: what the script printed (`puts`, `print`, `warn`) up
  * to 64 KB, and what it warned of, where:

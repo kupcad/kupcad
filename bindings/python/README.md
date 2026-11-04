@@ -14,7 +14,7 @@ from pathlib import Path
 
 import kupcad
 
-source = Path("bracket.kup").read_text()
+source = Path("bracket.kup").read_text(encoding="utf-8")
 model = kupcad.build(source, format="stl", params={"width": 60, "label": "A"})
 Path("bracket.stl").write_bytes(model.data)
 print(model.report.output)  # what the script printed
@@ -24,17 +24,21 @@ for warning in model.report.warnings:
 
 ## What it does
 
-- `kupcad.build(source, *, format, params, files, memory_limit, draco)` runs the script and
-  returns a `kupcad.Model`: its `data` (bytes) in the `format` (one of `kupcad.FORMATS`: `stl`,
-  `3mf`, `glb`, `gltf`, `obj`, `step`, `svg`, `dxf`), and the run's `report`, what the script
-  printed and what it warned of, where.
+- `kupcad.build(source, *, format, params, files, memory_limit, timeout, draco)` runs the
+  script and returns a `kupcad.Model`: its `data` (bytes) in the `format` (one of
+  `kupcad.FORMATS`, the library's: `stl`, `3mf`, `glb`, `gltf`, `obj`, `step`, `svg`, `dxf`),
+  and the run's `report`, what the script printed and the `kupcad.RunWarning`s it warned of,
+  where.
   - `params`: the parameters' values by name, as `kupcad build -p` takes them:
     `{"width": 60, "thread": "m4", "holes": [[5, 5], [35, 5]]}`. Values are checked against
     each parameter's rules.
-  - `files`: the files the script imports, by their path from its folder:
-    `{"lib/gears.kup": Path("lib/gears.kup").read_text(), "fonts/a.ttf": font_bytes}`. A script
-    reads no other file, and its exports (`export_stl`) write nothing.
+  - `files`: the files the script imports, by their path from its folder, text or bytes:
+    `{"lib/gears.kup": Path("lib/gears.kup").read_text(encoding="utf-8"), "a.ttf": font}`. A
+    script reads no other file, and its exports (`export_stl`) write nothing.
   - `memory_limit`: the most memory, in bytes, the script may hold; no limit by default.
+  - `timeout`: the most time, in seconds, the build may take; no limit by default. A script
+    that never ends otherwise holds its thread for good: a native call can't be interrupted,
+    by Ctrl-C or a signal.
   - `draco=True` compresses a GLB's or a glTF's meshes.
 - `kupcad.format(source)`: the source as `kupcad fmt` formats it.
 - `kupcad.check(source)`: what `kupcad check` finds, a list of `kupcad.Finding` (severity, rule,
@@ -45,18 +49,22 @@ for warning in model.report.warnings:
 
 ## Errors
 
-- `kupcad.ScriptError` when the script doesn't parse or compile, raises, or leaves no model;
-  its message says where and why (`"2:5: Invalid expression ..."`,
-  `"RuntimeError: Plate too thin"`), and its `report` holds what the script printed until then.
-- `ValueError` for a format that isn't one, or parameter values a parameter refuses (or JSON
-  can't hold, such as NaN).
-- `MemoryError` when the process runs out of memory.
+- `kupcad.ScriptError` (a `kupcad.Error`) when the script doesn't parse or compile, raises,
+  runs past its `timeout` or `memory_limit`, or leaves no model. A value one of its parameters
+  refuses is one too: the script raises `ValueError` at the `param` that refuses it. The
+  message says where and why (`"2:5: Invalid expression ..."`, `"RuntimeError: Plate too
+  thin"`), and its `report` holds what the script printed until then.
+- `ValueError` for a format that isn't one, a limit that isn't positive, or parameter values
+  JSON can't hold (NaN); `TypeError` for values JSON has no type for (a set).
+- `MemoryError` when the process itself runs out of memory.
 
 ## Threads and processes
 
 A build releases the GIL while it runs, so other threads go on, and builds on several threads
-run at once: libkupcad's calls share nothing. The core runs in your process, so a bug it stops
-on stops the process too. To run scripts you don't trust, or keep a crash away from a web
+run at once: libkupcad's calls share nothing. A process that has built may fork (gunicorn's
+`--preload`, multiprocessing's fork): libkupcad ends its worker threads before a fork, and
+each process starts its own. The core runs in your process, so a bug it stops on stops the
+process too. To run scripts you don't trust, or keep a crash away from a web
 server, run the [`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process
 of its own.
 

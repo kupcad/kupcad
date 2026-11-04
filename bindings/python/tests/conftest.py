@@ -8,12 +8,21 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
+# The examples that are drawings, which build as SVG
+DRAWINGS = {"cup.kup"}
 
 if not os.environ.get("KUPCAD_INSTALLED_WHEEL"):
     library = {"darwin": "libkupcad.dylib", "win32": "kupcad.dll"}.get(sys.platform, "libkupcad.so")
     os.environ.setdefault("KUPCAD_LIBRARY", str(ROOT / "core" / "zig-out" / "lib" / library))
 
-# The repository's example scripts, and those of them that are drawings, which build as SVG
-EXAMPLES = ROOT / "examples"
-DRAWINGS = {"cup.kup"}
+
+@pytest.fixture
+def examples() -> list[tuple[Path, str]]:
+    """The repository's example scripts, each with the format it builds in."""
+    return [
+        (path, "svg" if path.name in DRAWINGS else "glb")
+        for path in sorted((ROOT / "examples").glob("*.kup"))
+    ]

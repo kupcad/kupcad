@@ -325,6 +325,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 
     while (f_stack.frames.items.len > 0) {
         if (vm.cancel_token.load(.acquire)) return error.Canceled;
+        if (vm.pastDeadline()) return vm.failTimeLimit();
 
         const frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {

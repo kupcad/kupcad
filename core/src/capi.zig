@@ -6,16 +6,19 @@
 //! a result says all there is. Calls share no state, so threads may make them at once.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const api = @import("api.zig");
 const embed = @import("embed.zig");
 const version = @import("version.zig");
+const manifold = @import("bindings/manifold.zig");
 
 /// The ABI include/kupcad.h declares (KUPCAD_ABI_VERSION): a change to a declared function
 /// raises it, and a binding refuses a library that says another.
 pub const ABI_VERSION: u32 = 1;
 
-/// malloc's: thread-safe, and the host's own.
-const allocator = std.heap.c_allocator;
+/// malloc's: thread-safe, and the host's own. The tests' allocator under test, so they find what
+/// a call leaks.
+const allocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 
 pub const std_options: std.Options = .{ .logFn = logNothing };
 
@@ -97,16 +100,16 @@ fn bytesOf(ptr: ?[*]const u8, len: usize) []const u8 {
     return if (ptr) |p| p[0..len] else "";
 }
 
-export fn kupcad_abi_version() u32 {
+pub export fn kupcad_abi_version() u32 {
     return ABI_VERSION;
 }
 
-export fn kupcad_version() *kupcad_result {
+pub export fn kupcad_version() *kupcad_result {
     const json = std.json.Stringify.valueAlloc(allocator, version.Info{}, .{}) catch return handle(&out_of_memory);
     return succeeded(json);
 }
 
-export fn kupcad_format(source: ?[*]const u8, source_len: usize) *kupcad_result {
+pub export fn kupcad_format(source: ?[*]const u8, source_len: usize) *kupcad_result {
     var diagnostic: embed.Diagnostic = .{};
     defer diagnostic.deinit(allocator);
     const formatted = embed.format(allocator, bytesOf(source, source_len), &diagnostic) catch |err| return switch (err) {
@@ -120,12 +123,12 @@ export fn kupcad_format(source: ?[*]const u8, source_len: usize) *kupcad_result 
     return succeeded(formatted);
 }
 
-export fn kupcad_check(source: ?[*]const u8, source_len: usize) *kupcad_result {
+pub export fn kupcad_check(source: ?[*]const u8, source_len: usize) *kupcad_result {
     const findings = embed.check(allocator, io(), bytesOf(source, source_len)) catch |err| return internal(err);
     return succeeded(findings);
 }
 
-export fn kupcad_params(source: ?[*]const u8, source_len: usize) *kupcad_result {
+pub export fn kupcad_params(source: ?[*]const u8, source_len: usize) *kupcad_result {
     const schema = embed.params(allocator, bytesOf(source, source_len)) catch |err| return internal(err);
     return succeeded(schema);
 }
@@ -134,7 +137,7 @@ fn internal(err: anyerror) *kupcad_result {
     return if (err == error.OutOfMemory) handle(&out_of_memory) else failed(.internal_error, @errorName(err), null);
 }
 
-export fn kupcad_build(
+pub export fn kupcad_build(
     source: ?[*]const u8,
     source_len: usize,
     format: [*:0]const u8,
@@ -143,8 +146,11 @@ export fn kupcad_build(
     files: ?[*]const u8,
     files_len: usize,
     memory_limit: u64,
+    timeout_ms: u64,
     draco: bool,
 ) *kupcad_result {
+    // A host that loads the library may fork (a preforking web server)
+    manifold.endWorkersBeforeFork();
     const format_name = std.mem.span(format);
     var diagnostic: embed.Diagnostic = .{};
     defer diagnostic.deinit(allocator);
@@ -157,6 +163,7 @@ export fn kupcad_build(
         .files = bytesOf(files, files_len),
         .draco = draco,
         .memory_limit = if (memory_limit == 0) null else std.math.cast(usize, memory_limit) orelse std.math.maxInt(usize),
+        .time_limit_ms = if (timeout_ms == 0) null else timeout_ms,
         .report = &report,
     };
     const model = embed.build(allocator, io(), bytesOf(source, source_len), options, &diagnostic) catch |err| {
@@ -196,35 +203,32 @@ fn reportOf(report: *const api.RunReport) ?[:0]const u8 {
 }
 
 fn unsupportedFormat(name: []const u8) *kupcad_result {
-    var names: std.Io.Writer.Allocating = .init(allocator);
-    defer names.deinit();
-    for (std.enums.values(api.ExportFormat), 0..) |format, i| {
-        names.writer.print("{s}{s}", .{ if (i == 0) "" else ", ", @tagName(format) }) catch return handle(&out_of_memory);
-    }
-    const message = std.fmt.allocPrint(allocator, "'{s}' isn't a format: one of {s}", .{ name, names.written() }) catch return handle(&out_of_memory);
+    const message = std.fmt.allocPrint(allocator, "'{s}' isn't a format: one of {s}", .{ name, api.ExportFormat.NAMES }) catch return handle(&out_of_memory);
     defer allocator.free(message);
     return failed(.invalid_argument, message, null);
 }
 
-export fn kupcad_result_status(result: *const kupcad_result) Status {
+pub export fn kupcad_result_status(result: *const kupcad_result) Status {
     return resultOf(result).status;
 }
 
-export fn kupcad_result_data(result: *const kupcad_result, len: *usize) [*]const u8 {
+pub export fn kupcad_result_data(result: *const kupcad_result, len: *usize) [*]const u8 {
     const data = resultOf(result).data;
     len.* = data.len;
     return data.ptr;
 }
 
-export fn kupcad_result_message(result: *const kupcad_result) ?[*:0]const u8 {
+pub export fn kupcad_result_message(result: *const kupcad_result, len: ?*usize) ?[*:0]const u8 {
+    const message = resultOf(result).message orelse "";
+    if (len) |l| l.* = message.len;
     return if (resultOf(result).message) |m| m.ptr else null;
 }
 
-export fn kupcad_result_report(result: *const kupcad_result) ?[*:0]const u8 {
+pub export fn kupcad_result_report(result: *const kupcad_result) ?[*:0]const u8 {
     return if (resultOf(result).report) |r| r.ptr else null;
 }
 
-export fn kupcad_result_free(ptr: ?*kupcad_result) void {
+pub export fn kupcad_result_free(ptr: ?*kupcad_result) void {
     const result = resultOf(ptr orelse return);
     if (result == &out_of_memory) return;
     allocator.free(result.data);

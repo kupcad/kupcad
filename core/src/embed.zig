@@ -72,6 +72,7 @@ pub const Build = struct {
     draco: bool = false,
     interactive: bool = false,
     memory_limit: ?usize = null,
+    time_limit_ms: ?u64 = null,
     report: ?*api.RunReport = null,
 };
 
@@ -97,6 +98,7 @@ pub fn build(allocator: std.mem.Allocator, io: std.Io, source: []const u8, optio
         .diagnostic = diagnostic,
         .interactive = options.interactive,
         .memory_limit = options.memory_limit,
+        .time_limit_ms = options.time_limit_ms,
         .report = options.report,
     });
 }

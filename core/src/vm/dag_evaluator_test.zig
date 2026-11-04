@@ -588,6 +588,22 @@ test "DAG Evaluator: respects atomic cancellation token" {
     try testing.expectError(error.Canceled, result);
 }
 
+test "DAG Evaluator: stops past the run's time limit, saying so, and cancels the run" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    // A limit of none at all: the deadline passes before the first node
+    vm.setTimeLimit(0);
+    try testing.io.sleep(.fromMilliseconds(1), .awake);
+
+    try testing.expectError(error.Canceled, dag_evaluator.evaluateDAG(&vm, cube_idx));
+    try testing.expect(std.mem.startsWith(u8, vm.last_error.?, "Time limit: the run took longer than 0 ms"));
+    // A script that rescued the error stops at its next instruction anyway
+    try testing.expect(vm.cancel_token.load(.acquire));
+}
+
 test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

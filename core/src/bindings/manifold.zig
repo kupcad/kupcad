@@ -174,11 +174,18 @@ pub fn cppAssertsEnabled() bool {
 }
 
 extern fn kupcad_set_max_threads(threads: usize) void;
+extern fn kupcad_end_workers_before_fork() void;
 
 /// Caps the threads Manifold's parallel algorithms may use (null lifts the cap): for a test
 /// that compares a parallel run with one on a single thread.
 pub fn setMaxThreads(threads: ?usize) void {
     kupcad_set_max_threads(threads orelse 0);
+}
+
+/// Ends oneTBB's worker threads before every fork of the process from now on, for a host that
+/// loads libkupcad and may fork: they don't survive into the child. Once, however often called.
+pub fn endWorkersBeforeFork() void {
+    kupcad_end_workers_before_fork();
 }
 
 extern fn manifold_num_vert(m: ?*ManifoldObj) usize;

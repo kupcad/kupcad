@@ -20,17 +20,21 @@ model.report.warnings.each { |w| warn "#{w.line}: #{w.message}" }
 
 ## What it does
 
-- `Kupcad.build(source, format:, params:, files:, memory_limit:, draco:)` runs the script and
-  returns a `Kupcad::Model`: its `data` (binary) in the `format` (one of `Kupcad::FORMATS`:
-  `:stl`, `:"3mf"`, `:glb`, `:gltf`, `:obj`, `:step`, `:svg`, `:dxf`), and the run's `report`,
-  what the script printed and what it warned of, where.
+- `Kupcad.build(source, format:, params:, files:, memory_limit:, timeout:, draco:)` runs the
+  script and returns a `Kupcad::Model`: its `data` (binary) in the `format` (one of
+  `Kupcad::FORMATS`, the library's: `:stl`, `:"3mf"`, `:glb`, `:gltf`, `:obj`, `:step`, `:svg`,
+  `:dxf`), and the run's `report`, what the script printed and the `Kupcad::RunWarning`s it
+  warned of, where.
   - `params:` the parameters' values by name, as `kupcad build -p` takes them:
     `{ width: 60, thread: :m4, holes: [[5, 5], [35, 5]] }`. Values are checked against each
     parameter's rules.
-  - `files:` the files the script imports, by their path from its folder:
-    `{ 'lib/gears.kup' => File.read('lib/gears.kup'), 'data/sizes.json' => '...' }`. A script
-    reads no other file, and its exports (`export_stl`) write nothing.
+  - `files:` the files the script imports, by their path from its folder, text or binary:
+    `{ 'lib/gears.kup' => File.read('lib/gears.kup'), 'parts/base.stl' => File.binread(...) }`.
+    A script reads no other file, and its exports (`export_stl`) write nothing.
   - `memory_limit:` the most memory, in bytes, the script may hold; no limit by default.
+  - `timeout:` the most time, in seconds, the build may take; no limit by default. A script
+    that never ends otherwise holds its thread for good: a native call can't be interrupted,
+    by `Timeout` or by Ctrl-C.
   - `draco: true` compresses a GLB's or a glTF's meshes.
 - `Kupcad.format(source)`: the source as `kupcad fmt` formats it.
 - `Kupcad.check(source)`: what `kupcad check` finds, an Array of `Kupcad::Finding` (severity,
@@ -41,19 +45,23 @@ model.report.warnings.each { |w| warn "#{w.line}: #{w.message}" }
 
 ## Errors
 
-- `Kupcad::ScriptError` when the script doesn't parse or compile, raises, or leaves no model;
-  its message says where and why (`"2:5: Invalid expression ..."`,
-  `"RuntimeError: Plate too thin"`), and its `report` holds what the script printed until then.
-- `ArgumentError` for a format that isn't one, or parameter values a parameter refuses.
-- `NoMemoryError` when the process runs out of memory.
+- `Kupcad::ScriptError` (a `Kupcad::Error`) when the script doesn't parse or compile, raises,
+  runs past its `timeout` or `memory_limit`, or leaves no model. A value one of its parameters
+  refuses is one too: the script raises `ValueError` at the `param` that refuses it. The
+  message says where and why (`"2:5: Invalid expression ..."`, `"RuntimeError: Plate too
+  thin"`), and its `report` holds what the script printed until then.
+- `ArgumentError` for a format that isn't one, a limit that isn't positive, or parameter
+  values JSON can't hold (NaN).
+- `NoMemoryError` when the process itself runs out of memory.
 
 ## Threads and processes
 
 A build releases the GVL while it runs, so other threads go on, and builds on several threads
-run at once: libkupcad's calls share nothing. The core runs in your process, so a bug it stops
-on stops the process too. To run scripts you don't trust, or keep a crash away from a web
-server, run the [`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process
-of its own.
+run at once: libkupcad's calls share nothing. A process that has built may fork (Puma's or
+Unicorn's `preload_app`): libkupcad ends its worker threads before a fork, and each process
+starts its own. The core runs in your process, so a bug it stops on stops the process too.
+To run scripts you don't trust, or keep a crash away from a web server, run the
+[`kupcad` CLI](https://docs.kupcad.org/reference/tooling/cli/) as a process of its own.
 
 ## Platforms
 
