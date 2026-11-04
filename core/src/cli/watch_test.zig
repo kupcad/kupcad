@@ -34,6 +34,15 @@ test "kupcad watch: takes the file and parameter values, as build does, the late
     try testing.expectEqualStrings("A", options.params.map.get("label").?.string);
 }
 
+test "kupcad watch: takes the limits build does" {
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var options = (try parse(&.{ "model.kup", "--timeout", "2s", "--memory-limit", "1GB" }, &output)) orelse return error.TestRefused;
+    defer options.deinit(testing.allocator);
+    try testing.expectEqual(@as(?u64, 2000), options.timeout_ms);
+    try testing.expectEqual(@as(?usize, 1024 * 1024 * 1024), options.memory_limit);
+}
+
 test "kupcad watch: options it can't take are refused, saying why" {
     const cases = [_]struct { args: []const []const u8, says: []const u8 }{
         .{ .args = &.{}, .says = "Error: Missing input file path." },
@@ -44,6 +53,7 @@ test "kupcad watch: options it can't take are refused, saying why" {
         .{ .args = &.{ "model.kup", "-p", "width" }, .says = "Error: Invalid param format. Use --param key=value." },
         .{ .args = &.{ "model.kup", "-P", "missing.json" }, .says = "Error: Could not read parameter file 'missing.json'" },
         .{ .args = &.{ "model.kup", "-P" }, .says = "Error: Missing parameter file after -P" },
+        .{ .args = &.{ "model.kup", "--timeout", "0" }, .says = "Error: --timeout takes a time greater than zero" },
     };
     for (cases) |case| {
         var output: std.Io.Writer.Allocating = .init(testing.allocator);

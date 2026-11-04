@@ -41,7 +41,7 @@ const NATIVE_STACK_RESERVE = 16;
 /// nanoseconds, these instructions tens of microseconds.
 const TIME_CHECK_INTERVAL = 4096;
 /// What stops a run past its time limit (VM.setTimeLimit), with the limit in milliseconds.
-const TIME_LIMIT_MESSAGE = "Time limit: the run took longer than {d} ms, the limit where this host runs scripts; a loop that never ends, or a model too heavy for it.";
+const TIME_LIMIT_MESSAGE = "Time limit: the run took longer than {d} ms, the most it was given: a loop that never ends, or a model too heavy for that time.";
 
 /// Names an error lists (a module's exports, a JsonObject's keys) before "...".
 pub const MAX_NAMES_LISTED = 8;
@@ -1697,6 +1697,12 @@ pub const VM = struct {
         const limit = ms orelse return self.hooks.setDeadline(null, 0);
         const now = std.Io.Clock.now(.awake, self.io);
         self.hooks.setDeadline(now.addDuration(.fromMilliseconds(@intCast(@min(limit, std.math.maxInt(i64))))), limit);
+    }
+
+    /// Starts the time limit set (setTimeLimit) again from now, for a session that runs its
+    /// script again (`kupcad watch`'s every build); nothing without one.
+    pub fn restartTimeLimit(self: *VM) void {
+        if (self.hooks.deadline != null) self.setTimeLimit(self.hooks.time_limit_ms);
     }
 
     /// Whether the run is past its time limit; false without one.

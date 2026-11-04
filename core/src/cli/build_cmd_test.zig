@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const build_cmd = @import("build_cmd.zig");
 const memory_flag = @import("memory_flag.zig");
+const time_flag = @import("time_flag.zig");
 
 const Args = @import("args.zig").Args;
 
@@ -700,6 +701,52 @@ test "build_cmd: KUPCAD_MEMORY_LIMIT stands in for --memory-limit, which wins ov
     try testing.expectEqualStrings("Error: KUPCAD_MEMORY_LIMIT takes a size greater than zero, as 512MB or 8GB, got 'lots'\n", refused.text());
 }
 
+test "build_cmd: --timeout ends a script that runs past it, saying so" {
+    // A CI job, or a host running scripts it didn't write, was held until its own limit
+    var fx = try Fixture.init("while true\nend\ncube(1)\n");
+    defer fx.deinit();
+    var stopped = try runBuild(&.{ fx.input, "-o", fx.output, "--timeout", "100ms", "--errors", "json" });
+    defer stopped.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, stopped.outcome);
+    try testing.expect(std.mem.find(u8, stopped.text(), "Time limit: the run took longer than 100 ms") != null);
+    try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // no model.stl
+
+    // A build within it is left alone
+    var quick = try Fixture.init("cube(1)\n");
+    defer quick.deinit();
+    var built = try runBuild(&.{ quick.input, "-o", quick.output, "--timeout", "1m" });
+    defer built.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, built.outcome);
+}
+
+test "build_cmd: KUPCAD_TIMEOUT stands in for --timeout, which wins over it" {
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    try environ.put(time_flag.ENV, "100ms");
+    var fx = try Fixture.init("while true\nend\ncube(1)\n");
+    defer fx.deinit();
+    var held = try runBuildIn(&.{ fx.input, "-o", fx.output, "--errors", "json" }, &environ);
+    defer held.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, held.outcome);
+    try testing.expect(std.mem.find(u8, held.text(), "Time limit: the run took longer than 100 ms") != null);
+    // The flag's over the variable's
+    var flagged = try runBuildIn(&.{ fx.input, "-o", fx.output, "--errors", "json", "--timeout", "200ms" }, &environ);
+    defer flagged.deinit();
+    try testing.expect(std.mem.find(u8, flagged.text(), "Time limit: the run took longer than 200 ms") != null);
+    // Empty counts as unset; a value that isn't a time is refused as the flag's is
+    var quick = try Fixture.init("cube(1)\n");
+    defer quick.deinit();
+    try environ.put(time_flag.ENV, "");
+    var unset = try runBuildIn(&.{ quick.input, "-o", quick.output }, &environ);
+    defer unset.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, unset.outcome);
+    try environ.put(time_flag.ENV, "soon");
+    var refused = try runBuildIn(&.{ quick.input, "-o", quick.output }, &environ);
+    defer refused.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, refused.outcome);
+    try testing.expectEqualStrings("Error: KUPCAD_TIMEOUT takes a time greater than zero, as 500ms, 30s or 2m, got 'soon'\n", refused.text());
+}
+
 test "build_cmd: a project's settings that don't read are named, with where" {
     // It said `.kupcad.json near <script>:0:0: invalid JSON`: the script, with the file's place
     var fx = try Fixture.init("cube(1)\n");
@@ -833,6 +880,18 @@ test "build_cmd: --memory-limit takes a size greater than zero" {
         defer result.deinit();
         try testing.expectEqual(build_cmd.Outcome.failure, result.outcome);
         const message = try testing.allocator.print("Error: --memory-limit takes a size greater than zero, as 512MB or 8GB, got '{s}'\n", .{size});
+        defer testing.allocator.free(message);
+        try testing.expectEqualStrings(message, result.text());
+    }
+}
+
+test "build_cmd: --timeout takes a time greater than zero" {
+    for ([_][]const u8{ "0", "1.5s", "-1s", "1d", "soon" }) |time| {
+        errdefer std.debug.print("time '{s}'\n", .{time});
+        var result = try runBuild(&.{ "model.kup", "--timeout", time });
+        defer result.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, result.outcome);
+        const message = try testing.allocator.print("Error: --timeout takes a time greater than zero, as 500ms, 30s or 2m, got '{s}'\n", .{time});
         defer testing.allocator.free(message);
         try testing.expectEqualStrings(message, result.text());
     }

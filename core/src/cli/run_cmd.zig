@@ -8,6 +8,7 @@ const std = @import("std");
 const build_cmd = @import("build_cmd.zig");
 const param_flags = @import("param_flags.zig");
 const memory_flag = @import("memory_flag.zig");
+const time_flag = @import("time_flag.zig");
 const ScriptSession = @import("../session/session.zig").ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
@@ -24,7 +25,7 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ param_flags.USAGE ++ memory_flag.USAGE ++ script_options.ERRORS_USAGE ++
+++ param_flags.USAGE ++ memory_flag.USAGE ++ time_flag.USAGE ++ script_options.ERRORS_USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -47,5 +48,5 @@ pub fn run(allocator: std.mem.Allocator, args: anytype, environ: *const std.proc
     var disk = NativeVfs.init(reporter.io, root.dir);
     var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
     defer session.deinit();
-    return if (try build_cmd.runScript(allocator, &session, &root, &options.params, null, options.memory_limit, reporter)) .success else .failure;
+    return if (try build_cmd.runScript(allocator, &session, &root, &options, null, reporter)) .success else .failure;
 }

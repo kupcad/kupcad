@@ -15,6 +15,7 @@ const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const param_flags = @import("param_flags.zig");
 const memory_flag = @import("memory_flag.zig");
+const time_flag = @import("time_flag.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const script_options = @import("script_options.zig");
@@ -31,7 +32,7 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++ script_options.ERRORS_USAGE ++
+++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++ time_flag.USAGE ++ script_options.ERRORS_USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -63,6 +64,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return .failure;
     };
     session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, limits.INTERACTIVE_MEMORY_LIMIT));
+    // --timeout or KUPCAD_TIMEOUT holds each build, which evaluateWorkspace starts it again for.
+    session.vm.setTimeLimit(options.timeout_ms);
     if (options.writes) try options.exports.prepare(&session.vm);
 
     const source = fs.readFile(init.io, allocator, file_path) catch |err| {

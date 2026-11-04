@@ -71,6 +71,7 @@ kupcad build part.kup --bom bom.json               # also write the parts list (
 kupcad build part.kup -o part.3mf                  # 3MF: each part once, placed per copy, with colours
 kupcad build part.kup --split parts/               # one STL per part, as made, for printing
 kupcad build part.kup --memory-limit 2GB           # cap the script's memory (else KUPCAD_MEMORY_LIMIT, else the project's)
+kupcad build part.kup --timeout 30s                # cap the run's time (else KUPCAD_TIMEOUT; none without either)
 kupcad check part.kup                              # lint
 kupcad fmt part.kup                                # format
 kupcad watch part.kup -P bracket.json              # rebuild on change, with parameter values
@@ -91,6 +92,7 @@ and `kupcad --version` prints the version. Environment variables:
 | `KUPCAD_HOME` | Package cache directory, an absolute path (default `~/.kupcad`; empty is unset) |
 | `KUPCAD_VIEWPORT_PORT` | Preferred port for the LSP viewport WebSocket (default `9001`, falls back to a free port) |
 | `KUPCAD_MEMORY_LIMIT` | Most memory a script may hold, as `512MB` or `8GB`, when `--memory-limit` isn't given; wins over the project's `vm_memory_limit` (empty is unset) |
+| `KUPCAD_TIMEOUT` | Most time a run of `build`, `run` or `watch` may take, as `500ms`, `30s` or `2m` (a number alone is seconds), when `--timeout` isn't given (empty is unset) |
 
 ## Developer notes
 

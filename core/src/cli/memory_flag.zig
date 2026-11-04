@@ -8,12 +8,14 @@
 //! and `run`, the interactive one for `watch` and `lsp`.
 
 const std = @import("std");
-const Reporter = @import("reporter.zig").Reporter;
-const Taken = @import("param_flags.zig").Taken;
+const LimitFlag = @import("limit_flag.zig").LimitFlag;
 
-pub const FLAG = "--memory-limit";
-/// The variable read when the flag isn't given; empty counts as unset.
-pub const ENV = "KUPCAD_MEMORY_LIMIT";
+const Flag = LimitFlag(usize, "--memory-limit", "KUPCAD_MEMORY_LIMIT", "a size greater than zero, as 512MB or 8GB", parseSize);
+pub const FLAG = Flag.FLAG;
+pub const ENV = Flag.ENV;
+pub const take = Flag.take;
+pub const fromEnv = Flag.fromEnv;
+pub const given = Flag.given;
 
 pub const USAGE =
     \\  --memory-limit <size>     Most memory the script may hold, as 512MB or 8GB, in
@@ -46,34 +48,6 @@ pub fn parseSize(text: []const u8) ?usize {
     const count = std.fmt.parseInt(usize, number, 10) catch return null;
     if (count == 0) return null;
     return std.math.mul(usize, count, unit) catch null;
-}
-
-/// Takes `--memory-limit <size>` into `limit` when `arg` is the flag, reporting a size that
-/// isn't one.
-pub fn take(arg: []const u8, args: anytype, limit: *?usize, reporter: Reporter) Taken {
-    if (!std.mem.eql(u8, arg, FLAG)) return .other;
-    const text = args.next() orelse "";
-    limit.* = parseSize(text) orelse {
-        reporter.err("Error: {s} takes a size greater than zero, as 512MB or 8GB, got '{s}'\n", .{ FLAG, text });
-        return .refused;
-    };
-    return .taken;
-}
-
-/// `KUPCAD_MEMORY_LIMIT`'s size (as the flag reads one), null when it is unset or empty; a
-/// value that isn't a size is reported and refused, as the flag's would be.
-pub fn fromEnv(environ: *const std.process.Environ.Map, reporter: Reporter) error{Refused}!?usize {
-    const text = environ.get(ENV) orelse return null;
-    if (text.len == 0) return null;
-    return parseSize(text) orelse {
-        reporter.err("Error: {s} takes a size greater than zero, as 512MB or 8GB, got '{s}'\n", .{ ENV, text });
-        return error.Refused;
-    };
-}
-
-/// What a run is given from outside its project: the flag's size, else the variable's.
-pub fn given(flag: ?usize, environ: *const std.process.Environ.Map, reporter: Reporter) error{Refused}!?usize {
-    return flag orelse try fromEnv(environ, reporter);
 }
 
 /// The limit a run gets: the one `given` (the flag's, else the variable's), as the command line
