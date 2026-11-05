@@ -96,23 +96,17 @@ pub const NativeVfs = struct {
         try self.root_dir.createDirPath(self.io, path);
     }
 
+    /// The file at `path`, to its end, at most `max_read_bytes` (error.FileTooBig past it). A
+    /// stat and one read of its size failed as a RuntimeError when the read came back short,
+    /// and cut off a file that grew after the stat.
     fn readFile(ptr: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
         try self.confine(path);
-        const file = try self.root_dir.openFile(self.io, path, .{});
-        defer file.close(self.io);
-
-        const stat = try file.stat(self.io);
-        if (stat.size > self.max_read_bytes) return error.FileTooBig;
-        const file_size: usize = @intCast(stat.size);
-
-        const buffer = try allocator.alloc(u8, file_size);
-        // Free on the short-read error path below; the caller only owns it on success.
-        errdefer allocator.free(buffer);
-        const bytes_read = try file.readStreaming(self.io, &.{buffer});
-        if (bytes_read != file_size) return error.RuntimeError;
-
-        return buffer;
+        // A limit reached is past it: one more, so a file of max_read_bytes is read
+        return self.root_dir.readFileAlloc(self.io, path, allocator, .limited64(self.max_read_bytes +| 1)) catch |err| switch (err) {
+            error.StreamTooLong => error.FileTooBig,
+            else => err,
+        };
     }
 
     fn writeFile(ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void {

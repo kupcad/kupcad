@@ -101,11 +101,7 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
 
     // 3. The blob indexed, the corrupt one removed (it used to be indexed by its name alone),
     // the stray file left as it is
-    const stmt = try store.db.prepare("SELECT size FROM files WHERE hash = ?");
-    defer stmt.deinit();
-    const row = try stmt.one(struct { size: i64 }, .{&orphan});
-    try testing.expect(row != null);
-    try testing.expectEqual(@as(i64, 11), row.?.size); // "orphan data".len == 11
+    try testing.expect(try store.hasBlob(&orphan));
     try testing.expect(!try store.hasBlob(&corrupt));
     const corrupt_path = try cafs.blobPath(&corrupt);
     defer testing.allocator.free(corrupt_path);
@@ -169,7 +165,7 @@ test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
     const evil_name = "zz' OR '1'='1";
     // Bound, it matches no row; formatted into the query, it matched any (the orphan was
     // then never indexed)
-    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{});
+    try store.db.exec("INSERT INTO files (hash, created_at) VALUES ('keep', 0)", .{});
     try testing.expect(!try store.hasBlob(evil_name));
     // A file of that name is none of the store's: left as it is, and unindexed
     const path = try cafs.blobPath(evil_name);

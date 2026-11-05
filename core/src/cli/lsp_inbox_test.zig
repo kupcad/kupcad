@@ -149,7 +149,9 @@ test "LSP inbox: the work waits until the client has been quiet" {
         }
     };
     const late = try std.Thread.spawn(.{}, Late.send, .{&client});
-    inbox.quiet_period = .fromMilliseconds(1000);
+    // As long as any wait here: a busy machine that held the sender past a second ran the
+    // work first, and failed the test
+    inbox.quiet_period = .fromMilliseconds(WAIT_TIMEOUT_MS);
     try expectNext(&inbox, SAVED);
     late.join();
     try testing.expectEqual(@as(usize, 0), preview.runs);
@@ -204,6 +206,62 @@ test "LSP inbox: an edit or a request cancels the running work; other notificati
     try expectNext(&inbox, HOVER_7);
     try testing.expectEqual(@as(usize, 3), preview.runs);
     try testing.expect(preview.cancelled);
+}
+
+/// Waits until `preview`'s cancel is `set`.
+fn waitForCancel(preview: *const Preview, set: bool) !void {
+    var waited: i64 = 0;
+    while (preview.cancel.load(.acquire) != set) : (waited += POLL_MS) {
+        if (waited > WAIT_TIMEOUT_MS) return error.Timeout;
+        sleepMs(POLL_MS);
+    }
+}
+
+test "LSP inbox: a request being answered stops on an edit or a cancel of it, not on another request" {
+    // Only the preview's work could be stopped: a hover that ran the document ran to its end
+    var client: Client = .{ .messages = &.{ HOVER_7, HOVER_ABC, CANCEL_7, EDIT } };
+    defer client.deinit();
+    var preview: Preview = .{};
+    var inbox = Inbox.init(testing.allocator, testing.io, &client.transport, preview.work());
+    defer inbox.deinit();
+    try inbox.start();
+
+    client.allow(1);
+    preview.cancel.store(true, .release); // a cancel from before is no cancel of it
+    try expectNext(&inbox, HOVER_7);
+    try testing.expect(!preview.cancel.load(.acquire));
+    client.allow(1);
+    try waitFor(&inbox, 1, 0);
+    try testing.expect(!preview.cancel.load(.acquire));
+    client.allow(1);
+    try waitForCancel(&preview, true);
+
+    // The next request's answer starts uncancelled, and an edit stops it
+    try expectNext(&inbox, HOVER_ABC);
+    try testing.expect(!preview.cancel.load(.acquire));
+    client.allow(1);
+    try waitForCancel(&preview, true);
+}
+
+test "LSP inbox: an answer with no id to the request being answered gets its id" {
+    // lsp-kit answers a request whose params it can't read with "id": null, which the client
+    // matches to no request: its request was never answered
+    var client: Client = .{ .messages = &.{ HOVER_7, SAVED } };
+    defer client.deinit();
+    var preview: Preview = .{};
+    var inbox = Inbox.init(testing.allocator, testing.io, &client.transport, preview.work());
+    defer inbox.deinit();
+    try inbox.start();
+    const anonymous = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"UnexpectedToken\"}}";
+
+    client.allow(2);
+    try expectNext(&inbox, HOVER_7);
+    try inbox.transport.writeJsonMessage(testing.io, anonymous);
+    try testing.expectEqualStrings("{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32602,\"message\":\"UnexpectedToken\"}}", client.written.items[0]);
+    // A notification has no id to give it
+    try expectNext(&inbox, SAVED);
+    try inbox.transport.writeJsonMessage(testing.io, anonymous);
+    try testing.expectEqualStrings(anonymous, client.written.items[1]);
 }
 
 test "LSP inbox: deinit stops a reader that is waiting on the client" {

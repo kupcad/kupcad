@@ -167,17 +167,24 @@ test "HTTP client: a request whose body stops coming is abandoned" {
 }
 
 test "HTTP client: a request that keeps receiving isn't abandoned, however long it takes" {
-    // Its 120 pieces take 1.2 s, past twice the stall: only a pause that long ends it. They
-    // come 10 ms apart, so a busy machine may hold either end for most of the stall (50 ms
-    // gaps under a 200 ms stall once failed on CI's macOS runner)
-    const pieces = 120;
-    var server: SlowServer = undefined;
-    try server.start(.{ .pieces = pieces, .gap = .fromMilliseconds(10), .length = pieces });
-    defer server.stop();
-    const body = try watchedBody(&server, .fromMilliseconds(500));
-    defer testing.allocator.free(body);
-    const expected: [pieces]u8 = @splat('x');
-    try testing.expectEqualStrings(&expected, body);
+    // Stepped through its looks: a test that slept between pieces under a 500 ms stall failed
+    // on CI's macOS runner when a busy machine held either end that long
+    const ms = std.time.ns_per_ms;
+    var progress: http_client.Progress = .init(0, .fromMilliseconds(500), .fromSeconds(10), 0);
+    var now: i96 = 0;
+    var received: u64 = 0;
+    // A piece every 400 ms, far past twice the stall in all
+    while (now < 5000 * ms) {
+        now += 400 * ms;
+        received += 1;
+        try testing.expectEqual(@as(?http_client.Ended, null), progress.look(now, received));
+    }
+    // A look before the stall's deadline, with nothing new, goes on
+    try testing.expectEqual(@as(?http_client.Ended, null), progress.look(now + 499 * ms, received));
+    try testing.expectEqual(now + 500 * ms, progress.next());
+    try testing.expectEqual(@as(?http_client.Ended, .stalled), progress.look(now + 500 * ms, received));
+    // However steadily it receives, the total ends it
+    try testing.expectEqual(@as(?http_client.Ended, .timed_out), progress.look(10_000 * ms, received + 1));
 }
 
 test "HTTP client: canceling a watched request's caller cancels the request" {

@@ -186,29 +186,51 @@ pub fn watched(io: std.Io, stall: std.Io.Duration, total: std.Io.Duration, compt
 }
 
 /// How a watched request ended: of itself, receiving nothing for the stall, or past the total.
-const Ended = enum { done, stalled, timed_out };
+pub const Ended = enum { done, stalled, timed_out };
+
+/// The watch over a request's progress, given the times it is looked at (`now`, the awake
+/// clock's nanoseconds), so a test can step them: a test that slept saw a busy machine hold
+/// a request past its stall, and fail.
+pub const Progress = struct {
+    stall: i96,
+    /// When it is past its total time.
+    last: i96,
+    /// When it stalls unless more is received first.
+    deadline: i96,
+    seen: u64,
+
+    pub fn init(started: i96, stall: std.Io.Duration, total: std.Io.Duration, received: u64) Progress {
+        return .{ .stall = stall.nanoseconds, .last = started + total.nanoseconds, .deadline = started + stall.nanoseconds, .seen = received };
+    }
+
+    /// When to look next: at the stall's deadline, or the end of the total if sooner.
+    pub fn next(self: *const Progress) i96 {
+        return @min(self.deadline, self.last);
+    }
+
+    /// Looked at `now`, `received` in all so far: how it ended, or null while it goes on.
+    /// It stalled only once nothing came all the while (a look may come early).
+    pub fn look(self: *Progress, now: i96, received: u64) ?Ended {
+        if (now >= self.last) return .timed_out;
+        if (received != self.seen) {
+            self.seen = received;
+            self.deadline = now + self.stall;
+        } else if (now >= self.deadline) return .stalled;
+        return null;
+    }
+};
 
 /// Waits until `done`, until `received` hasn't grown for `stall`, or until `total` has
 /// passed.
 fn untilStalled(io: std.Io, done: *std.Io.Event, received: *const Received, stall: std.Io.Duration, total: std.Io.Duration) std.Io.Cancelable!Ended {
-    const window: std.Io.Clock.Duration = .{ .raw = stall, .clock = .awake };
-    var seen = received.load(.monotonic);
-    const started = std.Io.Clock.Timestamp.now(io, .awake);
-    const last = started.addDuration(.{ .raw = total, .clock = .awake });
-    var deadline = started.addDuration(window);
+    var progress: Progress = .init(std.Io.Clock.Timestamp.now(io, .awake).raw.nanoseconds, stall, total, received.load(.monotonic));
     while (true) {
-        const next = if (deadline.raw.nanoseconds < last.raw.nanoseconds) deadline else last;
+        const next: std.Io.Clock.Timestamp = .{ .raw = .{ .nanoseconds = progress.next() }, .clock = .awake };
         done.waitTimeout(io, .{ .deadline = next }) catch |err| switch (err) {
             error.Canceled => |e| return e,
-            // Or woken early: it stalled only once nothing came all the while
             error.Timeout => {
-                const now = std.Io.Clock.Timestamp.now(io, .awake);
-                if (now.raw.nanoseconds >= last.raw.nanoseconds) return .timed_out;
-                const count = received.load(.monotonic);
-                if (count != seen) {
-                    seen = count;
-                    deadline = now.addDuration(window);
-                } else if (now.raw.nanoseconds >= deadline.raw.nanoseconds) return .stalled;
+                const now = std.Io.Clock.Timestamp.now(io, .awake).raw.nanoseconds;
+                if (progress.look(now, received.load(.monotonic))) |ended| return ended;
                 continue;
             },
         };

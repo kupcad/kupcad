@@ -190,3 +190,19 @@ test "NativeVfs: a file past what a read takes isn't read, nor allocated for" {
     defer testing.allocator.free(data);
     try testing.expectEqualStrings("12345", data);
 }
+
+test "NativeVfs: a file is read to its end, however many reads that takes" {
+    // It was read with one read of the size a stat gave: a short read failed as a
+    // RuntimeError, and what was written after the stat was cut off
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var nvfs = NativeVfs.init(testing.io, tmp.dir);
+    const fs = nvfs.vfs();
+    const big = try testing.allocator.alloc(u8, 3 * 1024 * 1024);
+    defer testing.allocator.free(big);
+    @memset(big, 'x');
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.json", .data = big });
+    const data = try fs.readFile(testing.allocator, "big.json");
+    defer testing.allocator.free(data);
+    try testing.expectEqualSlices(u8, big, data);
+}

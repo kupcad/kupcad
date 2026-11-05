@@ -41,6 +41,8 @@ pub fn LimitFlag(comptime T: type, comptime flag: []const u8, comptime env: []co
         pub const FLAG = flag;
         /// The variable read when the flag isn't given.
         pub const ENV = env;
+        /// What a value is, as a refusal says it.
+        pub const EXPECTED = expected;
 
         /// Takes `<flag> <value>` into `limit` when `arg` is the flag, reporting a value that
         /// isn't one.

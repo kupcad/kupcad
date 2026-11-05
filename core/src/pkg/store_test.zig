@@ -232,6 +232,9 @@ test "Store: migrates v2 databases to the composite package key" {
     defer freeMap(&files);
     try testing.expectEqualStrings("h1", files.get("main.kup").?);
     try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM files"));
+    // v6: the size no one read is gone, the rest of the row kept
+    try testing.expectEqual(@as(i64, 7), try countRows(&store, "SELECT created_at AS n FROM files WHERE hash = 'h1'"));
+    try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM pragma_table_info('files') WHERE name = 'size'"));
     try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM meta"));
     // Unreachable mappings are cleaned up.
     try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE commit_sha = 'lost'"));
@@ -282,19 +285,29 @@ test "Store: a write waits for another connection's lock instead of failing" {
     defer writer.deinit();
 
     try holder.db.exec("BEGIN IMMEDIATE", .{});
+    // The lock is let go only once the write has begun, 100 ms on: a release thread that
+    // slept from its start could commit before a slow write began, and the test passed
+    // without the write ever waiting
+    var writing: std.Io.Event = .unset;
     const Release = struct {
-        fn run(store: *Store) void {
+        fn run(store: *Store, begun: *std.Io.Event) void {
+            begun.waitUncancelable(testing.io);
             testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
             store.db.exec("COMMIT", .{}) catch @panic("COMMIT failed");
         }
     };
-    const releaser = try std.Thread.spawn(.{}, Release.run, .{&holder});
+    const releaser = try std.Thread.spawn(.{}, Release.run, .{ &holder, &writing });
     defer releaser.join();
 
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
     try files.put("kupcad.json", "hash_json");
+    const started = std.Io.Clock.Timestamp.now(testing.io, .awake);
+    writing.set(testing.io);
     try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);
+    // It waited for the lock: the commit came 100 ms after the write began
+    const waited = started.durationTo(std.Io.Clock.Timestamp.now(testing.io, .awake));
+    try testing.expect(waited.raw.toMilliseconds() >= 100);
     try testing.expect(try writer.hasPackage("github.com-u-r", "commit-a"));
 }
 
@@ -337,7 +350,7 @@ test "Store: the prune time, the quick check and the blob index" {
     try testing.expect(try store.quickCheck());
 
     try testing.expect(!try store.hasBlob("abc"));
-    try store.indexBlob("abc", 12, 1);
+    try store.indexBlob("abc", 1);
     try testing.expect(try store.hasBlob("abc"));
     const hashes = try store.blobHashes(testing.allocator);
     defer {

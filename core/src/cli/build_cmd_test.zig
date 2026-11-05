@@ -290,12 +290,40 @@ test "build_cmd: --split names a part's file safely, and each once" {
         .{ .name = " . ", .number = 4, .file = "part_4.stl" },
         .{ .name = "a:b*c?\"d\x01", .number = 5, .file = "a_b_c__d_.stl" },
         .{ .name = "größe", .number = 6, .file = "größe.stl" },
+        // Nowhere but the folder: separators and `..` are no way out of it
+        .{ .name = "../up", .number = 7, .file = "_up.stl" },
+        .{ .name = "a\\b/c", .number = 8, .file = "a_b_c.stl" },
+        .{ .name = "..", .number = 9, .file = "part_9.stl" },
+        // Windows' devices, in any case and with an extension of their own
+        .{ .name = "CON", .number = 10, .file = "CON_.stl" },
+        .{ .name = "lpt1.top", .number = 11, .file = "lpt1_.top.stl" },
+        .{ .name = "console", .number = 12, .file = "console.stl" },
     };
     for (cases) |case| {
         const file = try names.next(testing.allocator, case.name, .part, case.number, "stl");
         defer testing.allocator.free(file);
         try testing.expectEqualStrings(case.file, file);
     }
+}
+
+test "build_cmd: --split cuts a long part name to what a file system takes, between characters" {
+    // A name past 255 bytes failed to write, after the files before it were written
+    var names: @import("export_flags.zig").PartFileNames = .{};
+    defer names.deinit(testing.allocator);
+    const long = comptime blk: {
+        var name: []const u8 = "";
+        for (0..150) |_| name = name ++ "é"; // 300 bytes
+        break :blk name;
+    };
+    const file = try names.next(testing.allocator, long, .part, 1, "stl");
+    defer testing.allocator.free(file);
+    try testing.expect(file.len <= 255);
+    try testing.expect(std.unicode.utf8ValidateSlice(file));
+    try testing.expect(std.mem.endsWith(u8, file, "é.stl"));
+    // The same cut twice gets a number
+    const again = try names.next(testing.allocator, long ++ "x", .part, 2, "stl");
+    defer testing.allocator.free(again);
+    try testing.expect(std.mem.endsWith(u8, again, "é_2.stl"));
 }
 
 test "build_cmd: --param sets the script's param" {

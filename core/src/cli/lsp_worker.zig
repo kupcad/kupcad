@@ -5,7 +5,9 @@
 //!
 //! The two talk in frames on the worker's stdin and stdout: a kind byte, the payload's length
 //! (u32, little-endian), the payload. Every request but `cancel` gets one `reply`; a cancel
-//! comes while an evaluation runs and stops it. The worker logs to stderr, as the server does.
+//! comes while an evaluation or a hover's run runs and stops it, and the server kills a
+//! worker that doesn't answer CANCEL_GRACE after one. The worker logs to stderr, as the
+//! server does.
 
 const std = @import("std");
 const ast = @import("../core/ast.zig");
@@ -74,6 +76,10 @@ pub const Frame = struct {
     kind: Kind,
     payload: []u8,
 };
+
+/// How a request a cancel stops ended (WorkerPreview.requestStoppable): its reply, the worker
+/// killed as it didn't stop, or the worker ended (`ended` says why).
+const Stoppable = union(enum) { reply: Frame, killed, ended };
 
 pub fn writeFrame(w: *std.Io.Writer, kind: Kind, parts: []const []const u8) !void {
     var len: usize = 0;
@@ -280,7 +286,7 @@ const WorkerInbox = struct {
                     continue;
                 },
                 // Cleared here, in arrival order: a cancel read after it is for it.
-                .evaluate => self.cancel.store(false, .release),
+                .evaluate, .hover => self.cancel.store(false, .release),
                 else => {},
             }
             self.queue.append(self.allocator, frame) catch {
@@ -461,15 +467,13 @@ pub const WorkerPreview = struct {
     pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
         const module_path = target.module_path;
         const w = self.running() catch return .crashed;
-        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@backingInt(want)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }) catch |err| return self.ended(w, err, module_path);
-        const reply = self.awaitReply(w) orelse {
-            logger.warn("The preview worker didn't stop within {d} ms of a cancel, running {s}: killed; the next run starts another", .{ self.cancel_grace.toMilliseconds(), module_path });
-            self.kill(w);
-            return .cancelled;
+        const frame = switch (self.requestStoppable(w, .evaluate, &.{ &.{@backingInt(want)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }, module_path)) {
+            .reply => |frame| frame,
+            .killed => return .cancelled,
+            .ended => return .crashed,
         };
-        const frame = reply catch |err| return self.ended(w, err, module_path);
         defer self.allocator.free(frame.payload);
-        if (frame.kind != .reply or frame.payload.len < 1) return self.ended(w, error.BadFrame, module_path);
+        if (frame.payload.len < 1) return self.ended(w, error.BadFrame, module_path);
         const tag = std.enums.fromInt(OutcomeTag, frame.payload[0]) orelse return self.ended(w, error.BadFrame, module_path);
         return switch (tag) {
             .frame => .{ .frame = allocator.dupe(u8, frame.payload[1..]) catch return .nothing },
@@ -480,12 +484,15 @@ pub const WorkerPreview = struct {
         };
     }
 
+    /// What the worker's run of `module_path` knows of `node`; a hover that runs the document
+    /// stops on a cancel as an evaluation does (null then), and the worker is killed when it
+    /// doesn't. It waited on the worker's answer, however long the run took.
     pub fn hoverFacts(self: *WorkerPreview, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) !?[]u8 {
         const w = self.running() catch return null;
         const node_bytes = u32Bytes(@backingInt(node));
-        const reply = self.request(w, .hover, &.{ &u32Bytes(4), &node_bytes, module_path }) catch |err| {
-            _ = self.ended(w, err, module_path);
-            return null;
+        const reply = switch (self.requestStoppable(w, .hover, &.{ &u32Bytes(4), &node_bytes, module_path }, module_path)) {
+            .reply => |frame| frame,
+            .killed, .ended => return null,
         };
         defer self.allocator.free(reply.payload);
         if (reply.payload.len < 1 or reply.payload[0] == 0) return null;
@@ -533,6 +540,31 @@ pub const WorkerPreview = struct {
         };
         defer self.allocator.free(reply.payload);
         if (reply.payload.len < 1 or reply.payload[0] != 0) return error.WorkerRefused;
+    }
+
+    /// Sends a request whose work a cancel stops (an evaluation, a hover's run) and waits for
+    /// its reply, passing on a cancel the inbox sets meanwhile; a worker that doesn't answer
+    /// `cancel_grace` after one is killed, the next request starting another.
+    fn requestStoppable(self: *WorkerPreview, w: *Worker, kind: Kind, parts: []const []const u8, subject: []const u8) Stoppable {
+        writeFrame(&w.writer.interface, kind, parts) catch |err| {
+            _ = self.ended(w, err, subject);
+            return .ended;
+        };
+        const reply = self.awaitReply(w) orelse {
+            logger.warn("The preview worker didn't stop within {d} ms of a cancel, running {s}: killed; the next run starts another", .{ self.cancel_grace.toMilliseconds(), subject });
+            self.kill(w);
+            return .killed;
+        };
+        const frame = reply catch |err| {
+            _ = self.ended(w, err, subject);
+            return .ended;
+        };
+        if (frame.kind != .reply) {
+            self.allocator.free(frame.payload);
+            _ = self.ended(w, error.BadFrame, subject);
+            return .ended;
+        }
+        return .{ .reply = frame };
     }
 
     fn request(self: *WorkerPreview, w: *Worker, kind: Kind, parts: []const []const u8) !Frame {

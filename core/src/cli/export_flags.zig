@@ -25,6 +25,13 @@ const DEFAULT_SPLIT_FORMAT: Format = .stl;
 /// The material library the parts of a `--split` share.
 const SPLIT_MTL_NAME = "materials.mtl";
 const MAX_DRACO_BITS = @import("../exporters/3d/gltf.zig").MAX_DRACO_POSITION_BITS;
+/// The most bytes of a part's name its `--split` file keeps: a file system takes 255 bytes
+/// for a name, which leaves room for a number (`_12`) and the extension. A longer name failed
+/// to write after the parts before it were written.
+const MAX_PART_NAME_BYTES = 200;
+/// The names Windows gives its devices, in any case and with any extension (`con.stl` is the
+/// console): a part named so gets a `_` after its name.
+const WINDOWS_DEVICE_NAMES = [_][]const u8{ "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
 
 /// The options' lines of a command's USAGE.
 pub const USAGE =
@@ -263,6 +270,13 @@ pub const ExportFlags = struct {
             defer allocator.free(path);
             if (!try writeMaterialLibrary(allocator, vm, path, reporter)) return false;
         }
+        // Every file's path first: a name that can't be written used to stop the split after
+        // the files before it were
+        var paths: std.ArrayList([]u8) = .empty;
+        defer {
+            for (paths.items) |path| allocator.free(path);
+            paths.deinit(allocator);
+        }
         var names: PartFileNames = .{};
         defer names.deinit(allocator);
         // Unnamed files are numbered per kind: part_1, part_2 and path_1 (parts_mod.fallbackName)
@@ -273,7 +287,10 @@ pub const ExportFlags = struct {
             const name = try names.next(allocator, file.name, file.kind, number.*, self.split_format.extension()[1..]);
             defer allocator.free(name);
             const path = try std.fs.path.join(allocator, &.{ dir, name });
-            defer allocator.free(path);
+            errdefer allocator.free(path);
+            try paths.append(allocator, path);
+        }
+        for (files, paths.items) |file, path| {
             cwd.writeFile(reporter.io, .{ .sub_path = path, .data = file.bytes }) catch |err| return reportWriteFailure(reporter, path, err);
             reporter.out("Wrote {s} ({d} {s})\n", .{ path, file.count, if (file.count == 1) "copy" else "copies" });
         }
@@ -387,8 +404,9 @@ fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: R
 }
 
 /// The file names `--split` gives the parts: a part's name with what a file name can't hold
-/// replaced by `_`, "part N" (its number in the list) for one without a name, and a number
-/// after one already given ("bolt 2"), case aside, as macOS and Windows compare names.
+/// replaced by `_`, cut to MAX_PART_NAME_BYTES and kept off Windows' device names, "part N"
+/// (its number in the list) for one without a name, and a number after one already given
+/// ("bolt 2"), case aside, as macOS and Windows compare names.
 pub const PartFileNames = struct {
     /// The names given, lowercased, owned.
     taken: std.StringHashMapUnmanaged(void) = .empty,
@@ -421,7 +439,8 @@ pub const PartFileNames = struct {
     }
 
     /// `name` without what a file name can't hold (separators, the characters Windows
-    /// reserves, control characters) and without spaces or dots at either end.
+    /// reserves, control characters), cut to MAX_PART_NAME_BYTES (whole UTF-8 characters),
+    /// without spaces or dots at either end, and with a `_` after a Windows device's name.
     fn safeName(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
         const kept = try allocator.dupe(u8, name);
         defer allocator.free(kept);
@@ -429,6 +448,14 @@ pub const PartFileNames = struct {
             '/', '\\', ':', '*', '?', '"', '<', '>', '|', 0...0x1f, 0x7f => c.* = '_',
             else => {},
         };
-        return allocator.dupe(u8, std.mem.trim(u8, kept, " ."));
+        var end = @min(kept.len, MAX_PART_NAME_BYTES);
+        // Not inside a character: a continuation byte is 0b10xxxxxx
+        while (end < kept.len and end > 0 and kept[end] & 0xc0 == 0x80) end -= 1;
+        const safe = std.mem.trim(u8, kept[0..end], " .");
+        const device = safe[0 .. std.mem.findScalar(u8, safe, '.') orelse safe.len];
+        for (WINDOWS_DEVICE_NAMES) |reserved| {
+            if (std.ascii.eqlIgnoreCase(device, reserved)) return std.mem.concat(allocator, u8, &.{ device, "_", safe[device.len..] });
+        }
+        return allocator.dupe(u8, safe);
     }
 };

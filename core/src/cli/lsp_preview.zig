@@ -9,15 +9,12 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const ast = @import("../core/ast.zig");
-const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 const limits = @import("../core/limits.zig");
-const registry = @import("../stdlib/registry.zig");
 const preview_build = @import("../preview/build.zig");
 const VM = @import("../vm/vm.zig").VM;
-const Compiler = @import("../compiler/compiler.zig").Compiler;
 const session_mod = @import("../session/session.zig");
 const ScriptSession = session_mod.ScriptSession;
 const ModuleRun = session_mod.ModuleRun;
@@ -30,7 +27,6 @@ const script_root = @import("script_root.zig");
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
 const memory_flag = @import("memory_flag.zig");
-const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ParamValues = api.ParamValues;
 const FrameWarning = @import("../preview/frame.zig").Warning;
 
@@ -196,7 +192,10 @@ pub const SessionPreview = struct {
     /// What every run here reads through, and can't write: the documents are untrusted.
     sandbox: ReadOnlyVfs,
     session: ScriptSession,
-    /// The last run for hovers, until a document changes (imports make any change matter).
+    /// The module whose run the session's VM holds, the last that ran, until a document
+    /// changes (imports make any change matter): hovers read what it left.
+    last_run: ?LastRun = null,
+    /// The parse of the document hovers read `last_run` for.
     hover: ?Hover = null,
     /// The frame of a module's last run, kept while no other run of it was made: a module
     /// that is up to date doesn't run again to be shown again.
@@ -214,11 +213,16 @@ pub const SessionPreview = struct {
     /// `vm_memory_limit`. Null: none, the project's or the interactive limit in its place.
     host_memory_limit: ?usize = null,
 
+    const LastRun = struct {
+        /// Owned
+        module_path: []u8,
+        /// It ended without an error, so its last value is the script's.
+        ok: bool,
+    };
+
     const Hover = struct {
         module_path: []u8,
         doc: api.Document,
-        /// Null when the document doesn't compile.
-        run: ?*HoverRun,
     };
 
     const Frame = struct {
@@ -304,7 +308,7 @@ pub const SessionPreview = struct {
     }
 
     pub fn deinit(self: *SessionPreview) void {
-        self.dropHover();
+        self.forgetRuns();
         self.dropFrame();
         owned_keys.deinit(&self.params, self.allocator, .owned);
         owned_keys.deinit(&self.ran_since_taken, self.allocator, .borrowed);
@@ -350,7 +354,7 @@ pub const SessionPreview = struct {
     /// change to one on disk shows (fileChanged): they ran from the VM's import cache, which
     /// kept the first version it read.
     pub fn update(self: *SessionPreview, module_path: []const u8, source: []const u8) !void {
-        self.dropHover();
+        self.forgetRuns();
         // From outside the workspace's folder: its own project's files are read, as `kupcad
         // run` reads them (a folder that can't be opened leaves its imports unread)
         if (self.read_workspace and std.fs.path.isAbsolute(module_path)) {
@@ -369,7 +373,7 @@ pub const SessionPreview = struct {
     /// Forgets a document the editor closed, and its values. One that another document
     /// imports is read from disk again, as it is now.
     pub fn remove(self: *SessionPreview, module_path: []const u8) !void {
-        self.dropHover();
+        self.forgetRuns();
         if (self.keepsFrameOf(module_path)) self.dropFrame();
         if (self.params.fetchRemove(module_path)) |kv| owned_keys.freeEntry(self.allocator, kv, .owned);
         try self.session.removeModule(module_path);
@@ -385,7 +389,7 @@ pub const SessionPreview = struct {
         const gop = try owned_keys.getOrPutOwned(&self.params, self.allocator, module_path);
         if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
         gop.value_ptr.* = copy;
-        if (self.hover) |hover| if (std.mem.eql(u8, hover.module_path, module_path)) self.dropHover();
+        if (self.holdsRunOf(module_path)) self.forgetRuns();
     }
 
     fn paramsOf(self: *const SessionPreview, module_path: []const u8) *const ParamValues {
@@ -409,7 +413,7 @@ pub const SessionPreview = struct {
         }
         // A module an import couldn't read, made (a package installed): fileChanged ignored it
         if (self.session.unread_imports.contains(path) and try self.session.loadUnreadImports()) affected = true;
-        if (affected) self.dropHover();
+        if (affected) self.forgetRuns();
         return affected;
     }
 
@@ -523,9 +527,12 @@ pub const SessionPreview = struct {
     fn ran(self: *SessionPreview, run: ModuleRun) void {
         _ = owned_keys.getOrPutOwned(&self.ran_since_taken, self.allocator, run.path) catch |err|
             logger.warn("{s}'s warnings won't be shown: {}", .{ run.path, err });
+        self.rememberRun(run);
+        // A run for hovers, outside a round, too: the frame kept was made before it
+        if (self.keepsFrameOf(run.path)) self.dropFrame();
         const round = &(self.round orelse return);
         const is_target = std.mem.eql(u8, run.path, round.target.module_path);
-        if (is_target or self.keepsFrameOf(run.path)) self.dropFrame();
+        if (is_target) self.dropFrame();
         if (!is_target) {
             round.last_import = run.path;
             return;
@@ -602,38 +609,83 @@ pub const SessionPreview = struct {
         return self.session.vm.cancel_token.load(.acquire);
     }
 
+    /// What the run of `module_path` knows of the value at `node` of it (writeFacts): the run
+    /// the session's VM holds, else one it makes now, as `evaluate` runs it (its values, its
+    /// memory limit, a cancel stops it). It ran in a VM of its own, which no cancel or edit
+    /// could stop, the document's second run after every edit. Null when the document
+    /// doesn't run (it doesn't compile, a cancel stopped it).
     pub fn hoverFacts(self: *SessionPreview, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) !?[]u8 {
-        const hover = try self.hoverFor(module_path);
-        const run = hover.run orelse return null;
+        const hover = try self.hoverFor(module_path) orelse return null;
         var out: std.Io.Writer.Allocating = .init(allocator);
         errdefer out.deinit();
-        run.writeFacts(&hover.doc, node, &out.writer) catch |err| switch (err) {
+        writeFacts(&self.session.vm, &hover.doc, node, self.last_run.?.ok, &out.writer) catch |err| switch (err) {
             error.NoValue => {},
             else => |e| return e,
         };
         return try out.toOwnedSlice();
     }
 
-    /// The run of `module_path` for hovers: the last one if it ran this document, else a new one.
-    fn hoverFor(self: *SessionPreview, module_path: []const u8) !*Hover {
+    /// The document `module_path` hovers point into, the session's VM holding its run; null
+    /// when it doesn't run.
+    fn hoverFor(self: *SessionPreview, module_path: []const u8) !?*Hover {
         if (self.hover) |*hover| {
-            if (std.mem.eql(u8, hover.module_path, module_path)) return hover;
+            if (std.mem.eql(u8, hover.module_path, module_path) and self.holdsRunOf(module_path)) return hover;
             self.dropHover();
         }
+        if (!self.holdsRunOf(module_path) and !try self.runForHovers(module_path)) return null;
         const source = try self.documents.vfs().readFile(self.allocator, module_path);
         defer self.allocator.free(source);
         const path = try self.allocator.dupe(u8, module_path);
         errdefer self.allocator.free(path);
-        var doc = try api.Document.parse(self.allocator, source);
-        errdefer doc.deinit();
-        const run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), &doc, module_path, self.paramsOf(module_path), self.memoryLimitOf(module_path));
-        self.hover = .{ .module_path = path, .doc = doc, .run = run };
+        self.hover = .{ .module_path = path, .doc = try api.Document.parse(self.allocator, source) };
         return &self.hover.?;
+    }
+
+    /// Runs `module_path`, as `evaluate` runs it, for its hovers: whether the VM holds its run
+    /// now. A run a cancel stopped isn't kept: it holds less than the document defines.
+    fn runForHovers(self: *SessionPreview, module_path: []const u8) !bool {
+        if (!self.session.workspace.path_to_id.contains(module_path)) return false;
+        try self.useParamsOf(module_path);
+        try self.session.runAgain(module_path);
+        self.session.vm.setMemoryLimit(self.memoryLimitOf(module_path));
+        self.session.evaluateWithImports(module_path) catch |err| switch (err) {
+            // A run that stops early still leaves what it defined before stopping
+            error.ParseError, error.CompileError, error.RuntimeError, error.Canceled => {},
+            else => return err,
+        };
+        if (self.cancelled()) {
+            self.forgetRuns();
+            return false;
+        }
+        return self.holdsRunOf(module_path);
+    }
+
+    /// Whether the session's VM holds a run of `module_path` from its sources as they are.
+    fn holdsRunOf(self: *const SessionPreview, module_path: []const u8) bool {
+        const last = self.last_run orelse return false;
+        return std.mem.eql(u8, last.module_path, module_path);
+    }
+
+    fn rememberRun(self: *SessionPreview, run: ModuleRun) void {
+        if (self.last_run) |last| if (std.mem.eql(u8, last.module_path, run.path)) {
+            self.last_run.?.ok = run.ok;
+            return;
+        };
+        self.forgetRuns();
+        const path = self.allocator.dupe(u8, run.path) catch return;
+        self.last_run = .{ .module_path = path, .ok = run.ok };
+    }
+
+    /// Forgets which run the session's VM holds, as a change makes it out of date.
+    fn forgetRuns(self: *SessionPreview) void {
+        self.dropHover();
+        const last = self.last_run orelse return;
+        self.allocator.free(last.module_path);
+        self.last_run = null;
     }
 
     fn dropHover(self: *SessionPreview) void {
         const hover = &(self.hover orelse return);
-        if (hover.run) |run| run.destroy();
         hover.doc.deinit();
         self.allocator.free(hover.module_path);
         self.hover = null;
@@ -681,115 +733,106 @@ pub const SessionPreview = struct {
     }
 };
 
-/// A document run once for its hovers. It used to run again for every hover, in a fresh
-/// VM capped at 500k instructions, so a big model's hovers showed nothing; now it runs
-/// once per version of the workspace, under the preview's limit, and every hover reads
-/// what that run left. Heap-allocated: the VM must not move.
-pub const HoverRun = struct {
-    allocator: std.mem.Allocator,
-    vm: VM,
-    program: chunk.Chunk,
+/// What the run `vm` holds of the document `doc` knows about the value at `target_node`: a
+/// script-level variable's value, or a call's, with a shape's measurements. A call's value
+/// is the one the run left for it, the variable it was assigned to or, as the script's last
+/// statement, the run's last value (when `run_ok`); never the call made again, which
+/// computed a kernel operation again at each hover and changed the run's state
+/// (`parts.push(x)` pushed again). error.NoValue when the run holds none.
+pub fn writeFacts(vm: *VM, doc: *const api.Document, target_node: ast.NodeIndex, run_ok: bool, writer: anytype) !void {
+    const node = doc.tree.getNode(target_node) orelse return error.NoValue;
+    var val: value.Value = value.Value.initNil();
 
-    /// Runs `doc` (known in the project as `module_path`) on `sandbox`, which must not
-    /// write: the document is untrusted, with `params` as the preview runs it. Null when it
-    /// doesn't compile: running an incomplete chunk broke the VM's invariants, and its
-    /// diagnostics say why.
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, params: *const ParamValues, memory_limit: usize) !?*HoverRun {
-        const self = try allocator.create(HoverRun);
-        errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
-        // Muted: its errors are the document's diagnostics. Previewing: hovers read the run
-        // the preview shows, under its memory limit
-        self.vm = try api.newVm(allocator, io, null, .{ .vfs = sandbox, .muted = true, .interactive = true, .memory_limit = memory_limit, .preview = true, .params = params });
-        errdefer self.vm.deinit();
-
-        var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
-        defer comp.deinit();
-        comp.module_path = module_path;
-        comp.compile(doc.tree.root) catch |err| {
-            logger.debug("Hover: the document doesn't compile: {}", .{err});
-            self.destroy();
-            return null;
-        };
-        // A run that stops early still leaves what it defined before stopping.
-        _ = self.vm.interpret(&self.program);
-        return self;
+    if (node.tag == .identifier or node.tag == .assignment) {
+        const name = if (node.tag == .identifier) doc.tree.nodeString(node) else doc.tree.getString(doc.tree.assignment(node).name);
+        val = vm.globals.get(name) orelse return error.NoValue;
+    } else if (node.tag == .method_call) {
+        val = valueOfCall(vm, doc, target_node, run_ok) orelse return error.NoValue;
+    } else {
+        return;
     }
 
-    pub fn destroy(self: *HoverRun) void {
-        const allocator = self.allocator;
-        self.program.free(allocator);
-        self.vm.deinit();
-        allocator.destroy(self);
-    }
+    // Concretized and measured as the run left it
+    if (val.isGeometry()) {
+        try writer.print("\n---\n### 🧊 3D Solid\n", .{});
 
-    /// What the run knows about the value at `target_node` of `doc` (the document it ran):
-    /// a variable's value, or a call's, with a shape's measurements.
-    pub fn writeFacts(self: *HoverRun, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
-        const node = doc.tree.getNode(target_node) orelse return error.NoValue;
-        var val: value.Value = value.Value.initNil();
+        if (vm.ensureConcrete(val)) |handle| {
+            // Only what the engine can measure: a B-Rep part would otherwise show zeros.
+            const engine = handle.engine;
+            if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
+                const extent = bx.size();
+                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ extent[0], extent[1], extent[2] });
+            };
 
-        if (node.tag == .identifier or node.tag == .assignment) {
-            const name = if (node.tag == .identifier) doc.tree.nodeString(node) else doc.tree.getString(doc.tree.assignment(node).name);
-            val = self.vm.globals.get(name) orelse return error.NoValue;
-        } else if (node.tag == .method_call) {
-            // The call alone, in the run's VM, so it sees the run's variables.
-            var expr_chunk = chunk.Chunk.init();
-            defer expr_chunk.free(self.allocator);
-            var expr_comp = Compiler.forDocument(self.allocator, doc, &expr_chunk, &self.vm);
-            defer expr_comp.deinit();
-            expr_comp.compile(target_node) catch return error.NoValue;
-            const res = self.vm.interpret(&expr_chunk);
-            if (res != .ok or self.vm.stack_top == 0) return error.NoValue;
-            val = self.vm.stack[self.vm.stack_top - 1];
-        } else {
-            return;
-        }
+            if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
+            if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
+            if (kernel.supports(engine, .genus)) {
+                const gen = kernel.genus(handle);
+                if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
+            }
 
-        // 3. Concretize and write Markdown while memory is safe
-        if (val.isGeometry()) {
-            try writer.print("\n---\n### 🧊 3D Solid\n", .{});
+            // Counted, not tessellated: the mesh used to be built and copied for this line.
+            if (kernel.numTris(handle)) |tris| try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ kernel.numVerts(handle), tris });
+        } else |_| {}
+    } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
+        try writer.print("\n---\n### 📐 2D Profile\n", .{});
 
-            if (self.vm.ensureConcrete(val)) |handle| {
-                // Only what the engine can measure: a B-Rep part would otherwise show zeros.
-                const engine = handle.engine;
-                if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
-                    const extent = bx.size();
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ extent[0], extent[1], extent[2] });
-                };
-
-                if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
-                if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
-                if (kernel.supports(engine, .genus)) {
-                    const gen = kernel.genus(handle);
-                    if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
+        if (vm.ensureConcreteCrossSection(val)) |cs_handle| {
+            if (kernel.supports(cs_handle.engine, .sketch_measure)) {
+                const area = kernel.crossSectionArea(cs_handle);
+                if (kernel.crossSectionBounds(cs_handle)) |rect| {
+                    const w = rect.max[0] - rect.min[0];
+                    const l = rect.max[1] - rect.min[1];
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                } else {
+                    try writer.print("- **Bounds:** empty\n", .{});
                 }
-
-                // Counted, not tessellated: the mesh used to be built and copied for this line.
-                if (kernel.numTris(handle)) |tris| try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ kernel.numVerts(handle), tris });
-            } else |_| {}
-        } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
-            try writer.print("\n---\n### 📐 2D Profile\n", .{});
-
-            if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
-                if (kernel.supports(cs_handle.engine, .sketch_measure)) {
-                    const area = kernel.crossSectionArea(cs_handle);
-                    if (kernel.crossSectionBounds(cs_handle)) |rect| {
-                        const w = rect.max[0] - rect.min[0];
-                        const l = rect.max[1] - rect.min[1];
-                        try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
-                    } else {
-                        try writer.print("- **Bounds:** empty\n", .{});
-                    }
-                    try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
-                }
-            } else |_| {}
-        } else if (val.isString()) {
-            try writer.writeAll("\n---\n*(String)* `");
-            try val.stringify(true, writer);
-            try writer.writeAll("`\n");
-        } else if (val.isBool()) {
-            try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
-        }
+                try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+            }
+        } else |_| {}
+    } else if (val.isString()) {
+        var quoted: std.Io.Writer.Allocating = .init(vm.allocator);
+        defer quoted.deinit();
+        try val.stringify(true, &quoted.writer);
+        try writer.writeAll("\n---\n*(String)* ");
+        try writeCodeSpan(writer, quoted.written());
+        try writer.writeAll("\n");
+    } else if (val.isBool()) {
+        try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
     }
-};
+}
+
+/// `text` as a Markdown code span: between runs of backticks longer than any in it, as
+/// CommonMark reads one, with a space inside each when it starts or ends with a backtick. A
+/// string's value went in single backticks, so one of its own ended the span and the rest
+/// was read as Markdown and HTML.
+pub fn writeCodeSpan(writer: anytype, text: []const u8) !void {
+    var longest: usize = 0;
+    var run: usize = 0;
+    for (text) |c| {
+        run = if (c == '`') run + 1 else 0;
+        longest = @max(longest, run);
+    }
+    const pad = text.len > 0 and (text[0] == '`' or text[text.len - 1] == '`');
+    try writer.splatByteAll('`', longest + 1);
+    if (pad) try writer.writeByte(' ');
+    try writer.writeAll(text);
+    if (pad) try writer.writeByte(' ');
+    try writer.splatByteAll('`', longest + 1);
+}
+
+/// The value the run `vm` holds left for the call `node`: the script-level variable it is the
+/// whole value of, or, as the script's last statement, the run's last value when it ran to
+/// its end. Null for any other call, which only making it again would give.
+fn valueOfCall(vm: *VM, doc: *const api.Document, node: ast.NodeIndex, run_ok: bool) ?value.Value {
+    const root = doc.tree.getNode(doc.tree.root) orelse return null;
+    const statements = doc.tree.getNodes(doc.tree.block(root).stmts);
+    for (statements, 0..) |statement, i| {
+        if (statement == node) return if (i + 1 == statements.len and run_ok and vm.stack_top > 0) vm.stack[0] else null;
+        const assigned = doc.tree.getNode(statement) orelse continue;
+        if (assigned.tag != .assignment) continue;
+        const assignment = doc.tree.assignment(assigned);
+        if (assignment.value == node and assignment.op == null) return vm.globals.get(doc.tree.getString(assignment.name));
+    }
+    return null;
+}

@@ -65,7 +65,7 @@ test "GarbageCollector: prune(true) removes orphaned files and index records" {
 
     const path = try fx.writeBlob("stale_hash", "old data");
     defer testing.allocator.free(path);
-    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('stale_hash', 8, 0)", .{});
+    try fx.store.db.exec("INSERT INTO files (hash, created_at) VALUES ('stale_hash', 0)", .{});
 
     var gc = fx.gc();
     try gc.prune(true);
@@ -148,7 +148,7 @@ test "GarbageCollector: prune binds blob names as SQL parameters" {
 
     const evil_name = "zz' OR '1'='1";
     // Only the evil blob is physically present and unreferenced; 'keep' is just a row.
-    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{});
+    try fx.store.db.exec("INSERT INTO files (hash, created_at) VALUES ('keep', 0)", .{});
     testing.allocator.free(try fx.writeBlob(evil_name, "x"));
 
     var gc = fx.gc();

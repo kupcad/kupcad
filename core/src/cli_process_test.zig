@@ -685,7 +685,64 @@ test "kupcad: dev ast-dump, disasm and lex-dump write their file beside the scri
     const missing = try kupcad(sb.path, &.{ "dev", "disasm" });
     defer missing.deinit();
     try testing.expectEqual(@as(u8, 1), missing.code);
-    try testing.expect(std.mem.find(u8, missing.stderr, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>") != null);
+    try testing.expect(std.mem.find(u8, missing.stderr, "Error: Missing input file path.\n\nUsage: kupcad dev disasm <file.kup>") != null);
+}
+
+test "kupcad: doc, dev and fmt refuse what they don't take, and say why each fails" {
+    try expectRuns(&.{
+        // The first argument was the file whatever it was, and the rest ignored
+        .{ .args = &.{ "doc", "valid.kup", "fixme.kup" }, .code = 1, .contains = "Expected one input file, got 'valid.kup' and 'fixme.kup'" },
+        .{ .args = &.{ "doc", "--format", "valid.kup" }, .code = 1, .contains = "Unknown option '--format'\n\nUsage: kupcad doc", .absent = "Could not read" },
+        .{ .args = &.{ "doc", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{ "dev", "ast-dump", "valid.kup", "x.kup" }, .code = 1, .contains = "Expected one input file" },
+        .{ .args = &.{ "dev", "lex-dump", "--x" }, .code = 1, .contains = "Unknown option '--x'" },
+        .{ .args = &.{ "dev", "ast-dump", "missing.kup" }, .code = 1, .contains = "Error reading file 'missing.kup'" },
+        // A syntax error is the script's, not the compiler's
+        .{ .args = &.{ "dev", "disasm", "syntax_error.kup" }, .code = 1, .contains = "Not disassembled: 1 syntax error in syntax_error.kup", .absent = "internal compiler error" },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "--no-eval", "--repeat", "1" }, .code = 0 },
+        .{ .args = &.{ "dev", "bench" }, .code = 1, .contains = "Error: missing file path." },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "--repeat" }, .code = 1, .contains = "--repeat needs a count" },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "--repeat", "0" }, .code = 1, .contains = "--repeat needs at least 1" },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "--repeat", "x" }, .code = 1, .contains = "--repeat needs a whole number" },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "--bogus" }, .code = 1, .contains = "Error: unknown option." },
+        .{ .args = &.{ "dev", "bench", "valid.kup", "fixme.kup" }, .code = 1, .contains = "Error: one file at a time." },
+        .{ .args = &.{ "dev", "bench", "missing.kup" }, .code = 1, .contains = "Error reading file 'missing.kup'" },
+        .{ .args = &.{ "dev", "crash" }, .code = 1, .contains = "Usage: kupcad dev crash panic|abort" },
+        // --config holds for fmt as for check
+        .{ .args = &.{ "fmt", "--config", "quiet.json", "valid.kup" }, .code = 0, .contains = "cube(10)" },
+        .{ .args = &.{ "fmt", "--config", "typo.json", "valid.kup" }, .code = 1, .contains = "typo.json:3:22: unknown setting" },
+        .{ .args = &.{ "fmt", "valid.kup", "--config" }, .code = 1, .contains = "Missing file after --config" },
+        // Flags whose value is missing
+        .{ .args = &.{ "build", "valid.kup", "--output" }, .code = 1, .contains = "Missing output path after --output" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.glb", "--draco-bits" }, .code = 1, .contains = "Missing bit count after --draco-bits" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.svg", "--stroke-width" }, .code = 1, .contains = "Missing width after --stroke-width" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.stl", "--errors" }, .code = 1, .contains = "--errors takes text or json, got ''" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.glb", "-d" }, .code = 0, .contains = "Successfully built out.glb" },
+    });
+}
+
+test "kupcad: version --json is what a front end checks, as JSON" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const run = try kupcad(sb.path, &.{ "version", "--json" });
+    defer run.deinit();
+    try testing.expectEqual(@as(u8, 0), run.code);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, run.stdout, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings(options.version, parsed.value.object.get("version").?.string);
+    try testing.expect(parsed.value.object.get("protocolVersion").?.integer > 0);
+}
+
+test "kupcad: check holds each file's parse to the project's compiler_memory_limit" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "tight");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "tight/.kupcad.json", .data = "{ \"compiler_memory_limit\": 64 }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "tight/a.kup", .data = VALID_SCRIPT });
+    try expectRunsIn(&sb, &.{
+        .{ .args = &.{ "check", "tight/a.kup" }, .code = 1, .contains = "Sandbox Error: 'tight/a.kup' exceeded memory limit" },
+        .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
+    });
 }
 
 test "kupcad: build of a script in a subfolder imports its neighbours" {
@@ -934,6 +991,11 @@ const Conversation = struct {
 
     /// In place: the reader and writer point into it.
     fn start(self: *Conversation, cwd: []const u8, args: []const []const u8) !void {
+        return self.startWith(cwd, args, &.{});
+    }
+
+    /// `start` with the variables `set` (name, value) in its environment.
+    fn startWith(self: *Conversation, cwd: []const u8, args: []const []const u8, set: []const [2][]const u8) !void {
         const exe = try kupcadPath();
         defer testing.allocator.free(exe);
         var argv: std.ArrayList([]const u8) = .empty;
@@ -943,6 +1005,7 @@ const Conversation = struct {
         var env = try testing.environ.createMap(testing.allocator);
         defer env.deinit();
         stripKupcadEnv(&env);
+        for (set) |variable| try env.put(variable[0], variable[1]);
         self.* = .{ .child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = &env, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore }) };
         self.reader = self.child.stdout.?.readerStreaming(testing.io, &self.in_buf);
         self.writer = self.child.stdin.?.writerStreaming(testing.io, &self.out_buf);
@@ -1171,6 +1234,75 @@ test "kupcad: lsp gives a document values with kupcad.setParams, a new worker is
     testing.allocator.free(try server.answer(7, &seen));
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
+}
+
+/// Starts `kupcad lsp args...` (with `set` in its environment) and initializes it with `sb` as
+/// its folder; the messages it sent meanwhile go to `seen`.
+fn startServer(server: *Conversation, sb: *const Sandbox, args: []const []const u8, set: []const [2][]const u8, seen: *std.ArrayList(u8)) !void {
+    try server.startWith(sb.path, args, set);
+    errdefer server.child.kill(testing.io);
+    var msg_buf: [2048]u8 = undefined;
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"file://{s}\"}}}}", .{sb.path}));
+    testing.allocator.free(try server.answer(1, seen));
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+}
+
+/// Shuts `server` down as an editor does, and expects it to end well.
+fn stopServer(server: *Conversation, seen: *std.ArrayList(u8)) !void {
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"shutdown\"}");
+    testing.allocator.free(try server.answer(99, seen));
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
+}
+
+test "kupcad: lsp runs with a KUPCAD_MEMORY_LIMIT it can't take, says so, and answers a request it can't read with its id" {
+    const builtin = @import("builtin");
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    var seen: std.ArrayList(u8) = .empty;
+    defer seen.deinit(testing.allocator);
+    var server: Conversation = undefined;
+    // It ended before `initialize`, which the editor saw as a dead server; a valid origin too
+    try startServer(&server, &sb, &.{ "lsp", "--viewport-origin", "tauri://localhost" }, &.{.{ "KUPCAD_MEMORY_LIMIT", "lots" }}, &seen);
+    errdefer server.child.kill(testing.io);
+    // A request whose params aren't a hover's was answered with "id": null
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":3}}");
+    const refused = try server.answer(2, &seen);
+    defer testing.allocator.free(refused);
+    try testing.expect(std.mem.find(u8, refused, "\"code\":-32602") != null);
+    try testing.expect(std.mem.find(u8, seen.items, "window/showMessage") != null);
+    try testing.expect(std.mem.find(u8, seen.items, "KUPCAD_MEMORY_LIMIT takes a size greater than zero") != null);
+    try stopServer(&server, &seen);
+
+    try expectRuns(&.{.{ .args = &.{ "lsp", "--memory-limit", "0" }, .code = 1, .contains = "--memory-limit takes a size greater than zero" }});
+}
+
+test "kupcad: lsp --memory-limit holds the runs its hovers read" {
+    const builtin = @import("builtin");
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const text = "big = (1..1000000).to_a\\nb = cube(2)\\n";
+    for ([_]struct { args: []const []const u8, facts: bool }{
+        .{ .args = &.{"lsp"}, .facts = true },
+        // The array is past the limit: the run stops before `b`
+        .{ .args = &.{ "lsp", "--memory-limit", "8MB" }, .facts = false },
+    }) |case| {
+        errdefer std.debug.print("kupcad {s}\n", .{case.args[case.args.len - 1]});
+        var seen: std.ArrayList(u8) = .empty;
+        defer seen.deinit(testing.allocator);
+        var server: Conversation = undefined;
+        try startServer(&server, &sb, case.args, &.{}, &seen);
+        errdefer server.child.kill(testing.io);
+        var msg_buf: [2048]u8 = undefined;
+        try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"file://{s}/big.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ sb.path, text }));
+        try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/hover\",\"params\":{{\"textDocument\":{{\"uri\":\"file://{s}/big.kup\"}},\"position\":{{\"line\":1,\"character\":0}}}}}}", .{sb.path}));
+        const hover = try server.answer(2, &seen);
+        defer testing.allocator.free(hover);
+        try testing.expectEqual(case.facts, std.mem.find(u8, hover, "**Volume:** `8.00`") != null);
+        try stopServer(&server, &seen);
+    }
 }
 
 test "kupcad: lsp runs scripts in a worker, and a worker that dies is replaced" {

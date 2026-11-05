@@ -84,10 +84,15 @@ pub const USAGE =
     \\
 ;
 
-/// Resolves the preferred viewport port from the environment, defaulting to DEFAULT_PORT.
+/// Resolves the preferred viewport port from the environment, defaulting to DEFAULT_PORT. A
+/// value that is no port is warned of, naming it, and the default taken: it became the
+/// default silently.
 pub fn preferredViewportPort(environ: *const std.process.Environ.Map) u16 {
     const raw = environ.get(VIEWPORT_PORT_ENV) orelse return viewport_ws.DEFAULT_PORT;
-    return std.fmt.parseInt(u16, raw, 10) catch viewport_ws.DEFAULT_PORT;
+    return std.fmt.parseInt(u16, raw, 10) catch {
+        logger.warn("{s} is '{s}', which is no port (0 to 65535): the viewport prefers {d}", .{ VIEWPORT_PORT_ENV, raw, viewport_ws.DEFAULT_PORT });
+        return viewport_ws.DEFAULT_PORT;
+    };
 }
 
 pub const DocumentBuffer = struct {
@@ -287,6 +292,10 @@ pub const Handler = struct {
     previewed: ?lsp_preview.Target = null,
     /// A front end chose the document shown: an edit of another no longer shows that one.
     preview_chosen: bool = false,
+    /// A setting of the environment the server couldn't take (borrowed): the editor is told
+    /// once it is initialized. The server ended on it, which an editor shows as a server that
+    /// died before it started.
+    setting_problem: ?[]const u8 = null,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
     /// The hash of the last frame the viewers were sent: the same frame (a run that made it
@@ -661,6 +670,11 @@ pub const Handler = struct {
     }
 
     pub fn initialized(self: *Handler, arena: std.mem.Allocator, _: lsp.types.InitializedParams) void {
+        if (self.setting_problem) |problem| {
+            self.transport.writeNotification(self.io, arena, "window/showMessage", lsp.types.window.ShowMessageParams, .{ .type = .Warning, .message = problem }, .{}) catch |err| {
+                logger.warn("Could not tell the editor of the setting it can't take: {}", .{err});
+            };
+        }
         // Tell the editor which port the viewport actually bound (it may be ephemeral), so the
         // extension never has to hard-code it. Sent after `initialized` per LSP lifecycle rules.
         const viewport = self.viewport orelse return;
@@ -1424,7 +1438,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
         break :blk null;
     };
     defer if (exe) |e| allocator.free(e);
-    memory_limit = memory_flag.given(memory_limit, init.environ_map, Reporter.forProcess(init)) catch return .failure;
+    // A KUPCAD_MEMORY_LIMIT that is no size: previews keep the default cap, and the editor is
+    // told why once it is initialized (the server ended before it, which only looked dead)
+    var problem_buf: [256]u8 = undefined;
+    var setting_problem: ?[]const u8 = null;
+    memory_limit = memory_flag.given(memory_limit, init.environ_map, Reporter.forProcess(init)) catch blk: {
+        setting_problem = std.fmt.bufPrint(&problem_buf, "KupCAD: {s} takes {s}, got '{s}'; previews hold up to the default limit", .{ memory_flag.ENV, memory_flag.EXPECTED, init.environ_map.get(memory_flag.ENV).? }) catch "KupCAD: KUPCAD_MEMORY_LIMIT isn't a size; previews hold up to the default limit";
+        break :blk null;
+    };
     // The limit before the worker's flag: the worker's argument loop runs it on seeing that
     var limit_text: [24]u8 = undefined;
     const plain_argv = [_][]const u8{ exe orelse "", "lsp", lsp_worker.WORKER_FLAG };
@@ -1465,6 +1486,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
 
     var handler = Handler.init(allocator, init.io, transport, preview, if (ws_server) |ws| Viewport.ofSocket(ws) else null);
     defer handler.deinit();
+    handler.setting_problem = setting_problem;
 
     // Messages come through the inbox, which evaluates the preview when the editor goes
     // quiet, cancels a stale evaluation and drops cancelled requests (cli/lsp_inbox.zig).

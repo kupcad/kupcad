@@ -4,9 +4,9 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
-const log_helpers = @import("../log.zig");
 pub const Outcome = @import("outcome.zig").Outcome;
-const Args = @import("args.zig").Args;
+const args = @import("args.zig");
+const Args = args.Args;
 const Reporter = @import("reporter.zig").Reporter;
 const diagnostic_report = @import("diagnostic_report.zig");
 
@@ -18,11 +18,9 @@ pub const USAGE =
 ;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
-    const file_path = args_iter.next() orelse {
-        log_helpers.printStderr(init.io, "Error: Missing input file path.\n\n" ++ USAGE, .{});
-        return .failure;
-    };
-    return run(allocator, file_path, .forProcess(init));
+    const reporter: Reporter = .forProcess(init);
+    const file_path = args.onlyFile(args_iter, reporter, USAGE) orelse return .failure;
+    return run(allocator, file_path, reporter);
 }
 
 /// Prints the schema of the script at `file_path` as JSON. A script with syntax errors

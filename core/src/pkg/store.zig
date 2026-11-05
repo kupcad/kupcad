@@ -18,7 +18,8 @@ pub const BUSY_TIMEOUT_MS: c_int = 5000;
 /// The index's schema (`PRAGMA user_version`); runMigrations brings older ones up to it.
 /// v4: packages.last_used, when an install last used the package (see GarbageCollector).
 /// v5: git host packages are indexed without their archive's top folder (see Cafs.ArchiveLayout).
-pub const SCHEMA_VERSION: i32 = 5;
+/// v6: files has no size: written (0 for every blob an install indexed) and never read.
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// Deletes package_files rows whose (package_id, commit_sha) has no packages row.
 const ORPHAN_PACKAGE_FILES_SQL =
@@ -152,6 +153,9 @@ pub const Store = struct {
                 try self.db.exec("DELETE FROM packages WHERE provider IN ('github', 'gitlab', 'gitea')", .{});
                 try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{});
             }
+            if (current_version < 6) {
+                try self.db.exec("ALTER TABLE files DROP COLUMN size", .{});
+            }
             var pragma_buf: [48]u8 = undefined;
             try self.db.exec(try std.mem.print(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{});
             try self.db.exec("COMMIT", .{});
@@ -209,8 +213,8 @@ pub const Store = struct {
     }
 
     /// Indexes a blob that is on disk but missing from the index.
-    pub fn indexBlob(self: *Store, hash: []const u8, size: i64, created_at: i64) !void {
-        try self.db.exec("INSERT INTO files (hash, size, created_at) VALUES (?, ?, ?)", .{ hash, size, created_at });
+    pub fn indexBlob(self: *Store, hash: []const u8, created_at: i64) !void {
+        try self.db.exec("INSERT INTO files (hash, created_at) VALUES (?, ?)", .{ hash, created_at });
     }
 
     pub fn evictBlob(self: *Store, hash: []const u8) !void {
@@ -312,8 +316,8 @@ pub const Store = struct {
 
         // Two statements for the whole package; they were prepared again for every file.
         const file_stmt = try self.db.prepare(
-            \\INSERT OR IGNORE INTO files (hash, size, created_at)
-            \\VALUES (?, 0, ?)
+            \\INSERT OR IGNORE INTO files (hash, created_at)
+            \\VALUES (?, ?)
         );
         defer file_stmt.deinit();
         const mapping_stmt = try self.db.prepare(

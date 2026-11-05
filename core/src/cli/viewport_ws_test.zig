@@ -386,6 +386,7 @@ test "ViewportWs: connections are capped, a viewer gets in past idle ones, deini
         defer extra.close();
         var dog = Watchdog{ .stream = extra.stream };
         try dog.arm();
+        errdefer dog.disarm() catch {};
         try expectClosed(&extra);
         try dog.disarm();
         try testing.expectEqual(ws.MAX_CLIENTS, server.clientCount());
@@ -427,7 +428,8 @@ test "ViewportWs: a connection that never sends its upgrade request is closed" {
     defer warnings.restore();
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     defer server.deinit();
-    server.handshake_timeout = .fromMilliseconds(50);
+    // Long enough that a busy machine's upgrade lands within it: 50 ms failed under load
+    server.handshake_timeout = .fromMilliseconds(500);
     try server.start();
 
     // It used to hold its slot (one of MAX_CLIENTS, two threads) until it hung up.
@@ -436,6 +438,7 @@ test "ViewportWs: a connection that never sends its upgrade request is closed" {
     defer silent.close();
     var dog = Watchdog{ .stream = silent.stream };
     try dog.arm();
+    errdefer dog.disarm() catch {};
     try expectClosed(&silent);
     try dog.disarm();
     try waitForClients(&server, 0);

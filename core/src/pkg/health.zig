@@ -123,8 +123,7 @@ pub const Doctor = struct {
                 dir.deleteFile(self.io, entry.name) catch |err| log.warn("Could not remove the corrupt blob {s}: {}", .{ entry.name, err });
                 continue;
             }
-            const stat = try dir.statFile(self.io, entry.name, .{});
-            try self.store.indexBlob(entry.name, @intCast(stat.size), now);
+            try self.store.indexBlob(entry.name, now);
             orphan_count += 1;
         }
 

@@ -139,8 +139,10 @@ test "ScriptSession: each evaluation gets the whole time limit, however long the
     // one isn't a build's
     var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
-    session.vm.setTimeLimit(50);
-    try testing.io.sleep(.fromMilliseconds(60), .awake);
+    // A second: the loop takes milliseconds, but a Debug build under the nightly
+    // -Dgc-stress, or a busy machine, took past a budget of 50
+    session.vm.setTimeLimit(1000);
+    try testing.io.sleep(.fromMilliseconds(1100), .awake);
     // Past the instructions between two looks at the clock
     _ = try session.workspace.addModule("main.kup", "i = 0\nwhile i < 2000\n  i += 1\nend\n");
     try session.workspace.linkDependencies();

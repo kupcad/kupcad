@@ -13,6 +13,7 @@ const LimitFlag = limit_flag.LimitFlag;
 const Flag = LimitFlag(usize, "--memory-limit", "KUPCAD_MEMORY_LIMIT", "a size greater than zero, as 512MB or 8GB", parseSize);
 pub const FLAG = Flag.FLAG;
 pub const ENV = Flag.ENV;
+pub const EXPECTED = Flag.EXPECTED;
 pub const take = Flag.take;
 pub const fromEnv = Flag.fromEnv;
 pub const given = Flag.given;

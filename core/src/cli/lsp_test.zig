@@ -11,6 +11,9 @@ const fileUri = @import("lsp.zig").fileUri;
 const SET_PARAMS_COMMAND = @import("lsp.zig").SET_PARAMS_COMMAND;
 const PREVIEW_COMMAND = @import("lsp.zig").PREVIEW_COMMAND;
 const Viewport = @import("lsp.zig").Viewport;
+const preferredViewportPort = @import("lsp.zig").preferredViewportPort;
+const VIEWPORT_PORT_ENV = @import("lsp.zig").VIEWPORT_PORT_ENV;
+const DEFAULT_VIEWPORT_PORT = @import("viewport_ws.zig").DEFAULT_PORT;
 const FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const kernel = @import("../kernel/kernel.zig");
@@ -321,7 +324,7 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
     // The variable is described from the syntax alone; no run happened.
     try testing.expect(std.mem.find(u8, answer.?.contents.markup_content.value, "(variable) x") != null);
     try testing.expect(std.mem.find(u8, answer.?.contents.markup_content.value, "Volume") == null);
-    try testing.expect(server.preview.hover.?.run == null);
+    try testing.expect(server.preview.hover == null);
 }
 
 test "LSP: open documents import each other, and one previewed again runs with its import's edit" {
@@ -371,15 +374,58 @@ test "LSP: hovers are answered from one run of the document, until something cha
     try server.open(URI, "a = cube(2)\nb = a.translate(1, 0, 0)\n");
 
     try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
-    const run = server.preview.hover.?.run.?;
+    const revision = server.preview.session.global_revision;
     // It used to run the whole document again for each hover.
     try testing.expect(std.mem.find(u8, server.hover(URI, 1, 0).?, "**Volume:** `8.00`") != null);
-    try testing.expectEqual(run, server.preview.hover.?.run.?);
+    try testing.expectEqual(revision, server.preview.session.global_revision);
 
     // An edit (here, or in a file it imports) makes the next hover run it again.
     try server.change(URI, "a = cube(3)\n");
     try testing.expect(server.preview.hover == null);
     try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
+}
+
+test "LSP: a hover reads the preview's run, and never makes a call again" {
+    // The first hover after an edit ran the document again in a VM of its own, which nothing
+    // could stop, and a hovered call was made again at each hover: `add` pushed again
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "parts = []\ndef add(x)\n  parts.push(x)\n  parts.length.to_s\nend\nadd(cube(1))\nn = add(cube(1))\nb = cube(2)\nsphere(1)\n");
+    server.settle();
+    const revision = server.preview.session.global_revision;
+    // A call whose value the run kept nowhere has no facts
+    for (0..3) |_| try testing.expect(std.mem.find(u8, server.hover(URI, 5, 0).?, "(String)") == null);
+    // A call assigned whole is its variable's value: made again after those, it would say 5
+    try testing.expect(std.mem.find(u8, server.hover(URI, 6, 4).?, "*(String)* `\"2\"`") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 7, 4).?, "**Volume:** `8.00`") != null);
+    // The last statement is the run's value
+    try testing.expect(std.mem.find(u8, server.hover(URI, 8, 0).?, "3D Solid") != null);
+    // The preview's run, not one of its own
+    try testing.expectEqual(revision, server.preview.session.global_revision);
+}
+
+test "LSP: a hover's run stops on a cancel, and the next hover runs it again" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "a = cube(2)\n");
+    // As the inbox does when the editor cancels the hover, or edits, while it runs
+    server.preview.session.vm.cancel_token.store(true, .release);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "Volume") == null);
+    try testing.expect(server.preview.hover == null);
+    server.preview.session.vm.cancel_token.store(false, .release);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
+}
+
+test "LSP: a string's value is shown in a code span no backtick in it can end" {
+    // It went in single backticks: one in the string closed the span, and what followed was
+    // read as Markdown and HTML
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "s = \"a`` <img src=x> `b\"\n");
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "*(String)* ```\"a`` <img src=x> `b\"```") != null);
 }
 
 test "LSP: a hover counts a solid's vertices and faces without building its mesh" {
@@ -994,4 +1040,19 @@ test "LSP: a warning of no line, and a script's warn(), are diagnostics too: on 
     try testing.expect(std.mem.find(u8, shown[1].message, "empty") != null);
     try testing.expectEqual(@as(u32, 2), shown[1].range.start.line);
     try testing.expectEqual(@as(u32, 0), shown[1].range.start.character);
+}
+
+test "LSP: the viewport's port comes from KUPCAD_VIEWPORT_PORT, a value that is no port warned of" {
+    // One that wasn't a port became the default silently
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    try testing.expectEqual(DEFAULT_VIEWPORT_PORT, preferredViewportPort(&environ));
+    try environ.put(VIEWPORT_PORT_ENV, "0");
+    try testing.expectEqual(@as(u16, 0), preferredViewportPort(&environ));
+    for ([_][]const u8{ "90o1", "70000", "-1" }) |bad| {
+        try environ.put(VIEWPORT_PORT_ENV, bad);
+        try testing.expectEqual(DEFAULT_VIEWPORT_PORT, preferredViewportPort(&environ));
+    }
 }

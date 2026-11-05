@@ -12,10 +12,13 @@ const registry = @import("../stdlib/registry.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/lexer.zig").Lexer;
 const Outcome = @import("outcome.zig").Outcome;
-const Args = @import("args.zig").Args;
+const args = @import("args.zig");
+const Args = args.Args;
 const bench = @import("../tools/bench.zig");
 const log_helpers = @import("../log.zig");
 const ScriptSession = @import("../session/session.zig").ScriptSession;
+const diagnostic_report = @import("diagnostic_report.zig");
+const Reporter = @import("reporter.zig").Reporter;
 
 const log = std.log.scoped(.dev);
 
@@ -82,10 +85,7 @@ fn executeCrash(init: std.process.Init, args_iter: *Args) Outcome {
 /// `kupcad dev <dump.name> <file>`: the script read, rendered as `dump` does and written to
 /// `<file>.<dump.extension>`.
 fn runDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args, comptime dump: Dump) !Outcome {
-    const file_path = args_iter.next() orelse {
-        log_helpers.printStderr(init.io, "Missing file path for '" ++ dump.name ++ "'. Usage: kupcad dev " ++ dump.name ++ " <file.kup>\n", .{});
-        return .failure;
-    };
+    const file_path = args.onlyFile(args_iter, .forProcess(init), "Usage: kupcad dev " ++ dump.name ++ " <file.kup>\n") orelse return .failure;
     const source = fs.readFile(init.io, allocator, file_path) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
         return .failure;
@@ -121,6 +121,16 @@ fn renderBytecode(init: std.process.Init, allocator: std.mem.Allocator, file_pat
         return false;
     };
     defer doc.deinit();
+    // Compiling a tree with errors in it is no compile error of the script's: it was
+    // reported as an internal compiler error
+    if (doc.diagnostics.len > 0) {
+        const reporter: Reporter = .forProcess(init);
+        var rendered: std.Io.Writer.Allocating = .init(allocator);
+        defer rendered.deinit();
+        const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, file_path, source, doc.diagnostics, reporter.err_style);
+        reporter.err("{s}Not disassembled: {d} syntax error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", file_path });
+        return false;
+    }
 
     // Compiled, not run: it reads no files
     var session = try ScriptSession.init(allocator, init.io, .none);

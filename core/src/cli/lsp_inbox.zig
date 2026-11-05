@@ -6,7 +6,11 @@
 //! * an edit or a request that arrives while that work runs cancels it: the edit makes its
 //!   result stale, and the request shouldn't wait for it. The work is still pending, so it
 //!   runs again once the client is quiet;
-//! * `$/cancelRequest` drops a request that is still waiting, answering it RequestCancelled.
+//! * a request being answered (a hover that runs the document) is cancelled the same way by
+//!   an edit or a `$/cancelRequest` of it: it answers with what it has;
+//! * `$/cancelRequest` drops a request that is still waiting, answering it RequestCancelled;
+//! * a request whose params the server can't read is answered with its own id: lsp-kit's
+//!   server answers it with `"id": null`, which the client matches to no request.
 //!
 //! The server reads through `transport` as from the client's own (lsp_kit's basic_server
 //! dispatches as before); everything except the reader task runs on the server's thread.
@@ -68,6 +72,10 @@ pub const Inbox = struct {
     end: ?lsp.Transport.ReadError = null,
     /// Whether `work.run` is running, so an edit knows to cancel it.
     working: bool = false,
+    /// The request the server is answering (owned), from when `next` hands it out until the
+    /// server asks for the next message: an edit or a cancel of it cancels the work it does.
+    /// Written on the server's thread under the lock; read there without it.
+    answering: ?Id = null,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, source: *lsp.Transport, work: Work) Inbox {
         return .{ .allocator = allocator, .io = io, .source = source, .work = work };
@@ -82,6 +90,7 @@ pub const Inbox = struct {
     /// it queued.
     pub fn deinit(self: *Inbox) void {
         if (self.reader) |*reader| reader.cancel(self.io);
+        if (self.answering) |id| self.freeId(id);
         for (self.queue.items) |q| self.freeQueued(q);
         self.queue.deinit(self.allocator);
         for (self.refused.items) |id| self.freeId(id);
@@ -115,13 +124,20 @@ pub const Inbox = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (std.mem.eql(u8, method, CANCEL_METHOD)) {
-            if (envelope.params) |params| if (params.id) |id| try self.refuseQueued(id);
+            if (envelope.params) |params| if (params.id) |id| {
+                if (self.answering) |answering| if (answering.eql(id)) self.work.cancel.store(true, .release);
+                try self.refuseQueued(id);
+            };
             self.arrived.signal(self.io);
             return;
         }
         // A response from the client has an id but no method: only requests can be cancelled.
         const id = if (envelope.method != null) envelope.id else null;
-        if (self.working and (id != null or isEdit(method))) self.work.cancel.store(true, .release);
+        const stops_work = self.working and (id != null or isEdit(method));
+        // Another request doesn't stop one being answered: a hover would never show facts
+        // while the editor asks for its highlights and code actions
+        const stops_answer = self.answering != null and isEdit(method);
+        if (stops_work or stops_answer) self.work.cancel.store(true, .release);
         const owned = if (id) |i| try self.dupeId(i) else null;
         errdefer if (owned) |i| self.freeId(i);
         try self.queue.append(self.allocator, .{ .json = json, .id = owned });
@@ -157,6 +173,9 @@ pub const Inbox = struct {
         const self: *Inbox = @alignCast(@fieldParentPtr("transport", transport));
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
+        // The server answered the request it was given last
+        if (self.answering) |id| self.freeId(id);
+        self.answering = null;
         while (true) {
             if (self.refused.pop()) |id| {
                 self.mutex.unlock(io);
@@ -166,7 +185,10 @@ pub const Inbox = struct {
             }
             if (self.queue.items.len > 0) {
                 const q = self.queue.orderedRemove(0);
-                if (q.id) |id| self.freeId(id);
+                // A request: what it does stops on an edit or a cancel from here on, as the
+                // work does (the flag cleared under the lock they set it under)
+                if (q.id != null) self.work.cancel.store(false, .release);
+                self.answering = q.id;
                 return q.json;
             }
             if (self.end) |err| return err;
@@ -203,7 +225,27 @@ pub const Inbox = struct {
 
     fn forward(transport: *lsp.Transport, io: std.Io, json: []const u8) lsp.Transport.WriteError!void {
         const self: *Inbox = @alignCast(@fieldParentPtr("transport", transport));
+        if (self.answering) |id| if (anonymousError(self.allocator, json)) |message| {
+            defer self.allocator.free(message);
+            return self.source.writeErrorResponse(io, self.allocator, id, .{ .code = .invalid_params, .message = message }, .{ .emit_null_optional_fields = false }) catch |err| switch (err) {
+                // As it was, then
+                error.OutOfMemory => self.source.writeJsonMessage(io, json),
+                else => |e| e,
+            };
+        };
         return self.source.writeJsonMessage(io, json);
+    }
+
+    /// The message of `json` (owned) when it is an error response with no id: what lsp-kit
+    /// answers a message whose params it can't read with, which for the request being
+    /// answered is a request it couldn't read.
+    fn anonymousError(allocator: std.mem.Allocator, json: []const u8) ?[]u8 {
+        const Response = struct { id: ?std.json.Value = null, @"error": ?struct { message: []const u8 } = null };
+        const parsed = std.json.parseFromSlice(Response, allocator, json, .{ .ignore_unknown_fields = true }) catch return null;
+        defer parsed.deinit();
+        const failure = parsed.value.@"error" orelse return null;
+        if (parsed.value.id) |id| if (id != .null) return null;
+        return allocator.dupe(u8, failure.message) catch null;
     }
 
     fn dupeId(self: *Inbox, id: Id) !Id {
