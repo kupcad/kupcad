@@ -756,9 +756,7 @@ jobs:
   # RubyGems.org's trusted publishing: the job's OIDC token is the credential, which RubyGems
   # takes from this workflow (release.yml) in the rubygems environment only. It pushes what the
   # bindings job packed, running nothing of the repository's; a gem already there is skipped, so a
-  # run stopped halfway can be re-run. It pushes to the gem's trusted publisher: a gem that isn't
-  # on RubyGems.org yet is pushed by hand first (a pending publisher creates one only for an owner
-  # the workflow names, which rubygems/configure-rubygems-credentials can't yet)
+  # run stopped halfway can be re-run
   rubygems:
     name: Publish the Ruby gems
     needs: [version, bindings, release]
@@ -790,8 +788,25 @@ jobs:
           path: pkg
           merge-multiple: true
 
-      - name: Configure trusted publishing credentials
-        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+      # The job's OIDC token exchanged for an API key that pushes for 15 minutes, as
+      # rubygems/configure-rubygems-credentials does, but naming the account that owns the gem:
+      # RubyGems.org lets a pending publisher create a gem only for the account the exchange
+      # names, and the action sends the token alone
+      - name: Get an API key for the trusted publisher
+        # bash's pipefail: a curl that fails in a pipe fails the step
+        shell: bash
+        env:
+          # The RubyGems.org account that owns the gem, by its ID (a handle can change)
+          OWNER: '48301'
+        run: |
+          jwt=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=rubygems.org" | jq -er .value)
+          if ! response=$(jq -n --arg jwt "$jwt" --arg owner "$OWNER" '{$jwt, $owner}' | curl --fail-with-body -sS -H 'Content-Type: application/json' -H 'Accept: application/json' --data @- https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token); then
+            echo "RubyGems.org refused the token: $response" >&2
+            exit 1
+          fi
+          key=$(jq -er .rubygems_api_key <<< "$response")
+          echo "::add-mask::$key"
+          echo "GEM_HOST_API_KEY=$key" >> "$GITHUB_ENV"
 
       - name: Push them
         run: |
