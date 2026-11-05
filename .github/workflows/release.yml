@@ -756,7 +756,9 @@ jobs:
   # RubyGems.org's trusted publishing: the job's OIDC token is the credential, which RubyGems
   # takes from this workflow (release.yml) in the rubygems environment only. It pushes what the
   # bindings job packed, running nothing of the repository's; a gem already there is skipped, so a
-  # run stopped halfway can be re-run
+  # run stopped halfway can be re-run. It pushes to the gem's trusted publisher: a gem that isn't
+  # on RubyGems.org yet is pushed by hand first (a pending publisher creates one only for an owner
+  # the workflow names, which rubygems/configure-rubygems-credentials can't yet)
   rubygems:
     name: Publish the Ruby gems
     needs: [version, bindings, release]

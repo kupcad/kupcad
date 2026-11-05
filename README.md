@@ -127,7 +127,9 @@ writes the same archives into a folder of your own. Once the GitHub release is o
 workflow publishes the npm packages at that version, with provenance (npm's trusted publishing
 from `release.yml` in the `npm` environment): `@kupcad/wasm` carries the module built for the
 release and shrunk by `wasm-opt`, tested in Node and in the playground in headless Chromium
-first; a pre-release goes under npm's `next` tag.
+first; a pre-release goes under npm's `next` tag. It publishes the Ruby gems and the Python
+wheels too, each built and tested on its platform, to RubyGems.org and PyPI by their trusted
+publishing (from `release.yml`, in the `rubygems` and the `pypi` environment).
 
 ## License
 
