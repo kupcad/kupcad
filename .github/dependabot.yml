@@ -22,6 +22,19 @@ updates:
         patterns:
           - '*'
 
+  # The Python package's development tools, pinned in its dev dependency group
+  # (bindings/python/pyproject.toml's [dependency-groups], which Dependabot's pip reads)
+  - package-ecosystem: pip
+    directory: /bindings/python
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      development:
+        patterns:
+          - '*'
+
   - package-ecosystem: npm
     directory: /
     schedule:
