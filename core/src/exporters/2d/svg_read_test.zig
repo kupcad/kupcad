@@ -3,6 +3,9 @@ const testing = std.testing;
 const support = @import("../../test_support.zig");
 const svg_read = @import("svg_read.zig");
 const path = @import("../../core/path.zig");
+
+const expectPoint = support.pointChecker(1e-9);
+
 /// A drawing in millimetres, a user unit each.
 const MM = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">";
 
@@ -19,8 +22,6 @@ fn expectRefused(text: []const u8, message: []const u8) !void {
     try testing.expectError(error.Unreadable, svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
-
-const expectPoint = support.pointChecker(1e-9);
 
 fn area(outline: path.Run) f64 {
     return @abs(path.signedArea(outline.start, outline.segments));

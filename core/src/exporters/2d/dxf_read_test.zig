@@ -4,6 +4,18 @@ const support = @import("../../test_support.zig");
 const dxf_read = @import("dxf_read.zig");
 const path = @import("../../core/path.zig");
 
+const expectPoint = support.pointChecker(1e-9);
+
+/// A slot: two lines (the top one drawn backwards) and two half circles, as separate entities.
+const SLOT =
+    "0\nLINE\n8\ncut\n10\n0\n20\n0\n11\n20\n21\n0\n" ++
+    "0\nARC\n8\ncut\n10\n20\n20\n5\n40\n5\n50\n270\n51\n90\n" ++
+    "0\nLINE\n8\ncut\n10\n0\n20\n10\n11\n20\n21\n10\n" ++
+    "0\nARC\n8\ncut\n10\n0\n20\n5\n40\n5\n50\n90\n51\n270\n";
+
+/// A block of one circle of radius 1 about (0, 0), on layer 0.
+const BOLT = "0\nBLOCK\n8\n0\n2\nbolt\n10\n0\n20\n0\n0\nCIRCLE\n8\n0\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n";
+
 /// A DXF file of `entities` (group codes and values, a line each), in `header`'s units.
 fn file(comptime header: []const u8, comptime entities: []const u8) []const u8 {
     return "0\nSECTION\n2\nHEADER\n" ++ header ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nENDSEC\n0\nEOF\n";
@@ -22,15 +34,6 @@ fn expectRefused(text: []const u8, message: []const u8) !void {
     try testing.expectError(error.Unreadable, dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
-
-const expectPoint = support.pointChecker(1e-9);
-
-/// A slot: two lines (the top one drawn backwards) and two half circles, as separate entities.
-const SLOT =
-    "0\nLINE\n8\ncut\n10\n0\n20\n0\n11\n20\n21\n0\n" ++
-    "0\nARC\n8\ncut\n10\n20\n20\n5\n40\n5\n50\n270\n51\n90\n" ++
-    "0\nLINE\n8\ncut\n10\n0\n20\n10\n11\n20\n21\n10\n" ++
-    "0\nARC\n8\ncut\n10\n0\n20\n5\n40\n5\n50\n90\n51\n270\n";
 
 test "DXF read: lines and arcs drawn apart are joined end to end, either way round, into one outline" {
     var drawing = try read(file("", SLOT), null);
@@ -253,9 +256,6 @@ test "DXF read: pieces that join into no outline are open paths, when the reader
 fn withBlocks(comptime blocks: []const u8, comptime entities: []const u8) []const u8 {
     return "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nENDSEC\n0\nEOF\n";
 }
-
-/// A block of one circle of radius 1 about (0, 0), on layer 0.
-const BOLT = "0\nBLOCK\n8\n0\n2\nbolt\n10\n0\n20\n0\n0\nCIRCLE\n8\n0\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n";
 
 fn center(drawing: dxf_read.Drawing, i: usize) [2]f64 {
     return drawing.outlines[i].segments[0].arc.?.center;

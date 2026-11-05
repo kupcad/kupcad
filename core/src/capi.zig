@@ -18,8 +18,9 @@ const json_text = @import("core/json_text.zig");
 pub const ABI_VERSION: u32 = 1;
 
 /// malloc's: thread-safe, and the host's own. The tests' allocator under test, so they find what
-/// a call leaks.
-const allocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
+/// a call leaks; a test that fails an allocation on purpose puts its own here, to find what a
+/// call does when memory runs out. Nothing else writes it.
+pub var allocator: std.mem.Allocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 
 pub const std_options: std.Options = .{ .logFn = logNothing };
 

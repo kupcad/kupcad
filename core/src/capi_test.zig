@@ -14,6 +14,14 @@ const packed_files = @import("vfs/packed.zig");
 
 /// A model heavy enough for Manifold's parallel algorithms, which start oneTBB's worker threads.
 const HEAVY = "sphere(r: 50, segments: 512) - cube(60, center: true).translate(x: 30)";
+/// How long a forked child may build before its alarm ends it: a child deadlocked in oneTBB
+/// after the fork left the parent waiting for good.
+const FORK_CHILD_SECONDS = 60;
+/// A loop a time limit must stop, and which ends by itself if it doesn't (seconds, not for
+/// good): `while true` hung the suite when the limit was lost.
+const LONG_LOOP = "i = 0\nwhile i < 100_000_000\n  i += 1\nend\ncube(1)";
+
+extern "c" fn alarm(seconds: c_uint) c_uint;
 
 comptime {
     // The exports the header's declarations link to, whichever tests a filter keeps
@@ -267,11 +275,15 @@ test "C API: a build's arguments refused before it runs: the format, the paramet
         defer result.deinit();
         try testing.expectEqual(@as(c_int, c.KUPCAD_INVALID_ARGUMENT), result.status());
         try testing.expect(std.mem.startsWith(u8, result.message().?, "parameters: "));
+        // Refused before it ran, the build has no report
+        try testing.expectEqual(null, result.report());
     }
     {
         const result = build("cube(1)", "stl", .{ .files = "\x09\x00\x00\x00lib" });
         defer result.deinit();
         try testing.expectEqual(@as(c_int, c.KUPCAD_INVALID_ARGUMENT), result.status());
+        try testing.expectEqualStrings("the files aren't packed as kupcad.h describes: a length runs past the end", result.message().?);
+        try testing.expectEqual(null, result.report());
     }
     {
         // No format at all: it crashed
@@ -332,7 +344,7 @@ test "C API: a build's memory limit stops a script that holds more, however smal
 }
 
 test "C API: a build's time limit stops a script that never ends" {
-    const result = build("while true\nend\ncube(1)", "stl", .{ .timeout_ms = 100 });
+    const result = build(LONG_LOOP, "stl", .{ .timeout_ms = 100 });
     defer result.deinit();
     try testing.expectEqual(@as(c_int, c.KUPCAD_SCRIPT_ERROR), result.status());
     try testing.expect(std.mem.startsWith(u8, result.message().?, "Time limit: the run took longer than 100 ms"));
@@ -349,13 +361,15 @@ test "C API: a build past its time limit fails, though the kernel spent it meshi
     try testing.expect(std.mem.startsWith(u8, result.message().?, "Time limit: the run took longer than 5 ms"));
 }
 
-test "C API: a build compresses a GLB's meshes with Draco when asked" {
-    const plain = build("sphere(r: 5)", "glb", .{});
-    defer plain.deinit();
-    const draco = build("sphere(r: 5)", "glb", .{ .draco = true });
-    defer draco.deinit();
-    try testing.expect(std.mem.find(u8, draco.data(), "KHR_draco_mesh_compression") != null);
-    try testing.expect(std.mem.find(u8, plain.data(), "KHR_draco_mesh_compression") == null);
+test "C API: a build compresses a glTF's meshes with Draco when asked, in either container" {
+    inline for (.{ "glb", "gltf" }) |format| {
+        const plain = build("sphere(r: 5)", format, .{});
+        defer plain.deinit();
+        const draco = build("sphere(r: 5)", format, .{ .draco = true });
+        defer draco.deinit();
+        try testing.expect(std.mem.find(u8, draco.data(), "KHR_draco_mesh_compression") != null);
+        try testing.expect(std.mem.find(u8, plain.data(), "KHR_draco_mesh_compression") == null);
+    }
 }
 
 test "C API: kupcad_format formats, and says a syntax error where it is" {
@@ -512,14 +526,72 @@ test "C API: a process forked while another thread that built is alive builds to
     try expectForkBuilds();
 }
 
-/// Forks, and expects the child to build HEAVY and exit with 0, not be killed by a signal.
+/// Forks, and expects the child to build HEAVY and exit with 0, not be killed by a signal (its
+/// alarm's, when it doesn't finish).
 fn expectForkBuilds() !void {
     const pid = std.c.fork();
     if (pid == 0) {
+        _ = alarm(FORK_CHILD_SECONDS);
         const result = build(HEAVY, "stl", .{});
         std.c._exit(if (result.status() == c.KUPCAD_OK) 0 else 1);
     }
     var status: c_int = undefined;
     try testing.expectEqual(pid, std.c.waitpid(pid, &status, 0));
     try testing.expectEqual(@as(c_int, 0), status);
+}
+
+/// Each call of the C API, with what it is given, for the out-of-memory sweep.
+const Calls = struct {
+    fn build() ?*c.kupcad_result {
+        return c.kupcad_build("w = param(:w, 2)\nputs w\ncube(w)", 31, "glb", "{\"w\": 3}", 8, null, 0, 0, 0, false);
+    }
+    fn format() ?*c.kupcad_result {
+        return c.kupcad_format("cube( 1 )", 9);
+    }
+    fn check() ?*c.kupcad_result {
+        return c.kupcad_check("x = 1\ncube(1)", 13);
+    }
+    fn params() ?*c.kupcad_result {
+        return c.kupcad_params("w = param(:w, 3)\ncube(w)", 24);
+    }
+    fn version() ?*c.kupcad_result {
+        return c.kupcad_version();
+    }
+    fn refused() ?*c.kupcad_result {
+        return c.kupcad_build("cube(1)", 7, "stp", null, 0, null, 0, 0, 0, false);
+    }
+};
+
+test "C API: when memory runs out at any allocation, a call says so, and its result frees" {
+    // Every out-of-memory path (a result that can't be allocated, its message, its report, the
+    // static result) was never taken by a test
+    inline for (.{ Calls.build, Calls.format, Calls.check, Calls.params, Calls.version, Calls.refused }) |call| {
+        try expectOutOfMemorySafe(call);
+    }
+}
+
+/// Runs `call` failing the C API's allocation number 0, 1, 2 and on until it makes them all:
+/// each time a result, never NULL, that is the call's own or says OUT_OF_MEMORY, and frees
+/// with nothing left behind (the testing allocator under the failing one finds a leak).
+fn expectOutOfMemorySafe(comptime call: fn () ?*c.kupcad_result) !void {
+    defer capi.allocator = testing.allocator;
+    const expected = blk: {
+        const whole = Result.of(call());
+        defer whole.deinit();
+        break :blk whole.status();
+    };
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        errdefer std.debug.print("allocation {d} failed\n", .{fail_index});
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        capi.allocator = failing.allocator();
+        const ptr = call() orelse return error.NullResult;
+        const status: c_int = @intCast(c.kupcad_result_status(ptr));
+        c.kupcad_result_free(ptr);
+        if (!failing.has_induced_failure) {
+            try testing.expectEqual(expected, status);
+            return;
+        }
+        if (status != expected) try testing.expectEqual(@as(c_int, c.KUPCAD_OUT_OF_MEMORY), status);
+    }
 }

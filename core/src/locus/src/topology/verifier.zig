@@ -245,29 +245,34 @@ fn validateShell(
     }
 }
 
-pub inline fn assertValidTestOnly(
+/// For a test: fails with what validateSolid finds wrong with the solid, its mesh dumped
+/// first, as an OBJ to look at, in a temporary directory the output names. It wrote
+/// src/locus/test_dump/crash_dump.obj under whatever directory the tests ran in, and then
+/// panicked, which ended every test after it.
+pub fn expectValid(
     allocator: std.mem.Allocator,
     t_arena: *const arena.TopologyArena,
     g_arena: *const geom_arena.GeometryArena,
     math_env: env.MathEnv,
     solid_idx: types.SolidIndex,
-) void {
-    if (builtin.is_test) {
-        std.debug.assert(t_arena.half_edges.items.len % 2 == 0);
+) !void {
+    // Each edge is two half-edges
+    if (t_arena.half_edges.items.len % 2 != 0) return error.DanglingTwin;
+    validateSolid(allocator, t_arena, g_arena, math_env, solid_idx, .{}) catch |err| {
+        dumpForTest(allocator, t_arena, g_arena, solid_idx);
+        return err;
+    };
+}
 
-        validateSolid(allocator, t_arena, g_arena, math_env, solid_idx, .{}) catch |err| {
-            const debug_dump = @import("../debug_dump.zig").DebugDumper;
-            const io = std.testing.io;
-
-            const cwd = std.Io.Dir.cwd();
-            cwd.createDirPath(io, "src/locus/test_dump") catch |dump_err| {
-                std.log.warn("Failed to create test_dump dir: {}", .{dump_err});
-            };
-
-            debug_dump.dumpSolidToObj(allocator, io, "src/locus/test_dump/crash_dump.obj", t_arena, g_arena, solid_idx) catch |dump_err| {
-                std.log.warn("Failed to dump crash obj: {}", .{dump_err});
-            };
-            std.debug.panic("Topological corruption detected during test: {s}", .{@errorName(err)});
-        };
-    }
+/// The solid as an OBJ in a temporary directory of the test's, which is kept to be looked at.
+fn dumpForTest(allocator: std.mem.Allocator, t_arena: *const arena.TopologyArena, g_arena: *const geom_arena.GeometryArena, solid_idx: types.SolidIndex) void {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.dir.close(io);
+    const dir = tmp.dir.realPathFileAlloc(io, ".", allocator) catch return;
+    defer allocator.free(dir);
+    const path = std.fs.path.join(allocator, &.{ dir, "invalid_solid.obj" }) catch return;
+    defer allocator.free(path);
+    @import("../debug_dump.zig").DebugDumper.dumpSolidToObj(allocator, io, path, t_arena, g_arena, solid_idx) catch return;
+    std.debug.print("the invalid solid is dumped to {s}\n", .{path});
 }

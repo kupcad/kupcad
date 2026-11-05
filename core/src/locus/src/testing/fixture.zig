@@ -307,9 +307,10 @@ pub const Fixture = struct {
         };
     }
 
-    /// VCR/Snapshot style testing helper.
-    /// If the file exists, it asserts the current state matches the file.
-    /// If the file is missing, it records the current state to the file and returns error.SnapshotCreated.
+    /// Snapshot testing: fails unless the solid's state is the snapshot at `file_path` (its
+    /// JSON, `dump`'s). A snapshot that isn't there is error.SnapshotMissing, the state
+    /// printed to save as one once reviewed: it was written on the spot, relative to wherever
+    /// the tests ran, and the test failed only that once.
     pub fn matchSnapshot(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -323,33 +324,17 @@ pub const Fixture = struct {
         const current_json = try dump(allocator, t_arena, g_arena, solid_idx, env);
         defer allocator.free(current_json);
 
-        const cwd = std.Io.Dir.cwd();
-
-        // 2. Ensure parent directory exists
-        if (std.fs.path.dirname(file_path)) |dir_path| {
-            _ = cwd.createDirPath(io, dir_path) catch |err| {
-                std.log.warn("Failed to create snapshot dir: {}", .{err});
-            };
-        }
-
-        // 3. Try to open the existing snapshot
-        var file = cwd.openFile(io, file_path, .{}) catch |err| {
+        // 2. Open the snapshot
+        var file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
-                // 4a. Record new snapshot if missing
-                var new_file = try cwd.createFile(io, file_path, .{});
-                defer new_file.close(io);
-
-                // Write out the JSON using the positional writer wrapper
-                try std.Io.File.writePositionalAll(new_file, io, current_json, 0);
-
-                std.log.warn("\n[!] Created new snapshot at: {s}\n[!] Please review the generated JSON and rerun the tests.\n", .{file_path});
-                return error.SnapshotCreated; // Fail intentionally so CI doesn't silently ignore missing files
+                std.debug.print("\n[X] No snapshot at {s}. Its state now, to review and save there:\n{s}\n", .{ file_path, current_json });
+                return error.SnapshotMissing;
             }
             return err;
         };
         defer file.close(io);
 
-        // 4b. Verify existing snapshot
+        // 3. Verify it
         const file_len = try file.length(io);
         const expected_json = try allocator.alloc(u8, file_len);
         defer allocator.free(expected_json);

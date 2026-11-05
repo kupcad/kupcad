@@ -44,7 +44,7 @@ pub fn computeBoolean(
 
     const result_solid = try packageResultingSolid(allocator, dest_t);
 
-    // verifier.assertValidTestOnly(allocator, dest_t, dest_g, result_solid);
+    // try verifier.expectValid(allocator, dest_t, dest_g, .{}, result_solid);
 
     return result_solid;
 }

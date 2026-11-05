@@ -106,11 +106,13 @@ test "Driver: Polygons Even-Odd" {
     const cs_handle = driver.driver.polygonsEvenOddFn(&TEST_CONFIG, std.testing.allocator, &contours) orelse return error.EvenOddFailed;
     defer driver.driver.destructCrossSectionFn(cs_handle);
 
-    const solid_handle = driver.driver.extrudeFn(cs_handle, 10, 0, 0, 1, 1) orelse return error.ExtrudeFailed;
-    defer driver.driver.destructFn(solid_handle);
-
-    const solid_ptr: *driver.BrepSolid = @ptrCast(@alignCast(solid_handle.ptr));
-    try std.testing.expect(solid_ptr.t_arena.solids.items.len > 0);
+    // The 20 mm square less the 10 mm hole: one face of an outline and a hole, all eight
+    // corners. (It was extruded and the solid's arena found not empty, but Locus's extrude is
+    // a placeholder, a fixed cube, and it measures no area or volume yet, so that held
+    // whatever the sketch was.)
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.crossSectionNumVertsFn(cs_handle));
+    const sketch: *driver.BrepSolid = @ptrCast(@alignCast(cs_handle.ptr));
+    try std.testing.expectEqual(@as(usize, 2), sketch.t_arena.loops.items.len);
 }
 
 // --- Projections & Slicing ---

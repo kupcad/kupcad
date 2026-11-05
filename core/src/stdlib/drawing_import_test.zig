@@ -11,6 +11,24 @@ const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;
 
+/// A 20 mm plate (drawn clockwise) with a 10 mm hole, a 4 mm island in the hole, and a
+/// 2 mm square of its own beside it on the layer "tabs".
+const PLATE = file(square("cut", "0", "20", true) ++ square("cut", "5", "15", false) ++ square("cut", "8", "12", false) ++ square("tabs", "30", "32", false));
+
+/// Two lines and a half circle 0.001 apart where they should meet.
+const GAPPED = file("0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n" ++ "0\nARC\n10\n10\n20\n5\n40\n5\n50\n270\n51\n90\n" ++ "0\nLINE\n10\n10.001\n20\n10\n11\n0\n21\n10\n" ++ "0\nLINE\n10\n0\n20\n10\n11\n0\n21\n0\n");
+
+/// A 20 mm plate with a 10 mm square hole, a rounded tab beside it, and an open stroke
+/// whose ends are 0.001 apart.
+const LOGO = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
+    "<path d=\"M0 0H20V20H0Z M5 5V15H15V5Z\"/><rect x=\"30\" y=\"0\" width=\"10\" height=\"10\" rx=\"2\"/>" ++
+    "<path d=\"M50 0L60 0L60 10L50.001 0\" fill=\"none\" stroke=\"black\"/></svg>";
+
+/// A plate to cut out with a score line across it and an arc of one beside it.
+const TEMPLATE = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
+    "<rect width=\"40\" height=\"20\" style=\"fill:none;stroke:red\"/>" ++
+    "<path d=\"M 20 0 V 20\" fill=\"none\" stroke=\"blue\"/><path d=\"M 5 5 A 5 5 0 0 1 15 5\" fill=\"none\"/></svg>";
+
 /// A DXF file of `entities`.
 fn file(comptime entities: []const u8) []const u8 {
     return "0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nENDSEC\n0\nEOF\n";
@@ -25,13 +43,6 @@ fn square(comptime layer: []const u8, comptime lo: []const u8, comptime hi: []co
         "10\n" ++ lo ++ "\n20\n" ++ lo ++ "\n10\n" ++ hi ++ "\n20\n" ++ lo ++ "\n10\n" ++ hi ++ "\n20\n" ++ hi ++ "\n10\n" ++ lo ++ "\n20\n" ++ hi ++ "\n";
     return "0\nLWPOLYLINE\n8\n" ++ layer ++ "\n90\n4\n70\n1\n" ++ corners;
 }
-
-/// A 20 mm plate (drawn clockwise) with a 10 mm hole, a 4 mm island in the hole, and a
-/// 2 mm square of its own beside it on the layer "tabs".
-const PLATE = file(square("cut", "0", "20", true) ++ square("cut", "5", "15", false) ++ square("cut", "8", "12", false) ++ square("tabs", "30", "32", false));
-
-/// Two lines and a half circle 0.001 apart where they should meet.
-const GAPPED = file("0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n" ++ "0\nARC\n10\n10\n20\n5\n40\n5\n50\n270\n51\n90\n" ++ "0\nLINE\n10\n10.001\n20\n10\n11\n0\n21\n10\n" ++ "0\nLINE\n10\n0\n20\n10\n11\n0\n21\n0\n");
 
 test "import_dxf: the outlines fill by nesting, a hole's island filled again, either way round" {
     const files = &.{ support.ScriptFile{ .path = "plate.dxf", .data = PLATE }, support.ScriptFile{ .path = "plate.txt", .data = PLATE } };
@@ -95,12 +106,6 @@ test "import_dxf: what can't be read is an ImportError naming the file" {
     });
 }
 
-/// A 20 mm plate with a 10 mm square hole, a rounded tab beside it, and an open stroke
-/// whose ends are 0.001 apart.
-const LOGO = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
-    "<path d=\"M0 0H20V20H0Z M5 5V15H15V5Z\"/><rect x=\"30\" y=\"0\" width=\"10\" height=\"10\" rx=\"2\"/>" ++
-    "<path d=\"M50 0L60 0L60 10L50.001 0\" fill=\"none\" stroke=\"black\"/></svg>";
-
 test "import_svg: the shapes fill by nesting, in millimetres, y turned over" {
     const files = &.{ support.ScriptFile{ .path = "logo.svg", .data = LOGO }, support.ScriptFile{ .path = "logo.xml", .data = LOGO } };
     try expectScripts(&.{
@@ -126,11 +131,6 @@ test "import_svg: what can't be read is an ImportError naming the file" {
         .{ .src = comptime rescued("import_svg(\"empty.svg\", layers: \"a\")"), .expected = .{ .str = "ArgumentError: import_svg does not take a keyword 'layers' (it accepts: tolerance, paths)" }, .files = files },
     });
 }
-
-/// A plate to cut out with a score line across it and an arc of one beside it.
-const TEMPLATE = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
-    "<rect width=\"40\" height=\"20\" style=\"fill:none;stroke:red\"/>" ++
-    "<path d=\"M 20 0 V 20\" fill=\"none\" stroke=\"blue\"/><path d=\"M 5 5 A 5 5 0 0 1 15 5\" fill=\"none\"/></svg>";
 
 test "import_dxf and import_svg: paths: true reads the open lines a Sketch can't hold as Paths" {
     const files = &.{

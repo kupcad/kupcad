@@ -3,6 +3,14 @@ const testing = std.testing;
 const api = @import("api.zig");
 const support = @import("test_support.zig");
 
+// The parser recovers from `y = )` by dropping the statement; building that tree used to
+// export the cube as if the script were fine.
+const syntax_broken_source =
+    \\x = 1
+    \\y = )
+    \\cube(x)
+;
+
 test "Formatter: formats raw KupCAD code to expected layout" {
     const input_code = @embedFile("fixtures/format_in.kup");
     const expected_code = @embedFile("fixtures/format_out.kup");
@@ -30,14 +38,6 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expectEqual(@as(?usize, 1), found.get("self-subtraction"));
     try testing.expectEqual(@as(?usize, 1), found.get("unreachable-code"));
 }
-
-// The parser recovers from `y = )` by dropping the statement; building that tree used to
-// export the cube as if the script were fine.
-const syntax_broken_source =
-    \\x = 1
-    \\y = )
-    \\cube(x)
-;
 
 test "API: buildModel rejects a script with syntax errors instead of dropping statements" {
     try testing.expectError(
@@ -381,7 +381,9 @@ test "API: a lint fix is kept only when it builds the same model" {
 
 test "API: buildModel reads and writes no files unless the caller gives it a file system" {
     // Given none, it ran on the disk at the working directory, where build.zig is: a
-    // script given to the API could read and write there
+    // script given to the API could read and write there. Run elsewhere, the test would
+    // pass whatever the API did: the files are there to be read
+    for ([_][]const u8{ "build.zig", "build.zig.zon" }) |there| try std.Io.Dir.cwd().access(testing.io, there, .{});
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "import_stl(\"build.zig\")", .message = "ImportError: could not read STL file 'build.zig': FileNotFound" },
         .{ .source = "import_json(\"build.zig.zon\")", .message = "ImportError: could not read JSON file 'build.zig.zon': FileNotFound" },

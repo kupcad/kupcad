@@ -13,7 +13,7 @@ test "Generator: Cube Strict Topology Validation" {
 
     const cube_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
-    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, cube_idx);
+    try verifier.expectValid(alloc, &t_arena, &g_arena, .{}, cube_idx);
 }
 
 test "Generator: buildPolyhedron Strict Topology Validation" {
@@ -39,7 +39,7 @@ test "Generator: buildPolyhedron Strict Topology Validation" {
     };
 
     const poly_idx = try generators.buildPolyhedron(alloc, &t_arena, &g_arena, &pts, &faces);
-    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, poly_idx);
+    try verifier.expectValid(alloc, &t_arena, &g_arena, .{}, poly_idx);
 
     try std.testing.expectEqual(@as(usize, 4), t_arena.vertices.items.len);
     try std.testing.expectEqual(@as(usize, 12), t_arena.half_edges.items.len); // 4 faces * 3 edges
@@ -83,7 +83,7 @@ test "Generator: Cylinder Strict Topology Validation" {
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 
     // Validate Manifold Invariants
-    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, cyl_idx);
+    try verifier.expectValid(alloc, &t_arena, &g_arena, .{}, cyl_idx);
 }
 
 test "Generator: Sphere Strict Topology Validation" {
@@ -105,7 +105,7 @@ test "Generator: Sphere Strict Topology Validation" {
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 
     // Validate Manifold Invariants
-    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, sphere_idx);
+    try verifier.expectValid(alloc, &t_arena, &g_arena, .{}, sphere_idx);
 }
 
 test "Generator: 2D Square (Open Manifold)" {

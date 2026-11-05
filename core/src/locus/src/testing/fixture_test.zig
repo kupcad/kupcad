@@ -7,22 +7,10 @@ const generators = @import("../operations/generators.zig");
 const verifier = @import("../topology/verifier.zig");
 const fixture_mod = @import("fixture.zig");
 
+/// The snapshot `filename` of the primitives, in the sources (test_paths.core_dir): a path
+/// relative to the working directory was another file wherever the tests ran.
 fn getFixturePath(alloc: std.mem.Allocator, filename: []const u8) ![]u8 {
-    const locus_src_dir = comptime blk: {
-        const file_path = @src().file;
-        const test_dir = std.fs.path.dirname(file_path) orelse ".";
-        const src_dir = std.fs.path.dirname(test_dir) orelse ".";
-
-        // When Zig compiles a module defined at src/locus/src/root.zig,
-        // @src().file strips 'src/'. We restore it so path.join resolves
-        // relative to the repository root (core/).
-        if (std.mem.startsWith(u8, src_dir, "locus")) {
-            break :blk "src/" ++ src_dir;
-        }
-        break :blk src_dir;
-    };
-
-    return std.fs.path.join(alloc, &[_][]const u8{ locus_src_dir, "fixtures", "primitives", filename });
+    return std.fs.path.join(alloc, &.{ @import("test_paths").core_dir, "src/locus/src/fixtures/primitives", filename });
 }
 
 // ============================================================================
