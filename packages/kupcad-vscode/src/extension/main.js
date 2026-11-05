@@ -42,12 +42,24 @@ export async function activate(context) {
   });
   const values = new ScriptValues();
 
+  /** The last start asked, which the next waits for. */
+  let starting = Promise.resolve(false);
+
   /**
    * Runs the kupcad the manager finds (installing one when none is), with the settings as they
    * are now: started the first time, started again after. False when there is none, or it
-   * didn't start: the user was told why.
+   * didn't start: the user was told why. One runs once the start before it is done: a setting
+   * changed during the first download started a second download and install, then restarted
+   * the server the first had just started.
    */
-  const startServer = async () => {
+  const startServer = () => {
+    const started = starting.then(runServer);
+    starting = started.catch(() => false);
+    return started;
+  };
+
+  /** Runs the kupcad the manager finds, as `startServer` says. */
+  const runServer = async () => {
     const found = await binaries.server();
     if (!found) return false;
     const viewportPort = settings().get('viewport.port', DEFAULT_VIEWPORT_PORT);
@@ -106,8 +118,10 @@ export async function activate(context) {
         state: context.globalState,
       });
     }),
-    // With none running (an install that failed offline, say), it tries again
+    // With none running (an install that failed offline, say), it tries again; asked during a
+    // start, it waits for that start to be done
     vscode.commands.registerCommand(UPDATE_CLI_COMMAND, async () => {
+      await starting;
       if (!server?.started) await startServer();
       else await runUpdate(await binaries.checkForUpdates({ asked: true }));
     }),

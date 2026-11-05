@@ -56,6 +56,10 @@ const binaries = vi.hoisted(() => ({
   failStart: false,
   updateFails: false,
   prunes: 0,
+  /** What finding (or installing) a kupcad waits for, and how many did at once, the most. */
+  held: Promise.resolve(),
+  finding: 0,
+  most: 0,
 }));
 vi.mock('./binary/manager.js', () => ({
   UPDATE_CLI_COMMAND: 'kupcad.updateCli',
@@ -65,6 +69,10 @@ vi.mock('./binary/manager.js', () => ({
       this.options = options;
     }
     async server() {
+      binaries.finding += 1;
+      binaries.most = Math.max(binaries.most, binaries.finding);
+      await binaries.held;
+      binaries.finding -= 1;
       return binaries.found;
     }
     /** @param {{ asked: boolean }} how */
@@ -106,6 +114,9 @@ beforeEach(() => {
   binaries.failStart = false;
   binaries.updateFails = false;
   binaries.prunes = 0;
+  binaries.held = Promise.resolve();
+  binaries.finding = 0;
+  binaries.most = 0;
   context = extension();
 });
 afterEach(async () => {
@@ -203,6 +214,29 @@ describe('activate', () => {
     fake.settings['kupcad.memoryLimit'] = 32;
     fake.changeSettings('kupcad.memoryLimit');
     await vi.waitFor(() => expect(servers[0].restarts.at(-1)).toMatchObject({ memoryLimit: 32 }));
+  });
+
+  it('starts one server at a time: a check asked or a setting set during the first download waits for it', async () => {
+    /** Ends the download under way. @type {(() => void)[]} */
+    const downloaded = [];
+    binaries.held = new Promise((resolve) => downloaded.push(() => resolve()));
+    const activating = activate(/** @type {any} */ (context));
+    await vi.waitFor(() => expect(binaries.finding).toBe(1));
+    const updating = commands.executeCommand('kupcad.updateCli');
+    fake.settings['kupcad.memoryLimit'] = 32;
+    fake.changeSettings('kupcad.memoryLimit');
+    downloaded[0]();
+    await activating;
+    await updating;
+    await vi.waitFor(() =>
+      expect(servers[0].restarts).toEqual([
+        { serverPath: '/usr/local/bin/kupcad', viewportPort: 9001, memoryLimit: 32 },
+      ]),
+    );
+    expect(binaries.most).toBe(1);
+    expect(servers).toHaveLength(1);
+    // The check asked for was made, once the server ran
+    expect(binaries.asked).toContain(true);
   });
 
   it("declares the memory limit's setting with the hosts' default, out of a repository's reach", () => {

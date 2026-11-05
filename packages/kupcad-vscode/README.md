@@ -53,8 +53,10 @@ an old `kupcad` on `PATH` never runs under a newer extension. When none fits, th
 in range is downloaded from GitHub (a progress notification shows it), checked against the
 release's `checksums.txt` before it is unpacked, and installed; if that fails, the message says
 why and offers the releases page and the setting, and `KupCAD: Update CLI` tries again.
-Windows installing the same release at once each unpack it apart, and the first to finish
-installs it; an install already there is kept.
+Within a window one start runs at a time: `KupCAD: Update CLI` or a server setting changed
+during the first download waits for it, rather than downloading again. Windows installing the
+same release at once each unpack it apart, and the first to finish installs it; an install
+already there is kept.
 
 Once a day the extension's own install looks for a newer release in range, and installs it and
 restarts the server with it, or asks first when `kupcad.binary.autoUpdate` is off.
