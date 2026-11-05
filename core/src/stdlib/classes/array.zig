@@ -7,7 +7,9 @@ const limits = @import("../../core/limits.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
-const callBlock = @import("iteration.zig").callBlock;
+const iteration = @import("iteration.zig");
+const callBlock = iteration.callBlock;
+const callBlockHolding = iteration.callBlockHolding;
 const arguments = @import("../arguments.zig");
 
 /// Array#length / Array#size
@@ -187,7 +189,9 @@ fn keepWhere(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure, truthy: 
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
         const item = arr.items.items[i];
-        const res = switch (try callBlock(vm, closure, &.{item})) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const res = switch (try callBlockHolding(vm, step, item, closure, &.{item})) {
             .broke => |v| return v,
             .value => |v| v,
         };
@@ -575,12 +579,12 @@ pub fn arrayUniq(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
         const item = arr.items.items[i];
-        const key = if (block) |closure| switch (try callBlock(vm, closure, &.{item})) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const key = if (block) |closure| switch (try callBlockHolding(vm, step, item, closure, &.{item})) {
             .broke => |v| return v,
             .value => |v| v,
         } else item;
-        var held = HandleScope.init(vm);
-        defer held.deinit();
         vm.push(key);
         if (seen.contains(key)) continue;
         try keys.items.append(vm.gc.trackingAllocator(), key);
@@ -636,7 +640,9 @@ pub fn arrayFind(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !val
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
         const item = arr.items.items[i];
-        switch (try callBlock(vm, closure, &.{item})) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        switch (try callBlockHolding(vm, step, item, closure, &.{item})) {
             .broke => |v| return v,
             .value => |v| if (!v.isFalsey()) return item,
         }
@@ -791,12 +797,12 @@ pub fn arrayGroupBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
         const item = arr.items.items[i];
-        const key = switch (try callBlock(vm, closure, &.{item})) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const key = switch (try callBlockHolding(vm, step, item, closure, &.{item})) {
             .broke => |v| return v,
             .value => |v| v,
         };
-        var held = HandleScope.init(vm);
-        defer held.deinit();
         vm.push(key);
         if (groups.table.get(key)) |group| {
             try group.asArray().items.append(vm.gc.trackingAllocator(), item);

@@ -44,6 +44,17 @@ pub fn callBlock(vm: *VM, block: *value.ObjClosure, args: []const value.Value) !
     return .{ .value = result };
 }
 
+/// callBlock for an iterating method that uses `held` (the item it gives, a Map entry's
+/// value) once the block is done: `held` is rooted first, until `step` ends, a scope the
+/// caller opens for this one step. The block may drop it from everywhere else (pop it off the
+/// Array, delete the entry) and collect, which freed it under the method.
+pub fn callBlockHolding(vm: *VM, step: HandleScope, held: value.Value, block: *value.ObjClosure, args: []const value.Value) !BlockResult {
+    // A scope of its own: what it roots goes when this step ends
+    std.debug.assert(vm.stack_top == step.saved_top);
+    vm.push(held);
+    return callBlock(vm, block, args);
+}
+
 /// Yields every value of `span` to `block`. Returns `receiver`, or the value of a
 /// `break` inside the block. Exceptions and `return` propagate unchanged.
 pub fn each(vm: *VM, span: Span, receiver: value.Value, block: *value.ObjClosure, method: []const u8) !value.Value {
@@ -80,9 +91,8 @@ pub fn collect(vm: *VM, span: Span, block: ?*value.ObjClosure, method: []const u
     const n = try materializeCount(vm, span, method);
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const arr = try vm.gc.allocateArray(vm);
-    // Rooted on the stack: the block may allocate (and collect) on every call.
-    vm.push(value.Value.initObj(&arr.obj));
+    // Rooted: the block may allocate (and collect) on every call.
+    const arr = try scope.array();
     try arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), n);
     for (0..n) |i| {
         const item = value.Value.initNumber(span.at(i));

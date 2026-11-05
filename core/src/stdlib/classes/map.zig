@@ -9,7 +9,7 @@ const vm_mod = @import("../../vm/vm.zig");
 const VM = vm_mod.VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
-const callBlock = @import("iteration.zig").callBlock;
+const callBlockHolding = @import("iteration.zig").callBlockHolding;
 
 /// Map.new -> an empty Map
 pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
@@ -75,11 +75,9 @@ pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.V
     defer scope.deinit();
     var walk = try Walk.init(vm, scope, map);
     while (walk.next()) |entry| {
-        var held = HandleScope.init(vm);
-        defer held.deinit();
-        // Rooted: the block may delete the entry
-        vm.push(entry[1]);
-        switch (try callBlock(vm, closure, &.{ entry[0], entry[1] })) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        switch (try callBlockHolding(vm, step, entry[1], closure, &.{ entry[0], entry[1] })) {
             .broke => |v| return v,
             .value => {},
         }
@@ -130,10 +128,9 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
 
     var walk = try Walk.init(vm, scope, map);
     while (walk.next()) |entry| {
-        var held = HandleScope.init(vm);
-        defer held.deinit();
-        vm.push(entry[1]);
-        const mapped_val = switch (try callBlock(vm, closure, &.{ entry[0], entry[1] })) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const mapped_val = switch (try callBlockHolding(vm, step, entry[1], closure, &.{ entry[0], entry[1] })) {
             .broke => |v| return v,
             .value => |v| v,
         };
@@ -290,11 +287,9 @@ fn keepEntries(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure, truthy: 
     var walk = try Walk.init(vm, scope, map);
     while (walk.next()) |entry| {
         const key, const val = entry;
-        // Rooted: the block may delete the entry
-        var held = HandleScope.init(vm);
-        defer held.deinit();
-        vm.push(val);
-        const res = switch (try callBlock(vm, closure, &.{ key, val })) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const res = switch (try callBlockHolding(vm, step, val, closure, &.{ key, val })) {
             .broke => |v| return v,
             .value => |v| v,
         };
@@ -312,10 +307,9 @@ pub fn mapTransformValues(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosur
     var walk = try Walk.init(vm, scope, map);
     while (walk.next()) |entry| {
         const key, const val = entry;
-        var held = HandleScope.init(vm);
-        defer held.deinit();
-        vm.push(val);
-        const result = switch (try callBlock(vm, closure, &.{val})) {
+        var step = HandleScope.init(vm);
+        defer step.deinit();
+        const result = switch (try callBlockHolding(vm, step, val, closure, &.{val})) {
             .broke => |v| return v,
             .value => |v| v,
         };

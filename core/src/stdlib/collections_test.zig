@@ -102,6 +102,27 @@ test "Map: a key is found by what it holds, an Array's, a Map's or a Range's, as
     });
 }
 
+test "Array and Map: an iterator keeps what it uses after the block, which the block may drop" {
+    // filter, reject, find, uniq and group_by use the item after its block, and Map's
+    // iterators the entry's value. A block that took it out (`a.pop`, `h.delete`) and let go
+    // of its own copy left it to the next collection, which freed it under the iterator:
+    // "switch on corrupt value". Every step collects (gc_stress) as well as the block.
+    const a = "a = [\"hello\" + \" world\"]\n";
+    const drop = "a.pop\ns = nil\nGC.collect\n";
+    const h = "h = { k: \"hello\" + \" world\" }\n";
+    const delete = "h.delete(k)\nv = nil\nGC.collect\n";
+    try expectScripts(&.{
+        .{ .src = a ++ "r = a.filter { |s| " ++ drop ++ "true }.inspect", .expected = .{ .str = "[\"hello world\"]" }, .gc_stress = true },
+        .{ .src = a ++ "r = a.reject { |s| " ++ drop ++ "false }.inspect", .expected = .{ .str = "[\"hello world\"]" }, .gc_stress = true },
+        .{ .src = a ++ "r = a.find { |s| " ++ drop ++ "true }", .expected = .{ .str = "hello world" }, .gc_stress = true },
+        .{ .src = a ++ "r = a.uniq { |s| " ++ drop ++ "1 }.inspect", .expected = .{ .str = "[\"hello world\"]" }, .gc_stress = true },
+        .{ .src = a ++ "r = a.group_by { |s| " ++ drop ++ "1 }.inspect", .expected = .{ .str = "{1 => [\"hello world\"]}" }, .gc_stress = true },
+        .{ .src = h ++ "r = h.filter { |k, v| " ++ delete ++ "true }.inspect", .expected = .{ .str = "{k: \"hello world\"}" }, .gc_stress = true },
+        .{ .src = h ++ "r = h.map { |k, v| " ++ delete ++ "1 }.inspect", .expected = .{ .str = "[1]" }, .gc_stress = true },
+        .{ .src = h ++ "r = h.transform_values { |v| h.delete(:k)\nv }.inspect", .expected = .{ .str = "{k: \"hello world\"}" }, .gc_stress = true },
+    });
+}
+
 test "Map: a block that deletes entries is given the others, each once" {
     // Deleting the entry given moved the next into its place, which the walk then passed
     const m = "h = { 1 => :a, 2 => :b, 3 => :c, 4 => :d }\n";
