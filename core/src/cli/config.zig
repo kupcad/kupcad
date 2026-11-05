@@ -86,15 +86,8 @@ pub const ProjectConfig = struct {
         defer allocator.free(cwd);
         const absolute = try std.fs.path.resolve(allocator, &.{ cwd, dir });
         defer allocator.free(absolute);
-        var current: ?[]const u8 = absolute;
-        while (current) |folder| : (current = std.fs.path.dirname(folder)) {
-            const candidate = try std.fs.path.join(allocator, &.{ folder, FILE_NAME });
-            if (std.Io.Dir.cwd().access(io, candidate, .{})) |_| return candidate else |err| {
-                allocator.free(candidate);
-                if (err != error.FileNotFound) return err;
-            }
-        }
-        return null;
+        const folder = try fs.nearestAncestorWith(io, allocator, absolute, null, &.{FILE_NAME}) orelse return null;
+        return try std.fs.path.join(allocator, &.{ folder, FILE_NAME });
     }
 
     /// What a `parse` error means, for a person.

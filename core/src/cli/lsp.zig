@@ -16,6 +16,7 @@ const lsp_inbox = @import("lsp_inbox.zig");
 const lsp_hints = @import("lsp_hints.zig");
 const lsp_definition = @import("lsp_definition.zig");
 const import_path = @import("../core/import_path.zig");
+const under = @import("../core/subpath.zig").under;
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const value = @import("../core/value.zig");
@@ -195,6 +196,8 @@ pub const Viewport = struct {
         send: *const fn (ptr: *anyopaque, frame: []const u8) anyerror!void,
     };
 
+    const SOCKET: VTable = .{ .viewers = socketViewers, .send = socketSend };
+
     /// How many viewers are connected: with none, no frame is made.
     pub fn viewers(self: Viewport) usize {
         return self.vtable.viewers(self.ptr);
@@ -208,8 +211,6 @@ pub const Viewport = struct {
     pub fn ofSocket(socket: *ViewportWsServer) Viewport {
         return .{ .ptr = socket, .vtable = &SOCKET, .port = socket.port };
     }
-
-    const SOCKET: VTable = .{ .viewers = socketViewers, .send = socketSend };
 
     fn socketViewers(ptr: *anyopaque) usize {
         const socket: *ViewportWsServer = @ptrCast(@alignCast(ptr));
@@ -350,11 +351,7 @@ pub const Handler = struct {
         var scratch = std.heap.ArenaAllocator.init(allocator);
         defer scratch.deinit();
         const path = try documentPath(scratch.allocator(), uri) orelse return allocator.dupe(u8, uri);
-        if (self.root) |root| {
-            if (path.len > root.len and std.mem.startsWith(u8, path, root) and path[root.len] == '/') {
-                return allocator.dupe(u8, path[root.len + 1 ..]);
-            }
-        }
+        if (self.root) |root| if (under(path, root)) |inside| return allocator.dupe(u8, inside);
         return allocator.dupe(u8, path);
     }
 

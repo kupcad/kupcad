@@ -4,7 +4,8 @@
 
 const std = @import("std");
 const owned_keys = @import("../core/owned_keys.zig");
-const Manifest = @import("manifest.zig").Manifest;
+const manifest_mod = @import("manifest.zig");
+const Manifest = manifest_mod.Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
 const StringMap = lockfile_mod.StringMap;
@@ -276,7 +277,7 @@ pub const Resolver = struct {
             commit_sha = null;
             integrity_owned = false;
 
-            if (files.get("kupcad.json")) |h| manifest_hash = try self.allocator.dupe(u8, h);
+            if (files.get(manifest_mod.FILE_NAME)) |h| manifest_hash = try self.allocator.dupe(u8, h);
         }
 
         // 5. Transitive dependencies (spawned outside the mutex: `async` may run inline)

@@ -1,10 +1,12 @@
 //! Argument parsing shared by the commands that take files or directories (`check`, `fmt`):
-//! `CommandOptions` turns a flags struct into `--name` options, and `CommandSetup` parses
-//! them and loads the project configuration, reporting failures with the command's usage.
+//! `CommandOptions` turns a flags struct into `--name` options, `CommandSetup` parses them,
+//! reporting failures with the command's usage, and `Settings` gives each file its project's
+//! configuration.
 
 const std = @import("std");
 const ProjectConfig = @import("config.zig").ProjectConfig;
-const log_helpers = @import("../log.zig");
+const owned_keys = @import("../core/owned_keys.zig");
+const Reporter = @import("reporter.zig").Reporter;
 
 /// The arguments of a command that takes files or directories, `--config <file>` and the
 /// options in `Flags`: a bool field `check` is the switch `--check`, a `?[]const u8` field
@@ -60,42 +62,80 @@ pub fn CommandOptions(comptime Flags: type) type {
     };
 }
 
-/// Parses a command's arguments and loads the project configuration, reporting what
-/// went wrong (followed by `usage`) so the command only has to return failure.
+/// The settings each file a command takes is read with: the file `--config` names for every
+/// one (`given`), else the .kupcad.json nearest the file's folder, as `kupcad build` finds a
+/// script's (ProjectConfig.forScript), read once per folder. `check` and `fmt` read the one
+/// nearest the current directory for every file, so `kupcad check sub/a.kup` didn't apply
+/// `sub/.kupcad.json`, which it did run inside `sub`.
+pub const Settings = struct {
+    allocator: std.mem.Allocator,
+    reporter: Reporter,
+    given: ?ProjectConfig = null,
+    /// What each folder's files are read with (keys owned): null for settings that couldn't
+    /// be read, which was reported.
+    by_folder: std.StringHashMapUnmanaged(?ProjectConfig) = .empty,
+
+    pub fn deinit(self: *Settings) void {
+        owned_keys.deinit(&self.by_folder, self.allocator, .borrowed);
+    }
+
+    /// The settings of the file at `file_path`; null when they couldn't be read (reported once
+    /// per folder), and the file must count as failed.
+    pub fn forFile(self: *Settings, file_path: []const u8) !?ProjectConfig {
+        if (self.given) |config| return config;
+        const folder = std.fs.path.dirname(file_path) orelse ".";
+        if (self.by_folder.get(folder)) |known| return known;
+        var failure: ?ProjectConfig.Failure = null;
+        defer if (failure) |*f| f.deinit(self.allocator);
+        const config: ?ProjectConfig = ProjectConfig.forScript(self.reporter.io, self.allocator, file_path, &failure) catch |err| blk: {
+            const f = failure orelse return err;
+            self.reporter.err("Error: {f}\n", .{f});
+            break :blk null;
+        };
+        const entry = try owned_keys.getOrPutOwned(&self.by_folder, self.allocator, folder);
+        entry.value_ptr.* = config;
+        return config;
+    }
+};
+
+/// Parses a command's arguments and loads the settings `--config` names, if any, reporting
+/// what went wrong (followed by `usage`) so the command only has to return failure.
 pub fn CommandSetup(comptime Flags: type) type {
     return struct {
         const Self = @This();
 
         options: CommandOptions(Flags),
-        config: ProjectConfig,
+        settings: Settings,
 
-        pub fn init(allocator: std.mem.Allocator, io: std.Io, args_iter: anytype, comptime usage: []const u8) !Self {
+        pub fn init(allocator: std.mem.Allocator, reporter: Reporter, args_iter: anytype, comptime usage: []const u8) !Self {
             var unknown: []const u8 = "";
             var options = CommandOptions(Flags).parse(allocator, args_iter, &unknown) catch |err| {
                 switch (err) {
-                    error.MissingConfigValue => log_helpers.printStderr(io, "Error: Missing file after --config\n\n" ++ usage, .{}),
-                    error.MissingFilePath => log_helpers.printStderr(io, "Error: Missing file path\n\n" ++ usage, .{}),
-                    error.UnknownOption => log_helpers.printStderr(io, "Error: Unknown option '{s}'\n\n" ++ usage, .{unknown}),
-                    error.MissingOptionValue => log_helpers.printStderr(io, "Error: Missing value after '{s}'\n\n" ++ usage, .{unknown}),
+                    error.MissingConfigValue => reporter.err("Error: Missing file after --config\n\n" ++ usage, .{}),
+                    error.MissingFilePath => reporter.err("Error: Missing file path\n\n" ++ usage, .{}),
+                    error.UnknownOption => reporter.err("Error: Unknown option '{s}'\n\n" ++ usage, .{unknown}),
+                    error.MissingOptionValue => reporter.err("Error: Missing value after '{s}'\n\n" ++ usage, .{unknown}),
                     error.OutOfMemory => {},
                 }
                 return err;
             };
             errdefer options.deinit(allocator);
 
-            const config_path = if (options.config_path) |p| try allocator.dupe(u8, p) else try ProjectConfig.find(io, allocator, ".");
-            defer if (config_path) |p| allocator.free(p);
-            var failure: ?ProjectConfig.Failure = null;
-            defer if (failure) |*f| f.deinit(allocator);
-            const config = ProjectConfig.load(io, allocator, config_path, &failure) catch |err| {
-                if (failure) |f| log_helpers.printStderr(io, "Error: {f}\n", .{f});
-                return err;
-            };
-            return .{ .options = options, .config = config };
+            var settings: Settings = .{ .allocator = allocator, .reporter = reporter };
+            if (options.config_path) |path| {
+                var failure: ?ProjectConfig.Failure = null;
+                defer if (failure) |*f| f.deinit(allocator);
+                settings.given = ProjectConfig.load(reporter.io, allocator, path, &failure) catch |err| {
+                    if (failure) |f| reporter.err("Error: {f}\n", .{f});
+                    return err;
+                };
+            }
+            return .{ .options = options, .settings = settings };
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.options.deinit(allocator);
+            self.settings.deinit();
         }
     };
 }

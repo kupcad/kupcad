@@ -1,17 +1,24 @@
 //! Where a script named on the command line runs: the folder its file system is rooted at
-//! (its imports and its own exports are read and written from there) and its path from
-//! there. One under the current directory runs there, as it always has, however it is named
-//! (`parts/a.kup`, or its absolute path, which a file system refuses); one outside it
-//! (`../parts/a.kup`) runs in its project's folder, the nearest above it that holds a
-//! kupcad.json or a .kupcad.json, else in its own. Rooted at the current directory, either
-//! could import nothing.
+//! (its imports, its packages and its own exports are read and written from there) and its
+//! path from there. One under the current directory runs in its project's folder there: the
+//! nearest from its own folder up to the current directory that holds a kupcad.json (the
+//! package manifest, whose packages are installed beside it), else the current directory,
+//! as it always has, however it is named (`parts/a.kup`, or its absolute path, which a file
+//! system refuses). Rooted at the current directory, `kupcad run proj/main.kup` read the
+//! packages of `proj` from `./.kupcad/pkg`. One outside it (`../parts/a.kup`) runs in its
+//! project's folder, the nearest above it that holds a kupcad.json or a .kupcad.json, else
+//! in its own. Rooted at the current directory, it could import nothing.
 
 const std = @import("std");
+const fs = @import("fs.zig");
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
+const MANIFEST_FILE_NAME = @import("../pkg/manifest.zig").FILE_NAME;
+const under = @import("../core/subpath.zig").under;
 const Reporter = @import("reporter.zig").Reporter;
 
-/// What marks a project's folder: its package manifest, or its settings.
-const PROJECT_FILES = [_][]const u8{ "kupcad.json", CONFIG_FILE_NAME };
+/// What marks the folder of a project outside the current directory: its package manifest,
+/// or its settings.
+const PROJECT_FILES = [_][]const u8{ MANIFEST_FILE_NAME, CONFIG_FILE_NAME };
 
 pub const ScriptRoot = struct {
     /// The folder: the current directory, or one opened here (`opened`)
@@ -27,22 +34,19 @@ pub const ScriptRoot = struct {
     pub fn of(io: std.Io, allocator: std.mem.Allocator, script_path: []const u8) !ScriptRoot {
         const cwd = try std.process.currentPathAlloc(io, allocator);
         defer allocator.free(cwd);
-        const inside = try std.fs.path.relativeAlloc(allocator, cwd, null, cwd, script_path);
-        if (!isOutside(inside)) {
-            errdefer allocator.free(inside);
-            return .{ .dir = std.Io.Dir.cwd(), .opened = false, .input = script_path, .path = modulePathOf(inside), .prefix = try allocator.dupe(u8, "") };
-        }
-        allocator.free(inside);
-
         const absolute = try std.fs.path.resolve(allocator, &.{ cwd, script_path });
         defer allocator.free(absolute);
         const folder = std.fs.path.dirname(absolute) orelse return error.FileNotFound;
-        const project = try projectFolder(io, allocator, folder);
-        defer allocator.free(project);
+        const project = if (under(absolute, cwd) != null)
+            try fs.nearestAncestorWith(io, allocator, folder, cwd, &.{MANIFEST_FILE_NAME}) orelse cwd
+        else
+            try fs.nearestAncestorWith(io, allocator, folder, null, &PROJECT_FILES) orelse folder;
+
         const path = try std.fs.path.relativeAlloc(allocator, cwd, null, project, absolute);
         errdefer allocator.free(path);
         const prefix = try std.fs.path.relativeAlloc(allocator, cwd, null, cwd, project);
         errdefer allocator.free(prefix);
+        if (prefix.len == 0) return .{ .dir = std.Io.Dir.cwd(), .opened = false, .input = script_path, .path = modulePathOf(path), .prefix = prefix };
         const dir = try std.Io.Dir.cwd().openDir(io, project, .{});
         return .{ .dir = dir, .opened = true, .input = script_path, .path = modulePathOf(path), .prefix = prefix };
     }
@@ -83,24 +87,8 @@ fn modulePathOf(relative: []u8) []u8 {
     return relative;
 }
 
-/// Whether a path relative to a folder leads out of it.
-fn isOutside(relative: []const u8) bool {
-    if (std.fs.path.isAbsolute(relative)) return true;
-    var it = std.mem.tokenizeAny(u8, relative, "/\\");
-    const first = it.next() orelse return false;
-    return std.mem.eql(u8, first, "..");
-}
-
 /// The project folder `folder` is in (absolute): the nearest from it up holding one of
 /// PROJECT_FILES, else `folder` itself. Owned.
 pub fn projectFolder(io: std.Io, allocator: std.mem.Allocator, folder: []const u8) ![]u8 {
-    var at: ?[]const u8 = folder;
-    while (at) |candidate| : (at = std.fs.path.dirname(candidate)) {
-        for (PROJECT_FILES) |name| {
-            const marker = try std.fs.path.join(allocator, &.{ candidate, name });
-            defer allocator.free(marker);
-            if (std.Io.Dir.cwd().access(io, marker, .{})) |_| return allocator.dupe(u8, candidate) else |_| {}
-        }
-    }
-    return allocator.dupe(u8, folder);
+    return allocator.dupe(u8, try fs.nearestAncestorWith(io, allocator, folder, null, &PROJECT_FILES) orelse folder);
 }

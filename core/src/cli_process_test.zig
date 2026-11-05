@@ -116,6 +116,11 @@ const Expect = struct {
 fn expectRuns(cases: []const Expect) !void {
     var sb = try Sandbox.init();
     defer sb.deinit();
+    try expectRunsIn(&sb, cases);
+}
+
+/// expectRuns in `sb`, which a test has added files to.
+fn expectRunsIn(sb: *const Sandbox, cases: []const Expect) !void {
     for (cases) |case| {
         const run = try kupcad(sb.path, case.args);
         defer run.deinit();
@@ -426,6 +431,51 @@ test "kupcad: a script imports its neighbours however it is named, from wherever
         // What it prints (on stderr, as `run` prints), and nothing else
         try testing.expectEqualStrings("6\n", run.stderr);
     }
+}
+
+test "kupcad: a script in a project below the current directory imports the project's packages" {
+    // Rooted at the current directory, `run proj/main.kup` read proj's packages from
+    // ./.kupcad/pkg, which ran inside proj
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "proj/.kupcad/pkg/c");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/.kupcad/pkg/c/main.kup", .data = "side = 4\nexport side\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/main.kup", .data = "import { side } from \"c\"\nputs side\ncube(side)\n" });
+    const proj = try std.fs.path.join(testing.allocator, &.{ sb.path, "proj" });
+    defer testing.allocator.free(proj);
+    for ([_][2][]const u8{ .{ sb.path, "proj/main.kup" }, .{ proj, "main.kup" } }) |case| {
+        errdefer std.debug.print("in {s}: kupcad run {s}\n", .{ case[0], case[1] });
+        const run = try kupcad(case[0], &.{ "run", case[1] });
+        defer run.deinit();
+        errdefer std.debug.print("{s}\n", .{run.stderr});
+        try testing.expectEqual(@as(u8, 0), run.code);
+        try testing.expectEqualStrings("4\n", run.stderr);
+    }
+}
+
+test "kupcad: check and fmt read each file's settings from the nearest .kupcad.json to it" {
+    // They read the one nearest the current directory, so a subfolder's own wasn't applied
+    // from its parent, and was inside it
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "sub");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "sub/.kupcad.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "sub/a.kup", .data = "x = 1\ncube(1)\n" });
+    try sb.tmp.dir.createDirPath(testing.io, "broken");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "broken/.kupcad.json", .data = "{ \"lint\": 3 }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "broken/b.kup", .data = "cube(1)\n" });
+    try expectRunsIn(&sb, &.{
+        .{ .args = &.{ "check", "sub/a.kup" }, .code = 0, .contains = "Success", .absent = "unused" },
+        .{ .args = &.{ "check", "sub" }, .code = 0, .absent = "unused" },
+        // The other files keep theirs
+        .{ .args = &.{ "check", "sub/a.kup", "unused.kup" }, .code = 0, .contains = "unused-variable" },
+        // --config still holds for every file
+        .{ .args = &.{ "check", "--config", "strict.json", "sub/a.kup" }, .code = 1, .contains = "unused-variable" },
+        // Settings that can't be read fail the files they hold for, and are named
+        .{ .args = &.{ "check", "broken/b.kup", "valid.kup" }, .code = 1, .contains = "broken/.kupcad.json" },
+        .{ .args = &.{ "fmt", "--check", "broken/b.kup" }, .code = 1, .contains = "broken/.kupcad.json" },
+    });
 }
 
 test "kupcad: pkg add of a local package records it, and keeps what else kupcad.json says" {

@@ -18,6 +18,8 @@ const SessionPreview = @import("lsp_preview.zig").SessionPreview;
 const test_support = @import("../test_support.zig");
 
 const URI = "file:///work/part.kup";
+const LIB_URI = "file:///work/lib.kup";
+const MAIN_URI = "file:///work/main.kup";
 
 /// An editor that watches files for the server by paths relative to a folder.
 const WATCHING_EDITOR: lsp.types.ClientCapabilities = .{ .workspace = .{
@@ -770,9 +772,6 @@ const Viewers = struct {
         return (try test_support.readFrame(arena, self.frames.items[self.frames.items.len - 1])).header;
     }
 };
-
-const LIB_URI = "file:///work/lib.kup";
-const MAIN_URI = "file:///work/main.kup";
 
 test "LSP: an edited document that didn't run has its last run's warnings put back nowhere" {
     var server: Server = undefined;

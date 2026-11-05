@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const Doctor = @import("../pkg/health.zig").Doctor;
-const Manifest = @import("../pkg/manifest.zig").Manifest;
+const manifest_mod = @import("../pkg/manifest.zig");
+const Manifest = manifest_mod.Manifest;
 const Lockfile = @import("../pkg/lockfile.zig").Lockfile;
 const Resolver = @import("../pkg/resolver.zig").Resolver;
 const Cafs = @import("../pkg/cafs.zig").Cafs;
@@ -115,7 +116,7 @@ fn unexpected(reporter: Reporter, command: []const u8, arg: []const u8) ?Request
 /// `kupcad pkg init`: a fresh kupcad.json, unless the project has one (it was overwritten,
 /// dependencies and all, with exit status 0).
 pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !Outcome {
-    if (fs.readFile(allocator, "kupcad.json")) |existing| {
+    if (fs.readFile(allocator, manifest_mod.FILE_NAME)) |existing| {
         allocator.free(existing);
         reporter.err("Error: kupcad.json already exists here; nothing changed. Edit it, or `kupcad pkg add` a dependency.\n", .{});
         return .failure;

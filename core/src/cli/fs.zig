@@ -1,6 +1,7 @@
 //! File helpers for the CLI commands: `readFile` reads a file it is given and `readStdin`
-//! what is piped in, under the size cap, and `replaceFileAtomic` replaces a file's contents
-//! without ever leaving it half-written.
+//! what is piped in, under the size cap, `replaceFileAtomic` replaces a file's contents
+//! without ever leaving it half-written, and `nearestAncestorWith` finds the folder a
+//! project's file marks.
 
 const std = @import("std");
 
@@ -32,4 +33,22 @@ pub fn replaceFileAtomic(io: std.Io, file_path: []const u8, data: []const u8) !v
     defer atomic.deinit(io);
     try atomic.file.writeStreamingAll(io, data);
     try atomic.replace(io);
+}
+
+/// The nearest of `folder` (absolute) and the folders above it that holds one of `markers`:
+/// a slice of `folder`, or null for none. The walk stops after `top` (absolute: `folder` or
+/// a folder above it) when one is given, else at the root. A marker that can't be looked
+/// for (a folder that can't be read) is an error. The settings file and the project's folder
+/// were each found by a walk of their own.
+pub fn nearestAncestorWith(io: std.Io, allocator: std.mem.Allocator, folder: []const u8, top: ?[]const u8, markers: []const []const u8) !?[]const u8 {
+    var at: ?[]const u8 = folder;
+    while (at) |candidate| : (at = std.fs.path.dirname(candidate)) {
+        for (markers) |name| {
+            const marker = try std.fs.path.join(allocator, &.{ candidate, name });
+            defer allocator.free(marker);
+            if (std.Io.Dir.cwd().access(io, marker, .{})) |_| return candidate else |err| if (err != error.FileNotFound) return err;
+        }
+        if (top) |last| if (std.mem.eql(u8, candidate, last)) return null;
+    }
+    return null;
 }

@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const limits = @import("../core/limits.zig");
+const subpath = @import("../core/subpath.zig");
 const Vfs = @import("vfs.zig").Vfs;
 
 pub const NativeVfs = struct {
@@ -43,9 +44,7 @@ pub const NativeVfs = struct {
         const root = root_buf[0..try self.root_dir.realPath(self.io, &root_buf)];
         var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const real = try self.realOfNearest(path, &buf);
-        const inside = std.mem.startsWith(u8, real, root) and
-            (real.len == root.len or std.fs.path.isSep(real[root.len]));
-        if (!inside) return error.AccessDenied;
+        if (!std.mem.eql(u8, real, root) and subpath.under(real, root) == null) return error.AccessDenied;
     }
 
     /// Refuses a link made at `path` unless the folder it is made in stays in the root: a

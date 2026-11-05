@@ -9,6 +9,8 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const string_map = @import("string_map.zig");
 pub const StringMap = string_map.StringMap;
 
+/// The manifest's file, in a project's folder and at a package's top.
+pub const FILE_NAME = "kupcad.json";
 /// The keys a manifest reads and writes itself, in the order a new one has them.
 const OWN_KEYS = [_][]const u8{ "name", "version", "dependencies" };
 
@@ -39,7 +41,7 @@ pub const Manifest = struct {
 
     /// Loads and parses kupcad.json from disk
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Manifest {
-        const buffer = fs.readFile(allocator, "kupcad.json") catch |err| switch (err) {
+        const buffer = fs.readFile(allocator, FILE_NAME) catch |err| switch (err) {
             error.FileNotFound => return error.ManifestNotFound,
             else => return err,
         };
@@ -125,7 +127,7 @@ pub const Manifest = struct {
         }
         try json.endObject();
         try out.writer.writeByte('\n');
-        try fs.writeFile("kupcad.json", out.written());
+        try fs.writeFile(FILE_NAME, out.written());
     }
 
     /// Writes its value of `key`, if `key` is one of its own (OWN_KEYS): whether it was.

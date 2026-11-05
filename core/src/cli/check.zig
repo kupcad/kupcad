@@ -13,6 +13,7 @@ const Reporter = @import("reporter.zig").Reporter;
 const plural = @import("reporter.zig").plural;
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
+const Settings = @import("options.zig").Settings;
 const CommandSetup = @import("options.zig").CommandSetup(struct {
     fix: bool = false,
     format: ?[]const u8 = null,
@@ -54,21 +55,21 @@ const Totals = struct {
     errors: usize = 0,
     warnings: usize = 0,
     infos: usize = 0,
-    config: LintConfig,
+    /// The lint rules and the compiler's memory limit of each file
+    settings: *Settings,
     fix: bool = false,
     format: output.Format = .text,
     /// Findings for the json and sarif formats, written once the run ends.
     collected: ?*output.Collector = null,
-    compiler_memory_limit: ?usize = null,
     reporter: Reporter,
 };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
+    const reporter: Reporter = .forProcess(init);
     // CommandSetup has already reported what was wrong with the arguments or config.
-    var setup = CommandSetup.init(allocator, init.io, args_iter, USAGE) catch return .failure;
+    var setup = CommandSetup.init(allocator, reporter, args_iter, USAGE) catch return .failure;
     defer setup.deinit(allocator);
 
-    const reporter: Reporter = .forProcess(init);
     const flags = setup.options.flags;
     const format = if (flags.format) |name| std.meta.stringToEnum(output.Format, name) orelse {
         reporter.err("Error: --format is text, json or sarif, not '{s}'\n", .{name});
@@ -82,11 +83,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer collector.deinit();
 
     var totals = Totals{
-        .config = setup.config.lint,
+        .settings = &setup.settings,
         .fix = flags.fix,
         .format = format,
         .collected = if (format == .text) null else &collector,
-        .compiler_memory_limit = setup.config.compiler_memory_limit, // Hook it up
         .reporter = reporter,
     };
 
@@ -133,11 +133,15 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
     var totals: *Totals = @ptrCast(@alignCast(context.?));
     totals.files += 1;
+    const config = try totals.settings.forFile(file_path) orelse {
+        totals.errors += 1;
+        return;
+    };
 
     // Apply the Memory Sandbox
     var limit_alloc: ?LimitAllocator = null;
     var compile_allocator = allocator;
-    if (totals.compiler_memory_limit) |limit| {
+    if (config.compiler_memory_limit) |limit| {
         limit_alloc = LimitAllocator.init(allocator, limit);
         compile_allocator = limit_alloc.?.allocator();
     }
@@ -146,14 +150,14 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
     // With --fix, what is reported is what the fixed file still has.
     var fixed: ?[]u8 = null;
     defer if (fixed) |f| compile_allocator.free(f);
-    if (totals.fix) fixed = fixFile(io, compile_allocator, file_path, source, totals) catch |err| blk: {
+    if (totals.fix) fixed = fixFile(io, compile_allocator, file_path, source, config.lint, totals) catch |err| blk: {
         totals.reporter.err("{s}Error fixing '{s}': {}{s}\n", .{ c.red, file_path, err, c.reset });
         totals.errors += 1;
         break :blk null;
     };
     const checked = fixed orelse source;
 
-    const diags = api.checkCode(compile_allocator, io, checked, totals.config) catch |err| {
+    const diags = api.checkCode(compile_allocator, io, checked, config.lint) catch |err| {
         if (err == error.OutOfMemory) {
             totals.reporter.err("{s}Sandbox Error: '{s}' exceeded memory limit during AST parsing.{s}\n", .{ c.red, file_path, c.reset });
         } else {
@@ -193,9 +197,9 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
 
 /// Applies the safe fixes to the file and writes it back if anything changed. Returns the
 /// fixed text (the caller frees it), or null when nothing changed.
-fn fixFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, totals: *Totals) !?[]u8 {
+fn fixFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, config: LintConfig, totals: *Totals) !?[]u8 {
     const c = totals.reporter.err_style;
-    const result = try api.fixCode(allocator, io, source, totals.config);
+    const result = try api.fixCode(allocator, io, source, config);
     if (result.refused) {
         totals.reporter.err("{s}{s}: a fix would have broken or changed the model in this file and was left out; please report it{s}\n", .{ c.yellow, file_path, c.reset });
     }

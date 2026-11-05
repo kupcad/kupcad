@@ -6,6 +6,7 @@
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
 const NativeVfs = @import("native.zig").NativeVfs;
+const under = @import("../core/subpath.zig").under;
 
 pub const Folders = struct {
     allocator: std.mem.Allocator,
@@ -72,9 +73,3 @@ pub const Folders = struct {
         return error.AccessDenied;
     }
 };
-
-/// `path` from `folder` when it is under it, else null.
-fn under(path: []const u8, folder: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, path, folder) or path.len <= folder.len + 1) return null;
-    return if (std.fs.path.isSep(path[folder.len])) path[folder.len + 1 ..] else null;
-}

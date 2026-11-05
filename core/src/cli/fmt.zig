@@ -11,6 +11,7 @@ const Reporter = @import("reporter.zig").Reporter;
 const plural = @import("reporter.zig").plural;
 pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
+const Settings = @import("options.zig").Settings;
 const CommandSetup = @import("options.zig").CommandSetup(struct { check: bool = false, write: bool = false, stdin: bool = false });
 
 pub const USAGE =
@@ -42,11 +43,11 @@ pub const Mode = enum {
 };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
+    const reporter: Reporter = .forProcess(init);
     // CommandSetup has already reported what was wrong with the arguments or config.
-    var setup = CommandSetup.init(allocator, init.io, args_iter, USAGE) catch return .failure;
+    var setup = CommandSetup.init(allocator, reporter, args_iter, USAGE) catch return .failure;
     defer setup.deinit(allocator);
     const flags = setup.options.flags;
-    const reporter: Reporter = .forProcess(init);
     if (flags.check and flags.write) {
         reporter.err("Error: --check and --write can't be used together\n\n" ++ USAGE, .{});
         return .failure;
@@ -62,22 +63,27 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             return .failure;
         };
         defer allocator.free(source);
-        return runSource(allocator, source, setup.config.fmt, mode, reporter);
+        // Named as a file in the current directory, whose settings hold for it
+        const config = try setup.settings.forFile(STDIN_NAME) orelse return .failure;
+        return runSource(allocator, source, config.fmt, mode, reporter);
     }
-    return run(allocator, setup.options.paths.items, setup.config.fmt, mode, reporter);
+    return run(allocator, setup.options.paths.items, &setup.settings, mode, reporter);
 }
 
 /// Formats `source` (piped in, named STDIN_NAME) as `mode` says: printed formatted, or with
 /// `.check` named and failing if it isn't formatted.
 pub fn runSource(allocator: std.mem.Allocator, source: []const u8, config: FmtConfig, mode: Mode, reporter: Reporter) !Outcome {
     std.debug.assert(mode != .write);
-    var state: Run = .{ .config = config, .mode = mode, .reporter = reporter };
+    var settings: Settings = .{ .allocator = allocator, .reporter = reporter, .given = .{ .fmt = config } };
+    defer settings.deinit();
+    var state: Run = .{ .settings = &settings, .mode = mode, .reporter = reporter };
     try processFile(reporter.io, allocator, STDIN_NAME, source, &state);
     return state.outcome();
 }
 
 const Run = struct {
-    config: FmtConfig,
+    /// The format settings of each file
+    settings: *Settings,
     mode: Mode,
     reporter: Reporter,
     /// Files that couldn't be formatted (a syntax error, a write that failed, ...).
@@ -89,10 +95,10 @@ const Run = struct {
     }
 };
 
-/// Formats every .kup file under `paths` as `mode` says. Returns failure if a file can't
-/// be formatted, or with `.check` if one isn't formatted.
-pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, config: FmtConfig, mode: Mode, reporter: Reporter) !Outcome {
-    var state: Run = .{ .config = config, .mode = mode, .reporter = reporter };
+/// Formats every .kup file under `paths` as `mode` says, each with its `settings`. Returns
+/// failure if a file can't be formatted, or with `.check` if one isn't formatted.
+pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, settings: *Settings, mode: Mode, reporter: Reporter) !Outcome {
+    var state: Run = .{ .settings = settings, .mode = mode, .reporter = reporter };
     // Added after the walk: processFile updates `state.failed` itself (see check.zig).
     const unreadable = try walker.walkPaths(reporter, allocator, paths, &state, processFile);
     state.failed += unreadable;
@@ -104,8 +110,12 @@ pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, config: FmtC
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
     const state: *Run = @ptrCast(@alignCast(context.?));
+    const config = try state.settings.forFile(file_path) orelse {
+        state.failed += 1;
+        return;
+    };
 
-    const formatted = api.formatCode(allocator, source, state.config) catch |err| {
+    const formatted = api.formatCode(allocator, source, config.fmt) catch |err| {
         switch (err) {
             error.SyntaxError => state.reporter.err("Error: '{s}' has syntax errors; kupcad check shows them\n", .{file_path}),
             error.FormatChangedProgram => state.reporter.err("Error: formatting '{s}' would change what it does, so it was left as it is. This is a formatter bug; please report it.\n", .{file_path}),

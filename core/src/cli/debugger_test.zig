@@ -11,6 +11,15 @@ const chunk = @import("../vm/chunk.zig");
 const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 
+const PAUSED_IN_A_METHOD =
+    \\def f(x)
+    \\  y = x * 2
+    \\  debugger
+    \\  y + 1
+    \\end
+    \\r = f(5)
+;
+
 /// Lines given in turn, as the terminal gives them (owned by the VM's allocator); Ctrl+C for
 /// INTERRUPT.
 const Lines = struct {
@@ -69,15 +78,6 @@ fn expectSaid(paused: *Paused, text: []const u8) !void {
         return error.TestUnexpectedResult;
     }
 }
-
-const PAUSED_IN_A_METHOD =
-    \\def f(x)
-    \\  y = x * 2
-    \\  debugger
-    \\  y + 1
-    \\end
-    \\r = f(5)
-;
 
 test "debugger: the paused frame's locals are listed, evaluated with, and written back" {
     var paused: Paused = .{ .vm = try support.initVm(), .lines = .{ .lines = &.{ ".locals", "y * 10", "y = 7", ".continue" } }, .out = .init(testing.allocator) };

@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const fmt_cmd = @import("fmt.zig");
+const Settings = @import("options.zig").Settings;
+const Reporter = @import("reporter.zig").Reporter;
 
 const FORMATTED = "x = 1 + 2\n";
 const UNFORMATTED = "x=1+  2";
@@ -41,7 +43,10 @@ const Fixture = struct {
             paths.deinit(testing.allocator);
         }
         for (names) |name| try paths.append(testing.allocator, try self.path(name));
-        return fmt_cmd.run(testing.allocator, paths.items, .{}, mode, .{ .io = testing.io, .capture = &output.writer });
+        const reporter: Reporter = .{ .io = testing.io, .capture = &output.writer };
+        var settings: Settings = .{ .allocator = testing.allocator, .reporter = reporter, .given = .{} };
+        defer settings.deinit();
+        return fmt_cmd.run(testing.allocator, paths.items, &settings, mode, reporter);
     }
 
     fn expectContents(self: *Fixture, name: []const u8, expected: []const u8) !void {
@@ -122,7 +127,7 @@ test "fmt: a file with syntax errors fails and is never written" {
 test "fmt --stdin: prints the source piped in formatted, or with --check fails naming <stdin>" {
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    const reporter: @import("reporter.zig").Reporter = .{ .io = testing.io, .capture = &out.writer };
+    const reporter: Reporter = .{ .io = testing.io, .capture = &out.writer };
     try testing.expectEqual(fmt_cmd.Outcome.success, try fmt_cmd.runSource(testing.allocator, UNFORMATTED, .{}, .print, reporter));
     try testing.expectEqualStrings(FORMATTED, out.written());
 

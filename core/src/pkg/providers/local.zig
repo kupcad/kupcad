@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const ParsedPackage = @import("provider.zig").ParsedPackage;
+const under = @import("../../core/subpath.zig").under;
 
 pub const LocalProvider = struct {
     /// The real path of the archive `pkg` names, read from `project_dir` (a relative path
@@ -19,7 +20,7 @@ pub const LocalProvider = struct {
         // realPathFileAlloc returns a sentinel slice; re-dupe so callers can free it as []const u8.
         const real = try cwd.realPathFileAlloc(io, named, allocator);
         defer allocator.free(real);
-        if (!std.mem.startsWith(u8, real, project) or real.len == project.len or real[project.len] != std.fs.path.sep) return error.ArchiveOutsideProject;
+        if (under(real, project) == null) return error.ArchiveOutsideProject;
         return allocator.dupe(u8, real);
     }
 };
