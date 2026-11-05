@@ -10,9 +10,8 @@ const geom = @import("../core/geometry_handle.zig");
 const OPEN_PATH_HINT = @import("../core/path.zig").OPEN_PATH_HINT;
 const ExportFormat = @import("format.zig").ExportFormat;
 const parts_mod = @import("parts.zig");
+const limits = @import("../core/limits.zig");
 
-/// How deep a model's Arrays of shapes inside Arrays are followed (an Array can hold itself).
-pub const MAX_MODEL_NESTING = 64;
 /// The most items an Array of the model may hold, so an item's number fits its path.
 const MAX_MODEL_ITEMS = 1_000_000_000;
 
@@ -82,7 +81,7 @@ pub fn collectModel(allocator: std.mem.Allocator, vm: *VM) !Model {
 
 /// Where an item is in the model's Arrays, for an error naming it: "item 2", "item 2.1".
 const ItemPath = struct {
-    buf: [MAX_MODEL_NESTING * ITEM_PATH_DIGITS]u8 = undefined,
+    buf: [limits.MAX_MODEL_NESTING * ITEM_PATH_DIGITS]u8 = undefined,
     len: usize = 0,
 
     const ITEM_PATH_DIGITS = 12; // ".", then the digits of an index up to MAX_MODEL_ITEMS
@@ -113,8 +112,8 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
             if (part.isAssembly()) _ = try collectShapes(allocator, vm, model, part, path) else try model.solids.append(allocator, part);
         }
     } else if (val.isArray()) {
-        if (path.len >= MAX_MODEL_NESTING * (ItemPath.ITEM_PATH_DIGITS - 1)) {
-            return vm.fail(.ValueError, "the model's Arrays nest deeper than {d} levels", .{MAX_MODEL_NESTING});
+        if (path.len >= limits.MAX_MODEL_NESTING * (ItemPath.ITEM_PATH_DIGITS - 1)) {
+            return vm.fail(.ValueError, "the model's Arrays nest deeper than {d} levels", .{limits.MAX_MODEL_NESTING});
         }
         for (val.asArray().items.items, 1..) |item, index| {
             if (index > MAX_MODEL_ITEMS) return vm.fail(.ValueError, "the model's Array holds more than {d} items", .{MAX_MODEL_ITEMS});

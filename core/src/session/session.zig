@@ -575,7 +575,7 @@ pub const ScriptSession = struct {
         if (unmeshed) hasher.update(mod.source);
         for (self.vm.materials.items) |mat| mat.hashInto(&hasher);
         // An export not hashed by content changed: this evaluation is its revision
-        if (mod.exports.count() > 0 and !exports_fingerprint.hashExports(&hasher, &self.vm)) {
+        if (mod.has_exports and !exports_fingerprint.hashExports(&hasher, &self.vm)) {
             hasher.update(std.mem.asBytes(&self.global_revision));
         }
         return hasher.final();

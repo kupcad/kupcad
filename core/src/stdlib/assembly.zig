@@ -9,8 +9,6 @@ const VM = @import("../vm/vm.zig").VM;
 const dag = @import("../vm/dag.zig");
 const arguments = @import("arguments.zig");
 const limits = @import("../core/limits.zig");
-/// How deep assemblies nest in assemblies: as deep as a model's Arrays may.
-const MAX_ASSEMBLY_DEPTH = @import("../exporters/model.zig").MAX_MODEL_NESTING;
 
 /// assemble(name: "Housing", parts: [...]) -> a named group of Solids and assemblies (a
 /// subassembly stays one: `parts` gives it back). Anything else is a TypeError: the
@@ -33,7 +31,7 @@ pub fn nativeAssemble(vm: *VM, args: []const value.Value) !value.Value {
         return vm.fail(.TypeError, "assemble expects Solids and assemblies in parts, got {s} at index {d}{s}", .{ arguments.typeName(vm, part), i, hint });
     }
     const size = sizeOf(parts.asArray().items.items);
-    if (size.depth > MAX_ASSEMBLY_DEPTH) return vm.fail(.ValueError, "assemble: assemblies nest at most {d} deep", .{MAX_ASSEMBLY_DEPTH});
+    if (size.depth > limits.MAX_MODEL_NESTING) return vm.fail(.ValueError, "assemble: assemblies nest at most {d} deep", .{limits.MAX_MODEL_NESTING});
     if (size.solids > limits.MAX_ASSEMBLY_SOLIDS) return vm.fail(.ValueError, "assemble: its parts place {d} Solids (an assembly among them counts each time it is placed); a script places at most {d}", .{ size.solids, limits.MAX_ASSEMBLY_SOLIDS });
 
     const own_parts = try copyArray(vm, parts.asArray());

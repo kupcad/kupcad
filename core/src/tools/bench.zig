@@ -9,6 +9,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
+const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const profiler_mod = @import("../vm/profiler.zig");
 const Stopwatch = @import("../core/stopwatch.zig").Stopwatch;
@@ -144,10 +145,6 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     return .{ .ns = ns, .evaluated = evaluated };
 }
 
-/// How deep the model's Arrays and Assemblies are walked (as the exporters' MAX_MODEL_NESTING,
-/// which this layer may not import).
-const MAX_MODEL_DEPTH = 64;
-
 /// Evaluates every shape the script left as its model: a Solid, a Sketch, an Assembly's parts,
 /// an Array's items. Whether there was one. A script ending in a Sketch, an Assembly or an
 /// Array (every heavy example) was timed with no evaluation at all, as if it had no geometry.
@@ -160,7 +157,7 @@ fn evaluateModel(vm: *VM, val: value.Value, depth: usize) anyerror!bool {
         _ = try vm.ensureConcreteCrossSection(val);
         return true;
     }
-    if (depth >= MAX_MODEL_DEPTH) return false;
+    if (depth >= limits.MAX_MODEL_NESTING) return false;
     const items = if (val.isAssembly())
         val.asAssembly().parts.items.items
     else if (val.isArray())

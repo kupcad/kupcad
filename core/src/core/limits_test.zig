@@ -53,6 +53,7 @@ const CASES = .{
     .MAX_PLACED_VERTICES = placedVertices,
     .MAX_PLACED_MESHES = placedMeshes,
     .MAX_ASSEMBLY_SOLIDS = assemblySolids,
+    .MAX_MODEL_NESTING = modelNesting,
     .MAX_MESH_BYTES = meshBytes,
     .MAX_READ_BYTES = readBytes,
     .MAX_FILES_READ = filesRead,
@@ -294,6 +295,14 @@ fn assemblySolids() !void {
     // as it is made (walking them took minutes, and memory no limit counted)
     const src = "a = assemble(name: \"p\", parts: [cube(1)])\n17.times { a = assemble(name: \"n\", parts: [a, a]) }";
     const expected = std.fmt.comptimePrint("ValueError: assemble: its parts place 131072 Solids (an assembly among them counts each time it is placed); a script places at most {d}", .{limits.MAX_ASSEMBLY_SOLIDS});
+    try support.expectScripts(&.{.{ .src = support.rescued(src), .expected = .{ .str = expected } }});
+}
+
+fn modelNesting() !void {
+    // Assemblies inside assemblies one level deeper than a model's Arrays may nest, which the
+    // exporters walk (and an Array can hold itself)
+    const src = std.fmt.comptimePrint("a = assemble(name: \"0\", parts: [cube(1)])\n{d}.times {{ |i| a = assemble(name: i.to_s, parts: [a]) }}", .{limits.MAX_MODEL_NESTING});
+    const expected = std.fmt.comptimePrint("ValueError: assemble: assemblies nest at most {d} deep", .{limits.MAX_MODEL_NESTING});
     try support.expectScripts(&.{.{ .src = support.rescued(src), .expected = .{ .str = expected } }});
 }
 

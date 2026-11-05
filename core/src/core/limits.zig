@@ -100,6 +100,9 @@ pub const MAX_PLACED_MESHES: usize = 100_000;
 // placed twice in each of 25 levels places 2^25, which an export, a BOM or a translate
 // walks one by one; as many as a 3MF's build may place.
 pub const MAX_ASSEMBLY_SOLIDS: usize = MAX_PLACED_MESHES;
+// How deep a model's Arrays of shapes inside Arrays, and its assemblies inside assemblies, are
+// followed (an Array can hold itself): by the exporters, `assemble` and `kupcad dev bench`.
+pub const MAX_MODEL_NESTING: usize = 64;
 // Largest mesh file `import_stl`, `import_obj` and `import_3mf` read: five million
 // triangles as binary STL (50 bytes each), which the kernel takes minutes over already.
 pub const MAX_MESH_BYTES: usize = 256 * 1024 * 1024; // 256 MiB

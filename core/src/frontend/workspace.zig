@@ -4,7 +4,6 @@
 //! cycle.
 
 const std = @import("std");
-const ast = @import("../core/ast.zig");
 const Document = @import("document.zig").Document;
 const import_path = @import("../core/import_path.zig");
 const import_kind = @import("../core/import_kind.zig");
@@ -17,15 +16,15 @@ pub const Module = struct {
     source: []const u8,
     doc: Document,
     deps: std.ArrayList(ModuleId) = .empty,
-    // Maps the string representation of an exported symbol to its original AST NodeIndex
-    exports: std.StringHashMapUnmanaged(ast.StringId) = .empty,
+    /// Whether it exports a name: what an importer sees of it changes with its run then (the
+    /// session's fingerprint). A map of the names was kept, and only counted.
+    has_exports: bool = false,
 
     pub fn deinit(self: *Module, allocator: std.mem.Allocator) void {
         allocator.free(self.path);
         allocator.free(self.source);
         self.doc.deinit();
         self.deps.deinit(allocator);
-        self.exports.deinit(allocator);
     }
 };
 
@@ -119,7 +118,7 @@ pub const Workspace = struct {
     pub fn linkDependencies(self: *Workspace) !void {
         for (self.modules.items) |*mod| {
             mod.deps.clearRetainingCapacity();
-            mod.exports.clearRetainingCapacity();
+            mod.has_exports = false;
 
             for (mod.doc.tree.nodes.items) |*node| {
                 // A module it imports or re-exports from; a file it reads (a mesh, data) is no
@@ -134,13 +133,8 @@ pub const Workspace = struct {
                     }
                 };
                 if (node.tag == .export_stmt) {
-                    const export_stmt = mod.doc.tree.exportStmt(node);
-                    const symbols = mod.doc.tree.getAliasPairs(export_stmt.symbols);
-
-                    for (symbols) |sym| {
-                        const alias_str = mod.doc.tree.getString(sym.alias);
-                        try mod.exports.put(self.allocator, alias_str, sym.original);
-                    }
+                    const symbols = mod.doc.tree.exportStmt(node).symbols;
+                    if (symbols.end > symbols.start) mod.has_exports = true;
                 }
             }
         }

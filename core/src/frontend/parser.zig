@@ -1185,7 +1185,7 @@ pub const Parser = struct {
 
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
-        return self.b.moduleStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), try self.b.addParams(&.{}), body, end_tok, start_tok) catch ParseError.OutOfMemory;
+        return self.b.moduleStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), body, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseClassPath(self: *Parser) ParseError!ast.NodeIndex {

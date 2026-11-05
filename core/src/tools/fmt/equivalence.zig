@@ -106,11 +106,7 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
             h.params(tree, ds.params);
         },
         .lambda_expr => h.params(tree, tree.lambdaExpr(node).params),
-        .module_stmt => {
-            const ms = tree.moduleStmt(node);
-            h.string(tree, ms.name);
-            h.params(tree, ms.params);
-        },
+        .module_stmt => h.string(tree, tree.moduleStmt(node).name),
         .range => h.add(tree.range(node).is_exclusive),
         .for_stmt => {
             const fs = tree.forStmt(node);

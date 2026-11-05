@@ -112,11 +112,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
             try walk(Context, ctx, tree, sc.target);
             try walk(Context, ctx, tree, sc.body);
         },
-        .module_stmt => {
-            const ms = tree.moduleStmt(node);
-            try walkParams(Context, ctx, tree, ms.params);
-            try walk(Context, ctx, tree, ms.body);
-        },
+        .module_stmt => try walk(Context, ctx, tree, tree.moduleStmt(node).body),
         .begin_stmt => {
             const bs = tree.beginStmt(node);
             try walk(Context, ctx, tree, bs.body);

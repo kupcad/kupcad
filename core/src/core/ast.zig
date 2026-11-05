@@ -330,7 +330,6 @@ pub const ClassStmt = struct {
 
 pub const ModuleStmt = struct {
     name: StringId,
-    params: Span, // Span of Param
     body: NodeIndex,
     end_token: u32 = 0,
 };
@@ -714,9 +713,8 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .name = @fromBackingInt(self.extra_data.items[base]),
-            .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
-            .body = @fromBackingInt(self.extra_data.items[base + 3]),
-            .end_token = self.extra_data.items[base + 4],
+            .body = @fromBackingInt(self.extra_data.items[base + 1]),
+            .end_token = self.extra_data.items[base + 2],
         };
     }
 
@@ -1161,8 +1159,8 @@ pub const Builder = struct {
         return self.createNode(.class_stmt, main_token, data_idx);
     }
 
-    pub fn moduleStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ name, params, body, end_token });
+    pub fn moduleStmt(self: *Builder, name: StringId, body: NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ name, body, end_token });
         return self.createNode(.module_stmt, main_token, data_idx);
     }
 
