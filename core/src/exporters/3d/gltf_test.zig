@@ -249,6 +249,36 @@ fn number(v: std.json.Value) f64 {
     };
 }
 
+test "GLTF: each part's mesh has positions of its own, with its own bounds" {
+    // Every mesh pointed at one POSITION accessor of the whole model's vertices: a viewer
+    // walking each part's walked the model's, and gave each part the model's size
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "[cube(1), cube(2).translate(x: 5), (cube(3).material(color: \"#FF0000\") + cube(1).translate(z: 3)).translate(y: 10)]", .{ .format = .glb });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    try expectValidLayout(&glb);
+    const accessors = glb.array("accessors");
+    const meshes = glb.array("meshes");
+    try std.testing.expectEqual(@as(usize, 3), meshes.len);
+    const boxes = [_][2][3]f64{ .{ .{ 0, 0, 0 }, .{ 1, 1, 1 } }, .{ .{ 5, 0, 0 }, .{ 7, 2, 2 } }, .{ .{ 0, 10, 0 }, .{ 3, 13, 4 } } };
+    var seen: [3]usize = undefined;
+    for (meshes, boxes, &seen) |mesh, box, *position| {
+        const primitives = mesh.object.get("primitives").?.array.items;
+        position.* = int(primitives[0].object.get("attributes").?.object.get("POSITION").?);
+        // A part of two materials: two primitives over its one set of positions
+        for (primitives) |p| try std.testing.expectEqual(position.*, int(p.object.get("attributes").?.object.get("POSITION").?));
+        const accessor = accessors[position.*].object;
+        for (accessor.get("min").?.array.items, accessor.get("max").?.array.items, box[0], box[1]) |lo, hi, want_lo, want_hi| {
+            try std.testing.expectEqual(want_lo, number(lo));
+            try std.testing.expectEqual(want_hi, number(hi));
+        }
+    }
+    try std.testing.expect(seen[0] != seen[1] and seen[1] != seen[2] and seen[0] != seen[2]);
+    // The cubes alone are 8 vertices each
+    try std.testing.expectEqual(@as(usize, 8), int(accessors[seen[0]].object.get("count").?));
+    try std.testing.expectEqual(@as(usize, 8), int(accessors[seen[1]].object.get("count").?));
+}
+
 test "GLTF: a model without materials uses only the default material" {
     const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "[cube(1), sphere(1).translate(x: 3)]", .{ .format = .glb });
     defer std.testing.allocator.free(bytes);
@@ -372,18 +402,20 @@ test "GLTF: the primitives of an export close every part" {
     var glb = try parseGlb(bytes);
     defer glb.deinit();
     const accessors = glb.array("accessors");
-    const positions = std.mem.bytesAsSlice(f32, viewBytes(&glb, int(accessors[0].object.get("bufferView").?)));
-    var indices: std.ArrayList(u32) = .empty;
-    defer indices.deinit(std.testing.allocator);
-    const prims = try allPrimitives(&glb);
-    defer std.testing.allocator.free(prims);
-    for (prims) |p| {
-        const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);
-        for (std.mem.bytesAsSlice(u32, viewBytes(&glb, view))) |i| try indices.append(std.testing.allocator, i);
+    for (glb.array("meshes")) |mesh| {
+        const prims = mesh.object.get("primitives").?.array.items;
+        const position = accessors[int(prims[0].object.get("attributes").?.object.get("POSITION").?)].object;
+        const positions = std.mem.bytesAsSlice(f32, viewBytes(&glb, int(position.get("bufferView").?)));
+        var indices: std.ArrayList(u32) = .empty;
+        defer indices.deinit(std.testing.allocator);
+        for (prims) |p| {
+            const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);
+            for (std.mem.bytesAsSlice(u32, viewBytes(&glb, view))) |i| try indices.append(std.testing.allocator, i);
+        }
+        const welded = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
+        defer welded.deinit(std.testing.allocator);
+        try mesh_check.expectClosed(std.testing.allocator, welded.mesh());
     }
-    const welded = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
-    defer welded.deinit(std.testing.allocator);
-    try mesh_check.expectClosed(std.testing.allocator, welded.mesh());
 }
 
 test "GLTF: Draco quantizes positions to the bits the export asks for" {

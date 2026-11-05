@@ -9,6 +9,7 @@ const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
 const byte_order_mark = @import("../../core/byte_order_mark.zig");
 const imported_mesh = @import("imported_mesh.zig");
+const mesh_part = @import("mesh_part.zig");
 const Mesh = imported_mesh.Mesh;
 const Builder = imported_mesh.Builder;
 pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
@@ -128,7 +129,7 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnost
 /// triangles, which KupCAD's own importer rejects.
 pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
     if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
-    const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+    const mesh = try mesh_part.floatMesh(allocator, handle);
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
 

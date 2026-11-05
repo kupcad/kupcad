@@ -11,7 +11,8 @@ const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
 const vec3 = @import("../../core/vec3.zig");
 const material_groups = @import("material_groups.zig");
-const MeshPart = @import("mesh_part.zig").MeshPart;
+const mesh_part = @import("mesh_part.zig");
+const MeshPart = mesh_part.MeshPart;
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 
 const HEADER = "# KupCAD Export\n# millimetres, Z up\n";
@@ -45,7 +46,7 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_cou
     var vertices_written: u32 = 0;
     var normals_written: u32 = 0;
     for (parts) |part| {
-        const mesh = kernel.getMesh(allocator, part.handle) orelse return error.MeshExtractionFailed;
+        const mesh = try mesh_part.floatMesh(allocator, part.handle);
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         if (mesh.tri_verts.len == 0) continue;

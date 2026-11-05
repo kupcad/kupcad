@@ -1,5 +1,6 @@
 //! SVG export: `build` writes a drawing (drawing.zig) as SVG, in millimetres (`width` and
-//! `height` in mm, the `viewBox` the drawing's bounds), with Y turned over (SVG's Y runs
+//! `height` in mm, the `viewBox` the drawing's bounds and half the outlines' stroke round
+//! them), with Y turned over (SVG's Y runs
 //! down, a sketch's up) so the file shows the sketch as the script has it. Each shape is one
 //! `<path>` of all its outlines, lines as `L`, arcs as `A` (the exact circle, not the
 //! chords the kernel drew) and a glyph's curves as `C`, filled by the even-odd rule so its holes are holes, in its
@@ -27,10 +28,14 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing, 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
-    const width = bounds.max[0] - bounds.min[0];
-    const height = bounds.max[1] - bounds.min[1];
+    // The bounds and half the stroke each side, which an outline's stroke reaches: at the
+    // bounds themselves the strokes at the edges were cut in half, and a drawing of no
+    // height (a line) had a viewBox of none, which renders nothing
+    const pad = stroke_width / 2;
+    const width = bounds.max[0] - bounds.min[0] + stroke_width;
+    const height = bounds.max[1] - bounds.min[1] + stroke_width;
     try w.writeAll("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    try w.print("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{d}mm\" height=\"{d}mm\" viewBox=\"{d} {d} {d} {d}\">\n", .{ width, height, bounds.min[0], flipped(bounds.max[1]), width, height });
+    try w.print("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{d}mm\" height=\"{d}mm\" viewBox=\"{d} {d} {d} {d}\">\n", .{ width, height, bounds.min[0] - pad, flipped(bounds.max[1]) - pad, width, height });
     try w.print("<!-- KupCAD Export: millimetres -->\n", .{});
     for (drawing.shapes) |shape| {
         if (shape.outlines.len == 0) continue;

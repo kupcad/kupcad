@@ -83,16 +83,24 @@ fn pathData(svg: []const u8, n: usize) ?[]const u8 {
     return null;
 }
 
-test "SVG: a sketch is a path in millimetres, Y turned over, in a viewBox of its bounds" {
+test "SVG: a sketch is a path in millimetres, Y turned over, in a viewBox of its bounds and half its stroke" {
     const svg = try exportSvg("square(10, 5)");
     defer testing.allocator.free(svg);
-    try testing.expect(std.mem.startsWith(u8, svg, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10mm\" height=\"5mm\" viewBox=\"0 -5 10 5\">\n"));
+    try testing.expect(std.mem.startsWith(u8, svg, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10.1mm\" height=\"5.1mm\" viewBox=\"-0.05 -5.05 10.1 5.1\">\n"));
     // Each y negated (no `-0`)
     try expectClosedThrough(svg, 0, &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, -5 }, .{ 0, -5 } });
     try testing.expect(pathData(svg, 1) == null);
     try testing.expect(std.mem.find(u8, svg, "fill=\"#CCCCCC\" fill-rule=\"evenodd\" stroke=\"#000000\" stroke-width=\"0.1\"") != null);
     try testing.expect(std.mem.find(u8, svg, "-0 ") == null and std.mem.find(u8, svg, "-0\"") == null);
     try testing.expect(std.mem.endsWith(u8, svg, "</svg>\n"));
+}
+
+test "SVG: a drawing of no height still has a viewBox to draw in, its strokes whole" {
+    // `height="0mm" viewBox="0 0 10 0"`: a viewBox of no height renders nothing, and the
+    // strokes at the bounds were cut in half
+    const svg = try exportSvg("line([0, 0], [10, 0])");
+    defer testing.allocator.free(svg);
+    try testing.expect(std.mem.find(u8, svg, "width=\"10.1mm\" height=\"0.1mm\" viewBox=\"-0.05 -0.05 10.1 0.1\"") != null);
 }
 
 test "SVG: a hole is a second subpath, a name the path's id, a colour its fill" {
@@ -120,7 +128,7 @@ test "SVG: a Solid is drawn as its projection onto XY, named after its part, bes
     try testing.expect(std.mem.find(u8, svg, "<path id=\"lid\" ") != null);
     try testing.expect(std.mem.find(u8, svg, "<path id=\"lid_2\" ") != null);
     // The diamond reaches y = 2 and the lid y = 4, down to the diamond's -2
-    try testing.expect(std.mem.find(u8, svg, "width=\"22mm\" height=\"6mm\" viewBox=\"0 -4 22 6\"") != null);
+    try testing.expect(std.mem.find(u8, svg, "width=\"22.1mm\" height=\"6.1mm\" viewBox=\"-0.05 -4.05 22.1 6.1\"") != null);
 }
 
 /// The centre of the arc an SVG `A` command describes from `from` to `to` (both in SVG's
@@ -142,7 +150,7 @@ test "SVG: a circle is two arcs of its exact radius, a rounded corner an arc, a 
     defer testing.allocator.free(circle);
     const d = pathData(circle, 0).?;
     try testing.expectEqualStrings("M 15 0 A 5 5 0 0 0 5 0 A 5 5 0 0 0 15 0 Z", d);
-    try testing.expect(std.mem.find(u8, circle, "viewBox=\"5 -5 10 10\"") != null);
+    try testing.expect(std.mem.find(u8, circle, "viewBox=\"4.95 -5.05 10.1 10.1\"") != null);
 
     // Four quarter arcs between four lines; each arc bulges away from the plate's middle
     const plate = try exportSvg("square(20, round_r: 4, segments: 16)");
@@ -205,7 +213,7 @@ test "SVG: a Path is an open, unfilled path with its arcs exact, a closed one's 
     const closed = pathData(svg, 0).?;
     try testing.expect(std.mem.endsWith(u8, closed, " Z"));
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, closed, " A 5 5 0 0 0 "));
-    try testing.expect(std.mem.find(u8, svg, "viewBox=\"0 -30 15 30\"") != null);
+    try testing.expect(std.mem.find(u8, svg, "viewBox=\"-0.05 -30.05 15.1 30.1\"") != null);
 }
 
 test "SVG: a polygon's rounded corners and a Path's fillets are arcs, a concave corner's the other way" {

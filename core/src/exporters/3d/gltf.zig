@@ -8,7 +8,8 @@ const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
 const draco = @import("../../bindings/draco.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
-const MeshPart = @import("mesh_part.zig").MeshPart;
+const mesh_part = @import("mesh_part.zig");
+const MeshPart = mesh_part.MeshPart;
 const material_groups = @import("material_groups.zig");
 
 // --- GLTF & Draco Configuration Constants ---
@@ -161,22 +162,25 @@ const PartPrimitive = struct {
     indices: std.ArrayList(u32),
 };
 
-/// A part's mesh in the file: its name, and which of the primitives are its.
+/// A part's mesh in the file: its name, which of the primitives are its, and which of the
+/// positions, with their bounds.
 const MeshRange = struct {
     name: ?[]const u8,
     first_primitive: u32,
     primitive_count: u32,
+    first_vertex: u32,
+    vertex_count: u32,
+    min: [3]f64,
+    max: [3]f64,
 };
 
-/// Every part's mesh, merged: the positions of all their vertices (x, y, z each) with
-/// their bounds, one primitive per part and material, so every part keeps its own, and
-/// which primitives make each part's mesh.
+/// Every part's mesh, merged: the positions of all their vertices (x, y, z each), one
+/// primitive per part and material, so every part keeps its own, and which primitives and
+/// positions make each part's mesh.
 const Parts = struct {
     positions: std.ArrayList(f32) = .empty,
     primitives: std.ArrayList(PartPrimitive) = .empty,
     meshes: std.ArrayList(MeshRange) = .empty,
-    min: [3]f64 = @splat(std.math.inf(f64)),
-    max: [3]f64 = @splat(-std.math.inf(f64)),
 
     fn deinit(self: *Parts, allocator: std.mem.Allocator) void {
         for (self.primitives.items) |*p| p.indices.deinit(allocator);
@@ -195,7 +199,7 @@ const Parts = struct {
         const handle = part.handle;
         // A part the kernel can't mesh is an error: skipping it exported a model without it.
         if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
-        const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+        const mesh = try mesh_part.floatMesh(allocator, handle);
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         if (mesh.vert_props.len / mesh.num_prop == 0) return;
@@ -204,17 +208,25 @@ const Parts = struct {
         var groups = try material_groups.Groups.collect(allocator, mesh, material_count);
         defer groups.deinit(allocator);
 
+        var range: MeshRange = .{
+            .name = part.name,
+            .first_primitive = @intCast(self.primitives.items.len),
+            .primitive_count = @intCast(groups.count()),
+            .first_vertex = base_vertex,
+            .vertex_count = @intCast(mesh.vert_props.len / mesh.num_prop),
+            .min = @splat(std.math.inf(f64)),
+            .max = @splat(-std.math.inf(f64)),
+        };
         var v: usize = 0;
         while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
             const position = mesh.vert_props[v..][0..3];
             try self.positions.appendSlice(allocator, position);
-            for (position, &self.min, &self.max) |c, *lo, *hi| {
+            for (position, &range.min, &range.max) |c, *lo, *hi| {
                 lo.* = @min(lo.*, @as(f64, @floatCast(c)));
                 hi.* = @max(hi.*, @as(f64, @floatCast(c)));
             }
         }
-
-        try self.meshes.append(allocator, .{ .name = part.name, .first_primitive = @intCast(self.primitives.items.len), .primitive_count = @intCast(groups.count()) });
+        try self.meshes.append(allocator, range);
         try self.primitives.ensureUnusedCapacity(allocator, groups.count());
         for (0..groups.count()) |g| {
             const group = groups.at(g);
@@ -259,41 +271,47 @@ const Gltf = struct {
         return @intCast(self.buffer_views.items.len - 1);
     }
 
-    /// Uncompressed: one buffer view of tightly packed positions for every part (accessor
-    /// 0), then one index buffer per primitive.
+    /// Uncompressed: each part's positions, tightly packed, in a buffer view of their own
+    /// with an accessor of their own and their bounds, then an index buffer per primitive,
+    /// numbering the part's vertices. One accessor held every part's: a viewer that walks
+    /// each mesh's POSITION (three.js's bounding boxes) walked the whole model's per part,
+    /// and every part had the model's size. Not instancing: a part's copies are meshes of
+    /// their own.
     fn addPrimitives(self: *Gltf, allocator: std.mem.Allocator, parts: *const Parts) !void {
-        const positions = try self.addAccessor(allocator, .{
-            .bufferView = 0,
-            .componentType = GLTF_COMPONENT_TYPE_FLOAT,
-            .count = parts.vertexCount(),
-            .type = "VEC3",
-            .min = parts.min,
-            .max = parts.max,
-        });
-        for (parts.positions.items) |c| try appendF32Le(&self.bin, allocator, c);
-        _ = try self.addBufferView(allocator, .{
-            .buffer = 0,
-            .byteOffset = 0,
-            .byteLength = @intCast(self.bin.items.len),
-            .target = GLTF_TARGET_ARRAY_BUFFER,
-        });
-
-        for (parts.primitives.items) |prim| {
-            const byte_offset: u32 = @intCast(self.bin.items.len);
-            for (prim.indices.items) |index| try appendU32Le(&self.bin, allocator, index);
-            const view = try self.addBufferView(allocator, .{
+        for (parts.meshes.items) |range| {
+            const position_offset: u32 = @intCast(self.bin.items.len);
+            for (parts.positions.items[range.first_vertex * 3 ..][0 .. range.vertex_count * 3]) |c| try appendF32Le(&self.bin, allocator, c);
+            const position_view = try self.addBufferView(allocator, .{
                 .buffer = 0,
-                .byteOffset = byte_offset,
-                .byteLength = @intCast(prim.indices.items.len * 4),
-                .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+                .byteOffset = position_offset,
+                .byteLength = range.vertex_count * 3 * 4,
+                .target = GLTF_TARGET_ARRAY_BUFFER,
             });
-            const indices = try self.addAccessor(allocator, .{
-                .bufferView = view,
-                .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
-                .count = @intCast(prim.indices.items.len),
-                .type = "SCALAR",
+            const positions = try self.addAccessor(allocator, .{
+                .bufferView = position_view,
+                .componentType = GLTF_COMPONENT_TYPE_FLOAT,
+                .count = range.vertex_count,
+                .type = "VEC3",
+                .min = range.min,
+                .max = range.max,
             });
-            try self.primitives.append(allocator, .{ .attributes = .{ .POSITION = positions }, .indices = indices, .material = prim.material });
+            for (parts.primitives.items[range.first_primitive..][0..range.primitive_count]) |prim| {
+                const byte_offset: u32 = @intCast(self.bin.items.len);
+                for (prim.indices.items) |index| try appendU32Le(&self.bin, allocator, index - range.first_vertex);
+                const view = try self.addBufferView(allocator, .{
+                    .buffer = 0,
+                    .byteOffset = byte_offset,
+                    .byteLength = @intCast(prim.indices.items.len * 4),
+                    .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+                });
+                const indices = try self.addAccessor(allocator, .{
+                    .bufferView = view,
+                    .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
+                    .count = @intCast(prim.indices.items.len),
+                    .type = "SCALAR",
+                });
+                try self.primitives.append(allocator, .{ .attributes = .{ .POSITION = positions }, .indices = indices, .material = prim.material });
+            }
         }
     }
 

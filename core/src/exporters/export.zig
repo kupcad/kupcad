@@ -24,7 +24,8 @@ const gltf_exporter = @import("3d/gltf.zig");
 const step_exporter = @import("3d/step.zig");
 const threemf_exporter = @import("3d/threemf.zig");
 const obj_exporter = @import("3d/obj.zig");
-const MeshPart = @import("3d/mesh_part.zig").MeshPart;
+const mesh_part = @import("3d/mesh_part.zig");
+const MeshPart = mesh_part.MeshPart;
 const svg_exporter = @import("2d/svg.zig");
 const dxf_exporter = @import("2d/dxf.zig");
 const drawing_mod = @import("2d/drawing.zig");
@@ -84,9 +85,13 @@ pub fn exportShapes(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat,
     // Only the viewer's formats hold ghosts (showsGhosts): a file for a slicer or a CAD
     // package gets the model alone, decided here once for every writer
     const ghosts = if (format.showsGhosts()) shapes.ghosts else &.{};
-    const bytes = try switch (format.dimension()) {
+    const written = switch (format.dimension()) {
         .@"3d" => exportSolids(allocator, vm, format, options, shapes.solids, ghosts, shapes.title),
         .@"2d" => exportDrawing(allocator, vm, format, options, shapes.sketches, shapes.solids, shapes.paths),
+    };
+    const bytes = written catch |err| switch (err) {
+        error.BeyondFloatRange => return vm.fail(.GeometryError, "{s} writes 32-bit floats, and the model reaches past {e} mm from the origin, the most they hold", .{ @tagName(format), mesh_part.MAX_FLOAT_COORDINATE }),
+        else => |e| return e,
     };
     // The kernel computes a chain of booleans as it meshes them, in one call the evaluator's
     // look at the clock before each node doesn't see: a run past its limit fails here
@@ -261,12 +266,12 @@ fn threemfOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value,
     try made.items.ensureTotalCapacity(vm.gc.trackingAllocator(), grouping.parts.len);
     const parts = try allocator.alloc(MeshPart, grouping.parts.len);
     defer allocator.free(parts);
-    for (grouping.parts, parts) |part, *mesh_part| {
+    for (grouping.parts, parts) |part, *written| {
         const shape = try parts_mod.madeOf(vm, part);
         made.items.appendAssumeCapacity(shape);
         const handle = try vm.ensureConcrete(shape);
         try vm.requireFeature(handle.engine, .mesh);
-        mesh_part.* = .{ .handle = handle, .name = part.name };
+        written.* = .{ .handle = handle, .name = part.name };
     }
     const items = try allocator.alloc(threemf_exporter.Item, grouping.copies.len);
     defer allocator.free(items);

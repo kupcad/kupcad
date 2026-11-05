@@ -10,7 +10,8 @@ const kernel = @import("../../kernel/kernel.zig");
 const material = @import("../../core/material.zig");
 const MaterialDef = material.MaterialDef;
 const Placement = @import("../../core/placement.zig").Placement;
-const MeshPart = @import("mesh_part.zig").MeshPart;
+const mesh_part = @import("mesh_part.zig");
+const MeshPart = mesh_part.MeshPart;
 const material_groups = @import("material_groups.zig");
 const zip = @import("../zip.zig");
 
@@ -100,7 +101,7 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
 /// `part`'s mesh as the object `id`, its triangles in the materials they have (of
 /// `material_count`); false (and nothing written) when the mesh has none.
 fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize) !bool {
-    const mesh = kernel.getMesh(allocator, part.handle) orelse return error.MeshExtractionFailed;
+    const mesh = try mesh_part.floatMesh(allocator, part.handle);
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
     if (mesh.tri_verts.len == 0) return false;

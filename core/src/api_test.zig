@@ -310,6 +310,17 @@ test "API: only the viewer's formats hold the script's ghosts" {
     try testing.expectEqual(@as(u32, 12), std.mem.readInt(u32, stl[80..84], .little));
 }
 
+test "API: a model past what a 32-bit float holds is refused, not written as inf" {
+    // STL, 3MF, OBJ and glTF write 32-bit floats: `cube(1e39)` was written as `inf`, a file
+    // no reader takes back, KupCAD's own import_3mf neither
+    inline for (.{ "stl", "3mf", "obj", "glb" }) |format| {
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, "cube(1e39)", .{ .format = api.ExportFormat.parse(format).?, .diagnostic = &diag }));
+        try testing.expectEqualStrings("GeometryError: " ++ format ++ " writes 32-bit floats, and the model reaches past 3.4028234663852886e38 mm from the origin, the most they hold", diag.message.?);
+    }
+}
+
 test "API: a split that fails after its first file frees what it wrote, once" {
     // The list of files was freed before the files in it, so the errdefer that frees them
     // walked freed memory: `kupcad build --split` crashed.
