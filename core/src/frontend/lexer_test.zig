@@ -815,6 +815,26 @@ test "KupCAD Lexer: Modulo operator with parenthesized expressions" {
     });
 }
 
+test "KupCAD Lexer: `%` written against an operand is modulo, whatever letter follows" {
+    // `(i%w)` lexed `%w)` and the rest of the line as a word list (`%W`, `%i`, `%I`, `%q` and
+    // `%Q` alike), so `puts((i%w) + 1)` was a syntax error.
+    try expectTokens("(i%w)", &.{
+        t(.l_paren, "("), t(.ident, "i"), t(.percent, "%"), t(.ident, "w"), t(.r_paren, ")"), t(.eof, ""),
+    });
+    inline for (.{ "W", "i", "I", "q", "Q" }) |letter| {
+        try expectTokens("n%" ++ letter ++ "(1)", &.{
+            t(.ident, "n"), t(.percent, "%"), t(if (letter[0] == 'W' or letter[0] == 'I' or letter[0] == 'Q') .constant else .ident, letter), t(.l_paren, "("), t(.number, "1"), t(.r_paren, ")"), t(.eof, ""),
+        });
+    }
+    try expectTokens("7%w]", &.{ t(.number, "7"), t(.percent, "%"), t(.ident, "w"), t(.r_bracket, "]"), t(.eof, "") });
+    try expectTokens("a[0]%q", &.{ t(.ident, "a"), t(.l_bracket, "["), t(.number, "0"), t(.r_bracket, "]"), t(.percent, "%"), t(.ident, "q"), t(.eof, "") });
+    try expectTokens("f(x)%i;", &.{ t(.ident, "f"), t(.l_paren, "("), t(.ident, "x"), t(.r_paren, ")"), t(.percent, "%"), t(.ident, "i"), t(.semicolon, ";"), t(.eof, "") });
+    try expectTokens("\"a\"%w;", &.{ t(.string, "a"), t(.percent, "%"), t(.ident, "w"), t(.semicolon, ";"), t(.eof, "") });
+    // After a space, or where no operand ends, it starts a literal as before
+    try expectTokens("puts %w[a b]", &.{ t(.ident, "puts"), t(.percent_w, "%w[a b]"), t(.eof, "") });
+    try expectTokens("[%i(a)]", &.{ t(.l_bracket, "["), t(.percent_i, "%i(a)"), t(.r_bracket, "]"), t(.eof, "") });
+}
+
 test "KupCAD Lexer: Uppercase percent array literals (%W and %I)" {
     try expectTokens("a = %W[one two]\nb = %I(x y)", &.{
         t(.ident, "a"), t(.equal, "="), t(.percent_w, "%W[one two]"), t(.newline, "\n"),
@@ -1114,4 +1134,23 @@ test "KupCAD Lexer: a bare $ is a character the language doesn't use, $name a gl
     try expectTokens("$", &.{ t(.invalid, "$"), t(.eof, "") });
     try expectTokens("$$x", &.{ t(.invalid, "$"), t(.ident, "$x"), t(.eof, "") });
     try expectTokens("$x + $_y", &.{ t(.ident, "$x"), t(.plus, "+"), t(.ident, "$_y"), t(.eof, "") });
+}
+
+test "KupCAD Lexer: a token's text, as errors name it, is what lexes to it" {
+    // Errors named the tag (`'r_paren'`, `'keyword_end'`); the operators' lengths were a table
+    // of their own.
+    inline for (@typeInfo(lexer_mod.Tag).@"enum".field_names) |name| {
+        const tag = @field(lexer_mod.Tag, name);
+        if (comptime tag.text()) |text| {
+            errdefer std.debug.print("tag {s}\n", .{name});
+            var lexer = Lexer.init(text, 0);
+            const tok = lexer.next();
+            try testing.expectEqual(tag, tok.tag);
+            try testing.expectEqualStrings(text, tok.lexeme);
+            try testing.expectEqual(lexer_mod.Tag.eof, lexer.next().tag);
+        }
+    }
+    try testing.expectEqualStrings("')'", lexer_mod.Tag.r_paren.describe());
+    try testing.expectEqualStrings("'end'", lexer_mod.Tag.keyword_end.describe());
+    try testing.expectEqualStrings("the end of the file", lexer_mod.Tag.eof.describe());
 }

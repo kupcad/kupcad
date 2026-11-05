@@ -136,11 +136,84 @@ pub const Tag = enum {
     r_brace,
     colon,
 
-    pub fn operatorLen(tag: Tag) usize {
+    /// How the token is written: `)` for `r_paren`, `end` for `keyword_end`; null for one whose
+    /// text varies (a name, a number, a string) or that has none (a line break, the end).
+    pub fn text(tag: Tag) ?[]const u8 {
         return switch (tag) {
-            .star_star_equal, .or_or_equal, .and_and_equal, .greater_greater_equal => 3,
-            .equal_equal, .bang_equal, .greater_equal, .and_and, .or_or, .star_star, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .arrow, .minus_greater, .greater_greater, .ampersand_dot, .ampersand_equal, .pipe_equal, .caret_equal => 2,
-            else => 1,
+            .eof, .invalid, .unterminated_string, .unterminated_heredoc, .runs_into_heredoc, .interpolation_too_deep, .newline, .ident, .constant, .number, .string, .raw_string, .heredoc, .string_start, .string_mid, .string_end, .symbol, .quoted_symbol, .raw_symbol, .symbol_start, .comment, .percent_w, .percent_i => null,
+            .semicolon => ";",
+            .equal_equal => "==",
+            .bang_equal => "!=",
+            .less_equal => "<=",
+            .greater_equal => ">=",
+            .less_equal_greater => "<=>",
+            .less => "<",
+            .greater => ">",
+            .and_and => "&&",
+            .or_or => "||",
+            .bang => "!",
+            .star_star => "**",
+            .star => "*",
+            .slash => "/",
+            .percent => "%",
+            .pipe => "|",
+            .question => "?",
+            .plus => "+",
+            .minus => "-",
+            .ampersand => "&",
+            .caret => "^",
+            .tilde => "~",
+            .equal => "=",
+            .plus_equal => "+=",
+            .minus_equal => "-=",
+            .star_equal => "*=",
+            .slash_equal => "/=",
+            .percent_equal => "%=",
+            .star_star_equal => "**=",
+            .and_and_equal => "&&=",
+            .or_or_equal => "||=",
+            .ampersand_equal => "&=",
+            .pipe_equal => "|=",
+            .caret_equal => "^=",
+            .less_less_equal => "<<=",
+            .greater_greater_equal => ">>=",
+            .arrow => "=>",
+            .minus_greater => "->",
+            .less_less => "<<",
+            .greater_greater => ">>",
+            .dot_dot => "..",
+            .dot_dot_dot => "...",
+            .dot => ".",
+            .ampersand_dot => "&.",
+            .colon_colon => "::",
+            .comma => ",",
+            .l_paren => "(",
+            .r_paren => ")",
+            .l_bracket => "[",
+            .r_bracket => "]",
+            .l_brace => "{",
+            .r_brace => "}",
+            .colon => ":",
+            inline else => |keyword| comptime @tagName(keyword)["keyword_".len..],
+        };
+    }
+
+    /// What an error calls the token: its text in quotes (`')'`, `'end'`), or what it is
+    /// (`a name`, `the end of the file`). Errors named the tag (`'r_paren'`, `'keyword_end'`).
+    pub fn describe(tag: Tag) []const u8 {
+        return switch (tag) {
+            .eof => "the end of the file",
+            .newline => "the end of the line",
+            .invalid => "an unexpected character",
+            .unterminated_string, .unterminated_heredoc, .runs_into_heredoc, .interpolation_too_deep => "an unreadable string",
+            .ident => "a name",
+            .constant => "a constant",
+            .number => "a number",
+            .string, .raw_string, .heredoc, .string_start, .string_mid, .string_end => "a string",
+            .symbol, .quoted_symbol, .raw_symbol, .symbol_start => "a symbol",
+            .comment => "a comment",
+            .percent_w, .percent_i => "a %-literal",
+            inline else => |fixed| comptime "'" ++ fixed.text().? ++ "'",
         };
     }
 };
@@ -312,10 +385,14 @@ pub const Lexer = struct {
         const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
         const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
 
-        // Explicit percent literals (%w, %W, %i, %I, %q, %Q) are ALWAYS literals
+        // `i%w`, written against an operand, is modulo, as in Ruby: `(i%w)` lexed `%w)` and
+        // the rest of the line as a word list.
+        if (self.touchesOperand()) return self.consumeOperator(start_loc);
+
+        // Percent literals (%w, %W, %i, %I, %q, %Q), delimited by a character that starts no word
         if (c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
             if (c2 == 'w' or c2 == 'W' or c2 == 'i' or c2 == 'I' or c2 == 'q') {
-                return self.consumePercentLiteral(start_loc, true);
+                return self.consumePercentLiteral(start_loc);
             }
 
             if (c2 == 'Q') {
@@ -329,15 +406,23 @@ pub const Lexer = struct {
         return self.consumeOperator(start_loc);
     }
 
-    fn consumePercentLiteral(self: *Lexer, start_loc: common_token.Location, has_letter: bool) Token {
+    /// Whether the token at `index` touches the one before it, which ends an operand (a
+    /// name, a number, a closing bracket, a string or a literal word): what follows is an
+    /// operator then.
+    fn touchesOperand(self: *const Lexer) bool {
+        if (self.index == 0 or std.ascii.isWhitespace(self.buffer[self.index - 1])) return false;
+        return switch (self.prev_tag) {
+            .ident, .constant, .number, .r_paren, .r_bracket, .r_brace, .string, .raw_string, .string_end, .heredoc, .symbol, .quoted_symbol, .raw_symbol, .percent_w, .percent_i, .keyword_end, .keyword_self, .keyword_true, .keyword_false, .keyword_nil => true,
+            else => false,
+        };
+    }
+
+    /// `%w[...]`, `%W`, `%i`, `%I` or `%q`, from its `%`.
+    fn consumePercentLiteral(self: *Lexer, start_loc: common_token.Location) Token {
         const full_start = self.index;
         self.advance(); // %
-
-        var kind: u8 = 0;
-        if (has_letter) {
-            kind = self.peek(); // w, W, i, I, or q
-            self.advance();
-        }
+        const kind = self.peek(); // w, W, i, I, or q
+        self.advance();
 
         const open_delim = self.peek();
         self.advance();
@@ -372,9 +457,9 @@ pub const Lexer = struct {
         const inner_end = self.index;
         self.advance(); // consume close delim
 
-        const tag: Tag = if (!has_letter or kind == 'q') .raw_string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
+        const tag: Tag = if (kind == 'q') .raw_string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
 
-        if (!has_letter or kind == 'q') {
+        if (tag == .raw_string) {
             // For raw strings (%q), the parser expects exactly the inner content.
             var content_loc = start_loc;
             content_loc.offset = @intCast(inner_start);
@@ -446,8 +531,8 @@ pub const Lexer = struct {
             else => return self.makeToken(.eof),
         };
 
-        // Ensure proper multi-char operator advances for *= and other augmented assignments
-        self.index = start + tag.operatorLen();
+        // Past the operator's text: `*=` and the other augmented assignments are longer
+        self.index = start + tag.text().?.len;
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }

@@ -31,9 +31,9 @@ it("marks check's findings and the places the run named, the run's error unless 
     { severity: 'warning', message: 'mended', line: 2, column: 5 },
   ]);
   // It doesn't parse: check says why, where, and the run's error would say it again
-  const syntax = findingOf({ severity: 'error', message: "Expected 'r_paren'" });
+  const syntax = findingOf({ severity: 'error', message: "Expected ')'" });
   expect(marksOf([syntax], problems).map((mark) => mark.message)).toEqual([
-    "Expected 'r_paren'",
+    "Expected ')'",
     'mended',
   ]);
 });

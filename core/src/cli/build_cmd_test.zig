@@ -607,7 +607,7 @@ test "build_cmd: syntax errors are reported with file, line, column and a caret"
     defer testing.allocator.free(first);
     const second = try testing.allocator.print("{s}:4:5:", .{fx.input});
     defer testing.allocator.free(second);
-    for ([_][]const u8{ first, "Expected 'r_paren', but found 'sphere' [unexpected-token]\nsphere(2)\n", second, "Invalid expression starting with ')' [invalid-expression]\nx = )\n    ", "^" }) |needle| {
+    for ([_][]const u8{ first, "Expected ')', but found 'sphere' [unexpected-token]\nsphere(2)\n", second, "Invalid expression starting with ')' [invalid-expression]\nx = )\n    ", "^" }) |needle| {
         errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
         try testing.expect(std.mem.find(u8, text, needle) != null);
     }

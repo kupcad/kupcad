@@ -108,7 +108,7 @@ describe('build', () => {
 
   it("refuses with the core's message: a syntax error where it is, a runtime error, a bad format", async () => {
     await expect(kupcad.build('cube(')).rejects.toThrow(
-      new KupcadError("1:6: Expected 'r_paren', but found '' [unexpected-token]"),
+      new KupcadError("1:6: Expected ')', but found the end of the file [unexpected-token]"),
     );
     await expect(kupcad.build('raise "boom"')).rejects.toThrow(
       new KupcadError('RuntimeError: boom'),

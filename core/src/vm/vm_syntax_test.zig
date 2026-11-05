@@ -865,3 +865,14 @@ test "VM: a `# @tag` comment ending a method's last line leaves its value" {
         .{ .src = "def f(a)\n  a # @return the value\nend\nr = f(2)", .expected = .{ .num = 2 } },
     });
 }
+
+test "VM: an element assigned in an argument list takes one value, and `i%w` is modulo" {
+    // `f(a[0] = 5, 6)` passed one argument and set a to [[5, 6]], `f(m[:k] += 1, 7)` raised a
+    // TypeError, and `(i%w)` lexed as a word list.
+    const support = @import("../test_support.zig");
+    try support.expectScripts(&.{
+        .{ .src = "def f(*xs) = xs.size\na = [0]\nr = [f(a[0] = 5, 6), a[0]]", .expected = .{ .nums = &.{ 2, 5 } } },
+        .{ .src = "def f(*xs) = xs.size\nm = { k: 1 }\nr = [f(m[:k] += 1, 7), m[:k]]", .expected = .{ .nums = &.{ 2, 2 } } },
+        .{ .src = "i = 7\nw = 3\nr = (i%w) + 1", .expected = .{ .num = 2 } },
+    });
+}

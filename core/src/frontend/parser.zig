@@ -349,23 +349,26 @@ pub const Parser = struct {
     }
 
     /// The flags a bracket ends, as they were outside it.
-    const Outer = struct { loop_header: bool, command_args: bool };
+    const Outer = struct { loop_header: bool, command_args: bool, block_params: bool };
 
     /// Clears the flags that hold until a bracket opens, within `( )`, `[ ]`, `{ }`, a
     /// lambda or a block: `do` opens blocks again in a loop header (`for x in (xs.map do |v|
-    /// v end)`), and `rescue` is the modifier again in a call's arguments. Pair with
+    /// v end)`), `rescue` is the modifier again in a call's arguments, and `|` an operator
+    /// again in a block's parameters (`|a = (x | y)|`). Pair with
     /// `defer self.leaveBrackets(outer)`.
     fn enterBrackets(self: *Parser) Outer {
         defer {
             self.in_loop_header = false;
             self.in_command_args = false;
+            self.in_block_params = false;
         }
-        return .{ .loop_header = self.in_loop_header, .command_args = self.in_command_args };
+        return .{ .loop_header = self.in_loop_header, .command_args = self.in_command_args, .block_params = self.in_block_params };
     }
 
     fn leaveBrackets(self: *Parser, outer: Outer) void {
         self.in_loop_header = outer.loop_header;
         self.in_command_args = outer.command_args;
+        self.in_block_params = outer.block_params;
     }
 
     /// The expression of a `for` or `while` header, which ends at the line break or `;`.
@@ -403,8 +406,20 @@ pub const Parser = struct {
             self.advance();
             return captured_idx;
         }
-        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected '{s}', but found '{s}'", .{ @tagName(expected), self.lexeme(0) });
+        self.reportExpected(expected.describe());
         return ParseError.UnexpectedToken;
+    }
+
+    /// Reports that `what` (`')'`, `a name`) should come where the current token is, naming
+    /// that token as written, or the end of its line or of the file.
+    fn reportExpected(self: *Parser, what: []const u8) void {
+        const loc = self.getLoc(self.tok_idx);
+        const found = self.tag(0);
+        if (found.text() != null or found == .eof or found == .newline) {
+            self.reportError(loc, .@"unexpected-token", "Expected {s}, but found {s}", .{ what, found.describe() });
+        } else {
+            self.reportError(loc, .@"unexpected-token", "Expected {s}, but found '{s}'", .{ what, self.lexeme(0) });
+        }
     }
 
     fn skipIgnored(self: *Parser) void {
@@ -776,17 +791,14 @@ pub const Parser = struct {
         return self.b.ternary(condition, then_branch, else_branch, cond_main_token) catch ParseError.OutOfMemory;
     }
 
-    fn parseIndexAccessOrAssignment(self: *Parser, target: ast.NodeIndex) ParseError!ast.NodeIndex {
+    /// `target[index]`. An assignment to it (`list[0] = 2`) is parseAssignmentExpr's, as any
+    /// other's: parsed here too, it took the rest of an argument list as its value
+    /// (`f(a[0] = 5, 6)` passed one argument, `a[0]` being `[5, 6]`).
+    fn parseIndexAccess(self: *Parser, target: ast.NodeIndex) ParseError!ast.NodeIndex {
         _ = try self.expect(.l_bracket);
         const target_main_token = self.b.tree.getNode(target).?.main_token;
         const index = try self.parseExpressionList();
         _ = try self.expect(.r_bracket);
-        if (isAssignmentOp(self.tag(0))) {
-            const op_tag = self.tag(0);
-            self.advance();
-            const value = try self.parseExpressionList();
-            return self.b.indexAssignment(target, index, tagToAssignmentOp(op_tag), value, target_main_token) catch ParseError.OutOfMemory;
-        }
         return self.b.indexAccess(target, index, target_main_token) catch ParseError.OutOfMemory;
     }
 
@@ -804,7 +816,7 @@ pub const Parser = struct {
         if (self.tag(0) == .pipe) {
             self.advance();
 
-            // Toggle the state flag for parameter parsing
+            // `|` closes the list here, not an operator (but within brackets: enterBrackets)
             self.in_block_params = true;
             const outer_list = self.enterParamList();
             const elements = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .pipe);
@@ -988,8 +1000,9 @@ pub const Parser = struct {
             self.skipIgnored();
             else_branch = try self.parseBlock(&.{.keyword_end});
             _ = try self.expect(.keyword_end);
-        } else if (self.tag(0) == .keyword_end) {
-            self.advance();
+        } else {
+            // The file may not end in its body: `if c` and a body with no `end` ran it
+            _ = try self.expect(.keyword_end);
         }
         const end_tok = self.tok_idx;
         return self.b.ifStmt(condition, then_branch, else_branch, is_unless, end_tok, start_tok) catch ParseError.OutOfMemory;
@@ -1196,7 +1209,7 @@ pub const Parser = struct {
     fn parseClassPath(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
         if (self.tag(0) != .constant and self.tag(0) != .ident) {
-            self.reportError(self.getLoc(start_tok), .@"unexpected-token", "Expected 'constant', but found '{s}'", .{self.lexeme(0)});
+            self.reportExpected("a class name");
             return ParseError.UnexpectedToken;
         }
         const s_len = self.scratch_strings.items.len;
@@ -1774,7 +1787,7 @@ pub const Parser = struct {
                 .dot => try self.parseMethodCall(left, false),
                 .ampersand_dot => try self.parseMethodCall(left, true),
                 .colon_colon => try self.parseScopeResolution(left),
-                .l_bracket => try self.parseIndexAccessOrAssignment(left),
+                .l_bracket => try self.parseIndexAccess(left),
                 .l_paren => try self.parseCallOnExpr(left),
                 .keyword_rescue => try self.parseRescueModifierExpr(left),
                 else => break,
@@ -1964,6 +1977,8 @@ pub const Parser = struct {
     /// makes `x -1` and `x [0]` arithmetic and indexing; a method name takes them as arguments.
     fn isCommandCallStart(self: *Parser, callee_is_variable: bool) bool {
         const t = self.tag(0);
+        // The `|` closing a block's parameters: `|a, b = x|` was the call `x(|...)`
+        if (t == .pipe and self.in_block_params) return false;
         switch (t) {
             // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
             // `=>` starts no argument either: `{ k => 1 }` is a key, not a call `k(=> 1)`.

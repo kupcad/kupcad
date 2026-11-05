@@ -45,7 +45,7 @@ the file for each bundle that names it, ships it once rather than once more for 
 ## What a call can fail with
 
 * `KupcadError`: the core refused, with its message: a script that doesn't parse
-  (`1:6: Expected 'r_paren' ...`) or run (`RuntimeError: boom`), values it refused
+  (`1:6: Expected ')' ...`) or run (`RuntimeError: boom`), values it refused
   (`parameters: ...`), a format it doesn't write. A preview doesn't throw for these: its frame
   says why.
 * `KupcadCrashError`: the module stopped (a trap, or an exit), or the worker failed (its script

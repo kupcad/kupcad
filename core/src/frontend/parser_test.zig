@@ -1131,7 +1131,24 @@ test "KupCAD Parser: Diagnostics for Unexpected Token" {
     const result = pt.parser.parseExpression(.none);
     try testing.expectError(error.UnexpectedToken, result);
     try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
-    try testing.expectEqualStrings("Expected 'r_paren', but found ']'", pt.parser.diagnostics.list.items[0].message);
+    try testing.expectEqualStrings("Expected ')', but found ']'", pt.parser.diagnostics.list.items[0].message);
+}
+
+test "KupCAD Parser: a missing token is named as written, and so is the end of the file" {
+    // Errors named the lexer's tags: "Expected 'r_paren', but found 'puts'", and at the end
+    // "Expected 'keyword_end', but found ''".
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "f(1 puts", .message = "Expected ')', but found 'puts'" },
+        .{ .source = "def f\n  1\n", .message = "Expected 'end', but found the end of the file" },
+        .{ .source = "x = [1, 2", .message = "Expected ']', but found the end of the file" },
+        .{ .source = "a.(1)", .message = "Expected a name, but found '('" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var doc = try Document.parse(testing.allocator, case.source);
+        defer doc.deinit();
+        try testing.expectEqualStrings(case.message, doc.diagnostics[0].message);
+    }
 }
 
 test "KupCAD Parser: Diagnostics for Invalid Expression (AST Poisoning)" {
@@ -1314,7 +1331,7 @@ test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
     const result = pt.parser.parseStatement();
     try testing.expectError(error.UnexpectedToken, result);
     try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
-    try testing.expectEqualStrings("Expected 'constant', but found '123'", pt.parser.diagnostics.list.items[0].message);
+    try testing.expectEqualStrings("Expected a class name, but found '123'", pt.parser.diagnostics.list.items[0].message);
 }
 
 test "KupCAD Parser: CSG Math Chains with Mixed Arithmetic and Set Operators" {
@@ -4570,15 +4587,20 @@ test "Parser: an assignment in an argument or an element takes one value" {
         .{ .src = "o b = 5, 6", .count = 2 },
         .{ .src = "o(b = 5,\n)", .count = 1 },
         .{ .src = "o(k: b = 5, j: 6)", .count = 2 },
+        // An element's assignment was parsed apart, ignoring this: `a[0]` took `[5, 6]`
+        .{ .src = "a = [0]\no(a[0] = 5, 6)", .count = 2 },
+        .{ .src = "m = {}\no(m[:k] += 1, 7)", .count = 2 },
+        .{ .src = "a = [0]\no a[0] = 5, 6", .count = 2 },
     }) |case| {
         var pt = try KTest.init(case.src);
         defer pt.deinit();
         const node = try lastStatement(&pt, case.src);
         const mc = pt.parser.b.tree.methodCall(node);
         try testing.expectEqual(case.count, mc.args.end - mc.args.start);
-        try testing.expectEqual(ast.Tag.assignment, pt.getNode(pt.parser.b.tree.getNamedArgs(mc.args)[0].value).tag);
+        const first = pt.getNode(pt.parser.b.tree.getNamedArgs(mc.args)[0].value).tag;
+        try testing.expect(first == .assignment or first == .index_assignment);
     }
-    for ([_][]const u8{ "[b = 5, 6]", "{ k: b = 5, j: 6 }" }) |src| {
+    for ([_][]const u8{ "[b = 5, 6]", "{ k: b = 5, j: 6 }", "a = [0]\n[a[0] = 5, 6]" }) |src| {
         var pt = try KTest.init(src);
         defer pt.deinit();
         _ = try lastStatement(&pt, src);
@@ -4590,6 +4612,33 @@ test "Parser: an assignment in an argument or an element takes one value" {
     var doc = try Document.parse(testing.allocator, "y = 1, 2\nr = y.length");
     defer doc.deinit();
     try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+    // A statement's element assignment takes the list too
+    var element = try KTest.init("a = [0]\na[0] = 5, 6");
+    defer element.deinit();
+    const ia = element.parser.b.tree.indexAssignment(try lastStatement(&element, "a = [0]\na[0] = 5, 6"));
+    try testing.expectEqual(ast.Tag.array_literal, element.getNode(ia.value).tag);
+}
+
+test "Parser: a block parameter's default may end in a name" {
+    // The name then took the closing `|` for its argument: "Invalid expression starting with '|'".
+    for ([_][]const u8{
+        "x = 2\n[1].each { |a, b = x| a + b }",
+        "x = 2\n[1].each { |a, k: x| a + k }",
+        "x = 2\n[1].each do |a, b = x|\n  a + b\nend",
+        "x = 2\n[1].each { |a, b = (x | 1)| a + b }",
+        "x = 2\n[1].each { |a, b = [1].map { |v| v | x }.first| a + b }",
+    }) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        try compileOnly(src);
+    }
+}
+
+test "Parser: an if, unless or elsif the file ends in without its end is a syntax error" {
+    // It ran: `if true` and a body at the end of the file printed, and fmt added the `end`.
+    for ([_][]const u8{ "if true\n  puts 1\n", "unless false\n  puts 1\n", "if false\n  1\nelsif true\n  puts 1\n" }) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        try expectSingleDiagnostic(src, "Expected 'end', but found the end of the file");
+    }
 }
 
 test "KupCAD Parser: an import's path may be single-quoted" {
