@@ -2,6 +2,10 @@ module Kupcad
   VERSION: String
   FORMATS: Array[Symbol]
 
+  # A parameter value: what JSON has a type for (Kupcad.build raises TypeError for anything else)
+  type json_scalar = String | Symbol | Integer | Float | bool | nil
+  type json_value = json_scalar | Array[json_value] | Hash[json_scalar, json_value]
+
   class Error < StandardError
   end
 
@@ -56,6 +60,6 @@ module Kupcad
   def self.format: (String source) -> String
   def self.check: (String source) -> Array[Finding]
   def self.params: (String source) -> Hash[Symbol, untyped]
-  def self.build: (String source, ?format: Symbol | String, ?params: Hash[Symbol | String, untyped],
-                   ?files: Hash[_ToS, String], ?memory_limit: Integer?, ?timeout: Numeric?, ?draco: boolish) -> Model
+  def self.build: (String source, ?format: Symbol | String, ?params: Hash[Symbol | String, json_value]?,
+                   ?files: Hash[_ToS, String]?, ?memory_limit: Integer?, ?timeout: Numeric?, ?draco: boolish) -> Model
 end

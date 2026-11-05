@@ -3,6 +3,7 @@
 require 'json'
 require_relative 'kupcad/version'
 require_relative 'kupcad/native'
+require_relative 'kupcad/params'
 
 # KupCAD from Ruby: build the model of a KupCAD script, with its parameters, in any format the
 # CLI exports, and format, lint and read the parameters of scripts. It runs libkupcad, the
@@ -93,18 +94,20 @@ module Kupcad
     # Runs `source` and builds its model in `format` (one of FORMATS), a Model.
     #
     # params: the parameters' values by name, as `kupcad build -p` takes them
-    #   ({ width: 60, label: 'A', holes: [[5, 5], [35, 5]] }).
+    #   ({ width: 60, label: 'A', holes: [[5, 5], [35, 5]] }); nil for none.
     # files: the files the script imports, by their path from its folder, text or binary
-    #   ({ 'lib/gears.kup' => File.read('lib/gears.kup'), 'parts/base.stl' => File.binread(...) }).
+    #   ({ 'lib/gears.kup' => File.read('lib/gears.kup'), 'parts/base.stl' => File.binread(...) });
+    #   nil for none.
     # memory_limit: the most memory, in bytes, the script may hold; nil for no limit.
     # timeout: the most time, in seconds, the build may take; nil (or Float::INFINITY) for no
     #   limit. The time is checked every few thousand instructions and between geometry
     #   operations.
     # draco: compress a GLB's or a glTF's meshes with Draco.
     #
-    # Raises ScriptError when the script fails, with what it printed and warned of until then,
-    # ArgumentError for a format that isn't one, a limit that isn't positive, or parameter
-    # values JSON can't hold, and TypeError for a source or a file's content that isn't a String.
+    # Raises ScriptError when the script fails, with what it printed and warned of until then;
+    # ArgumentError for a format that isn't one, a limit that isn't positive, or parameter values
+    # JSON can't hold (NaN) or that aren't by name (an Array); and TypeError for values JSON has
+    # no type for (a Rational, a Set), or a source or a file's content that isn't a String.
     def build(source, format: :stl, params: {}, files: {}, memory_limit: nil, timeout: nil, draco: false)
       format = format.to_sym
       unless FORMATS.include?(format)
@@ -112,7 +115,7 @@ module Kupcad
       end
 
       data, report = call(:kupcad_build, *Native.buffer(utf8(source, 'source')), format.to_s,
-                          *Native.buffer(params_json(params)), *Native.buffer(pack(files)),
+                          *Native.buffer(Params.json(params)), *Native.buffer(pack(files || {})),
                           limit(memory_limit, 'memory_limit'), milliseconds(timeout), draco ? true : false)
       Model.new(data:, format:, report: Report.from_json(report))
     end
@@ -150,12 +153,6 @@ module Kupcad
       raise TypeError, "#{name} is #{text.class}: a String" unless text.is_a?(String)
 
       RAW_ENCODINGS.include?(text.encoding) ? text : text.encode(Encoding::UTF_8)
-    end
-
-    def params_json(params)
-      params.empty? ? '' : JSON.generate(params)
-    rescue JSON::GeneratorError, JSON::NestingError => e
-      raise ArgumentError, "parameters: #{e.message}"
     end
 
     # A limit as the library takes it, 0 for none; one past what it holds is none either

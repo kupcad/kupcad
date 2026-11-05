@@ -26,12 +26,14 @@ model.report.warnings.each { |w| warn "#{w.line}: #{w.message}" }
   `:dxf`), and the run's `report`, what the script printed and the `Kupcad::RunWarning`s it
   warned of, where.
   - `params:` the parameters' values by name, as `kupcad build -p` takes them:
-    `{ width: 60, thread: :m4, holes: [[5, 5], [35, 5]] }`. Values are checked against each
-    parameter's rules.
+    `{ width: 60, thread: :m4, holes: [[5, 5], [35, 5]] }`, each what JSON has a type for (a
+    String or a Symbol, an Integer or a Float, true, false, nil, an Array or a Hash of them).
+    Values are checked against each parameter's rules.
   - `files:` the files the script imports, by their path from its folder, each a String, text
     or binary: `{ 'lib/gears.kup' => File.read('lib/gears.kup'), 'parts/base.stl' =>
     File.binread(...) }`. A script reads no other file, and its exports (`export_stl`) write
     nothing.
+  - `nil` for `params:` or `files:` is none, as leaving them out is.
   - `memory_limit:` the most memory, in bytes, the script may hold: its values and its
     geometry graph, not the kernel's meshes; no limit by default.
   - `timeout:` the most time, in seconds, the build may take, to the millisecond; no limit by
@@ -58,7 +60,9 @@ US-ASCII one as UTF-8, which is what libkupcad reads); a file's content is passe
   thin"`), and its `report` holds what the script printed until then.
 - `ArgumentError` for a format that isn't one, a limit that isn't positive, parameter values
   JSON can't hold (NaN), or values that aren't by name (an Array).
-- `TypeError` for a source, or a file's content, that isn't a String (a `Pathname`: read it).
+- `TypeError` for parameter values JSON has no type for (a `Rational`, a `BigDecimal`, a `Set`:
+  JSON would write them as text), saying which, or a source, or a file's content, that isn't a
+  String (a `Pathname`: read it).
 - `NoMemoryError` when the process itself runs out of memory, and `Kupcad::Error` itself when
   libkupcad fails on its own, a bug of KupCAD's.
 

@@ -1,0 +1,9 @@
+module Kupcad
+  # The parameters' values as the JSON libkupcad takes them, each checked first (private to the gem)
+  module Params
+    SCALARS: Array[Module]
+    DEPTH: Integer
+
+    def self.json: (untyped params) -> String
+  end
+end

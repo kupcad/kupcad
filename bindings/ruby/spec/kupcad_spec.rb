@@ -117,6 +117,20 @@ RSpec.describe Kupcad do
       expect { described_class.build('cube(1)', params: [['width', 1]]) }.to raise_error(ArgumentError, /object/)
     end
 
+    # JSON.generate writes them as their to_s: "5/2", which a number parameter refused, and
+    # "#<Object...>", which a string parameter took
+    it 'raises TypeError for parameter values, or keys, JSON has no type for, saying where' do
+      [[{ width: 5r / 2 }, /params\[:width\] is Rational/], [{ label: Object.new }, /params\[:label\] is Object/],
+       [{ holes: [[5, 5], Set[1, 2]] }, /params\[:holes\]\[1\] is Set/],
+       [{ size: { Object.new => 1 } }, /a key of params\[:size\] is Object/]].each do |params, message|
+        expect { described_class.build('cube(1)', params:) }.to raise_error(TypeError, message)
+      end
+    end
+
+    it 'takes nil parameters and files as none' do
+      expect(described_class.build('cube(1)', params: nil, files: nil).data).not_to be_empty
+    end
+
     it 'raises ArgumentError for a limit that is not a positive number' do
       expect { described_class.build('cube(1)', memory_limit: -1) }.to raise_error(ArgumentError, /memory_limit/)
       expect { described_class.build('cube(1)', memory_limit: 1.5) }.to raise_error(ArgumentError, /memory_limit/)
