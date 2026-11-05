@@ -150,7 +150,8 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   Edit, View, Window, Help) is set from the page as the window changes (Save enabled once there
   is something to save, Open Recent's folders, Show or Hide Files); a tree's row has its own
   menu. Help's Keyboard Shortcuts, as the button at the end of the preview's bottom bar, lists
-  the app's, the tree's, the editor's and the viewer's keys. The settings apply as they are
+  the app's (the menu bar's, from the one table its accelerators come from: `menu.js`'s
+  `SHORTCUTS`), the tree's, the editor's and the viewer's keys, as the system names them. The settings apply as they are
   set, from the page or not, and are kept in the app's settings file (`settings.json` in its
   config folder, macOS's `~/Library/Application Support/dev.kupcad.desktop/`, through Tauri's
   store plugin), read before the window is laid out, each change written to it, and followed

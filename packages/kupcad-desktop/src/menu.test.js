@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { menuBar } from './menu.js';
+import { keysOf, menuBar, SHORTCUTS, shortcutKeys } from './menu.js';
 
 /** @import { MenuAction, MenuEntry, MenuState } from './menu.js' */
 
@@ -125,5 +125,38 @@ describe('the menu bar', () => {
     expect(submenuOf(menuBar(STATE, actions()), 'Edit')?.items).toContainEqual({
       predefined: 'Paste',
     });
+  });
+});
+
+/**
+ * The accelerators of `entries`, at any depth.
+ * @param {MenuEntry[]} entries
+ * @returns {string[]}
+ */
+const accelerators = (entries) =>
+  entries.flatMap((entry) => {
+    if (typeof entry !== 'object' || 'predefined' in entry) return [];
+    if ('items' in entry) return accelerators(entry.items);
+    return entry.accelerator ? [entry.accelerator] : [];
+  });
+
+describe('the shortcuts', () => {
+  it("are the menu bar's, each listed in the Keyboard Shortcuts dialog", () => {
+    const listed = Object.values(SHORTCUTS).map((shortcut) => shortcut.accelerator);
+    for (const mac of [true, false]) {
+      expect(accelerators(menuBar({ ...STATE, mac }, actions())).toSorted()).toEqual(
+        listed.toSorted(),
+      );
+    }
+    expect(shortcutKeys('mac')).toContainEqual(['⌘S', 'Save the script']);
+    expect(shortcutKeys('windows')).toContainEqual(['Ctrl+Shift+N', 'New folder']);
+  });
+
+  it('are written as the system names its keys', () => {
+    expect(keysOf('CmdOrCtrl+Shift+N', 'mac')).toBe('⇧⌘N');
+    expect(keysOf('CmdOrCtrl+,', 'mac')).toBe('⌘,');
+    expect(keysOf('CmdOrCtrl+-', 'mac')).toBe('⌘-');
+    expect(keysOf('CmdOrCtrl+Shift+N', 'windows')).toBe('Ctrl+Shift+N');
+    expect(keysOf('CmdOrCtrl+=', 'other')).toBe('Ctrl+=');
   });
 });

@@ -23,7 +23,7 @@ export {
   settingsObject,
   sizeSetting,
 } from './settings.js';
-export { VIEWER_SHORTCUTS } from './shortcuts.js';
+export { keyboardSystem, VIEWER_SHORTCUTS } from './shortcuts.js';
 export { watchTokens } from './theme.js';
 export { plainValues } from './values.svelte.js';
 export {
@@ -43,5 +43,6 @@ export { connectViewport } from './viewport-socket.js';
 /** @typedef {import('./run-status.js').RunStatus} RunStatus */
 /** @typedef {import('./settings.js').Settings} Settings */
 /** @typedef {import('./shortcuts.js').ShortcutGroup} ShortcutGroup */
+/** @typedef {import('./shortcuts.js').KeyboardSystem} KeyboardSystem */
 /** @typedef {import('./view-settings.js').ViewChoices} ViewChoices */
 /** @typedef {import('./viewport-socket.js').ViewportEvents} ViewportEvents */

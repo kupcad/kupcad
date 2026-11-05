@@ -25,6 +25,7 @@
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText, memoryLimitOf } from '@kupcad/protocol';
   import {
+    keyboardSystem,
     memorySettings,
     PreviewPanel,
     ShortcutsDialog,
@@ -46,7 +47,7 @@
   } from '@kupcad/files';
   import { fileUri, moduleUri } from './folder.js';
   import { createHost } from './host.js';
-  import { menuBar } from './menu.js';
+  import { keysOf, menuBar, SHORTCUTS, shortcutKeys } from './menu.js';
   import { fontSizeOf, KEYS, recentOf, withRecent, zoomOf, zoomStep } from './prefs.js';
   import SettingsPane from './SettingsPane.svelte';
   import { themeOf } from './theme.js';
@@ -76,11 +77,11 @@
 
   /** How long a script changed waits to be saved, where the settings say it is, in milliseconds. */
   const AUTOSAVE_MS = 1000;
-  const MAC = globalThis.navigator?.userAgent.includes('Mac') ?? false;
-  /** The shortcuts' key as this system names it, in the strip's tooltips. */
-  const MOD = MAC ? '⌘' : 'Ctrl+';
+  /** The system the window runs on, as its keys are named. */
+  const SYSTEM = keyboardSystem();
+  const MAC = SYSTEM === 'mac';
   /** Where a file moved away goes. */
-  const TRASH = globalThis.navigator?.userAgent.includes('Windows') ? 'Recycle Bin' : 'Trash';
+  const TRASH = SYSTEM === 'windows' ? 'Recycle Bin' : 'Trash';
 
   // As the settings have them; a size dragged is the pane's own until the drag is done
   let filesWidth = $derived(sizeSetting(settings, KEYS.files, 224));
@@ -137,40 +138,28 @@
   let settingsButton = $state(/** @type {HTMLButtonElement | null} */ (null));
   let shortcutsOpen = $state(false);
 
-  /** A shortcut as this system writes it: ⇧⌘N on a Mac, Ctrl+Shift+N elsewhere. */
-  const combo = (/** @type {string} */ key, shift = false) =>
-    MAC ? `${shift ? '⇧' : ''}⌘${key}` : `Ctrl+${shift ? 'Shift+' : ''}${key}`;
+  /** An accelerator's keys as this system writes them: ⇧⌘N on a Mac, Ctrl+Shift+N elsewhere. */
+  const keys = (/** @type {string} */ accelerator) => keysOf(accelerator, SYSTEM);
   /** @type {ShortcutGroup[]} */
-  const SHORTCUTS = [
-    {
-      title: 'KupCAD',
-      keys: [
-        [combo('S'), 'Save the script'],
-        [combo('N'), 'New script'],
-        [combo('N', true), 'New folder'],
-        [combo('O'), 'Open a folder'],
-        [combo('B'), 'Show or hide the files'],
-        [combo(','), 'Settings'],
-        [`${combo('=')} / ${combo('-')}`, 'Zoom in / out'],
-        ['Esc', 'Close the settings'],
-      ],
-    },
+  const SHORTCUT_GROUPS = [
+    // The menu bar's, as it has them
+    { title: 'KupCAD', keys: [...shortcutKeys(SYSTEM), ['Esc', 'Close the settings']] },
     {
       title: 'Files',
       keys: [
         ['↑ ↓', 'Move between the rows'],
         ['→ ←', 'Open or close a folder'],
         ['F2', 'Rename'],
-        [`Delete, ${combo('⌫')}`, `Move to the ${TRASH}`],
+        [`Delete, ${keys('CmdOrCtrl+⌫')}`, `Move to the ${TRASH}`],
         ['Shift+F10', "The row's menu"],
       ],
     },
     {
       title: 'Editor',
       keys: [
-        [combo('F'), 'Find'],
-        [combo('Z'), 'Undo'],
-        [combo('Z', true), 'Redo'],
+        [keys('CmdOrCtrl+F'), 'Find'],
+        [keys('CmdOrCtrl+Z'), 'Undo'],
+        [keys('CmdOrCtrl+Shift+Z'), 'Redo'],
         ['Tab', 'Indent'],
       ],
     },
@@ -714,7 +703,7 @@
     <button
       type="button"
       aria-label="Files"
-      title="Files ({combo('B')})"
+      title="Files ({keys(SHORTCUTS.toggleFiles.accelerator)})"
       aria-pressed={filesShown && !settingsOpen}
       disabled={!folder}
       onclick={toggleFiles}
@@ -729,7 +718,7 @@
       type="button"
       class="settings"
       aria-label="Settings"
-      title="Settings ({MOD},)"
+      title="Settings ({keys(SHORTCUTS.settings.accelerator)})"
       aria-pressed={settingsOpen}
       onclick={toggleSettings}
       bind:this={settingsButton}
@@ -793,7 +782,10 @@
             onrename={startRename}
             ontrash={(entry) => void trashEntry(entry)}
             onnew={(kind) => startNew(kind)}
-            keys={{ script: combo('N'), folder: combo('N', true) }}
+            keys={{
+              script: keys(SHORTCUTS.newScript.accelerator),
+              folder: keys(SHORTCUTS.newFolder.accelerator),
+            }}
             ondropfiles={(dropped, dir) => void dropFiles(dropped, dir)}
           />
         </nav>
@@ -842,7 +834,7 @@
             {settings}
             presets={false}
             console={showsConsole}
-            shortcuts={SHORTCUTS}
+            shortcuts={SHORTCUT_GROUPS}
             bind:shortcutsOpen
           />
         </section>
@@ -870,7 +862,10 @@
             </section>
           {/if}
         </div>
-        <ShortcutsDialog groups={[...SHORTCUTS, VIEWER_SHORTCUTS]} bind:open={shortcutsOpen} />
+        <ShortcutsDialog
+          groups={[...SHORTCUT_GROUPS, VIEWER_SHORTCUTS]}
+          bind:open={shortcutsOpen}
+        />
       {/if}
     </div>
     {#if settingsOpen}
