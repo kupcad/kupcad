@@ -16,6 +16,7 @@ const geom = @import("../core/geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
+const vec3 = @import("../core/vec3.zig");
 
 /// Material slots carried on solids (the Manifold engine stores them as a vertex property).
 /// Slot 0 is the default material and user material `id` (an index into VM.materials) is
@@ -220,8 +221,24 @@ pub inline fn polygon(config: *const EngineConfig, allocator: std.mem.Allocator,
     return dispatchOn("polygonFn", config.engine, .{ config, allocator, pts });
 }
 
-pub inline fn polyhedron(config: *const EngineConfig, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    return dispatchOn("polyhedronFn", config.engine, .{ config, allocator, points, faces });
+/// The solid a closed mesh bounds, wound outward whichever way its faces are given: a mesh
+/// whose signed volume (in f64) is negative has every face turned around before either
+/// engine sees it. Manifold built such a mesh, measured it and built it again turned, and
+/// the B-Rep engine kept it as given, an inside-out solid (a STEP whose planes face into it).
+pub fn polyhedron(config: *const EngineConfig, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    // Six times the volume, each face's tetrahedron to a corner of the mesh: about one of
+    // its own points, a mesh far from the origin doesn't sum large terms that cancel
+    var signed: f64 = 0;
+    for (faces) |f| {
+        for (f) |i| if (i >= points.len) return null;
+        const a = vec3.sub(points[f[0]], points[0]);
+        signed += vec3.dot(a, vec3.cross(vec3.sub(points[f[1]], points[0]), vec3.sub(points[f[2]], points[0])));
+    }
+    if (signed >= 0) return dispatchOn("polyhedronFn", config.engine, .{ config, allocator, points, faces });
+    const outward = allocator.alloc([3]u32, faces.len) catch return null;
+    defer allocator.free(outward);
+    for (faces, outward) |f, *turned| turned.* = .{ f[0], f[2], f[1] };
+    return dispatchOn("polyhedronFn", config.engine, .{ config, allocator, points, @as([]const [3]u32, outward) });
 }
 
 pub inline fn polygonsEvenOdd(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {

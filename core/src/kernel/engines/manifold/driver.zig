@@ -14,6 +14,8 @@ const vec3 = @import("../../../core/vec3.zig");
 /// The fewest divisions Manifold revolves through: it reads 1 or 2 as 0, "choose your
 /// own", which for a small sweep at a small radius rounds down to none (an empty solid).
 const MIN_REVOLVE_DIVISIONS = 3;
+/// A sketch's mirror across the y axis (x to -x), as crossSectionTransform takes it.
+const MIRROR_X = [6]f64{ -1, 0, 0, 1, 0, 0 };
 
 fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]const f64, ctx: ?*anyopaque) callconv(.c) void {
     _ = pos;
@@ -97,6 +99,14 @@ fn polygonsEvenOddImpl(config: *const EngineConfig, allocator: std.mem.Allocator
 
 // --- 3D CSG Booleans & Operations ---
 
+fn opOf(op: kernel.BooleanOp) manifold.OpType {
+    return switch (op) {
+        .union_op => .add,
+        .difference_op => .subtract,
+        .intersection_op => .intersect,
+    };
+}
+
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     // Real check (not an assert): release builds must never reinterpret a B-Rep pointer as a Manifold.
     if (a.engine != .manifold or b.engine != .manifold) return null;
@@ -109,12 +119,7 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
 
     const m1: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const m2: *manifold.ManifoldObj = @ptrCast(@alignCast(b.ptr));
-    const m_op = switch (op) {
-        .union_op => manifold.OpType.add,
-        .difference_op => manifold.OpType.subtract,
-        .intersection_op => manifold.OpType.intersect,
-    };
-    const ptr = manifold.boolean(m1, m2, m_op) orelse return null;
+    const ptr = manifold.boolean(m1, m2, opOf(op)) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -128,13 +133,7 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
         m_objs[i] = @ptrCast(@alignCast(obj.ptr));
     }
 
-    const m_op = switch (op) {
-        .union_op => manifold.OpType.add,
-        .difference_op => manifold.OpType.subtract,
-        .intersection_op => manifold.OpType.intersect,
-    };
-
-    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return null;
+    const ptr = manifold.batchBoolean(m_objs, opOf(op)) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -145,12 +144,7 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
 
     if (!a_valid or !b_valid) return null;
 
-    const m_op = switch (op) {
-        .union_op => manifold.OpType.add,
-        .difference_op => manifold.OpType.subtract,
-        .intersection_op => manifold.OpType.intersect,
-    };
-    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return null;
+    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), opOf(op)) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -343,12 +337,7 @@ fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const 
         if (cs.engine != .manifold) return null;
         m.* = @ptrCast(@alignCast(cs.ptr));
     }
-    const m_op = switch (op) {
-        .union_op => manifold.OpType.add,
-        .difference_op => manifold.OpType.subtract,
-        .intersection_op => manifold.OpType.intersect,
-    };
-    const ptr = manifold.crossSectionBatchBoolean(m_sketches, m_op) orelse return null;
+    const ptr = manifold.crossSectionBatchBoolean(m_sketches, opOf(op)) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -473,15 +462,9 @@ fn polyhedronImpl(config: *const EngineConfig, allocator: std.mem.Allocator, poi
         tri_verts[i * 3 + 2] = f[2];
     }
 
+    // Wound outward already (kernel.polyhedron turns an inward mesh around for either engine)
     const ptr = manifold.polyhedron(vert_props, tri_verts) orelse return null;
-    // A closed mesh has one outward orientation. Faces wound inward give a valid but
-    // inside-out solid (negative volume) that breaks every later boolean, so flip them.
-    if (manifold.volume(ptr) >= 0) return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
-    manifold.destruct(ptr);
-    var t: usize = 0;
-    while (t < tri_verts.len) : (t += 3) std.mem.swap(u32, &tri_verts[t + 1], &tri_verts[t + 2]);
-    const flipped = manifold.polyhedron(vert_props, tri_verts) orelse return null;
-    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(flipped) };
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
@@ -495,18 +478,42 @@ fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.Cro
 
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
+    const profile: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(cs.ptr));
     // Sweeping the empty Sketch gives the empty Solid (Manifold rejects empty polygons).
-    if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl(&.{});
-    const ptr = manifold.extrude(@ptrCast(@alignCast(cs.ptr)), height, slices, twist_degrees, scale_x, scale_y) orelse return null;
+    if (manifold.crossSectionNumVert(profile) == 0) return emptyImpl(&.{});
+    if (twist_degrees >= 0) {
+        const ptr = manifold.extrude(profile, height, slices, twist_degrees, scale_x, scale_y) orelse return null;
+        return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    }
+    // Manifold splits each side between two slices along the same diagonal whichever way
+    // the profile turns: the short one counter-clockwise, the long one clockwise, so a
+    // twist and its mirror image were different solids (a square 3 from the axis turned
+    // once: 11.1 one way, 8.2 the other). A clockwise twist is the counter-clockwise twist
+    // of the mirrored profile, mirrored back.
+    const mirrored = manifold.crossSectionTransform(profile, MIRROR_X[0], MIRROR_X[1], MIRROR_X[2], MIRROR_X[3], MIRROR_X[4], MIRROR_X[5]) orelse return null;
+    defer manifold.destructCrossSection(mirrored);
+    const twisted = manifold.extrude(mirrored, height, slices, -twist_degrees, scale_x, scale_y) orelse return null;
+    defer manifold.destruct(twisted);
+    const ptr = manifold.mirror(twisted, 1, 0, 0) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
-    if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl(&.{});
+    const profile: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(cs.ptr));
+    if (manifold.crossSectionNumVert(profile) == 0) return emptyImpl(&.{});
     // 0 asks for Manifold's own count; a count it can't take is the least it can
     const divisions = if (segments > 0) @max(segments, MIN_REVOLVE_DIVISIONS) else segments;
-    const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), divisions, revolve_degrees) orelse return null;
+    if (revolve_degrees > 0) {
+        const ptr = manifold.revolve(profile, divisions, revolve_degrees) orelse return null;
+        return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    }
+    // Manifold revolves counter-clockwise only: a negative angle built the solid inside out
+    // (a negative volume, which a boolean took as a hole). Clockwise is the counter-clockwise
+    // revolve mirrored across the XZ plane the profile stands in.
+    const swept = manifold.revolve(profile, divisions, -revolve_degrees) orelse return null;
+    defer manifold.destruct(swept);
+    const ptr = manifold.mirror(swept, 0, 1, 0) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

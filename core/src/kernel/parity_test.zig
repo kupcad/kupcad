@@ -9,6 +9,8 @@ const api = @import("../api.zig");
 const kernel = @import("kernel.zig");
 const geom = @import("../core/geometry_handle.zig");
 const support = @import("../test_support.zig");
+const Vfs = @import("../vfs/vfs.zig").Vfs;
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 /// STEP writes coordinates with six decimals.
 const STEP_TOLERANCE = 1e-5;
@@ -73,6 +75,56 @@ test "parity: an argument one engine refuses, the other refuses the same way" {
         var brep_buf: [256]u8 = undefined;
         try testing.expectEqualStrings(on_mesh, try rescuedMessage(brep_script, &brep_buf));
     }
+}
+
+test "parity: a mesh wound inward is the solid it bounds, on either engine" {
+    // Manifold turned an inward mesh around and the B-Rep engine kept it, inside out (its
+    // STEP planes faced into it): the mesh is turned once, before either engine. A script's
+    // polyhedron and an imported mesh wound inward are the one wound outward, its points in
+    // the same order (the STL's, as they first appear), on both.
+    const outward = "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])";
+    const inward = [_][]const u8{
+        "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]])",
+        "import_stl(\"in.stl\", repair: false)",
+    };
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("in.stl", tetrahedronStl(&.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } }));
+    const expected = try stepOf(outward, files.vfs());
+    defer testing.allocator.free(expected);
+    for (inward) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        vm.vfs = files.vfs();
+        var script: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer script.deinit();
+        try script.writer.print("r = ({s}).volume", .{source});
+        try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+        try testing.expectApproxEqAbs(@as(f64, 1000.0 / 6.0), vm.globals.get("r").?.asNumber(), 1e-9);
+        const step = try stepOf(source, files.vfs());
+        defer testing.allocator.free(step);
+        try testing.expectEqualStrings(expected, step);
+    }
+}
+
+/// The STEP file of `source` built on the B-Rep engine, reading `files`.
+fn stepOf(source: []const u8, files: Vfs) ![]const u8 {
+    const brep = try std.mem.concat(testing.allocator, u8, &.{ BREP_CONFIG, source });
+    defer testing.allocator.free(brep);
+    return api.buildModel(testing.allocator, testing.io, brep, .{ .format = .step, .vfs = files });
+}
+
+/// An ASCII STL of the tetrahedron of corners (0, 0, 0) and 10 along each axis, of `faces`.
+fn tetrahedronStl(comptime faces: []const [3]u8) []const u8 {
+    const corners = [_][]const u8{ "0 0 0", "10 0 0", "0 10 0", "0 0 10" };
+    comptime var text: []const u8 = "solid t\n";
+    inline for (faces) |f| {
+        text = text ++ "facet normal 0 0 0\nouter loop\n";
+        inline for (f) |corner| text = text ++ "vertex " ++ corners[corner] ++ "\n";
+        text = text ++ "endloop\nendfacet\n";
+    }
+    return text ++ "endsolid t\n";
 }
 
 /// What the script leaves in `r`, a string, copied into `buf`.

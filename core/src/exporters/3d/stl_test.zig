@@ -148,7 +148,7 @@ test "STL: every exported solid reads back closed and consistently oriented" {
         defer testing.allocator.free(bytes);
         var mesh = try parse(bytes);
         defer mesh.deinit(testing.allocator);
-        try mesh_check.expectClosed(testing.allocator, mesh.faces);
+        try mesh_check.expectClosed(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces });
     }
 }
 

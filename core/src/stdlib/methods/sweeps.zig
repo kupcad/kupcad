@@ -45,9 +45,12 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     if (pos.len > 0) base.h = try arguments.requireNumber(vm, pos[0], "extrude", "h");
     var opts = (try arguments.parseKwargsOver(ExtrudeOpts, base, sig.EXTRUDE.keywords, vm, args, "extrude")).opts;
     if (opts.scale) |s| {
+        try requireTopScale(vm, s, "scale");
         opts.scale_x = s;
         opts.scale_y = s;
     }
+    try requireTopScale(vm, opts.scale_x, "scale_x");
+    try requireTopScale(vm, opts.scale_y, "scale_y");
 
     try arguments.requireSegmentCount(vm, opts.slices, "slices");
     const slices = try twistSlices(vm, receiver, opts.slices, opts.twist);
@@ -58,6 +61,12 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         new_idx = try vm.dag_builder.addTranslate(new_idx, 0.0, 0.0, -opts.h / 2.0);
     }
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// A scale of the top of an extrusion: zero (a point, a pyramid's apex) or more. A negative
+/// one was taken as zero.
+fn requireTopScale(vm: *VM, scale: f64, comptime name: []const u8) !void {
+    if (scale < 0) return vm.fail(.ValueError, "extrude expects " ++ name ++ " to be zero or more (zero tapers to a point), got {f}", .{value.fmtNumber(scale)});
 }
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {

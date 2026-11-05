@@ -31,10 +31,6 @@ pub const JoinType = enum(c_int) {
 // Spatial math relies on 64-bit doubles (f64)
 pub const ManifoldVec2 = extern struct { x: f64, y: f64 };
 pub const ManifoldVec3 = extern struct { x: f64, y: f64, z: f64 };
-pub const ManifoldManifoldPair = extern struct {
-    first: ?*ManifoldObj,
-    second: ?*ManifoldObj,
-};
 
 /// Opaque in manifoldc: read through manifold_rect_min / manifold_rect_max.
 pub const ManifoldRect = opaque {};
@@ -91,7 +87,6 @@ extern fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
 extern fn manifold_batch_hull(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj) ?*ManifoldObj;
 extern fn manifold_hull_pts(mem: ?*ManifoldObj, ps: [*]const ManifoldVec3, length: usize) ?*ManifoldObj;
 extern fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
-extern fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
 extern fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
 extern fn manifold_minkowski_sum(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj) ?*ManifoldObj;
 extern fn manifold_cross_section_offset(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit: f64, circular_segments: c_int) ?*ManifoldCrossSection;
@@ -113,7 +108,6 @@ extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
 extern fn manifold_cross_section_num_vert(cs: ?*ManifoldCrossSection) usize;
 extern fn manifold_rect_max(r: ?*ManifoldRect) ManifoldVec2;
 
-extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
 extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
 
 extern fn manifold_extrude(mem: ?*ManifoldObj, cs: ?*ManifoldPolygons, height: f64, slices: c_int, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj;

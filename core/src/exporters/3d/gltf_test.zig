@@ -365,9 +365,9 @@ test "GLTF: the primitives of an export close every part" {
         const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);
         for (std.mem.bytesAsSlice(u32, viewBytes(&glb, view))) |i| try indices.append(std.testing.allocator, i);
     }
-    const triangles = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
-    defer std.testing.allocator.free(triangles);
-    try mesh_check.expectClosed(std.testing.allocator, triangles);
+    const welded = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
+    defer welded.deinit(std.testing.allocator);
+    try mesh_check.expectClosed(std.testing.allocator, welded.mesh());
 }
 
 test "GLTF: Draco quantizes positions to the bits the export asks for" {
@@ -443,9 +443,9 @@ test "GLTF: each Draco primitive decodes to the mesh its accessors describe" {
         const ext = p.object.get("extensions").?.object.get("KHR_draco_mesh_compression").?.object;
         const mesh = try draco.decodeMesh(std.testing.allocator, viewBytes(&glb, int(ext.get("bufferView").?)));
         defer mesh.deinit(std.testing.allocator);
-        const triangles = try mesh_check.weld(std.testing.allocator, mesh.positions, mesh.indices);
-        defer std.testing.allocator.free(triangles);
-        try mesh_check.expectClosed(std.testing.allocator, triangles);
+        const welded = try mesh_check.weld(std.testing.allocator, mesh.positions, mesh.indices);
+        defer welded.deinit(std.testing.allocator);
+        try mesh_check.expectClosed(std.testing.allocator, welded.mesh());
     }
 }
 

@@ -40,6 +40,44 @@ const SHAPES = [_][]const u8{
     "text(\"Hi\", size: 5).extrude(1)",
 };
 
+/// Each sweep and constructor with a parameter that has a sign, as a pair: the parameter one
+/// way and the other way (or a mesh wound outward and inward), which makes the mirror image.
+/// The profiles are symmetric across the x axis, so a twist one way is the other twist of
+/// the same profile, turned.
+const MIRRORED = [_][2][]const u8{
+    .{ "square(1).translate(x: 2).revolve(90)", "square(1).translate(x: 2).revolve(-90)" },
+    .{ "square(1).translate(x: 2).revolve(360)", "square(1).translate(x: 2).revolve(-360)" },
+    .{ "square(1, center: true).translate(x: 3).extrude(5, twist: 90)", "square(1, center: true).translate(x: 3).extrude(5, twist: -90)" },
+    .{ "square(2, center: true).extrude(5, twist: 45, scale: 0.5)", "square(2, center: true).extrude(5, twist: -45, scale: 0.5)" },
+    .{ "square(1, center: true).translate(x: 3).helix(h: 10, twist: 360)", "square(1, center: true).translate(x: 3).helix(h: 10, twist: -360)" },
+    .{ "square(1, center: true).translate(x: 3).helix(h: 10, turns: 2)", "square(1, center: true).translate(x: 3).helix(h: 10, turns: -2)" },
+    .{ "square(1).loft(square(2), 3)", "square(1).loft(square(2), -3)" },
+    .{ "cube(1, 2, 3).scale(2, 1, 1)", "cube(1, 2, 3).scale(-2, 1, 1)" },
+    .{ "cube(1, 2, 3).rotate(x: 30)", "cube(1, 2, 3).rotate(x: -30)" },
+    .{ "polyhedron([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])", "polyhedron([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]])" },
+};
+
+test "invariants: a parameter's other sign makes the mirror image, as much volume and more than none" {
+    // A negative revolve was inside out (a volume of -3.75), and a clockwise twist another
+    // solid than the counter-clockwise one (8.2 against 11.1)
+    for (MIRRORED) |pair| {
+        errdefer std.debug.print("scripts: {s} | {s}\n", .{ pair[0], pair[1] });
+        var volumes: [2]f64 = undefined;
+        for (pair, &volumes) |source, *volume| {
+            var vm = try support.initVm();
+            defer vm.deinit();
+            var script: std.Io.Writer.Allocating = .init(testing.allocator);
+            defer script.deinit();
+            try script.writer.print("r = {s}", .{source});
+            try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+            const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+            try expectConsistent(handle);
+            volume.* = kernel.volume(handle);
+        }
+        try testing.expectApproxEqRel(volumes[0], volumes[1], RELATIVE_TOLERANCE);
+    }
+}
+
 test "invariants: every solid is closed, and its mesh measures what the kernel reports" {
     for (SHAPES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});
@@ -88,9 +126,10 @@ fn expectConsistent(handle: geom.GeometryHandle) !void {
     const positions = try testing.allocator.alloc(f32, mesh.vert_props.len / mesh.num_prop * 3);
     defer testing.allocator.free(positions);
     for (0..positions.len / 3) |v| @memcpy(positions[v * 3 ..][0..3], mesh.vert_props[v * mesh.num_prop ..][0..3]);
-    const triangles = try mesh_check.weld(testing.allocator, positions, mesh.tri_verts);
-    defer testing.allocator.free(triangles);
-    try mesh_check.expectClosed(testing.allocator, triangles);
+    const welded = try mesh_check.weld(testing.allocator, positions, mesh.tri_verts);
+    defer welded.deinit(testing.allocator);
+    try mesh_check.expectClosed(testing.allocator, welded.mesh());
+    const triangles = welded.triangles;
 
     var signed_volume: f64 = 0;
     var area: f64 = 0;

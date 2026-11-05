@@ -1817,6 +1817,16 @@ test "Stdlib: text draws accented and Cyrillic letters and symbols, and refuses 
     });
 }
 
+test "Stdlib: an extrusion's top is scaled by zero or more" {
+    // A negative scale was taken as zero: a pyramid, with no error
+    try expectScripts(&.{
+        .{ .src = comptime rescued("square(2).extrude(5, scale: -1)"), .expected = .{ .str = "ValueError: extrude expects scale to be zero or more (zero tapers to a point), got -1" } },
+        .{ .src = comptime rescued("square(2).extrude(5, scale_x: -0.5)"), .expected = .{ .str = "ValueError: extrude expects scale_x to be zero or more (zero tapers to a point), got -0.5" } },
+        .{ .src = comptime rescued("square(2).extrude(5, scale_y: -2)"), .expected = .{ .str = "ValueError: extrude expects scale_y to be zero or more (zero tapers to a point), got -2" } },
+        .{ .src = "r = square(2).extrude(5, scale: 0).volume.round(9)", .expected = .{ .num = 20.0 / 3.0 } },
+    });
+}
+
 test "Stdlib: a size is refused where the lint reads it, before the native runs" {
     // Each native checked its own sizes, and some didn't: `extrude(0)` failed in the kernel,
     // `revolve(0)` gave an empty Solid, `simplify(-1)` was taken. The Signature's sizes, which
