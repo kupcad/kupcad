@@ -60,7 +60,9 @@ pre-release updates no one.
 A release makes it: each installer the updater installs is signed as it is built (the
 `.app.tar.gz` beside the `.dmg` on macOS, the `.AppImage`, `.deb` and `.rpm` on Linux, the
 `_setup.exe` on Windows), and `scripts/updater-manifest.js` writes their signatures into the
-release's `latest.json`. A Linux app finds the package it was installed from there
+release's `latest.json` (refusing a signature with no installer beside it, of none the updater
+takes, or a second installer for a platform: a wrong one would ship a `latest.json` the apps
+never update from). A Linux app finds the package it was installed from there
 (`linux-x86_64-deb`, …), so a `.deb` install updates to the `.deb`. The signing key is set up
 once:
 
@@ -224,7 +226,8 @@ settings' store it may load the file, read it whole and set a key, nothing else.
 
 ## Tests
 
-The folder's tree (folders in folders, what a closed folder hides, the folders a script is in,
+The updater's `latest.json` (`scripts/updater-manifest.js`: each installer under its platform,
+the refusals, the release workflow's command line); the folder's tree (folders in folders, what a closed folder hides, the folders a script is in,
 which of the watcher's changes list it again or are a file written, the names a new entry may
 take) and its files' URIs; the tree's rows (a folder opened and closed by a click or the arrow
 keys, a row's menu by a right click or the keys, F2, Delete and ⌘⌫, a name given in a field in

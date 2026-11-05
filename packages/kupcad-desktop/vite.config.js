@@ -21,5 +21,10 @@ export default defineConfig({
   },
   // The webviews Tauri 2 runs on: WebKit (macOS, Linux) and WebView2
   build: { target: ['safari16', 'chrome110'] },
-  test: { ...SVELTE_TESTS, setupFiles: ['@kupcad/ui/testing'] },
+  test: {
+    ...SVELTE_TESTS,
+    // The release's scripts' too (scripts/updater-manifest.js)
+    include: [...SVELTE_TESTS.include, 'scripts/**/*.test.js'],
+    setupFiles: ['@kupcad/ui/testing'],
+  },
 });

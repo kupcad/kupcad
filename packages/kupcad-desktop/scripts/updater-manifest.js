@@ -22,36 +22,49 @@ const KINDS = {
   '_setup.exe': '',
 };
 
-const [version, repo, folder] = process.argv.slice(2);
-if (!version || !repo || !folder) {
-  console.error('usage: node scripts/updater-manifest.js <version> <owner/repo> <folder>');
-  process.exit(1);
-}
-
-const prefix = `kupcad-desktop_${version}_`;
-/** @type {Record<string, { signature: string, url: string }>} */
-const platforms = {};
-for (const sig of readdirSync(folder).filter((name) => name.endsWith('.sig'))) {
-  const file = sig.slice(0, -'.sig'.length);
-  const [, os, arch, kind] = file.startsWith(prefix)
-    ? (/^(darwin|linux|windows)_(amd64|arm64)(.+)$/.exec(file.slice(prefix.length)) ?? [])
-    : [];
-  if (!os || !(kind in KINDS))
-    throw new Error(`${sig}: not the signature of an installer the updater takes`);
-  if (!existsSync(join(folder, file))) throw new Error(`${sig}: ${file} isn't beside it`);
-  const platform = `${os}-${ARCHES[/** @type {'amd64' | 'arm64'} */ (arch)]}${KINDS[/** @type {keyof KINDS} */ (kind)]}`;
-  if (platform in platforms) throw new Error(`${sig}: a second installer for ${platform}`);
-  platforms[platform] = {
-    signature: readFileSync(join(folder, sig), 'utf8').trim(),
-    url: `https://github.com/${repo}/releases/download/v${version}/${file}`,
+/**
+ * The updater's latest.json for release `version` of `repo` (owner/name): each signed installer
+ * in `folder`, under its platform, with where the release keeps it.
+ * @param {string} version
+ * @param {string} repo
+ * @param {string} folder
+ * @param {Date} [published]
+ * @throws {Error} for a signature of no installer the updater takes, one with no installer beside
+ *   it, a second installer for a platform, or no signed installer at all
+ */
+export function updaterManifest(version, repo, folder, published = new Date()) {
+  const prefix = `kupcad-desktop_${version}_`;
+  /** @type {Record<string, { signature: string, url: string }>} */
+  const platforms = {};
+  for (const sig of readdirSync(folder).filter((name) => name.endsWith('.sig'))) {
+    const file = sig.slice(0, -'.sig'.length);
+    const [, os, arch, kind] = file.startsWith(prefix)
+      ? (/^(darwin|linux|windows)_(amd64|arm64)(.+)$/.exec(file.slice(prefix.length)) ?? [])
+      : [];
+    if (!os || !(kind in KINDS))
+      throw new Error(`${sig}: not the signature of an installer the updater takes`);
+    if (!existsSync(join(folder, file))) throw new Error(`${sig}: ${file} isn't beside it`);
+    const platform = `${os}-${ARCHES[/** @type {'amd64' | 'arm64'} */ (arch)]}${KINDS[/** @type {keyof KINDS} */ (kind)]}`;
+    if (platform in platforms) throw new Error(`${sig}: a second installer for ${platform}`);
+    platforms[platform] = {
+      signature: readFileSync(join(folder, sig), 'utf8').trim(),
+      url: `https://github.com/${repo}/releases/download/v${version}/${file}`,
+    };
+  }
+  if (Object.keys(platforms).length === 0) throw new Error(`no signed installers in ${folder}`);
+  return {
+    version,
+    notes: `https://github.com/${repo}/releases/tag/v${version}`,
+    pub_date: published.toISOString(),
+    platforms,
   };
 }
-if (Object.keys(platforms).length === 0) throw new Error(`no signed installers in ${folder}`);
 
-const latest = {
-  version,
-  notes: `https://github.com/${repo}/releases/tag/v${version}`,
-  pub_date: new Date().toISOString(),
-  platforms,
-};
-console.log(JSON.stringify(latest, null, 2));
+if (import.meta.main) {
+  const [version, repo, folder] = process.argv.slice(2);
+  if (!version || !repo || !folder) {
+    console.error('usage: node scripts/updater-manifest.js <version> <owner/repo> <folder>');
+    process.exit(1);
+  }
+  console.log(JSON.stringify(updaterManifest(version, repo, folder), null, 2));
+}
