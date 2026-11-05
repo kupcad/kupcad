@@ -57,7 +57,7 @@ pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
     var header = try headerOf(arena, script);
     header.params.values = try valuesOf(arena, vm, header.params.schema);
     header.timing.runMs = stopwatch.milliseconds(run.run_ns);
-    header.output = try textOf(arena, vm.report.output.items);
+    header.output = vm.report.output.items;
     header.outputCut = vm.report.output_cut;
 
     var clock = stopwatch.Stopwatch.start(vm.io);
@@ -83,13 +83,6 @@ pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
         },
     }
     return frame.encode(allocator, header, "");
-}
-
-/// `bytes` as text: a script prints what it likes, and a string that isn't UTF-8 would be
-/// written as an array of numbers; each sequence that isn't one is U+FFFD.
-fn textOf(arena: std.mem.Allocator, bytes: []const u8) ![]const u8 {
-    if (std.unicode.utf8ValidateSlice(bytes)) return bytes;
-    return std.fmt.allocPrint(arena, "{f}", .{std.unicode.fmtUtf8(bytes)});
 }
 
 /// The frame of a script that didn't get to run: its schema, as far as it parses, and why.

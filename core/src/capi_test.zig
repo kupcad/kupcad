@@ -282,6 +282,16 @@ test "C API: a build's arguments refused before it runs: the format, the paramet
     }
 }
 
+test "C API: a message quoting bytes that aren't UTF-8 is UTF-8, as kupcad.h promises" {
+    // A DXF's layer named in its codepage (0xD8) was copied raw into the message
+    const files = try packed_files.pack(testing.allocator, &.{.{ .path = "plate.dxf", .content = "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\nIm\xD8ller\n10\n0\n20\n0\n40\n1\n0\nENDSEC\n0\nEOF\n" }});
+    defer testing.allocator.free(files);
+    const result = build("import_dxf(\"plate.dxf\", layers: \"cut\")", "stl", .{ .files = files });
+    defer result.deinit();
+    try testing.expectEqual(@as(c_int, c.KUPCAD_SCRIPT_ERROR), result.status());
+    try testing.expectEqualStrings("ImportError: DXF file 'plate.dxf' has no outline on a layer 'cut' (its layers: 'Im\u{FFFD}ller')", result.message().?);
+}
+
 test "C API: a result's data and message may be read without their lengths" {
     // kupcad_result_message took a NULL length, and kupcad_result_data crashed on one
     const result = build("cube(1)", "stl", .{});

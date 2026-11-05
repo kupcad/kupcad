@@ -211,6 +211,20 @@ test "preview: bytes a run printed that aren't UTF-8 are text in the frame, each
     try testing.expectEqualStrings("a\u{FFFD}b", read.header.output);
 }
 
+test "preview: a message quoting bytes a file gave that aren't UTF-8 is text in the frame" {
+    // A DXF's layer named in its codepage (0xD8, Windows-1252's Ø) made the frame's error
+    // message an array of numbers, which no front end reads as the message
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var files = @import("../vfs/memory.zig").MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("plate.dxf", "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\nIm\xD8ller\n10\n0\n20\n0\n40\n1\n0\nENDSEC\n0\nEOF\n");
+    const bytes = try api.previewScript(testing.allocator, testing.io, "import_dxf(\"plate.dxf\", layers: \"cut\")\n", .{ .vfs = files.vfs() });
+    defer testing.allocator.free(bytes);
+    const read = try test_support.readFrame(arena.allocator(), bytes);
+    try testing.expectEqualStrings("ImportError: DXF file 'plate.dxf' has no outline on a layer 'cut' (its layers: 'Im\u{FFFD}ller')", read.header.@"error".?.message);
+}
+
 test "preview: the run is a preview (CAD.preview?), where a script can lighten its model" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

@@ -11,6 +11,7 @@ const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 const packed_files = @import("vfs/packed.zig");
 const frame = @import("preview/frame.zig");
 const preview_build = @import("preview/build.zig");
+const json_text = @import("core/json_text.zig");
 
 /// Why a call failed, in words a script's author can act on: "2:5: ..." for a syntax error,
 /// the error as the CLI prints it ("RuntimeError: ...") for a run that failed, or why the
@@ -132,7 +133,7 @@ pub fn reportJson(allocator: std.mem.Allocator, report: *const api.RunReport) ![
         outputCut: bool,
         warnings: []const frame.Warning,
     };
-    return std.json.Stringify.valueAlloc(allocator, Report{
+    return json_text.valueAlloc(allocator, Report{
         .output = report.output.items,
         .outputCut = report.output_cut,
         .warnings = warnings,

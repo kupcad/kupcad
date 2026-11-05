@@ -11,6 +11,7 @@ const api = @import("api.zig");
 const embed = @import("embed.zig");
 const version = @import("version.zig");
 const manifold = @import("bindings/manifold.zig");
+const json_text = @import("core/json_text.zig");
 
 /// The ABI include/kupcad.h declares (KUPCAD_ABI_VERSION): a change to a declared function
 /// raises it, and a binding refuses a library that says another.
@@ -87,7 +88,9 @@ fn failed(status: Status, message: []const u8, report: ?[:0]const u8) *kupcad_re
         if (report) |r| allocator.free(r);
         return handle(&out_of_memory);
     };
-    const owned = allocator.dupeSentinel(u8, message, 0) catch {
+    // kupcad.h promises UTF-8: a message quoting a name a file gave (a DXF layer's, in its
+    // codepage) may hold any bytes
+    const owned = json_text.textZ(allocator, message) catch {
         allocator.destroy(result);
         if (report) |r| allocator.free(r);
         return handle(&out_of_memory);

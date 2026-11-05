@@ -105,6 +105,7 @@ test {
     _ = @import("exporters/3d/obj_test.zig");
     _ = @import("exporters/zip_test.zig");
     _ = @import("exporters/xml_test.zig");
+    _ = @import("core/json_text_test.zig");
     _ = @import("exporters/3d/threemf_test.zig");
     _ = @import("exporters/2d/svg_test.zig");
     _ = @import("exporters/2d/dxf_test.zig");
@@ -130,6 +131,7 @@ test {
 
     // CLI & Config Tests
     _ = @import("cli/build_cmd_test.zig");
+    _ = @import("cli/reporter_test.zig");
     _ = @import("cli/memory_flag_test.zig");
     _ = @import("cli/time_flag_test.zig");
     _ = @import("cli/watch_test.zig");

@@ -12,6 +12,7 @@ const std = @import("std");
 const Step = @import("../core/param_rules.zig").Step;
 const UiSchema = @import("../tools/doc/extractor.zig").UiSchema;
 const ParamValues = @import("../core/param_values.zig").ParamValues;
+const json_text = @import("../core/json_text.zig");
 
 pub const PROTOCOL_VERSION: u32 = 1;
 /// The header's length, before it.
@@ -110,12 +111,14 @@ pub const Timing = struct {
     renderMs: f64,
 };
 
-/// The frame of `header` and `body`, owned by `allocator`.
+/// The frame of `header` and `body`, owned by `allocator`. What the script gave its text
+/// (what it printed, a message quoting a name a file gave) may be any bytes: the header's
+/// strings are written as text (json_text), not as arrays of numbers.
 pub fn encode(allocator: std.mem.Allocator, header: Header, body: []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
     try out.writer.splatByteAll(0, LENGTH_BYTES);
-    try std.json.Stringify.value(header, .{}, &out.writer);
+    try json_text.value(header, .{}, &out.writer);
     const header_len = std.math.cast(u32, out.written().len - LENGTH_BYTES) orelse return error.FrameTooLarge;
     std.mem.writeInt(u32, out.written()[0..LENGTH_BYTES], header_len, .little);
     try out.writer.writeAll(body);

@@ -4,6 +4,7 @@
 const std = @import("std");
 const log_helpers = @import("../log.zig");
 const Style = @import("diagnostic_report.zig").Style;
+const json_text = @import("../core/json_text.zig");
 
 /// `one` for a count of 1, else `many`: "1 error", "2 errors" (summaries said "1 errors"
 /// and "1 file(s)").
@@ -57,6 +58,6 @@ pub const Reporter = struct {
     /// JSON on stderr, `{"error": {...}}`, when `errors` is json; nothing otherwise.
     pub fn fail(self: Reporter, failure: Failure) void {
         if (self.errors != .json) return;
-        self.err("{f}\n", .{std.json.fmt(.{ .@"error" = failure }, .{})});
+        self.err("{f}\n", .{json_text.fmt(.{ .@"error" = failure }, .{})});
     }
 };
