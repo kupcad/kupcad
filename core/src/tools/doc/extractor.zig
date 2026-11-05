@@ -7,6 +7,8 @@ const ast = @import("../../core/ast.zig");
 const Document = @import("../../frontend/document.zig").Document;
 const visitor = @import("../../core/visitor.zig");
 const param_rules = @import("../../core/param_rules.zig");
+const token_span = @import("../../core/token_span.zig");
+const docstring = @import("docstring.zig");
 
 pub const PresentationMeta = struct {
     title: ?[]const u8 = null,
@@ -48,10 +50,10 @@ pub const UiSchema = struct {
     parameters: []ParamMetadata,
 };
 
-/// The schema of `doc`'s script; its strings are the Document's.
+/// The schema of `doc`'s script; its strings are the Document's, or `allocator`'s.
 pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSchema {
     var schema = UiSchema{
-        .meta = headerOf(&doc.tree),
+        .meta = try headerOf(allocator, doc),
         .parameters = &.{},
     };
 
@@ -87,30 +89,40 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSche
     return schema;
 }
 
-/// The script's `@title`, `@description` and `@author`: the parser's docstrings at its top
-/// level, the first of each tag, with the indented lines that continue one joined by
-/// newlines, as YARD keeps them (a renderer folds them: the panel shows a space). The
-/// source was read again line by line, which dropped a continuation, took a `# @title`
+/// The script's `@title`, `@description` and `@author`: the tags of the comments above its
+/// first statement (docstring.zig), the first of each, with the indented lines that continue
+/// one joined by newlines, as YARD keeps them (a renderer folds them: the panel shows a space).
+/// The source was read again line by line, which dropped a continuation, took a `# @title`
 /// anywhere (the last one), and `# @titles` for a title.
-fn headerOf(tree: *const ast.Tree) PresentationMeta {
+fn headerOf(allocator: std.mem.Allocator, doc: *const Document) !PresentationMeta {
     var meta: PresentationMeta = .{};
-    const root = tree.getNode(tree.root) orelse return meta;
-    for (tree.getNodes(tree.block(root).stmts)) |stmt| {
-        const node = tree.getNode(stmt) orelse continue;
-        if (node.tag != .docstring) continue;
-        const doc_string = tree.docString(node);
-        const tag = tree.getString(doc_string.tag_name);
-        const field: *?[]const u8 = if (std.mem.eql(u8, tag, "title"))
-            &meta.title
-        else if (std.mem.eql(u8, tag, "description"))
-            &meta.description
-        else if (std.mem.eql(u8, tag, "author"))
-            &meta.author
-        else
+    const header = doc.source[0..firstStatementOffset(doc)];
+    for (doc.comments) |comment| {
+        if (comment.loc.offset >= header.len) break;
+        const found = try docstring.parse(allocator, header[comment.loc.offset..]) orelse continue;
+        const field = headerField(&meta, found.tag) orelse {
+            allocator.free(found.content);
             continue;
-        if (field.* == null) field.* = tree.getString(doc_string.content);
+        };
+        if (field.* == null) field.* = found.content else allocator.free(found.content);
     }
     return meta;
+}
+
+/// The field of `meta` a header's tag fills, if it names one.
+fn headerField(meta: *PresentationMeta, tag: []const u8) ?*?[]const u8 {
+    if (std.mem.eql(u8, tag, "title")) return &meta.title;
+    if (std.mem.eql(u8, tag, "description")) return &meta.description;
+    if (std.mem.eql(u8, tag, "author")) return &meta.author;
+    return null;
+}
+
+/// Where the script's first statement starts: the end of its header.
+fn firstStatementOffset(doc: *const Document) usize {
+    const root = doc.tree.getNode(doc.tree.root) orelse return doc.source.len;
+    const stmts = doc.tree.getNodes(doc.tree.block(root).stmts);
+    if (stmts.len == 0) return doc.source.len;
+    return doc.tokens.starts[token_span.first(&doc.tree, stmts[0])];
 }
 
 fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.MethodCall) !?ParamMetadata {

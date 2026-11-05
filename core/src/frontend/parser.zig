@@ -9,7 +9,6 @@ const limits = @import("../core/limits.zig");
 const ast = @import("../core/ast.zig");
 const common_token = @import("../core/token.zig");
 const common_errors = @import("../core/errors.zig");
-const docstring = @import("docstring.zig");
 const string_escape = @import("../core/string_escape.zig");
 const import_kind = @import("../core/import_kind.zig");
 
@@ -423,15 +422,13 @@ pub const Parser = struct {
     }
 
     fn skipComments(self: *Parser) void {
-        while (self.tag(0) == .comment or self.tag(0) == .docstring) {
-            if (self.tag(0) == .comment) {
-                self.comments.append(self.allocator, .{
-                    .lexeme = self.lexeme(0),
-                    .loc = self.getLoc(self.tok_idx),
-                }) catch |err| {
-                    std.log.err("OOM while parsing comments: {}", .{err});
-                };
-            }
+        while (self.tag(0) == .comment) {
+            self.comments.append(self.allocator, .{
+                .lexeme = self.lexeme(0),
+                .loc = self.getLoc(self.tok_idx),
+            }) catch |err| {
+                std.log.err("OOM while parsing comments: {}", .{err});
+            };
             self.advance();
         }
     }
@@ -446,7 +443,7 @@ pub const Parser = struct {
     /// untouched, so the line break still ends the statement.
     fn skipIgnoredBefore(self: *Parser, tags: []const Tag) bool {
         var lookahead: u24 = 0;
-        while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .semicolon or self.tag(lookahead) == .docstring) {
+        while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .semicolon) {
             lookahead += 1;
         }
 
@@ -575,7 +572,7 @@ pub const Parser = struct {
     /// file, or one of the tokens that close the enclosing block (`end`, `}`, `else`, ...).
     fn atStatementEnd(self: *const Parser, end_tags: []const Tag) bool {
         switch (self.tag(0)) {
-            .newline, .semicolon, .comment, .docstring, .eof => return true,
+            .newline, .semicolon, .comment, .eof => return true,
             else => {},
         }
         return std.mem.findScalar(Tag, end_tags, self.tag(0)) != null;
@@ -618,7 +615,6 @@ pub const Parser = struct {
             .keyword_break => try self.parseBreakStatement(),
             .keyword_next => try self.parseNextStatement(),
             .keyword_begin => try self.parseBeginStatement(),
-            .docstring => try self.parseDocString(),
             else => try self.parseExprOrMultiAssign(),
         };
 
@@ -1473,12 +1469,6 @@ pub const Parser = struct {
         return self.spaceBefore(self.tok_idx) and !self.spaceBefore(self.tok_idx + 1) and self.tag(1) != .newline;
     }
 
-    fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {
-        const tok_idx = try self.expect(.docstring);
-        var doc_parser = docstring.DocstringParser{ .allocator = self.allocator, .b = &self.b };
-        return doc_parser.parse(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch return ParseError.OutOfMemory;
-    }
-
     fn parseArgModifier(self: *Parser) ?ast.ArgModifier {
         switch (self.tag(0)) {
             .star => {
@@ -1762,7 +1752,7 @@ pub const Parser = struct {
 
         while (true) {
             const t = self.tag(0);
-            if (t == .newline or t == .semicolon or t == .comment or t == .docstring) {
+            if (t == .newline or t == .semicolon or t == .comment) {
                 if (!self.skipNewlinesIfChainedCall()) {
                     break; // Standard statement terminator, stop parsing the expression
                 }
@@ -1977,7 +1967,7 @@ pub const Parser = struct {
         switch (t) {
             // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
             // `=>` starts no argument either: `{ k => 1 }` is a key, not a call `k(=> 1)`.
-            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .arrow, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            .newline, .semicolon, .eof, .comment, .r_paren, .r_brace, .r_bracket, .comma, .colon, .arrow, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
             .keyword_do => return !self.in_loop_header,
             .l_brace => return true,
             else => {

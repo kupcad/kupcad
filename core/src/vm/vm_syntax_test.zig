@@ -857,3 +857,11 @@ test "VM: unary + and ~ work on numbers and reject the rest" {
         .{ .src = support.rescued("~1e300"), .expected = .{ .str = "RangeError: Bitwise operand 1e300 is not a finite 64-bit integer." } },
     });
 }
+
+test "VM: a `# @tag` comment ending a method's last line leaves its value" {
+    // It was a docstring statement, the method's last, so the method gave nil.
+    const support = @import("../test_support.zig");
+    try support.expectScripts(&.{
+        .{ .src = "def f(a)\n  a # @return the value\nend\nr = f(2)", .expected = .{ .num = 2 } },
+    });
+}

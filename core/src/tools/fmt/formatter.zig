@@ -434,7 +434,6 @@ pub const Formatter = struct {
                 const path: ?[]const u8 = if (es_stmt.path == .none) null else tree.getString(es_stmt.path);
                 try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), es_stmt.braced, path, es_stmt.attributes);
             },
-            .docstring => try self.formatDocString(tree, tree.docString(node)),
         }
     }
 
@@ -1527,32 +1526,6 @@ pub const Formatter = struct {
         if (attrs != .none) {
             try self.out.appendSlice(self.allocator, " with ");
             try self.formatNode(tree, attrs);
-        }
-    }
-
-    fn formatDocString(self: *Formatter, tree: *const ast.Tree, doc: ast.DocString) Error!void {
-        const tag = tree.getString(doc.tag_name);
-        const content = tree.getString(doc.content);
-
-        try self.out.appendSlice(self.allocator, "# @");
-        try self.out.appendSlice(self.allocator, tag);
-
-        if (content.len > 0) {
-            var lines = std.mem.splitScalar(u8, content, '\n');
-
-            // First line sits on the same line right after the tag
-            if (lines.next()) |first_line| {
-                try self.out.append(self.allocator, ' ');
-                try self.out.appendSlice(self.allocator, first_line);
-            }
-
-            // Subsequent continuation lines get an indented YARD comment prefix (#   )
-            while (lines.next()) |line| {
-                try self.ensureNewline();
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "#   ");
-                try self.out.appendSlice(self.allocator, line);
-            }
         }
     }
 };

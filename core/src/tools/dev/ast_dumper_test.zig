@@ -27,7 +27,6 @@ test "AST Dumper: produces correct tree format and semantic metadata" {
 
     const expected =
         \\└── block
-        \\    ├── docstring
         \\    ├── assignment 'width'
         \\    │   └── number 50
         \\    ├── method_call 'translate'

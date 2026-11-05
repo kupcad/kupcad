@@ -119,7 +119,6 @@ pub const Tag = enum(u8) {
     return_stmt,
     break_stmt,
     next_stmt,
-    docstring,
     block,
     range,
     array_literal,
@@ -327,11 +326,6 @@ pub const BeginStmt = struct {
     body: NodeIndex,
     rescues: Span, // Span of RescueClause
     ensure_body: NodeIndex = .none,
-};
-
-pub const DocString = struct {
-    tag_name: StringId, // e.g., "label", "tooltip", "description", "title"
-    content: StringId, // The text that follows the tag
 };
 
 pub const Block = struct {
@@ -719,14 +713,6 @@ pub const Tree = struct {
             .body = @fromBackingInt(self.extra_data.items[base]),
             .rescues = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
             .ensure_body = @fromBackingInt(self.extra_data.items[base + 3]),
-        };
-    }
-
-    pub fn docString(self: *const Tree, node: *const Node) DocString {
-        const base = node.data;
-        return .{
-            .tag_name = @fromBackingInt(self.extra_data.items[base]),
-            .content = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
@@ -1236,9 +1222,5 @@ pub const Builder = struct {
 
     pub fn doubleSplatExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
         return self.createNode(.double_splat_expr, main_token, @backingInt(expr));
-    }
-
-    pub fn addDocString(self: *Builder, doc: DocString) !u32 {
-        return try self.addExtra(.{ doc.tag_name, doc.content });
     }
 };

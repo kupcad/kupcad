@@ -481,8 +481,6 @@ pub const Compiler = struct {
             .property_assignment => try self.compilePropertyAssignment(node),
             .block => try self.compileBlock(node),
             .nil => try self.emitOp(.op_nil),
-            // A `##` doc comment is a statement whose value is nil.
-            .docstring => try self.emitOp(.op_nil),
 
             // Every tag is listed: an unhandled node used to compile to nil, which is how a
             // half-built `for` parsed and then did nothing. A new tag is a Zig compile error.

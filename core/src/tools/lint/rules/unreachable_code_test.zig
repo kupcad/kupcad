@@ -33,6 +33,13 @@ test "Linter Rule: UnreachableCodeRule catches code after break and next" {
     }
 }
 
+test "Linter Rule: UnreachableCodeRule leaves a `# @tag` comment after a return alone" {
+    // It was a docstring statement: flagged, and its fix deleted it.
+    var engine = try runRule(testing.allocator, "def f(a)\n  return a\n  # @todo simplify\nend\nf(1)\n");
+    defer engine.deinit();
+    try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+}
+
 test "Linter Rule: UnreachableCodeRule offers to delete the dead lines, never as a safe fix" {
     const source = "def f\n  return 1\n  puts 2\n  puts 3\nend\nf\n";
     var engine = try runRule(testing.allocator, source);

@@ -1284,19 +1284,26 @@ test "KupCAD Parser: Safe Navigation Multi-line Fluent API" {
     try testing.expectEqual(true, prev_mc.is_safe);
 }
 
-test "KupCAD Parser: Generic Docstring Parsing" {
-    const source = "# @label Bracket Width";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const stmt_idx = try pt.parser.parseStatement();
-    const stmt = pt.getNode(stmt_idx);
-    try testing.expectEqual(ast.Tag.docstring, stmt.tag);
-
-    const doc = tree.docString(stmt);
-    try testing.expectEqualStrings("label", tree.getString(doc.tag_name));
-    try testing.expectEqualStrings("Bracket Width", tree.getString(doc.content));
+test "KupCAD Parser: a `# @tag` line is a comment, wherever it is" {
+    // It was a docstring statement: one after a value made it the method's result (nil), one in
+    // a list or a map was a syntax error, and one ending a line was dropped by the formatter.
+    const sources = [_][]const u8{
+        "# @label Bracket Width",
+        "name = \"bracket\" # @todo rename",
+        "def f(a)\n  a # @return the value\nend",
+        "x = [1,\n # @todo two\n 2]",
+        "y = { a: 1, # @see b\n b: 2 }",
+        "cube(1)\n  # @todo move it\n  .translate([1, 0, 0])",
+    };
+    for (sources) |source| {
+        var doc = try Document.parse(testing.allocator, source);
+        defer doc.deinit();
+        try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+        try testing.expectEqual(@as(usize, 1), doc.comments.len);
+        const root = doc.tree.getNode(doc.tree.root).?;
+        const stmts = doc.tree.getNodes(doc.tree.block(root).stmts);
+        try testing.expectEqual(@as(usize, if (std.mem.startsWith(u8, source, "#")) 0 else 1), stmts.len);
+    }
 }
 
 test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
@@ -1712,17 +1719,11 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
 
     const body_node = pt.getNode(ms.body);
     const block_stmts = tree.getNodes(tree.block(body_node).stmts);
-    try testing.expectEqual(@as(usize, 2), block_stmts.len);
+    // The doc comment is a comment
+    try testing.expectEqual(@as(usize, 1), block_stmts.len);
+    try testing.expectEqualStrings("# @label Thickness of enclosure walls", pt.parser.comments.items[0].lexeme);
 
-    // Statement 0: Doc Comment
-    const doc_node = pt.getNode(block_stmts[0]);
-    try testing.expectEqual(ast.Tag.docstring, doc_node.tag);
-    const doc = tree.docString(doc_node);
-    try testing.expectEqualStrings("label", tree.getString(doc.tag_name));
-    try testing.expectEqualStrings("Thickness of enclosure walls", tree.getString(doc.content));
-
-    // Statement 1: Class Statement
-    const class_stmt = pt.getNode(block_stmts[1]);
+    const class_stmt = pt.getNode(block_stmts[0]);
     const cs = tree.classStmt(class_stmt);
     try testing.expectEqualStrings("Box", tree.nodeString(pt.getNode(cs.name)));
     try testing.expectEqualStrings("Base", tree.nodeString(pt.getNode(cs.super_class)));
@@ -2778,31 +2779,6 @@ test "KupCAD Parser: Ruby 3.1 Shorthand Hash Syntax" {
 
     try testing.expectEqualStrings("height", tree.nodeString(pt.getNode(hash[1].key)));
     try testing.expectEqualStrings("height", tree.nodeString(pt.getNode(hash[1].value)));
-}
-
-test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
-    const source =
-        \\# @deprecated Use {#my_new_method} instead of this method because
-        \\#   it uses a library that is no longer supported.
-        \\def mymethod
-        \\end
-    ;
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const doc_stmt1_idx = try pt.parser.parseStatement();
-    const doc_stmt1 = pt.getNode(doc_stmt1_idx);
-    try testing.expectEqual(ast.Tag.docstring, doc_stmt1.tag);
-    const doc = tree.docString(doc_stmt1);
-
-    try testing.expectEqualStrings("deprecated", tree.getString(doc.tag_name));
-    try testing.expectEqualStrings("Use {#my_new_method} instead of this method because\nit uses a library that is no longer supported.", tree.getString(doc.content));
-
-    const def_stmt_idx = try pt.parser.parseStatement();
-    const def_stmt = pt.getNode(def_stmt_idx);
-    try testing.expectEqual(ast.Tag.def_stmt, def_stmt.tag);
-    try testing.expectEqualStrings("mymethod", tree.getString(tree.defStmt(def_stmt).name));
 }
 
 test "KupCAD Parser: AST Node offset and length calculation for LSP" {

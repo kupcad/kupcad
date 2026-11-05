@@ -42,7 +42,7 @@ test "Extractor: Parses Presentation Data and Param Config into Schema" {
     try testing.expectEqual(true, p2.default_value.boolean);
 }
 
-test "Extractor: the header is the parser's docstrings, continued, at the top level, by exact tag" {
+test "Extractor: the header is the tagged comments above the first statement, continued, by exact tag" {
     // The source was read again line by line: a continuation was dropped, a `# @title`
     // anywhere counted (the last one), and `# @titles` was a title.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -70,6 +70,24 @@ test "Extractor: the header is the parser's docstrings, continued, at the top le
     // Joined by newlines, as YARD keeps them: the panel shows a space
     try testing.expectEqualStrings("Mounting plate\nfor M3 bolts", schema.meta.title.?);
     try testing.expectEqualStrings("Four holes,\none in each corner.", schema.meta.description.?);
+    try testing.expectEqual(@as(?[]const u8, null), schema.meta.author);
+}
+
+test "Extractor: a tag below the first statement is a comment, not the header's" {
+    // `# @...` lines were statements, read wherever they were at the top level; now they are
+    // comments, and the header is what the file starts with.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\#@title Plate
+        \\# second line
+        \\width = 10
+        \\# @author Not the header
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
+    try testing.expectEqualStrings("Plate", schema.meta.title.?);
     try testing.expectEqual(@as(?[]const u8, null), schema.meta.author);
 }
 

@@ -133,11 +133,6 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
         },
         .import_stmt => h.importish(tree, tree.importStmt(node).path, tree.importStmt(node).symbols, tree.importStmt(node).braced),
         .export_stmt => h.importish(tree, tree.exportStmt(node).path, tree.exportStmt(node).symbols, tree.exportStmt(node).braced),
-        .docstring => {
-            const ds = tree.docString(node);
-            h.string(tree, ds.tag_name);
-            h.string(tree, ds.content);
-        },
         else => {},
     }
     return h.inner.final();

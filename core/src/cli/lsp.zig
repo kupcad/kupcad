@@ -1423,7 +1423,7 @@ fn inText(doc: *const api.Document, offset: usize) bool {
     const tok = lo - 1;
     const end = starts[tok] + doc.tokens.lengths[tok];
     return switch (doc.tokens.tags[tok]) {
-        .string, .raw_string, .string_start, .string_mid, .string_end, .quoted_symbol, .raw_symbol, .symbol_start, .comment, .docstring => offset <= end,
+        .string, .raw_string, .string_start, .string_mid, .string_end, .quoted_symbol, .raw_symbol, .symbol_start, .comment => offset <= end,
         // It runs to the end of the file
         .unterminated_string => true,
         else => false,

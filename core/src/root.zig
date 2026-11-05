@@ -119,7 +119,6 @@ test {
     _ = @import("exporters/3d/threemf_read_test.zig");
 
     // Frontends
-    _ = @import("frontend/docstring_test.zig");
     _ = @import("frontend/lexer_test.zig");
     _ = @import("frontend/parser_test.zig");
     _ = @import("frontend/fuzz_test.zig");
@@ -167,6 +166,7 @@ test {
     _ = @import("stdlib/stdlib_test.zig");
 
     // Docs
+    _ = @import("tools/doc/docstring_test.zig");
     _ = @import("tools/doc/extractor_test.zig");
 
     // Dev tools

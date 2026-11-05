@@ -646,6 +646,27 @@ test "Formatter: comments above end or else stay inside their block" {
     );
 }
 
+test "Formatter: a `# @tag` comment is kept wherever it is, as written" {
+    // Each was a docstring statement: one ending a line or inside a chain was dropped, and
+    // `#@title X` lost the line after it, which the lexer took for its continuation.
+    try expectStableFormat(
+        \\#@title Bracket
+        \\# second line
+        \\name = "bracket" # @todo rename
+        \\part = cube(1)
+        \\  # @todo move it
+        \\  .translate([1, 0, 0])
+    ,
+        \\#@title Bracket
+        \\# second line
+        \\name = "bracket" # @todo rename
+        \\part = cube(1)
+        \\  # @todo move it
+        \\  .translate([1, 0, 0])
+        \\
+    );
+}
+
 test "Formatter: comments stay with the list row, call or operator line they follow" {
     // A list the author broke keeps its rows, and an operator expression its lines, so the
     // comments stay on theirs (they used to move after the statement).

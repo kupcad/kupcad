@@ -42,7 +42,6 @@ pub const Tag = enum {
     raw_symbol,
     /// `:"...#{`: the text up to the `#{`, as `string_start`; the rest are the string's tokens.
     symbol_start,
-    docstring,
     comment,
     keyword_do,
     keyword_end,
@@ -201,7 +200,7 @@ pub const Lexer = struct {
     pub fn next(self: *Lexer) Token {
         var tok = self.scan();
         // A token is one slice of the source, so it can't skip a body: one that runs past
-        // the opener's line (a string, a docstring) would read the body as its own text.
+        // the opener's line (a string, say) would read the body as its own text.
         if (self.heredoc_resume != null and tok.tag != .newline and std.mem.findScalar(u8, tok.lexeme, '\n') != null) {
             tok.tag = .runs_into_heredoc;
             self.skipHeredocBodies();
@@ -240,7 +239,7 @@ pub const Lexer = struct {
             ':' => self.consumeSymbolOrColon(start_loc),
             '\'' => self.consumeString(start_loc, '\''),
             '"' => self.consumeString(start_loc, '"'),
-            '#' => self.consumeCommentOrParam(start_loc),
+            '#' => self.consumeComment(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             '%' => self.consumePercentOrModulo(start_loc),
             else => {
@@ -404,56 +403,17 @@ pub const Lexer = struct {
         return .{ .tag = .dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
-    fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
+    /// A `#` line, to its end. A `# @title` line is a comment too: only `kupcad doc` reads
+    /// those (tools/doc/docstring.zig), and as statements they broke code they sat in.
+    fn consumeComment(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
-        // Consume the initial comment line
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
 
-        // Identify the end of the first line, stripping \r for tag parsing
-        var first_line_end = self.index;
-        while (first_line_end > start and self.buffer[first_line_end - 1] == '\r') first_line_end -= 1;
-
-        const first_line = self.buffer[start..first_line_end];
-        var i: usize = 1; // Start after '#'
-        while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
-
-        var tag: Tag = .comment;
-
-        // Check if this is a YARD/Lookbook docstring annotation (@tag)
-        if (i < first_line.len and first_line[i] == '@') {
-            tag = .docstring;
-            const base_indent = i - 1; // Number of spaces between '#' and '@'
-            while (self.index < self.buffer.len) {
-                if (self.index >= self.buffer.len or self.peek() != '\n') break;
-
-                var lookahead = self.index + 1;
-                // Skip horizontal whitespace leading up to '#'
-                while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {}
-                if (lookahead < self.buffer.len and self.buffer[lookahead] == '#') {
-                    lookahead += 1; // Skip '#'
-                    var spaces_after_hash: usize = 0;
-                    while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {
-                        spaces_after_hash += 1;
-                    }
-
-                    // Continuation rule:
-                    // Must have strictly MORE spaces after '#' than the tag line AND must NOT start a new '@' tag
-                    if (spaces_after_hash > base_indent and lookahead < self.buffer.len and self.buffer[lookahead] != '@') {
-                        self.advance(); // consume '\n'
-                        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-                        continue;
-                    }
-                }
-                break;
-            }
-        }
-
-        // Trim the trailing \r, a CRLF's and any before it, from the final docstring or comment
-        // lexeme: the formatter ends the line with \n, which would make the last one left a
-        // CRLF's, trimmed when the output is read again
+        // Trim the trailing \r, a CRLF's and any before it: the formatter ends the line with
+        // \n, which would make the last one left a CRLF's, trimmed when the output is read again
         var end_idx = self.index;
         while (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
-        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
+        return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {

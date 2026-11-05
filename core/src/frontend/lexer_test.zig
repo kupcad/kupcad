@@ -40,16 +40,16 @@ test "KupCAD Lexer: Basic assignment and method chaining" {
     });
 }
 
-test "KupCAD Lexer: Docstring annotations and comments" {
+test "KupCAD Lexer: a `# @tag` line is a comment like any other" {
     try expectTokens(
         \\# @label Overall box width
         \\# Standard comment
         \\width = 80.0
     , &.{
-        t(.docstring, "# @label Overall box width"), t(.newline, "\n"),
-        t(.comment, "# Standard comment"),           t(.newline, "\n"),
-        t(.ident, "width"),                          t(.equal, "="),
-        t(.number, "80.0"),                          t(.eof, ""),
+        t(.comment, "# @label Overall box width"), t(.newline, "\n"),
+        t(.comment, "# Standard comment"),         t(.newline, "\n"),
+        t(.ident, "width"),                        t(.equal, "="),
+        t(.number, "80.0"),                        t(.eof, ""),
     });
 }
 
@@ -68,15 +68,15 @@ test "KupCAD Lexer: Complex Parametric Component with Imports" {
         \\# @label Bracket Width
         \\width = 50.5
     , &.{
-        t(.keyword_import, "import"), t(.l_brace, "{"),                        t(.constant, "ThreadedInsert"),
-        t(.r_brace, "}"),             t(.keyword_from, "from"),                t(.string, "./hardware.kup"),
-        t(.newline, "\n"),            t(.docstring, "# @label Bracket Width"), t(.newline, "\n"),
-        t(.ident, "width"),           t(.equal, "="),                          t(.number, "50.5"),
+        t(.keyword_import, "import"), t(.l_brace, "{"),                      t(.constant, "ThreadedInsert"),
+        t(.r_brace, "}"),             t(.keyword_from, "from"),              t(.string, "./hardware.kup"),
+        t(.newline, "\n"),            t(.comment, "# @label Bracket Width"), t(.newline, "\n"),
+        t(.ident, "width"),           t(.equal, "="),                        t(.number, "50.5"),
         t(.eof, ""),
     });
 }
 
-test "KupCAD Lexer: Docstring annotations with irregular spacing and casing" {
+test "KupCAD Lexer: Comments with tags, whatever their spacing and casing" {
     const source =
         "#@label width\n" ++
         "#    @Label height\n" ++
@@ -85,11 +85,11 @@ test "KupCAD Lexer: Docstring annotations with irregular spacing and casing" {
         "# not_a_docstring";
 
     try expectTokens(source, &.{
-        t(.docstring, "#@label width"),      t(.newline, "\n"),
-        t(.docstring, "#    @Label height"), t(.newline, "\n"),
-        t(.docstring, "#\t@LABEL depth"),    t(.newline, "\n"),
-        t(.docstring, "#   @lAbEl radius"),  t(.newline, "\n"),
-        t(.comment, "# not_a_docstring"),    t(.eof, ""),
+        t(.comment, "#@label width"),      t(.newline, "\n"),
+        t(.comment, "#    @Label height"), t(.newline, "\n"),
+        t(.comment, "#\t@LABEL depth"),    t(.newline, "\n"),
+        t(.comment, "#   @lAbEl radius"),  t(.newline, "\n"),
+        t(.comment, "# not_a_docstring"),  t(.eof, ""),
     });
 }
 
@@ -178,19 +178,19 @@ test "KupCAD Lexer: Nested String Interpolation" {
     });
 }
 
-test "KupCAD Lexer: Generalized Docstring Annotations (@return, @type, @deprecated)" {
+test "KupCAD Lexer: Comments with other tags (@return, @type, @deprecated)" {
     try expectTokens(
         \\# @return Outer enclosure shell
         \\# @deprecated Use Box.new instead
         \\# @type Depth offset
     , &.{
-        t(.docstring, "# @return Outer enclosure shell"),   t(.newline, "\n"),
-        t(.docstring, "# @deprecated Use Box.new instead"), t(.newline, "\n"),
-        t(.docstring, "# @type Depth offset"),              t(.eof, ""),
+        t(.comment, "# @return Outer enclosure shell"),   t(.newline, "\n"),
+        t(.comment, "# @deprecated Use Box.new instead"), t(.newline, "\n"),
+        t(.comment, "# @type Depth offset"),              t(.eof, ""),
     });
 }
 
-test "KupCAD Lexer: Multi-line Indented Docstring Tag" {
+test "KupCAD Lexer: a tag's indented lines are comments of their own" {
     const source =
         \\# @deprecated Use {#my_new_method} instead of this method because
         \\#   it uses a library that is no longer supported.
@@ -199,12 +199,14 @@ test "KupCAD Lexer: Multi-line Indented Docstring Tag" {
         \\end
     ;
 
+    // One comment per line: the lexer joined the indented ones to the tag's, by a rule of its
+    // own that kupcad doc's didn't follow (tools/doc/docstring.zig has the one rule)
     try expectTokens(source, &.{
-        t(.docstring,
-            \\# @deprecated Use {#my_new_method} instead of this method because
-            \\#   it uses a library that is no longer supported.
-            \\#   The new method accepts the same parameters.
-        ),
+        t(.comment, "# @deprecated Use {#my_new_method} instead of this method because"),
+        t(.newline, "\n"),
+        t(.comment, "#   it uses a library that is no longer supported."),
+        t(.newline, "\n"),
+        t(.comment, "#   The new method accepts the same parameters."),
         t(.newline, "\n"),
         t(.keyword_def, "def"),
         t(.ident, "mymethod"),
@@ -850,12 +852,13 @@ test "KupCAD Lexer: Percent array literals after statement keywords" {
     });
 }
 
-test "KupCAD Lexer: Multi-line Docstring with Windows CRLF line endings" {
+test "KupCAD Lexer: Comments with Windows CRLF line endings" {
     const source = "# @label Outer shell\r\n#   Continuation line\r\nwidth = 10";
     try expectTokens(source, &.{
-        t(.docstring, "# @label Outer shell\r\n#   Continuation line"), t(.newline, "\n"),
-        t(.ident, "width"),                                             t(.equal, "="),
-        t(.number, "10"),                                               t(.eof, ""),
+        t(.comment, "# @label Outer shell"),  t(.newline, "\n"),
+        t(.comment, "#   Continuation line"), t(.newline, "\n"),
+        t(.ident, "width"),                   t(.equal, "="),
+        t(.number, "10"),                     t(.eof, ""),
     });
 }
 
