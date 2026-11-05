@@ -134,6 +134,11 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         if (opts.miter_limit != null) {
             return vm.fail(.ArgumentError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit", .{});
         }
+        // Grown by a ball whose volume is beyond the largest number, it has no measure a
+        // Number holds, and the kernel gave the Solid back as it was
+        if (opts.delta > 0 and !std.math.isFinite(4.0 / 3.0 * std.math.pi * opts.delta * opts.delta * opts.delta)) {
+            return arguments.overflowed(vm, "offset");
+        }
         const solid = receiver.asGeometry().dag_idx;
         if (opts.delta < 0) return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addErode(solid, -opts.delta, segments) });
         const sphere_idx = try vm.dag_builder.addSphere(opts.delta, segments);

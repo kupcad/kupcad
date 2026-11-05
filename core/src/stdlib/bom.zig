@@ -52,7 +52,7 @@ pub fn meshMass(vm: *VM, receiver: value.Value) !value.Value {
         };
         total += mass * @as(f64, @floatFromInt(part.count));
     }
-    return value.Value.initNumber(total);
+    return arguments.measured(vm, total, "mass");
 }
 
 /// `part` as a Map with Symbol keys (parts.FIELDS).
@@ -62,16 +62,16 @@ fn rowOf(vm: *VM, part: Part) !value.Value {
     const row = try scope.map();
     const size = try scope.array();
     try size.items.ensureTotalCapacity(vm.gc.trackingAllocator(), part.size.len);
-    for (part.size) |extent| size.items.appendAssumeCapacity(value.Value.initNumber(extent));
+    for (part.size) |extent| size.items.appendAssumeCapacity(try arguments.measured(vm, extent, "bom"));
     const name = if (part.name) |text| try vm.allocateString(text) else value.Value.initNil();
     vm.push(name);
     const fields = [parts_mod.FIELDS.len]value.Value{
         name,
         value.Value.initNumber(@floatFromInt(part.count)),
-        value.Value.initNumber(part.volume),
+        try arguments.measured(vm, part.volume, "bom"),
         value.Value.initObj(&size.obj),
         if (part.density()) |d| value.Value.initNumber(d) else value.Value.initNil(),
-        if (part.mass()) |m| value.Value.initNumber(m) else value.Value.initNil(),
+        if (part.mass()) |m| try arguments.measured(vm, m, "bom") else value.Value.initNil(),
     };
     for (parts_mod.FIELDS, fields) |field, v| {
         const key = try vm.allocateSymbol(field);

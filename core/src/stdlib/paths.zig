@@ -444,7 +444,6 @@ fn pointArray(vm: *VM, p: [2]f64) !value.Value {
 
 /// `length`: along the path, in mm.
 pub fn pathLength(vm: *VM, receiver: value.Value) !value.Value {
-    _ = vm;
     const p = receiver.asPath();
     var total: f64 = 0;
     var from = p.start;
@@ -452,5 +451,5 @@ pub fn pathLength(vm: *VM, receiver: value.Value) !value.Value {
         total += segment.length(from);
         from = segment.to;
     }
-    return value.Value.initNumber(total);
+    return arguments.measured(vm, total, "length");
 }

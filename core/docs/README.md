@@ -497,6 +497,8 @@ hits = box.ray_cast([x, y, 100], [x, y, -100])  # Where the segment meets the su
 
 ```
 
+A measure beyond the largest number (`cube(1e150).volume`, `circle(1e300).area`, a `mass`, a Path's `length`, a `bom` row's) is a `RangeError`, as an arithmetic overflow is, and so is a Solid's `offset` by a distance whose ball has no volume a number holds (`offset(1e150)`).
+
 Each of `ray_cast`'s hits is a Map: its `"distance"` from the origin, its `"position"`, the face's outward `"normal"` and its `"crossing"`, +1 where the ray goes into the solid and -1 where it comes out. A ray that only touches an edge or a corner meets it as a +1 and a -1 at the same distance, which cancel, so count the material along a ray by its crossings rather than its hits: from an origin outside, `hits.map { |h| -h["crossing"] * h["distance"] }.sum` is how much of it runs through the solid.
 
 

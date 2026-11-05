@@ -70,7 +70,7 @@ pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
     try vm.requireFeature(handle.engine, .volume);
     const solid = receiver.asGeometry();
     if (solid.cached_volume == null) solid.cached_volume = kernel.volume(handle);
-    return value.Value.initNumber(solid.cached_volume.?);
+    return arguments.measured(vm, solid.cached_volume.?, "volume");
 }
 
 /// `solid.center_of_mass`: the centroid of its volume, [x, y, z], where it balances at a
@@ -99,8 +99,10 @@ pub fn meshCenterOfMass(vm: *VM, receiver: value.Value) !value.Value {
         six_volume += v6;
         moment = vec3.add(moment, vec3.scale(vec3.add(vec3.add(a, b), c), v6));
     }
+    if (!std.math.isFinite(six_volume)) return arguments.overflowed(vm, "center_of_mass");
     if (!(six_volume > 0)) return vm.fail(.ValueError, "center_of_mass: the Solid encloses no volume", .{});
     const centroid = vec3.add(ref, vec3.scale(moment, 1 / (4 * six_volume)));
+    for (centroid) |c| if (!std.math.isFinite(c)) return arguments.overflowed(vm, "center_of_mass");
     return vec3Value(vm, centroid);
 }
 
@@ -130,7 +132,7 @@ pub fn sketchArea(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "area", receiver);
     const handle = try vm.ensureConcreteCrossSection(receiver);
     try vm.requireFeature(handle.engine, .sketch_measure);
-    return value.Value.initNumber(kernel.crossSectionArea(handle));
+    return arguments.measured(vm, kernel.crossSectionArea(handle), "area");
 }
 
 pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
@@ -139,7 +141,7 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
     try vm.requireFeature(handle.engine, .surface_area);
     const solid = receiver.asGeometry();
     if (solid.cached_surface_area == null) solid.cached_surface_area = kernel.surfaceArea(handle);
-    return value.Value.initNumber(solid.cached_surface_area.?);
+    return arguments.measured(vm, solid.cached_surface_area.?, "surface_area");
 }
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -152,13 +154,13 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const other_handle = try vm.ensureConcrete(args[0]);
     try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0
     try vm.requireFeature(handle.engine, .min_gap);
-    if (search_length) |length| return value.Value.initNumber(kernel.minGap(handle, other_handle, length));
+    if (search_length) |length| return arguments.measured(vm, kernel.minGap(handle, other_handle, length), "min_gap");
     try vm.requireFeature(handle.engine, .bounding_box);
     // Infinity to an empty one: there is nothing in it to be near (its box has none)
     if (kernel.isEmpty(handle) or kernel.isEmpty(other_handle)) return value.Value.initNumber(std.math.inf(f64));
     const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
-    return value.Value.initNumber(fullGap(handle, other_handle, box_a, box_b));
+    return arguments.measured(vm, fullGap(handle, other_handle, box_a, box_b), "min_gap");
 }
 
 /// The gap between two solids, however far apart (`min_gap` without a search length):

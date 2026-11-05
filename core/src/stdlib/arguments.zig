@@ -35,6 +35,19 @@ pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{R
     return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, vm.typeName(receiver) });
 }
 
+/// `n`, what `method` measured of a shape, as a Number. One beyond the largest number
+/// (Infinity, or the NaN a kernel's sums make of Infinity less Infinity) is the RangeError an
+/// arithmetic overflow is: it was returned, so `cube(1e150).volume` was NaN.
+pub fn measured(vm: *VM, n: f64, method: []const u8) error{RuntimeError}!value.Value {
+    if (!std.math.isFinite(n)) return overflowed(vm, method);
+    return value.Value.initNumber(n);
+}
+
+/// The RangeError of what `method` works out being beyond the largest number.
+pub fn overflowed(vm: *VM, method: []const u8) error{RuntimeError} {
+    return vm.fail(.RangeError, "{s} overflows: the result is beyond the largest number ({e:.1})", .{ method, std.math.floatMax(f64) });
+}
+
 /// The bounding box of a Solid, of a Sketch (flat, at z = 0), or of an Assembly (the box
 /// around those of its parts that have one); null for an empty shape, which has none (a
 /// Solid's was ±infinity, and a move by it NaN).
