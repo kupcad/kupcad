@@ -1,14 +1,12 @@
 // The release's version, in every file that carries it: the core's build.zig.zon (what
 // `kupcad --version` prints), the package.json of the npm packages, the VS Code extension and the
-// desktop app, the desktop app's tauri.conf.json, the Ruby gem's version.rb (and so its
-// Gemfile.lock, which `bundle lock` writes) and the Python package's _version.py. `bump` sets
-// them all, as `npm version` sets a package's; the Release workflow checks a tag against them
-// with `check`.
+// desktop app, the desktop app's tauri.conf.json, the Ruby gem's version.rb and Gemfile.lock, and
+// the Python package's _version.py. `bump` sets them all, as `npm version` sets a package's; the
+// Release workflow checks a tag against them with `check`.
 //
 //   pnpm bump <major | minor | patch | version>     (node scripts/version.js bump ...)
 //   node scripts/version.js check <version>
 
-import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -24,8 +22,8 @@ const JSON_VERSION = /(?<=^ {2}"version": ")[^"]+(?=",$)/gm;
 const PACKAGES = ['protocol', 'wasm', 'ui', 'editor', 'playground', 'files', 'vscode', 'desktop'];
 
 /**
- * Each file that carries the version, by its path from the root, and its pattern: the version,
- * once in the file.
+ * Each file that carries the version, by its path from the root, its pattern, and how many times
+ * the pattern finds the version in it, the same each time: once, unless `times` says otherwise.
  */
 export const HOLDERS = [
   { path: 'core/build.zig.zon', pattern: /(?<=^ *\.version = ")[^"]+(?=",$)/gm },
@@ -35,6 +33,13 @@ export const HOLDERS = [
   })),
   { path: 'packages/kupcad-desktop/src-tauri/tauri.conf.json', pattern: JSON_VERSION },
   { path: 'bindings/ruby/lib/kupcad/version.rb', pattern: /(?<=^ *VERSION = ')[^']+(?='$)/gm },
+  // The gem's spec and its checksum line. The release installs the gem's development tools with
+  // the lock frozen, which refuses a lock that names another version than version.rb's
+  {
+    path: 'bindings/ruby/Gemfile.lock',
+    pattern: /(?<=^ +kupcad \()[^)]+(?=\)$)/gm,
+    times: 2,
+  },
   { path: 'bindings/python/src/kupcad/_version.py', pattern: /(?<=^__version__ = ")[^"]+(?="$)/gm },
 ];
 
@@ -93,13 +98,18 @@ export function nextVersion(current, wanted) {
 /**
  * The text of `holder`'s file under `root`, and the version in it.
  * @param {string} root
- * @param {{ path: string, pattern: RegExp }} holder
+ * @param {{ path: string, pattern: RegExp, times?: number }} holder
  */
-function read(root, { path, pattern }) {
+function read(root, { path, pattern, times = 1 }) {
   const text = readFileSync(join(root, path), 'utf8');
-  const found = text.match(pattern) ?? [];
-  if (found.length !== 1)
-    throw new Error(`${path}: its version is in it ${found.length} times, not once`);
+  const found = text.match(pattern);
+  if (found?.length !== times) {
+    const wanted = times === 1 ? 'once' : `${times} times`;
+    throw new Error(`${path}: its version is in it ${found?.length ?? 0} times, not ${wanted}`);
+  }
+  const differing = [...new Set(found)];
+  if (differing.length > 1)
+    throw new Error(`${path}: its versions differ: ${differing.join(', ')}`);
   return { text, version: found[0] };
 }
 
@@ -111,29 +121,28 @@ function listed(holders) {
   return holders.map(({ path, version }) => `\n  ${path}: ${version}`).join('');
 }
 
-/** @param {string} wanted */
-function bump(wanted) {
-  const current = versions(ROOT);
+/**
+ * Sets every holder under `root` to the version `wanted` sets (nextVersion).
+ * @param {string} root
+ * @param {string} wanted
+ */
+function bump(root, wanted) {
+  const current = versions(root);
   const version = nextVersion(current, wanted);
-  setVersion(ROOT, version);
+  setVersion(root, version);
   console.log(`${[...new Set(current.map((holder) => holder.version))].join(', ')} -> ${version}`);
-  const locked = spawnSync('bundle', ['lock'], {
-    cwd: join(ROOT, 'bindings/ruby'),
-    stdio: 'inherit',
-  });
-  if (locked.status !== 0) {
-    throw new Error(
-      `${version} is set, but not in bindings/ruby/Gemfile.lock: run \`bundle lock\` there`,
-    );
-  }
   console.log(
     `Commit, then tag the commit and push the tag: git tag v${version} && git push origin v${version}`,
   );
 }
 
-/** @param {string} wanted */
-function check(wanted) {
-  const other = versions(ROOT).filter(({ version }) => version !== wanted);
+/**
+ * Throws, naming them, if any of the holders under `root` isn't `wanted`.
+ * @param {string} root
+ * @param {string} wanted
+ */
+export function check(root, wanted) {
+  const other = versions(root).filter(({ version }) => version !== wanted);
   if (other.length > 0) {
     throw new Error(
       `these aren't ${wanted} (\`pnpm bump ${wanted}\` sets them all):${listed(other)}`,
@@ -153,7 +162,7 @@ if (import.meta.main) {
         'usage: pnpm bump <major | minor | patch | version>, or node scripts/version.js check <version>',
       );
     }
-    run(wanted);
+    run(ROOT, wanted);
   } catch (error) {
     console.error(`version: ${error instanceof Error ? error.message : error}`);
     process.exitCode = 1;

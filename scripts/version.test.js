@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { HOLDERS, nextVersion, setVersion, versions } from './version.js';
+import { HOLDERS, check, nextVersion, setVersion, versions } from './version.js';
 
 /** The repository's root, whose holders the tests copy. */
 const ROOT = join(import.meta.dirname, '..');
@@ -70,12 +70,26 @@ describe('setVersion', () => {
       return { path, lines: after.length - before.length, changed };
     });
     expect(changes).toEqual(
-      HOLDERS.map(({ path }) => ({
+      HOLDERS.map(({ path, times = 1 }) => ({
         path,
         lines: 0,
-        changed: [expect.stringContaining('10.20.30-rc.1')],
+        changed: Array(times).fill(expect.stringContaining('10.20.30-rc.1')),
       })),
     );
+  });
+
+  it("sets the gem's version in Gemfile.lock, its spec and its checksum, as Bundler writes them", () => {
+    setVersion(root, '0.4.0');
+    const lock = readFileSync(join(root, 'bindings/ruby/Gemfile.lock'), 'utf8');
+    expect(lock).toMatch(/^PATH\n  remote: \.\n  specs:\n    kupcad \(0\.4\.0\)$/m);
+    expect(lock).toMatch(/^CHECKSUMS\n(?: {2}.+\n)*? {2}kupcad \(0\.4\.0\)$/m);
+  });
+
+  it('refuses a Gemfile.lock whose spec and checksum name other versions, saying which', () => {
+    const path = join(root, 'bindings/ruby/Gemfile.lock');
+    const lock = readFileSync(path, 'utf8');
+    writeFileSync(path, lock.replace(/(?<=^ {4}kupcad \()[^)]+/m, '0.4.0'));
+    expect(() => versions(root)).toThrow(/Gemfile\.lock: its versions differ: 0\.4\.0, /);
   });
 
   it("changes no file when one's version isn't found, saying which", () => {
@@ -96,6 +110,32 @@ describe('setVersion', () => {
     setVersion(root, '0.4.0');
     expect(readFileSync(path, 'utf8')).toBe(
       '{\n  "engines": {\n    "version": "0.3.0",\n  },\n  "version": "0.4.0",\n}\n',
+    );
+  });
+});
+
+describe('check', () => {
+  /** A copy of the repository's holders, at their paths, each at 0.4.0. */
+  let root = '';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'kupcad-version-'));
+    for (const { path } of HOLDERS) cpSync(join(ROOT, path), join(root, path));
+    setVersion(root, '0.4.0');
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('passes the version every holder has', () => {
+    expect(() => check(root, '0.4.0')).not.toThrow();
+  });
+
+  // A frozen `bundle install`, as the release's, refuses that lock once version.rb says another
+  it("names Gemfile.lock when it wasn't bumped with version.rb", () => {
+    const path = join(root, 'bindings/ruby/lib/kupcad/version.rb');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('0.4.0', '0.5.0'));
+    expect(() => check(root, '0.5.0')).toThrow(
+      /these aren't 0\.5\.0[^]*\n {2}bindings\/ruby\/Gemfile\.lock: 0\.4\.0/,
     );
   });
 });
