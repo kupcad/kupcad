@@ -445,7 +445,7 @@ pub const VM = struct {
 
     // --- Dynamic Stack Operations ---
     /// Pushes onto room reserved beforehand: every frame reserves its compiled stack depth
-    /// and every native call NATIVE_STACK_RESERVE (reserveFrame, executeNative), where
+    /// and every native call NATIVE_STACK_RESERVE (reserveFrame, runNative), where
     /// running out of memory is an error. A native needing more slots reserves them with
     /// ensureStackCapacity first. Growing here is the fallback for a reservation that
     /// fell short, a bug.
@@ -1171,9 +1171,7 @@ pub const VM = struct {
         // As for a native: a raised error may be rescued, unwinding past this frame.
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
-        const next = self.pushForElement(frame, slot, @intFromFloat(taken)) catch |err| {
-            return self.alreadyThrown(throw_seq, caller_depth) orelse self.nativeFailed("for", err);
-        };
+        const next = self.pushForElement(frame, slot, @intFromFloat(taken)) catch |err| return self.nativeFailure("for", err, throw_seq, caller_depth);
         if (next) |got| {
             self.setLocal(frame, slot + 1, value.Value.initNumber(@floatFromInt(got)));
         } else {
@@ -2441,7 +2439,7 @@ pub const VM = struct {
         const throw_seq = self.throw_seq;
         const result = handler(self, op, a_val, b_val) catch |err| {
             if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
-            return self.alreadyThrown(throw_seq, depth) orelse self.nativeFailed(operatorSymbol(op), err);
+            return self.nativeFailure(operatorSymbol(op), err, throw_seq, depth);
         };
         self.push(result);
         return .ok;
@@ -2650,7 +2648,7 @@ pub const VM = struct {
             // it every read walked the class chain and tried the private name.
             if (self.findMethodWithPrivacy(instance.class, name_val, ic).method) |method_val| {
                 if (method_val.isNative()) {
-                    const res = self.executeNative(method_val.asNative(), 0, self.stack.ptr + self.stack_top, false);
+                    const res = self.executeNative(method_val.asNative(), 0, self.stack_top - 1, false);
                     if (res != .ok) return res;
                     return null;
                 }
@@ -2748,8 +2746,7 @@ pub const VM = struct {
                     if (res != .ok) return res;
                     return null;
                 } else if (m_val.isNative()) {
-                    const args_ptr = self.stack.ptr + base_slot + 1;
-                    const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
+                    const res = self.executeNative(m_val.asNative(), arg_count, base_slot, call.has_block);
                     if (self.afterCall(res, target_depth)) |out| return out;
                     return null;
                 } else {
@@ -2832,7 +2829,6 @@ pub const VM = struct {
         const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| return self.callArgsError(err);
         const arg_count = call.count;
         const receiver = self.stack[base_slot];
-        const args_ptr = self.stack.ptr + base_slot + 1;
 
         // Resolve Class of Receiver seamlessly
         const class_obj: ?*value.ObjClass = self.getClass(receiver);
@@ -2889,7 +2885,7 @@ pub const VM = struct {
         // Dispatch Method if Found
         if (method_val) |m_val| {
             if (m_val.isNative()) {
-                return self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
+                return self.executeNative(m_val.asNative(), arg_count, base_slot, call.has_block);
             } else if (m_val.isClosure()) {
                 return self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block, call.has_kwargs);
             }
@@ -3412,12 +3408,10 @@ pub const VM = struct {
                 return self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false, has_block, has_kwargs);
             } else if (bound.method.isNative()) {
                 // Same error protocol as any native call (a block raising inside it must unwind)
-                const args_ptr = self.stack.ptr + base_slot + 1;
-                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, has_block);
+                return self.executeNative(bound.method.asNative(), arg_count, base_slot, has_block);
             }
         } else if (callee.isNative()) {
-            const args_ptr = self.stack.ptr + base_slot + 1;
-            return self.executeNative(callee.asNative(), arg_count, args_ptr, has_block);
+            return self.executeNative(callee.asNative(), arg_count, base_slot, has_block);
         } else if (callee.isClosure()) {
             return self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false, has_block, has_kwargs);
         } else if (callee.isClass()) {
@@ -3456,73 +3450,90 @@ pub const VM = struct {
         }
         if (!init_method.isNative()) return self.raiseError(.TypeError, "'{s}#initialize' is not callable.", .{class_obj.name.chars});
 
-        const native_obj = init_method.asNative();
-        const args_ptr = self.stack.ptr + base_slot + 1;
-        const caller_depth = self.frames.items.len;
-        const throw_seq = self.throw_seq;
         // The native's return value is discarded: a constructor always yields the instance
-        _ = native_obj.function(self, .{ .ptr = args_ptr, .count = arg_count, .has_block = has_block, .name = native_obj.name }) catch |err| {
-            if (err == error.Unwind) {
-                self.restoreAfterUnwind(caller_depth);
-                return .ok;
-            }
-            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-            if (err == error.FatalError) return .runtime_error;
-            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.nativeFailed(native_obj.name, err);
-        };
-        self.popAndRelease(arg_count);
+        switch (self.callNative(init_method.asNative(), arg_count, base_slot, has_block)) {
+            .failed => |res| return res,
+            .returned => self.popAndRelease(arg_count),
+        }
         return .ok;
     }
 
-    /// Calls `native_obj` with the `arg_count` arguments at `args_ptr` (the receiver just
-    /// below them); `has_block`: the last of them is the call's block.
-    inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, has_block: bool) InterpretResult {
-        // Natives push GC roots without growing the stack themselves (see NATIVE_STACK_RESERVE).
-        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseOutOfMemory("{s}", .{native_obj.name});
+    /// What a native call gave: its result, or, when it failed, what the run does next.
+    const NativeOutcome = union(enum) { returned: value.Value, failed: InterpretResult };
+
+    /// Calls `native_obj` on the `arg_count` arguments above `base_slot`, its receiver's slot
+    /// (`has_block`: the last of them is the call's block), and pushes its result in their
+    /// place.
+    inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
+        switch (self.callNative(native_obj, arg_count, base_slot, has_block)) {
+            .failed => |res| return res,
+            .returned => |result| {
+                self.popAndRelease(arg_count + 1);
+                self.stack.ptr[self.stack_top] = result;
+                self.stack_top += 1;
+                return .ok;
+            },
+        }
+    }
+
+    /// runNative as the run calls a native, the one way it does (a call, a constructor's
+    /// `initialize`): its failure turned into what the run does next (nativeFailure), a
+    /// `break` in its block carried on or refused (nativeBroke).
+    inline fn callNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, base_slot: usize, has_block: bool) NativeOutcome {
         // Depth of the calling frame, captured before an unwind can pop it
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
+        const result = self.runNative(native_obj, arg_count, base_slot, has_block) catch |err| {
+            if (err == error.BlockBreak) return .{ .failed = self.nativeBroke(native_obj.name, arg_count) };
+            return .{ .failed = self.nativeFailure(native_obj.name, err, throw_seq, caller_depth) };
+        };
+        return .{ .returned = result };
+    }
 
-        // --- PROFILER: Native Enter ---
+    /// Runs `native_obj` on the `arg_count` arguments above `base_slot`, its receiver's slot,
+    /// as every call of a native begins: room reserved for the roots it pushes
+    /// (NATIVE_STACK_RESERVE), its arguments found where the stack is once that room is
+    /// there (making it may move the stack), a profiler frame. Its error is the caller's:
+    /// callNative's, or a native's that runs this one on its own behalf (writeShown).
+    fn runNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, base_slot: usize, has_block: bool) anyerror!value.Value {
+        try self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE);
         if (self.profiler) |p| p.enterFrame(native_obj.name) catch |err| {
             log.err("Profiler error: {}", .{err});
         };
-
-        const result = native_obj.function(self, .{ .ptr = args_ptr, .count = arg_count, .has_block = has_block, .name = native_obj.name }) catch |err| {
-            if (self.profiler) |p| p.exitFrame() catch |e| {
-                log.err("Profiler error: {}", .{e});
-            };
-            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-            if (err == error.Unwind) {
-                self.restoreAfterUnwind(caller_depth);
-                return .ok;
-            }
-            if (err == error.FatalError) return .runtime_error;
-            if (err == error.BlockBreak) {
-                if (self.pending_break.?.target != null) {
-                    // Aimed at a method below this native (`m { break }` where m yields from
-                    // inside `each`): the native is done; the calling frame carries it on.
-                    self.popAndRelease(arg_count + 1);
-                    return .block_break;
-                }
-                // A `break` in a block the native didn't iterate (highlight { }, benchmark { }).
-                self.pending_break = null;
-                return self.raiseError(.ArgumentError, "break can only stop a block given to an iterating method, not {s}'s", .{native_obj.name});
-            }
-            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.nativeFailed(native_obj.name, err);
-        };
-
-        // --- PROFILER: Native Exit ---
-        if (self.profiler) |p| p.exitFrame() catch |err| {
+        defer if (self.profiler) |p| p.exitFrame() catch |err| {
             log.err("Profiler error: {}", .{err});
         };
+        return native_obj.function(self, .{ .ptr = self.stack.ptr + base_slot + 1, .count = arg_count, .has_block = has_block, .name = native_obj.name });
+    }
 
-        self.popAndRelease(arg_count + 1);
-        self.stack.ptr[self.stack_top] = result;
-        self.stack_top += 1;
-        return .ok;
+    /// What the run does after something it called failed with `err` (`name`: a native, an
+    /// operator the host runs, a `for` loop's step), `throw_seq` and `caller_depth` taken as
+    /// the call began: past a limit, or failed beyond rescue, the run ends; a rescue outside
+    /// the call that took an error raised in it goes on at its handler (error.Unwind); an
+    /// error the call raised stands (alreadyThrown); any other failure is raised, naming it.
+    fn nativeFailure(self: *VM, name: []const u8, err: anyerror, throw_seq: u64, caller_depth: usize) InterpretResult {
+        switch (err) {
+            error.ExecutionLimitExceeded => return .execution_limit_exceeded,
+            error.FatalError => return .runtime_error,
+            error.Unwind => {
+                self.restoreAfterUnwind(caller_depth);
+                return .ok;
+            },
+            else => return self.alreadyThrown(throw_seq, caller_depth) orelse self.nativeFailed(name, err),
+        }
+    }
+
+    /// A native failed with error.BlockBreak: a `break` in a block it was given.
+    fn nativeBroke(self: *VM, name: []const u8, arg_count: u8) InterpretResult {
+        if (self.pending_break.?.target != null) {
+            // Aimed at a method below this native (`m { break }` where m yields from inside
+            // `each`): the native is done; the calling frame carries it on.
+            self.popAndRelease(arg_count + 1);
+            return .block_break;
+        }
+        // A `break` in a block the native didn't iterate (highlight { }, benchmark { }).
+        self.pending_break = null;
+        return self.raiseError(.ArgumentError, "break can only stop a block given to an iterating method, not {s}'s", .{name});
     }
 
     /// Called when a native (or sync closure call) started at `caller_depth` frames
@@ -3618,10 +3629,9 @@ pub const VM = struct {
     fn writeShown(self: *VM, val: value.Value, method: value.Value, comptime name: []const u8, writer: *std.Io.Writer) !void {
         const shown = if (method.isClosure()) try self.callMethodSync(val, method.asClosure(), &.{}) else shown: {
             // A built-in method reads its receiver just below its arguments
-            const native = method.asNative();
             self.push(val);
             defer _ = self.pop();
-            break :shown try native.function(self, .{ .ptr = self.stack.ptr + self.stack_top, .count = 0, .name = native.name });
+            break :shown try self.runNative(method.asNative(), 0, self.stack_top - 1, false);
         };
         if (!shown.isString()) {
             return self.fail(.TypeError, "{s}#" ++ name ++ " must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });

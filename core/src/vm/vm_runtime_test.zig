@@ -690,6 +690,25 @@ test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
     try testing.expectEqual(.execution_limit_exceeded, result);
 }
 
+test "VM: a limit or a stack overflow in a script's to_s under an operator ends the run" {
+    // `%` runs a script's to_s on the host's operator handler, whose failures were raised as
+    // "% failed (ExecutionLimitExceeded)": an error the script could rescue, and run on.
+    const support = @import("../test_support.zig");
+    const loops = "class Loops\n  def to_s\n    while true\n    end\n  end\nend\n";
+    const deep = "class Deep\n  def to_s = \"#{Deep.new}\"\nend\n";
+    const cases = [_]struct { src: []const u8, result: InterpretResult }{
+        .{ .src = loops ++ "r = begin\n  \"%s\" % [Loops.new]\nrescue => e\n  e.message\nend", .result = .execution_limit_exceeded },
+        .{ .src = deep ++ "r = begin\n  \"%s\" % [Deep.new]\nrescue => e\n  e.message\nend", .result = .runtime_error },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        vm.hooks.setLimit(100_000);
+        try testing.expectEqual(case.result, try support.runOn(&vm, case.src));
+    }
+}
+
 test "VM: Modules accurately namespace nested classes and prevent global leaks" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
