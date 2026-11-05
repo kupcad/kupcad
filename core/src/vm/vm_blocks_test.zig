@@ -83,11 +83,11 @@ test "VM: executes Array.map with functional closure block" {
     const arr_span = try b.addNodes(&.{ one, two, three });
     const arr_node = try b.arrayLiteral(arr_span, 0, 0);
 
-    const param_x = try b.identifierNode("x", 0);
+    const param_x = try b.addParams(&.{.{ .name = try b.intern("x") }});
     const get_x = try b.identifierNode("x", 0);
     const two_mul = try b.number("2", 0);
     const mult_node = try b.binary(.multiply, get_x, two_mul, 0);
-    const block_node = try b.block(&.{param_x}, &.{mult_node}, 0, 0);
+    const block_node = try b.block(param_x, &.{mult_node}, 0, 0);
 
     const map_str = try b.intern("map");
     const empty_args = try b.addNamedArgs(&.{});
@@ -289,7 +289,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     defer comp.deinit();
 
     // Group into a block to execute as a single script sequence
-    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
+    const block_node = try b.block(.empty, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
     // The result should be the packed *args array: [2, 3, 4]
@@ -360,7 +360,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     defer comp.deinit();
 
     // Group into a block to execute as a single script sequence
-    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
+    const block_node = try b.block(.empty, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
     // The result should be an array: [ [20, 30], { "x" => 100 } ]
@@ -466,7 +466,7 @@ test "VM: Named Keyword Arguments with default values" {
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
-    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
+    const block_node = try b.block(.empty, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
     const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
@@ -1372,14 +1372,11 @@ test "Compiler: Block array destructuring refuses what no array element is, shou
     defer b.deinit();
 
     // Manually build a bad destructuring parameter, which the parser reports: |(x, **y)|
-    const x_id = try b.identifierNode("x", 0);
-    const y_id = try b.identifierNode("y", 0);
-    const y_keywords = try b.doubleSplatExpr(y_id, 0); // Invalid inside tuple!
-
-    const tuple_span = try b.addNodes(&.{ x_id, y_keywords });
-    const tuple_node = try b.arrayLiteral(tuple_span, 0, 0);
-
-    const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
+    const tuple = try b.addParams(&.{
+        .{ .name = try b.intern("x") },
+        .{ .name = try b.intern("y"), .modifier = .double_splat }, // Invalid inside tuple!
+    });
+    const block_node = try b.block(try b.addParams(&.{.{ .name = .none, .pattern = tuple }}), &.{}, 0, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

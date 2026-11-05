@@ -79,3 +79,17 @@ test "ParentMap: correctly maps blocks and method calls" {
     // Nested Block's parent is the call
     try testing.expectEqual(call_idx, pmap.parents[@backingInt(child_block_idx)]);
 }
+
+test "ParentMap: a block parameter's default has its block for a parent" {
+    // The walk skipped block parameters: their nodes had no parent.
+    var doc = try @import("../frontend/document.zig").Document.parse(testing.allocator, "x = 1\n[1].each { |a, b = x| a + b }\n");
+    defer doc.deinit();
+    const tree = &doc.tree;
+    for (tree.nodes.items, 0..) |node, i| {
+        if (node.tag != .block or i == @backingInt(tree.root)) continue;
+        const default = tree.getParams(tree.block(&node).params)[1].default_value;
+        try testing.expectEqual(@as(ast.NodeIndex, @fromBackingInt(@as(u32, @intCast(i)))), doc.parents[@backingInt(default)]);
+        return;
+    }
+    return error.NoBlock;
+}

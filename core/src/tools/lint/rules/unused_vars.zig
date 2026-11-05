@@ -151,35 +151,12 @@ pub const UnusedVarsRule = struct {
         try engine.markUsed(var_name);
     }
 
-    fn declareLhsBindings(engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        if (node_idx == .none) return;
-        const node = tree.getNode(node_idx) orelse return;
-
-        switch (node.tag) {
-            .identifier => {
-                try engine.declareVar(tree.nodeString(node), engine.getLoc(node.main_token), true);
-            },
-            .array_literal => {
-                const span = tree.nodeSpan(node);
-                for (tree.getNodes(span)) |elem_idx| {
-                    try declareLhsBindings(engine, tree, elem_idx);
-                }
-            },
-            .hash_literal => {
-                const span = tree.nodeSpan(node);
-                for (tree.getHashEntries(span)) |entry| {
-                    try declareLhsBindings(engine, tree, entry.value);
-                }
-            },
-            .splat_expr => {
-                const inner = tree.nodeIndex(node);
-                try declareLhsBindings(engine, tree, inner);
-            },
-            .double_splat_expr => {
-                const inner = tree.nodeIndex(node);
-                try declareLhsBindings(engine, tree, inner);
-            },
-            else => {},
+    /// Declares a block's parameters, a destructured one's names too, each where its name is
+    /// written, so a rename can change it there.
+    fn declareBlockParams(engine: *linter.Linter, tree: *const ast.Tree, params: ast.Span) !void {
+        for (tree.getParams(params)) |p| {
+            if (p.name != .none) try engine.declareVar(tree.getString(p.name), engine.getLoc(@intCast(p.name_token)), true);
+            try declareBlockParams(engine, tree, p.pattern);
         }
     }
 
@@ -213,12 +190,7 @@ pub const UnusedVarsRule = struct {
                     try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token), false);
                 }
             },
-            .block => {
-                const b = tree.block(node);
-                for (tree.getNodes(b.params)) |p_idx| {
-                    try declareLhsBindings(engine, tree, p_idx);
-                }
-            },
+            .block => try declareBlockParams(engine, tree, tree.block(node).params),
             else => {},
         }
     }

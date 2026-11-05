@@ -92,12 +92,11 @@ test "AST Builder: Constructs span-based Block nodes accurately" {
     const stmt3 = try builder.number("3", dummy_token);
 
     const stmts = [_]ast.NodeIndex{ stmt1, stmt2, stmt3 };
-    const params = [_]ast.NodeIndex{}; // Empty params for this block
 
     // Distinct start/end tokens so a swapped or defaulted end_token is caught
     const start_token: u24 = 3;
     const end_token: u32 = 7;
-    const block_idx = try builder.block(&params, &stmts, end_token, start_token);
+    const block_idx = try builder.block(.empty, &stmts, end_token, start_token);
     const node = builder.tree.getNode(block_idx).?;
 
     try testing.expectEqual(ast.Tag.block, node.tag);

@@ -66,7 +66,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         },
         .lambda_expr => {
             const le = tree.lambdaExpr(node);
-            for (tree.getParams(le.params)) |param| try walk(Context, ctx, tree, param.default_value);
+            try walkParams(Context, ctx, tree, le.params);
             try walk(Context, ctx, tree, le.body);
         },
         .import_stmt => try walk(Context, ctx, tree, tree.importStmt(node).attributes),
@@ -98,7 +98,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         },
         .def_stmt => {
             const ds = tree.defStmt(node);
-            for (tree.getParams(ds.params)) |param| try walk(Context, ctx, tree, param.default_value);
+            try walkParams(Context, ctx, tree, ds.params);
             try walk(Context, ctx, tree, ds.body);
         },
         .class_stmt => {
@@ -114,7 +114,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         },
         .module_stmt => {
             const ms = tree.moduleStmt(node);
-            for (tree.getParams(ms.params)) |param| try walk(Context, ctx, tree, param.default_value);
+            try walkParams(Context, ctx, tree, ms.params);
             try walk(Context, ctx, tree, ms.body);
         },
         .begin_stmt => {
@@ -124,7 +124,9 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
             try walk(Context, ctx, tree, bs.ensure_body);
         },
         .block => {
-            for (tree.getNodes(tree.block(node).stmts)) |stmt| try walk(Context, ctx, tree, stmt);
+            const b = tree.block(node);
+            try walkParams(Context, ctx, tree, b.params);
+            for (tree.getNodes(b.stmts)) |stmt| try walk(Context, ctx, tree, stmt);
         },
         .range => {
             const r = tree.range(node);
@@ -149,5 +151,14 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
 
     if (comptime std.meta.hasFn(Context, "leaveNode")) {
         try ctx.leaveNode(tree, node_idx);
+    }
+}
+
+/// The parameters' defaults, the only nodes a parameter holds (a destructured one's names
+/// hold none). A block's were skipped, so a name read in one was never seen.
+fn walkParams(comptime Context: type, ctx: *Context, tree: *const ast.Tree, params: ast.Span) anyerror!void {
+    for (tree.getParams(params)) |param| {
+        try walk(Context, ctx, tree, param.default_value);
+        try walkParams(Context, ctx, tree, param.pattern);
     }
 }

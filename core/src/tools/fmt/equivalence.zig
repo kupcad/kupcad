@@ -57,10 +57,6 @@ const Collector = struct {
     pub fn enterNode(self: *Collector, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx).?;
         try self.prints.append(self.allocator, fingerprint(tree, node));
-        // The walker skips a block's parameters, which are nodes too (`|a, b = 1|`).
-        if (node.tag == .block) {
-            for (tree.getNodes(tree.block(node).params)) |param| try visitor.walk(Collector, self, tree, param);
-        }
     }
 };
 
@@ -126,7 +122,7 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
         .if_stmt => h.add(tree.ifStmt(node).is_unless),
         .while_stmt => h.add(tree.whileStmt(node).is_until),
         .namespace_access => for (tree.getStringLists(tree.nodeSpan(node))) |s| h.string(tree, s),
-        .block => h.add(tree.getNodes(tree.block(node).params).len),
+        .block => h.params(tree, tree.block(node).params),
         .begin_stmt => for (tree.getRescueClauses(tree.beginStmt(node).rescues)) |rc| {
             for (tree.getStringLists(rc.errors)) |e| h.string(tree, e);
             h.string(tree, rc.variable);
@@ -159,11 +155,15 @@ const Hasher = struct {
         }
     }
 
+    /// Their names and kinds, a destructured one's too (the walker visits their defaults).
     fn params(self: *Hasher, tree: *const ast.Tree, span: ast.Span) void {
+        self.add(span.end - span.start);
         for (tree.getParams(span)) |param| {
             self.string(tree, param.name);
             self.add(param.modifier);
             self.add(param.is_keyword);
+            self.add(param.default_value != .none);
+            self.params(tree, param.pattern);
         }
     }
 

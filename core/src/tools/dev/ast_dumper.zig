@@ -80,9 +80,7 @@ fn dumpNode(
 
     switch (node.tag) {
         .block => {
-            const b = tree.block(node);
-            try children.appendSlice(allocator, tree.getNodes(b.params));
-            try children.appendSlice(allocator, tree.getNodes(b.stmts));
+            try children.appendSlice(allocator, tree.getNodes(tree.block(node).stmts));
         },
         .assignment => {
             try children.append(allocator, tree.assignment(node).value);

@@ -77,6 +77,12 @@ pub const StringId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const Span = struct {
     start: u32,
     end: u32,
+
+    pub const empty: Span = .{ .start = 0, .end = 0 };
+
+    pub fn isEmpty(self: Span) bool {
+        return self.start == self.end;
+    }
 };
 
 /// A memory-efficient slice pointing to the contiguous string_bytes buffer
@@ -142,11 +148,18 @@ pub const Node = packed struct {
 };
 
 // --- Node Payloads (Reconstructed from extra_data) ---
+/// A parameter of a def, a lambda or a block.
 pub const Param = struct {
     name: StringId,
-    default_value: NodeIndex, // .none if no default
-    modifier: ?ArgModifier, // For *args, **kwargs, &block
-    is_keyword: bool,
+    default_value: NodeIndex = .none,
+    modifier: ?ArgModifier = null, // For *args, **kwargs, &block
+    is_keyword: bool = false,
+    /// The token of its name, or of the `(` of a destructured one: where findings point.
+    name_token: u32 = 0,
+    /// A block's parameter in parentheses, `|(x, *rest), z|`, which takes an array apart: the
+    /// parameters its elements go to, in order (Span of Param: a name, a `*` one, or another
+    /// in parentheses), its own name being none. Empty for any other parameter.
+    pattern: Span = .empty,
 };
 
 pub const NamedArg = struct {
@@ -329,7 +342,7 @@ pub const BeginStmt = struct {
 };
 
 pub const Block = struct {
-    params: Span, // Span of NodeIndex
+    params: Span, // Span of Param, a call's block's
     stmts: Span, // Span of NodeIndex
     end_token: u32 = 0,
 };
@@ -1158,8 +1171,10 @@ pub const Builder = struct {
         return self.createNode(.begin_stmt, main_token, data_idx);
     }
 
-    pub fn block(self: *Builder, params: []const NodeIndex, stmts: []const NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ try self.addNodes(params), try self.addNodes(stmts), end_token });
+    /// A body: a program's, a branch's, or a call's block with its parameters (`params`, a
+    /// Span of Param; empty for the others).
+    pub fn block(self: *Builder, params: Span, stmts: []const NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ params, try self.addNodes(stmts), end_token });
         return self.createNode(.block, main_token, data_idx);
     }
 

@@ -646,6 +646,19 @@ test "Formatter: comments above end or else stay inside their block" {
     );
 }
 
+test "Formatter: a block's keyword, splat and destructured parameters" {
+    // A keyword one was a one-entry map to the parser, which the formatter wrote as one: it
+    // refused the file ("would change what it does").
+    try expectStableFormat(
+        \\[1].each { |a, k: 1, j:, *r, **o| a }
+        \\[[1, 2]].each { |(c, *d), e = 3| c }
+    ,
+        \\[1].each { |a, k: 1, j:, *r, **o| a }
+        \\[[1, 2]].each { |(c, *d), e = 3| c }
+        \\
+    );
+}
+
 test "Formatter: a `# @tag` comment is kept wherever it is, as written" {
     // Each was a docstring statement: one ending a line or inside a chain was dropped, and
     // `#@title X` lost the line after it, which the lexer took for its continuation.

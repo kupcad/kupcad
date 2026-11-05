@@ -320,7 +320,7 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     defer b.deinit();
 
     // rescue IOError => e
-    const rescue_body = try b.block(&.{}, &.{try b.number("1", 0)}, 0, 0);
+    const rescue_body = try b.block(.empty, &.{try b.number("1", 0)}, 0, 0);
     const err_name = try b.intern("IOError");
     const err_list = try b.addStringLists(&.{err_name});
     const var_name = try b.intern("e");
@@ -328,7 +328,7 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     const rescues = try b.addRescueClauses(&.{rescue_clause});
 
     // begin body
-    const begin_body = try b.block(&.{}, &.{try b.number("2", 0)}, 0, 0);
+    const begin_body = try b.block(.empty, &.{try b.number("2", 0)}, 0, 0);
     const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
 
     var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
@@ -501,7 +501,7 @@ test "Compiler Edge Case: break and next inside an expression drop its operands"
         const payload = if (tag == .break_stmt) try b.number("5", 0) else ast.NodeIndex.none;
         const jump_node = try b.createNode(tag, 0, @backingInt(payload));
         const add_node = try b.binary(.add, ten, jump_node, 0);
-        const body = try b.block(&.{}, &.{add_node}, 0, 0);
+        const body = try b.block(.empty, &.{add_node}, 0, 0);
         const loop = try b.whileStmt(try b.booleanNode(true, 0), body, false, 0);
 
         var vm = try VM.init(testing.allocator, testing.io);
@@ -533,8 +533,8 @@ test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
     // rescue => e
     //   20
     // end
-    const begin_body = try b.block(&.{}, &.{try b.number("10", 0)}, 0, 0);
-    const rescue_body = try b.block(&.{}, &.{try b.number("20", 0)}, 0, 0);
+    const begin_body = try b.block(.empty, &.{try b.number("10", 0)}, 0, 0);
+    const rescue_body = try b.block(.empty, &.{try b.number("20", 0)}, 0, 0);
 
     const err_name = try b.intern("StandardError");
     const err_list = try b.addStringLists(&.{err_name});
@@ -631,7 +631,7 @@ test "Compiler: Protects core classes from complete reassignment" {
 
     // AST: class Array; end
     const class_name_node = try b.identifierNode("Array", 0);
-    const empty_body = try b.block(&.{}, &.{}, 0, 0);
+    const empty_body = try b.block(.empty, &.{}, 0, 0);
     const class_node = try b.classStmt(class_name_node, .none, empty_body, 0, 0);
 
     var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
@@ -661,7 +661,7 @@ test "Compiler: Block intermediate expressions are strictly popped" {
     const ten = try b.number("10", 0);
     const twenty = try b.number("20", 0);
     const thirty = try b.number("30", 0);
-    const block_node = try b.block(&.{}, &.{ ten, twenty, thirty }, 0, 0);
+    const block_node = try b.block(.empty, &.{ ten, twenty, thirty }, 0, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1618,24 +1618,19 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // One more identifier than MAX_SHORT_CONSTANTS
-    var elements: std.ArrayList(ast.NodeIndex) = .empty;
+    // One more name than MAX_SHORT_CONSTANTS
+    var elements: std.ArrayList(ast.Param) = .empty;
     defer elements.deinit(testing.allocator);
 
     for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [16]u8 = undefined;
         const str = try std.mem.print(&buf, "v{d}", .{i});
-        const name_id = try b.intern(str);
-        // Build raw identifier nodes
-        const id_node = try b.createNode(.identifier, 0, @backingInt(name_id));
-        try elements.append(testing.allocator, id_node);
+        try elements.append(testing.allocator, .{ .name = try b.intern(str) });
     }
 
-    const span = try b.addNodes(elements.items);
-    const tuple_node = try b.arrayLiteral(span, 0, 0);
-
-    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v255)|`
-    const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
+    // Pass the massive destructured parameter to a block: `do |(v0...v255)|`
+    const tuple = try b.addParams(&.{.{ .name = .none, .pattern = try b.addParams(elements.items) }});
+    const block_node = try b.block(tuple, &.{}, 0, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1647,7 +1642,7 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     defer comp.deinit();
 
     // This MUST fail with TooManyConstants. If the `errdefer` stack restoration is missing
-    // inside `compileDestructureNode`, the compiler's internal `std.debug.assert` for
+    // inside `compileDestructurePattern`, the compiler's internal `std.debug.assert` for
     // `current_stack_depth` will instantly panic and crash the test.
     const result = comp.compile(block_node);
     try testing.expectError(error.TooManyConstants, result);

@@ -98,3 +98,18 @@ test "definition: a class declared by its path is found by its name, and doesn't
     const nut = std.mem.find(u8, source, "Nut").?;
     try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(nut), .length = 3 } }, definition.definitionAt(&doc, std.mem.findLast(u8, source, "Nut").?).?);
 }
+
+test "definition: a destructured or splat block parameter goes to where it is written" {
+    // The resolver declared only a block's plain names: `c`, `d` and `rest` were globals
+    // with no declaration, and hover and go-to-definition missed them.
+    const source = "[[1, 2]].map { |(c, d), *rest, k: 1| c + d + rest.size + k }\n";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    for ([_][]const u8{ "c", "d", "rest", "k" }) |name| {
+        errdefer std.debug.print("{s}\n", .{name});
+        const written = std.mem.find(u8, source, name).?;
+        const used = std.mem.findPos(u8, source, written + 1, name).?;
+        const target = definition.definitionAt(&doc, used) orelse return error.NoDefinition;
+        try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(written), .length = @intCast(name.len) } }, target);
+    }
+}

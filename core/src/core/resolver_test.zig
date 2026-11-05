@@ -383,7 +383,7 @@ test "Resolver: a local's or an upvalue's use records the node that declared it"
             .identifier => {
                 const name = tree.nodeString(&node);
                 const by = tree.getNode(declared) orelse return error.NoDeclaration;
-                const expected: ast.Tag = if (std.mem.eql(u8, name, "p")) .def_stmt else if (std.mem.eql(u8, name, "a")) .assignment else .identifier;
+                const expected: ast.Tag = if (std.mem.eql(u8, name, "p")) .def_stmt else if (std.mem.eql(u8, name, "a")) .assignment else .block;
                 errdefer std.debug.print("{s}: {s}\n", .{ name, @tagName(by.tag) });
                 try testing.expectEqual(expected, by.tag);
                 if (std.mem.eql(u8, name, "a")) try testing.expectEqual(first_assignment, declared);
@@ -392,7 +392,6 @@ test "Resolver: a local's or an upvalue's use records the node that declared it"
             else => {},
         }
     }
-    // The two assignments, p, a and q's use (declared by the block's parameter, a node
-    // the parent map doesn't reach)
+    // The two assignments, p, a and q's use (declared by the block, whose parameter it is)
     try testing.expectEqual(@as(usize, 5), checked);
 }

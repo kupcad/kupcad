@@ -64,6 +64,26 @@ test "Linter Rule: UnusedVarsRule handles arbitrary nested destructuring in bloc
     try testing.expectEqualStrings("Unused variable 'b'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }
 
+test "Linter Rule: UnusedVarsRule counts a read in a block parameter's default" {
+    // The walk skipped block parameters, so `base` was reported unused.
+    var engine = try runRule(testing.allocator, "def run\n  base = 5\n  [1].each { |a, b = base + 0, k: base| puts a + b + k }\nend\nrun\n");
+    defer engine.deinit();
+    try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+}
+
+test "Linter Rule: UnusedVarsRule renames a block parameter where it is written" {
+    const source = "[[1, 2]].each { |(c, d), k: 1| cube(c) }\n";
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+    try testing.expectEqual(@as(usize, 2), engine.diagnostics.items.len);
+    for (engine.diagnostics.items) |d| {
+        const edit = d.fix.?.edits[0];
+        const at = if (std.mem.find(u8, d.message, "'d'") != null) std.mem.find(u8, source, "d)").? else std.mem.find(u8, source, "k:").?;
+        try testing.expectEqual(at, edit.offset);
+        try testing.expectEqual(@as(u32, 1), edit.length);
+    }
+}
+
 test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts as a use" {
     // Each of these used to report a variable that is read (or is the model).
     const clean = [_][]const u8{

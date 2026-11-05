@@ -228,6 +228,16 @@ pub const Resolver = struct {
         return slot;
     }
 
+    /// Declares the names `params` bind, a destructured one's included, as locals of the
+    /// innermost scope, declared by `by` (the def, lambda or block). Only a block's plain
+    /// names were, so `|(c, d), *rest|` left c, d and rest unresolved.
+    fn declareParams(self: *Resolver, params: ast.Span, by: ast.NodeIndex) !void {
+        for (self.tree.getParams(params)) |param| {
+            if (param.name != .none) _ = try self.declareLocal(param.name, by);
+            try self.declareParams(param.pattern, by);
+        }
+    }
+
     /// The node that declared `name` in the innermost scope (after declareLocal).
     fn declaredBy(self: *const Resolver, name: ast.StringId) ast.NodeIndex {
         if (self.scopes.items.len == 0) return .none;
@@ -381,30 +391,17 @@ const ResolverContext = struct {
             .block => {
                 const is_mb = self.resolver.active_method_blocks.contains(node_idx);
                 try self.resolver.pushScope(false, is_mb, node_idx);
-                const b = tree.block(node);
-                for (tree.getNodes(b.params)) |param_idx| {
-                    const param_node = tree.getNode(param_idx).?;
-                    if (param_node.tag == .identifier) {
-                        const name_id: ast.StringId = @fromBackingInt(param_node.data);
-                        _ = try self.resolver.declareLocal(name_id, param_idx);
-                        try self.resolver.resolveUsage(name_id, param_idx);
-                    }
-                }
+                try self.resolver.declareParams(tree.block(node).params, node_idx);
             },
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 try self.resolver.noteTopLevel(ds.name);
                 try self.resolver.pushScope(true, false, node_idx);
-                for (tree.getParams(ds.params)) |param| {
-                    _ = try self.resolver.declareLocal(param.name, node_idx);
-                }
+                try self.resolver.declareParams(ds.params, node_idx);
             },
             .lambda_expr => {
                 try self.resolver.pushScope(true, false, node_idx);
-                const le = tree.lambdaExpr(node);
-                for (tree.getParams(le.params)) |param| {
-                    _ = try self.resolver.declareLocal(param.name, node_idx);
-                }
+                try self.resolver.declareParams(tree.lambdaExpr(node).params, node_idx);
             },
             .for_stmt => {
                 // Like Ruby's, a for loop opens no scope: its variables stay after it.

@@ -1769,9 +1769,11 @@ pub const Compiler = struct {
         }
     }
 
-    fn splatIndex(targets: []const ast.LhsExpr) ?usize {
-        for (targets, 0..) |t, i| {
-            if (t.modifier == .splat) return i;
+    /// Where the `*` one is among a multiple assignment's targets (LhsExpr) or a destructured
+    /// parameter's names (Param); the parser lets one through.
+    fn splatIndex(items: anytype) ?usize {
+        for (items, 0..) |item, i| {
+            if (item.modifier == .splat) return i;
         }
         return null;
     }
@@ -1979,82 +1981,6 @@ pub const Compiler = struct {
         // Pop the arguments + the implicit `self` receiver
         self.simulatePop(call.count + 1);
         self.simulatePush(1);
-    }
-
-    fn lowerBlockParams(self: *Compiler, param_span: ast.Span) CompileError![]const ast.Param {
-        const param_nodes = self.tree.getNodes(param_span);
-        var lowered = try self.allocator.alloc(ast.Param, param_nodes.len);
-
-        for (param_nodes, 0..) |node_idx, i| {
-            const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
-
-            switch (node.tag) {
-                .identifier => {
-                    lowered[i] = .{
-                        .name = self.tree.stringId(node),
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                .assignment => {
-                    const assign = self.tree.assignment(node);
-                    lowered[i] = .{
-                        .name = assign.name,
-                        .default_value = assign.value,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                .symbol => {
-                    lowered[i] = .{
-                        .name = self.tree.stringId(node),
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = true,
-                    };
-                },
-                .hash_literal => {
-                    const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
-                    const key_node = self.tree.getNode(entries[0].key).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(key_node),
-                        .default_value = entries[0].value,
-                        .modifier = null,
-                        .is_keyword = true,
-                    };
-                },
-                .splat_expr => {
-                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(inner_node),
-                        .default_value = .none,
-                        .modifier = .splat,
-                        .is_keyword = false,
-                    };
-                },
-                .double_splat_expr => {
-                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(inner_node),
-                        .default_value = .none,
-                        .modifier = .double_splat,
-                        .is_keyword = false,
-                    };
-                },
-                .array_literal => {
-                    // This represents destructuring like |(x, y)|
-                    lowered[i] = .{
-                        .name = .none, // Anonymous parameter
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                else => return error.UnknownNode,
-            }
-        }
-        return lowered;
     }
 
     fn compileIfStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
@@ -2270,16 +2196,16 @@ pub const Compiler = struct {
         const block_payload = self.tree.block(node);
         const stmts = self.tree.getNodes(block_payload.stmts);
 
-        // Unpack destructured block arguments
-        const param_nodes = self.tree.getNodes(block_payload.params);
-        for (param_nodes, 0..) |p_idx, i| {
-            const p_node = self.tree.getNode(p_idx).?;
-            if (p_node.tag == .array_literal) {
-                // The tuple is sitting in local slot (i + 1)
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
-                // Call recursive destructuring directly
-                try self.compileDestructureNode(p_idx);
+        // Unpack each destructured parameter (`|(x, y)|`) from its positional slot, as
+        // declareParams numbers them (slot 0 is the closure)
+        var slot: u16 = 1;
+        for (self.tree.getParams(block_payload.params)) |param| {
+            if (param.is_keyword or param.modifier == .double_splat or param.modifier == .block) continue;
+            if (!param.pattern.isEmpty()) {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, slot);
+                try self.compileDestructurePattern(param.pattern);
             }
+            slot += 1;
         }
 
         if (stmts.len == 0) {
@@ -2625,9 +2551,7 @@ pub const Compiler = struct {
     /// A `do ... end` / `{ ... }` block, compiled as a closure value.
     fn compileBlockLiteral(self: *Compiler, block_idx: ast.NodeIndex) CompileError!void {
         const block_payload = self.tree.block(self.tree.getNode(block_idx).?);
-        const lowered_params = try self.lowerBlockParams(block_payload.params);
-        defer self.allocator.free(lowered_params);
-        try self.compileClosureBlock(lowered_params, block_idx, null, false);
+        try self.compileClosureBlock(self.tree.getParams(block_payload.params), block_idx, null, false);
     }
 
     fn anySplat(self: *Compiler, nodes: []const ast.NodeIndex) bool {
@@ -2735,65 +2659,49 @@ pub const Compiler = struct {
         }
     }
 
-    // Helper function to handle nested array destructuring
-    /// Unpacks a destructured block parameter (`|(x, (y, z))|`) into block locals.
-    fn compileDestructureNode(self: *Compiler, target_node_idx: ast.NodeIndex) CompileError!void {
+    /// Unpacks the array on top of the stack into the names of a destructured block parameter
+    /// (`|(x, (y, z))|`), as block locals. A splat (`|(a, *rest, z)|`) takes what the names
+    /// around it leave, as `a, *rest, z = value` does.
+    fn compileDestructurePattern(self: *Compiler, pattern: ast.Span) CompileError!void {
         // Save simulator state to prevent stack corruption on TooManyConstants aborts
         const saved_depth = self.current_stack_depth;
         errdefer self.current_stack_depth = saved_depth;
 
-        const node = self.tree.getNode(target_node_idx) orelse return error.UnknownNode;
+        const elements = self.tree.getParams(pattern);
+        if (splatIndex(elements)) |before| {
+            const after = elements.len - 1 - before;
+            if (before > limits.MAX_SHORT_CONSTANTS or after > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack_splat);
+            try self.emitByte(@intCast(before));
+            try self.emitByte(@intCast(after));
+        } else {
+            if (elements.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack);
+            try self.emitByte(@intCast(elements.len));
+        }
+        self.simulatePop(1);
+        self.simulatePush(elements.len);
 
-        if (node.tag == .identifier) {
+        var i: usize = elements.len;
+        while (i > 0) {
+            i -= 1;
+            const element = elements[i];
+            // A default, a keyword or `**`, which the parser reports: no array element is one
+            if (element.is_keyword or element.default_value != .none or element.modifier == .double_splat or element.modifier == .block) return error.UnknownNode;
+            if (!element.pattern.isEmpty()) {
+                try self.compileDestructurePattern(element.pattern);
+                continue;
+            }
             // A destructured name is a parameter like a plain `|x|`: it always shadows an
             // outer variable of the same name instead of writing through it.
-            const name_id = self.tree.stringId(node);
-            const slot = self.resolveLocal(name_id) orelse blk: {
+            const slot = self.resolveLocal(element.name) orelse blk: {
                 const new_slot = self.getNextLocalSlot();
-                try self.addLocal(name_id, new_slot);
+                try self.addLocal(element.name, new_slot);
                 break :blk new_slot;
             };
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
             try self.emitOp(.op_pop);
-        } else if (node.tag == .array_literal) {
-            // Recursive Spatial Destructuring! A splat (`|(a, *rest, z)|`) takes what the names
-            // around it leave, as `a, *rest, z = value` does
-            const elements = self.tree.getNodes(self.tree.nodeSpan(node));
-            if (self.splatElementIndex(elements)) |before| {
-                const after = elements.len - 1 - before;
-                if (before > limits.MAX_SHORT_CONSTANTS or after > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-                try self.emitOp(.op_unpack_splat);
-                try self.emitByte(@intCast(before));
-                try self.emitByte(@intCast(after));
-            } else {
-                if (elements.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-                try self.emitOp(.op_unpack);
-                try self.emitByte(@intCast(elements.len));
-            }
-            self.simulatePop(1);
-            self.simulatePush(elements.len);
-
-            var el_i: usize = elements.len;
-            while (el_i > 0) {
-                el_i -= 1;
-                try self.compileDestructureNode(elements[el_i]);
-            }
-        } else if (node.tag == .splat_expr) {
-            // The rest, an array, into the splat's name
-            try self.compileDestructureNode(self.tree.nodeIndex(node));
-        } else {
-            // A default, a keyword or `**`, which the parser reports: no array element is one
-            return error.UnknownNode;
         }
-    }
-
-    /// Where the splat is among a destructured parameter's names (the parser lets one through).
-    fn splatElementIndex(self: *Compiler, elements: []const ast.NodeIndex) ?usize {
-        for (elements, 0..) |idx, i| {
-            const element = self.tree.getNode(idx) orelse continue;
-            if (element.tag == .splat_expr) return i;
-        }
-        return null;
     }
 
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {

@@ -1018,8 +1018,21 @@ pub const Formatter = struct {
     fn formatParams(self: *Formatter, tree: *const ast.Tree, params: []const ast.Param) Error!void {
         if (params.len == 0) return;
         try self.out.append(self.allocator, '(');
+        try self.formatParamList(tree, params);
+        try self.out.append(self.allocator, ')');
+    }
+
+    /// Parameters, a comma between them: each with its modifier, its keyword colon and its
+    /// default, or a destructured one's names in parentheses, as written.
+    fn formatParamList(self: *Formatter, tree: *const ast.Tree, params: []const ast.Param) Error!void {
         for (params, 0..) |p, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            if (!p.pattern.isEmpty()) {
+                try self.out.append(self.allocator, '(');
+                try self.formatParamList(tree, tree.getParams(p.pattern));
+                try self.out.append(self.allocator, ')');
+                continue;
+            }
             if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
             try self.out.appendSlice(self.allocator, tree.getString(p.name));
             if (p.is_keyword) try self.out.append(self.allocator, ':');
@@ -1028,7 +1041,6 @@ pub const Formatter = struct {
                 try self.formatNode(tree, p.default_value);
             }
         }
-        try self.out.append(self.allocator, ')');
     }
 
     /// Whether an array literal was written as a list without brackets (`return 1, 2`,
@@ -1435,28 +1447,11 @@ pub const Formatter = struct {
 
     /// ` |a, b|` after a block's opener, when it has parameters.
     fn formatBlockParams(self: *Formatter, tree: *const ast.Tree, b: ast.Block) Error!void {
-        const params = tree.getNodes(b.params);
+        const params = tree.getParams(b.params);
         if (params.len == 0) return;
         try self.out.appendSlice(self.allocator, " |");
-        try self.formatBlockParamList(tree, params);
+        try self.formatParamList(tree, params);
         try self.out.append(self.allocator, '|');
-    }
-
-    /// Block parameters, a comma between them. A destructured one, which the parser keeps as
-    /// an Array literal, is in parentheses as written: printed as an Array, `|[x, y]|`, it
-    /// didn't parse, and the formatter refused the file.
-    fn formatBlockParamList(self: *Formatter, tree: *const ast.Tree, params: []const ast.NodeIndex) Error!void {
-        for (params, 0..) |p_idx, idx| {
-            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            const param = tree.getNode(p_idx).?;
-            if (param.tag == .array_literal) {
-                try self.out.append(self.allocator, '(');
-                try self.formatBlockParamList(tree, tree.getNodes(tree.nodeSpan(param)));
-                try self.out.append(self.allocator, ')');
-            } else {
-                try self.formatNode(tree, p_idx);
-            }
-        }
     }
 
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {

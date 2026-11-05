@@ -526,10 +526,15 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Parser, end_tags: []const Tag) ParseError!ast.NodeIndex {
+        return self.parseBody(.empty, end_tags, self.tok_idx);
+    }
+
+    /// The statements up to one of `end_tags`, as a block of `params` (a call's block's, a
+    /// Span of Param) whose main token is `start_tok`.
+    fn parseBody(self: *Parser, params: ast.Span, end_tags: []const Tag, start_tok: u24) ParseError!ast.NodeIndex {
         try self.enterNesting();
         defer self.ast_depth -= 1;
 
-        const start_tok = self.tok_idx;
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
         while (self.tag(0) != .eof) {
@@ -562,7 +567,7 @@ pub const Parser = struct {
             }
         }
         const end_tok = self.tok_idx;
-        return self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch ParseError.OutOfMemory;
+        return self.b.block(params, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     /// The token a statement stopped at, said: the line's (or the file's) end after what came
@@ -637,7 +642,7 @@ pub const Parser = struct {
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             try self.scratch_nodes.append(self.allocator, stmt);
             const end_tok = self.tok_idx;
-            const then_block = self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, stmt_main_token) catch return ParseError.OutOfMemory;
+            const then_block = self.b.block(.empty, self.scratch_nodes.items[s_len..], end_tok, stmt_main_token) catch return ParseError.OutOfMemory;
 
             if (mod_tag == .keyword_if or mod_tag == .keyword_unless) {
                 stmt = self.b.ifStmt(cond, then_block, .none, mod_tag == .keyword_unless, end_tok, mod_tok) catch return ParseError.OutOfMemory;
@@ -801,46 +806,29 @@ pub const Parser = struct {
         defer self.leaveBrackets(outer);
         const is_brace = (self.tag(0) == .l_brace);
         const start_tok = if (is_brace) try self.expect(.l_brace) else try self.expect(.keyword_do);
-        const params_start = self.scratch_nodes.items.len;
-        defer self.scratch_nodes.shrinkRetainingCapacity(params_start);
-        var params_len: usize = 0;
         const scope = self.enterScope();
         defer self.leaveScope(scope);
 
+        var params: ast.Span = .empty;
         if (self.tag(0) == .pipe) {
             self.advance();
 
             // `|` closes the list here, not an operator (but within brackets: enterBrackets)
             self.in_block_params = true;
             const outer_list = self.enterParamList();
-            const elements = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .pipe);
+            const s_len = self.scratch_params.items.len;
+            defer self.scratch_params.shrinkRetainingCapacity(s_len);
+            const elements = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .pipe);
             self.rest_params = outer_list;
             self.in_block_params = false;
             try self.checkParamCount(elements.len);
-
-            params_len = elements.len;
             _ = try self.expect(.pipe);
+            params = try self.b.addParams(elements);
         }
 
-        const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
-        const block_node_idx = try self.parseBlock(end_tags);
-
-        const end_tok = self.tok_idx;
-
-        if (is_brace) {
-            _ = try self.expect(.r_brace);
-        } else {
-            _ = try self.expect(.keyword_end);
-        }
-
-        const block_node = self.b.tree.getNode(block_node_idx).?;
-        const block_payload = self.b.tree.block(block_node);
-        const stmts_start = self.scratch_nodes.items.len;
-        try self.scratch_nodes.appendSlice(self.allocator, self.b.tree.getNodes(block_payload.stmts));
-        const safe_params = self.scratch_nodes.items[params_start .. params_start + params_len];
-        const safe_stmts = self.scratch_nodes.items[stmts_start..self.scratch_nodes.items.len];
-
-        return self.b.block(safe_params, safe_stmts, end_tok, start_tok) catch ParseError.OutOfMemory;
+        const block_node = try self.parseBody(params, if (is_brace) &.{.r_brace} else &.{.keyword_end}, start_tok);
+        _ = try self.expect(if (is_brace) .r_brace else .keyword_end);
+        return block_node;
     }
 
     fn parseBeginStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -1161,7 +1149,7 @@ pub const Parser = struct {
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             try self.scratch_nodes.append(self.allocator, expr);
 
-            const body_node = self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch return ParseError.OutOfMemory;
+            const body_node = self.b.block(.empty, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch return ParseError.OutOfMemory;
 
             // Return the AST Node immediately without looking for an `end` keyword
             return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), params_span, body_node, is_class_method, end_tok, is_private, start_tok) catch ParseError.OutOfMemory;
@@ -1531,7 +1519,12 @@ pub const Parser = struct {
     /// parameter `|(@x, y)|` would silently assign the receiver's field. The name
     /// is still consumed, so the rest of the signature parses without follow-on errors.
     fn expectParamName(self: *Parser) ParseError!u24 {
-        const name_tok = try self.expect(.ident);
+        if (self.tag(0) != .ident) {
+            self.reportExpected("a parameter name");
+            return ParseError.UnexpectedToken;
+        }
+        const name_tok = self.tok_idx;
+        self.advance();
         const name = self.tokens.lexeme(self.source, name_tok);
         const kind: ?[]const u8 = switch (identifier.kindOf(name)) {
             .class_var => "a class variable",
@@ -1543,8 +1536,21 @@ pub const Parser = struct {
         return name_tok;
     }
 
+    /// A parameter of a def, a lambda or (`in_block_params`) a block, which may also be a
+    /// destructured one in parentheses and can't take a block. Block parameters were parsed
+    /// apart, as expressions (an assignment for a default, a one-entry map for a keyword), and
+    /// the compiler turned them back into parameters, the walker and the resolver missing
+    /// what they held.
     fn parseParam(self: *Parser) ParseError!ast.Param {
         const mod_tok = self.tok_idx;
+        if (self.in_block_params) switch (self.tag(0)) {
+            .l_paren => return self.parseParamPattern(),
+            .ampersand => {
+                self.reportError(self.getLoc(self.tok_idx), .@"invalid-parameter", "A block parameter cannot take a block ('&'); pass it as a normal argument instead", .{});
+                return ParseError.UnexpectedToken;
+            },
+            else => {},
+        };
         const mod = self.parseArgModifier(); // Automatically handles *, **, and &
         self.noteRestParam(mod, mod_tok);
 
@@ -1559,7 +1565,7 @@ pub const Parser = struct {
             is_keyword = true;
             self.advance();
             // In KupCAD, `x: 10` assigns 10 as the default.
-            if (self.tag(0) != .comma and self.tag(0) != .r_paren) {
+            if (self.tag(0) != .comma and self.tag(0) != .r_paren and self.tag(0) != .pipe) {
                 default_val = try self.parseExpression(.none);
             }
         } else if (self.tag(0) == .equal) {
@@ -1575,7 +1581,23 @@ pub const Parser = struct {
             .default_value = default_val,
             .modifier = mod,
             .is_keyword = is_keyword,
+            .name_token = name_tok,
         };
+    }
+
+    /// `(a, *rest, (b, c))`, a block parameter that takes an array apart: a parameter of no
+    /// name whose pattern is its elements'.
+    fn parseParamPattern(self: *Parser) ParseError!ast.Param {
+        const open_tok = try self.expect(.l_paren);
+        // An array's names: a splat here is the group's, not the block's
+        const outer_list = self.enterParamList();
+        defer self.rest_params = outer_list;
+        const s_len = self.scratch_params.items.len;
+        defer self.scratch_params.shrinkRetainingCapacity(s_len);
+        const elements = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .r_paren);
+        self.checkDestructuredParams(elements);
+        _ = try self.expect(.r_paren);
+        return .{ .name = .none, .name_token = open_tok, .pattern = try self.b.addParams(elements) };
     }
 
     /// Parameters occupy u8 frame slots and arity is a u8, so reject oversized
@@ -2111,90 +2133,18 @@ pub const Parser = struct {
         return self.b.hashLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
-    fn parseBlockParam(self: *Parser) ParseError!ast.NodeIndex {
-        const start_tok = self.tok_idx;
-        if (self.tag(0) == .star) {
-            self.advance();
-            self.noteRestParam(.splat, start_tok);
-            const ident_tok = try self.expectParamName();
-            try self.declareLocal(ident_tok);
-            const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
-            return self.b.splatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
-        } else if (self.tag(0) == .star_star) {
-            self.advance();
-            self.noteRestParam(.double_splat, start_tok);
-            const ident_tok = try self.expectParamName();
-            try self.declareLocal(ident_tok);
-            const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
-            return self.b.doubleSplatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
-        } else if (self.tag(0) == .ident) {
-            const ident_tok = try self.expectParamName();
-            try self.declareLocal(ident_tok);
-            const ident_str = self.tokens.lexeme(self.source, ident_tok);
-
-            // Check for default value assignment (x = 10)
-            if (self.tag(0) == .equal) {
-                self.advance();
-                const default_val = try self.parseExpression(.none);
-                const name_id = try self.b.intern(ident_str);
-                return self.b.assignment(name_id, null, default_val, start_tok) catch ParseError.OutOfMemory;
-            } else if (self.tag(0) == .colon) {
-                // Keyword param: a: or a: 10
-                self.advance();
-                const name_id = try self.b.intern(ident_str);
-                // `)` ends a parameter in parentheses, which can't be a keyword: one error says so
-                if (self.tag(0) != .comma and self.tag(0) != .pipe and self.tag(0) != .r_paren) {
-                    // Keyword with default: a: 10
-                    const default_val = try self.parseExpression(.none);
-
-                    const sym_node = self.b.createNode(.symbol, ident_tok, @backingInt(name_id)) catch return ParseError.OutOfMemory;
-
-                    const s_len = self.scratch_hash_entries.items.len;
-                    defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);
-                    self.scratch_hash_entries.append(self.allocator, .{ .key = sym_node, .value = default_val }) catch return ParseError.OutOfMemory;
-
-                    const span = try self.b.addHashEntries(self.scratch_hash_entries.items[s_len..]);
-                    return self.b.hashLiteral(span, self.tok_idx - 1, ident_tok) catch ParseError.OutOfMemory;
-                }
-                // Keyword without default: a:
-                return self.b.createNode(.symbol, ident_tok, @backingInt(name_id)) catch return ParseError.OutOfMemory;
-            }
-
-            return self.b.identifierNode(ident_str, start_tok) catch ParseError.OutOfMemory;
-        } else if (self.tag(0) == .l_paren) {
-            self.advance();
-            // An array's names: a splat here is the group's, not the block's
-            const outer_list = self.enterParamList();
-            defer self.rest_params = outer_list;
-            const s_len = self.scratch_nodes.items.len;
-            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-            const tuple_params = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .r_paren);
-            self.checkDestructuredParams(tuple_params);
-            const end_tok = self.tok_idx;
-            _ = try self.expect(.r_paren);
-            const span = try self.b.addNodes(tuple_params);
-            return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
-        } else if (self.tag(0) == .ampersand) {
-            // Blocks don't receive blocks; this used to be mis-parsed without a diagnostic.
-            self.reportError(self.getLoc(self.tok_idx), .@"invalid-parameter", "A block parameter cannot take a block ('&'); pass it as a normal argument instead", .{});
-            return ParseError.UnexpectedToken;
-        }
-        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
-        return ParseError.UnexpectedToken;
-    }
-
     /// Reports what a parameter in parentheses (`|(a, *rest)|`) can't be, as Ruby refuses it:
     /// its names are an array's elements, which have no defaults and no keywords (a second
     /// splat is noteRestParam's). The compiler took them for a fault of its own.
-    fn checkDestructuredParams(self: *Parser, params: []const ast.NodeIndex) void {
-        for (params) |idx| {
-            const node = self.b.tree.getNode(idx) orelse continue;
-            const loc = self.getLoc(node.main_token);
-            switch (node.tag) {
-                .assignment => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot have a default value", .{}),
-                .symbol, .hash_literal => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot be a keyword", .{}),
-                .double_splat_expr => self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot take keywords ('**')", .{}),
-                else => {},
+    fn checkDestructuredParams(self: *Parser, params: []const ast.Param) void {
+        for (params) |param| {
+            const loc = self.getLoc(@intCast(param.name_token));
+            if (param.is_keyword) {
+                self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot be a keyword", .{});
+            } else if (param.default_value != .none) {
+                self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot have a default value", .{});
+            } else if (param.modifier == .double_splat) {
+                self.reportError(loc, .@"invalid-parameter", "A parameter in parentheses cannot take keywords ('**')", .{});
             }
         }
     }

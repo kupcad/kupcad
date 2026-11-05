@@ -176,11 +176,11 @@ test "KupCAD Parser: Method Call with Do Block and Parameters" {
 
     const block = pt.getNode(mc.block);
     const block_payload = tree.block(block);
-    const params = tree.getNodes(block_payload.params);
+    const params = tree.getParams(block_payload.params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
-    try testing.expectEqualStrings("face", tree.nodeString(pt.getNode(params[0])));
-    try testing.expectEqualStrings("idx", tree.nodeString(pt.getNode(params[1])));
+    try testing.expectEqualStrings("face", tree.getString(params[0].name));
+    try testing.expectEqualStrings("idx", tree.getString(params[1].name));
 
     const block_stmts = tree.getNodes(block_payload.stmts);
     const stmt2 = pt.getNode(block_stmts[0]);
@@ -639,8 +639,8 @@ test "KupCAD Parser: Curly Brace Method Blocks" {
 
     const block = pt.getNode(mc.block);
     const block_payload = tree.block(block);
-    const params = tree.getNodes(block_payload.params);
-    try testing.expectEqualStrings("f", tree.nodeString(pt.getNode(params[0])));
+    const params = tree.getParams(block_payload.params);
+    try testing.expectEqualStrings("f", tree.getString(params[0].name));
 
     const block_stmts = tree.getNodes(block_payload.stmts);
     const inner_call = pt.getNode(block_stmts[0]);
@@ -914,17 +914,14 @@ test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
 
     const block = pt.getNode(mc.block);
     const block_payload = tree.block(block);
-    const params = tree.getNodes(block_payload.params);
+    const params = tree.getParams(block_payload.params);
 
-    const param0 = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.array_literal, param0.tag);
+    try testing.expectEqual(ast.StringId.none, params[0].name);
+    const param0_elems = tree.getParams(params[0].pattern);
+    try testing.expectEqualStrings("x", tree.getString(param0_elems[0].name));
+    try testing.expectEqualStrings("y", tree.getString(param0_elems[1].name));
 
-    const param0_elems = tree.getNodes(tree.nodeSpan(param0));
-    try testing.expectEqualStrings("x", tree.nodeString(pt.getNode(param0_elems[0])));
-    try testing.expectEqualStrings("y", tree.nodeString(pt.getNode(param0_elems[1])));
-
-    const param1 = pt.getNode(params[1]);
-    try testing.expectEqualStrings("val", tree.nodeString(param1));
+    try testing.expectEqualStrings("val", tree.getString(params[1].name));
 }
 
 test "KupCAD Parser: Super with Command Syntax and Blocks" {
@@ -1196,7 +1193,7 @@ test "KupCAD Parser: Combinators and Trailing Commas" {
 
     const n3 = pt.getNode(try pt.parser.parseStatement());
     const block = pt.getNode(tree.methodCall(n3).block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 }
 
@@ -1880,15 +1877,14 @@ test "KupCAD Parser: Destructuring with Nested Tuple Patterns" {
     const stmt = pt.getNode(stmt_idx);
     const mc = tree.methodCall(stmt);
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
-    const param0 = pt.getNode(params[0]);
-    const tuple_param = tree.getNodes(tree.nodeSpan(param0));
+    const tuple_param = tree.getParams(params[0].pattern);
     try testing.expectEqual(@as(usize, 2), tuple_param.len);
-    try testing.expectEqualStrings("x", tree.nodeString(pt.getNode(tuple_param[0])));
-    try testing.expectEqualStrings("y", tree.nodeString(pt.getNode(tuple_param[1])));
-    try testing.expectEqualStrings("index", tree.nodeString(pt.getNode(params[1])));
+    try testing.expectEqualStrings("x", tree.getString(tuple_param[0].name));
+    try testing.expectEqualStrings("y", tree.getString(tuple_param[1].name));
+    try testing.expectEqualStrings("index", tree.getString(params[1].name));
 }
 
 test "KupCAD Parser: Complex Nested Modifier Precedence" {
@@ -2611,9 +2607,9 @@ test "KupCAD Parser: Top-Level Method Call with Parens and Block" {
     try testing.expectEqual(@as(usize, 2), args.len);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
-    try testing.expectEqualStrings("x", tree.nodeString(pt.getNode(params[0])));
+    try testing.expectEqualStrings("x", tree.getString(params[0].name));
 }
 
 test "KupCAD Parser: Multi-Assignment with Raw Comma Values" {
@@ -3102,20 +3098,13 @@ test "KupCAD Parser: Block with splat (*args) parameters" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
-    // first
-    const param0 = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.identifier, param0.tag);
-    try testing.expectEqualStrings("first", tree.nodeString(param0));
-
-    // *rest
-    const param1 = pt.getNode(params[1]);
-    try testing.expectEqual(ast.Tag.splat_expr, param1.tag);
-    const rest_ident = pt.getNode(@as(ast.NodeIndex, @fromBackingInt(param1.data)));
-    try testing.expectEqual(ast.Tag.identifier, rest_ident.tag);
-    try testing.expectEqualStrings("rest", tree.nodeString(rest_ident));
+    try testing.expectEqualStrings("first", tree.getString(params[0].name));
+    try testing.expectEqual(null, params[0].modifier);
+    try testing.expectEqualStrings("rest", tree.getString(params[1].name));
+    try testing.expectEqual(ast.ArgModifier.splat, params[1].modifier.?);
 }
 
 test "KupCAD Parser: Block with double splat (**kwargs) parameters" {
@@ -3129,20 +3118,12 @@ test "KupCAD Parser: Block with double splat (**kwargs) parameters" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
-    // val
-    const param0 = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.identifier, param0.tag);
-    try testing.expectEqualStrings("val", tree.nodeString(param0));
-
-    // **opts
-    const param1 = pt.getNode(params[1]);
-    try testing.expectEqual(ast.Tag.double_splat_expr, param1.tag);
-    const opts_ident = pt.getNode(@as(ast.NodeIndex, @fromBackingInt(param1.data)));
-    try testing.expectEqual(ast.Tag.identifier, opts_ident.tag);
-    try testing.expectEqualStrings("opts", tree.nodeString(opts_ident));
+    try testing.expectEqualStrings("val", tree.getString(params[0].name));
+    try testing.expectEqualStrings("opts", tree.getString(params[1].name));
+    try testing.expectEqual(ast.ArgModifier.double_splat, params[1].modifier.?);
 }
 
 test "KupCAD Parser: Block with extreme complex arguments |(x, y), *args, **kw|" {
@@ -3156,26 +3137,15 @@ test "KupCAD Parser: Block with extreme complex arguments |(x, y), *args, **kw|"
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 3), params.len);
 
-    // (x, y) -> .array_literal
-    const param0 = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.array_literal, param0.tag);
-    const tuple_elems = tree.getNodes(tree.nodeSpan(param0));
-    try testing.expectEqual(@as(usize, 2), tuple_elems.len);
-
-    // *args -> .splat_expr
-    const param1 = pt.getNode(params[1]);
-    try testing.expectEqual(ast.Tag.splat_expr, param1.tag);
-    const args_ident = pt.getNode(@as(ast.NodeIndex, @fromBackingInt(param1.data)));
-    try testing.expectEqualStrings("args", tree.nodeString(args_ident));
-
-    // **kw -> .double_splat_expr
-    const param2 = pt.getNode(params[2]);
-    try testing.expectEqual(ast.Tag.double_splat_expr, param2.tag);
-    const kw_ident = pt.getNode(@as(ast.NodeIndex, @fromBackingInt(param2.data)));
-    try testing.expectEqualStrings("kw", tree.nodeString(kw_ident));
+    // (x, y): a pattern of two names
+    try testing.expectEqual(@as(usize, 2), tree.getParams(params[0].pattern).len);
+    try testing.expectEqualStrings("args", tree.getString(params[1].name));
+    try testing.expectEqual(ast.ArgModifier.splat, params[1].modifier.?);
+    try testing.expectEqualStrings("kw", tree.getString(params[2].name));
+    try testing.expectEqual(ast.ArgModifier.double_splat, params[2].modifier.?);
 }
 
 test "KupCAD Parser: Block with empty parameter pipes (||)" {
@@ -3189,7 +3159,7 @@ test "KupCAD Parser: Block with empty parameter pipes (||)" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
 
     // Should parse cleanly but yield 0 parameters
     try testing.expectEqual(@as(usize, 0), params.len);
@@ -3206,27 +3176,22 @@ test "KupCAD Parser: Block with nested destructuring |((x, y), z)|" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 1), params.len); // 1 top-level param
 
     // Outer tuple
-    const outer_tuple = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.array_literal, outer_tuple.tag);
-    const outer_elems = tree.getNodes(tree.nodeSpan(outer_tuple));
+    const outer_elems = tree.getParams(params[0].pattern);
     try testing.expectEqual(@as(usize, 2), outer_elems.len);
 
     // Inner tuple (x, y)
-    const inner_tuple = pt.getNode(outer_elems[0]);
-    try testing.expectEqual(ast.Tag.array_literal, inner_tuple.tag);
-    const inner_elems = tree.getNodes(tree.nodeSpan(inner_tuple));
+    const inner_elems = tree.getParams(outer_elems[0].pattern);
     try testing.expectEqual(@as(usize, 2), inner_elems.len);
-    try testing.expectEqualStrings("x", tree.nodeString(pt.getNode(inner_elems[0])));
-    try testing.expectEqualStrings("y", tree.nodeString(pt.getNode(inner_elems[1])));
+    try testing.expectEqualStrings("x", tree.getString(inner_elems[0].name));
+    try testing.expectEqualStrings("y", tree.getString(inner_elems[1].name));
 
     // z
-    const z_ident = pt.getNode(outer_elems[1]);
-    try testing.expectEqual(ast.Tag.identifier, z_ident.tag);
-    try testing.expectEqualStrings("z", tree.nodeString(z_ident));
+    try testing.expect(outer_elems[1].pattern.isEmpty());
+    try testing.expectEqualStrings("z", tree.getString(outer_elems[1].name));
 }
 
 test "KupCAD Parser: Block with single element destructuring |(x,)|" {
@@ -3240,16 +3205,13 @@ test "KupCAD Parser: Block with single element destructuring |(x,)|" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 1), params.len);
 
-    const tuple = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.array_literal, tuple.tag);
-
     // The trailing comma should be ignored, leaving exactly 1 element
-    const elems = tree.getNodes(tree.nodeSpan(tuple));
+    const elems = tree.getParams(params[0].pattern);
     try testing.expectEqual(@as(usize, 1), elems.len);
-    try testing.expectEqualStrings("x", tree.nodeString(pt.getNode(elems[0])));
+    try testing.expectEqualStrings("x", tree.getString(elems[0].name));
 }
 
 test "KupCAD Parser: Block with default positional parameters" {
@@ -3263,14 +3225,11 @@ test "KupCAD Parser: Block with default positional parameters" {
     const mc = tree.methodCall(stmt);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.block(block).params);
+    const params = tree.getParams(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
-    const param0 = pt.getNode(params[0]);
-    try testing.expectEqual(ast.Tag.assignment, param0.tag);
-    const assign0 = tree.assignment(param0);
-    try testing.expectEqualStrings("x", tree.getString(assign0.name));
-    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(assign0.value)));
+    try testing.expectEqualStrings("x", tree.getString(params[0].name));
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(params[0].default_value)));
 }
 
 test "KupCAD Parser: Inline visibility modifiers (private def / public def)" {
@@ -3557,8 +3516,8 @@ test "KupCAD Parser: Deep Workplane Nesting and Scope Depth" {
 
     // Level 1 Block
     const block1 = pt.getNode(mc.block);
-    const params1 = tree.getNodes(tree.block(block1).params);
-    try testing.expectEqualStrings("face", tree.nodeString(pt.getNode(params1[0])));
+    const params1 = tree.getParams(tree.block(block1).params);
+    try testing.expectEqualStrings("face", tree.getString(params1[0].name));
 
     // Level 2 Block
     const stmts1 = tree.getNodes(tree.block(block1).stmts);
@@ -3566,8 +3525,8 @@ test "KupCAD Parser: Deep Workplane Nesting and Scope Depth" {
     try testing.expectEqualStrings("grid", tree.getString(inner_mc.method_name));
 
     const block2 = pt.getNode(inner_mc.block);
-    const params2 = tree.getNodes(tree.block(block2).params);
-    try testing.expectEqualStrings("y", tree.nodeString(pt.getNode(params2[1])));
+    const params2 = tree.getParams(tree.block(block2).params);
+    try testing.expectEqualStrings("y", tree.getString(params2[1].name));
 
     // Deepest Node
     const stmts2 = tree.getNodes(tree.block(block2).stmts);
@@ -4111,7 +4070,7 @@ test "KupCAD Parser: a block parameter cannot take a block" {
     // `|&b|` used to be mis-parsed without a diagnostic and the block body never ran.
     try expectSingleDiagnostic("[1, 2].each { |&b| b }\n", "A block parameter cannot take a block ('&')");
     try expectSingleDiagnostic("[1, 2].each { |a, &b| a }\n", "A block parameter cannot take a block ('&')");
-    try expectSingleDiagnostic("[1, 2].each { |a, 5| a }\n", "Expected a block parameter name, found '5'");
+    try expectSingleDiagnostic("[1, 2].each { |a, 5| a }\n", "Expected a parameter name, but found '5'");
 }
 
 test "KupCAD Parser: a parameter in parentheses is an array's names, with one splat at most" {
