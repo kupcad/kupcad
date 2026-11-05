@@ -73,7 +73,9 @@ client.sendRequest('workspace/executeCommand', {
   host's services (the server, an export, a screenshot, a place to show, the presets and
   settings a host keeps), and `listen` gives it the host's (the document shown, its values,
   presets, the log); `pngBytes(base64)`, a screenshot's bytes. Each host handled the messages
-  itself, and the two drifted.
+  itself, and the two drifted. Before it asks the server for a frame (a document shown, a page
+  ready on its socket) it gives the server the document's values: a server started again
+  knows none.
 * `extensionOf(name)`, `stemOf(name)` and `isScriptName(name)`: a file name's (or path's) extension, lower
   case, its stem, and whether it is a script's (`.kup` in any case), split one way for every host;
   `formatOf(path)`, the export format a file name is written in, by its extension (`EXPORT_FORMATS`

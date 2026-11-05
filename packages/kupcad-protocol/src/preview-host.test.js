@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPreviewHost, pngBytes } from './preview-host.js';
 
+/** @import { ParamValues } from './types.js' */
+
 const PART = { uri: 'file:///w/part.kup', name: 'part.kup' };
 const LID = { uri: 'file:///w/lid.kup', name: 'lid.kup' };
 
 /** A host on stand-in services, and what it told the page. */
 function hostOn() {
   const services = {
-    server: { preview: vi.fn(async () => {}), setParams: vi.fn(async () => {}) },
+    server: {
+      preview: vi.fn(async (/** @type {string} */ _uri) => {}),
+      setParams: vi.fn(
+        async (/** @type {string} */ _uri, /** @type {ParamValues} */ _values) => {},
+      ),
+    },
     warn: vi.fn(),
     fail: vi.fn(),
     export: vi.fn(),
@@ -50,6 +57,30 @@ describe('the preview host', () => {
     host.show(null);
     expect(told.at(-1)).toEqual({ type: 'document', document: null });
     expect(host.shown).toBeNull();
+  });
+
+  it('gives the server the values of the document shown before it asks for its frame', () => {
+    const { host, services } = hostOn();
+    /** @type {string[]} */
+    const asked = [];
+    services.server.setParams.mockImplementation(async (uri, values) => {
+      asked.push(`setParams ${uri} ${JSON.stringify(values)}`);
+    });
+    services.server.preview.mockImplementation(async (uri) => void asked.push(`preview ${uri}`));
+    host.show(PART);
+    host.post({ type: 'setParams', uri: PART.uri, values: { w: 3 } });
+    asked.length = 0;
+    // A server started again knows none: the page, on its socket, is ready again
+    host.post({ type: 'ready' });
+    expect(asked).toEqual([`setParams ${PART.uri} {"w":3}`, `preview ${PART.uri}`]);
+    // Nor one started while another document was shown
+    host.show(LID);
+    host.show(PART);
+    expect(asked.slice(2)).toEqual([
+      `preview ${LID.uri}`,
+      `setParams ${PART.uri} {"w":3}`,
+      `preview ${PART.uri}`,
+    ]);
   });
 
   it('acts on the document shown alone, and says so', () => {

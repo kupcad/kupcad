@@ -67,6 +67,20 @@ describe('the host', () => {
     expect(told.at(-1)).toEqual({ type: 'overrides', uri: PART.uri, values: { width: 40 } });
   });
 
+  it("gives a server started again the panel's values before the frame is asked", () => {
+    const { host, show, services } = hostOn();
+    show(PART);
+    host.post({ type: 'setParams', uri: PART.uri, values: { width: 40 } });
+    services.server.setParams.mockClear();
+    services.server.preview.mockClear();
+    // The server started again (a new memory limit, a crash): the panel, on its socket, is ready
+    host.post({ type: 'ready' });
+    expect(services.server.setParams).toHaveBeenCalledWith(PART.uri, { width: 40 });
+    expect(services.server.setParams.mock.invocationCallOrder[0]).toBeLessThan(
+      services.server.preview.mock.invocationCallOrder[0],
+    );
+  });
+
   it('acts on the script shown alone', () => {
     const { host, show, services } = hostOn();
     show(PART);

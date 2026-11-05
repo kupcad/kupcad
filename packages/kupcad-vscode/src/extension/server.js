@@ -174,7 +174,11 @@ export class LanguageServer {
     return [client, watcher];
   }
 
-  /** Gives the server the values every script was given. */
+  /**
+   * Gives the server the values every script was given: the viewer gives the shown one's again
+   * as its page connects, and these are the rest, which their hovers run with, the viewer closed
+   * too.
+   */
   #giveValues() {
     for (const [uri, values] of this.#options.values.entries()) {
       this.setParams(uri, values).catch((error) =>

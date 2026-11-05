@@ -178,7 +178,8 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   admit any other project's dev server on that port.
 * **The preview's host** (`src/host.js`): `@kupcad/protocol`'s preview host over the app's
   services, so what the panel asks is done in the page, as the VS Code extension's panel does it.
-  The panel's values go to the server (`kupcad.setParams`) and are kept for the script; an export, in the format
+  The panel's values go to the server (`kupcad.setParams`) and are kept for the script, given
+  again to a server started again (a new memory limit, a crash) before it runs the script; an export, in the format
   the panel's menu chose, asks where to save it (a dialog of that format alone: macOS's save
   panel offers no choice among file types, so one of them all named the file `.stl` whatever
   the model) and runs `kupcad build` with them; a screenshot

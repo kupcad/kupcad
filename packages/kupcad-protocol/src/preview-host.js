@@ -59,8 +59,17 @@ export function createPreviewHost(services) {
       tell({ type: 'overrides', uri: shown.uri, values: values.of(shown.uri) });
     services.presets?.(shown.uri);
   };
+  /**
+   * Asks the server for the frame of the document shown, its values given first: a server
+   * forgets them as it ends, so one started again (the page ready on its socket), or while
+   * another document was shown, ran it with its defaults, which the panel didn't show and an
+   * export didn't build.
+   */
   const preview = () => {
-    if (shown) ask(services.server.preview(shown.uri), 'Showing the script');
+    if (!shown) return;
+    if (values.has(shown.uri))
+      ask(services.server.setParams(shown.uri, values.of(shown.uri)), 'Giving the values');
+    ask(services.server.preview(shown.uri), 'Showing the script');
   };
 
   /** @param {ViewerMessage} message */
@@ -74,7 +83,8 @@ export function createPreviewHost(services) {
     }
     switch (message.type) {
       case 'ready':
-        // A page loaded again (a new port, a reload) knows nothing yet
+        // A page loaded again (a new port, a reload) knows nothing yet, nor a server started
+        // again
         tellDocument();
         preview();
         return;
@@ -119,8 +129,8 @@ export function createPreviewHost(services) {
     },
     values,
     /**
-     * Shows `document` from now on (none for null): the page is told, and the server asked for
-     * its frame. The same document again changes nothing.
+     * Shows `document` from now on (none for null): the page is told, and the server given its
+     * values and asked for its frame. The same document again changes nothing.
      * @param {ShownDocument | null} document
      */
     show(document) {
