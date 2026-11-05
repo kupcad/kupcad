@@ -12,7 +12,8 @@ name: Release
 # libkupcad, the core as a C library, is built beside the CLI on each runner, and the Ruby gem
 # and the Python wheel of each platform around it (bindings/), each tested on its platform, go
 # to RubyGems.org and PyPI. Nothing is published before every test CI runs (tests.yml) passes
-# on the tagged commit.
+# on the tagged commit. Its jobs use no cache (setup-zig's, pnpm's, Bundler's): a tag's run
+# restored what main's runs saved into what it publishes, and what it saves no later run reads.
 on:
   push:
     tags:
@@ -66,8 +67,7 @@ jobs:
   # The CLI, libkupcad beside it, and the Ruby gem and the Python wheel around libkupcad
   # (bindings/), on a runner of each system and architecture they ship for: each checked there
   # as it ships, the gem and the wheel installed as a user installs them and their tests run
-  # against them. No cache goes into what they build: a tag's run restored what main's runs
-  # saved, and a cache a tag's run saves no later run reads
+  # against them
   build:
     name: Build ${{ matrix.platform }}
     needs: version
