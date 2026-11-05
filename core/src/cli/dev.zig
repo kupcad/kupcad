@@ -103,14 +103,14 @@ fn runDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Arg
     return .success;
 }
 
-/// The script parsed, its symbols and slots resolved, as a tree.
+/// The script parsed, its names resolved, as a tree.
 fn renderAst(init: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, out: *std.Io.Writer.Allocating) !bool {
     var doc = api.Document.parse(allocator, source) catch |err| {
         log_helpers.printStderr(init.io, "Error parsing file '{s}': {}\n", .{ file_path, err });
         return false;
     };
     defer doc.deinit();
-    try ast_dumper.dump(allocator, &doc, out);
+    try ast_dumper.dump(&doc, &out.writer);
     return true;
 }
 

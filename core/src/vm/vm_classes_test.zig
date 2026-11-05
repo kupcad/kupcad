@@ -2028,3 +2028,12 @@ test "VM: rescuing one error class does not catch another" {
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     try expectGlobalString(&vm, "r", "outer ValueError handler");
 }
+
+test "VM: attr_accessor takes a name of any length" {
+    // The setter's name was printed into a 256-byte buffer: a 300-character one failed to
+    // compile, as "out of memory while compiling".
+    const name = comptime support.repeat("w", 300);
+    try support.expectScripts(&.{
+        .{ .src = "class P\n  attr_accessor :" ++ name ++ "\nend\np = P.new\np." ++ name ++ " = 4\nr = p." ++ name, .expected = .{ .num = 4 } },
+    });
+}

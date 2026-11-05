@@ -666,7 +666,7 @@ test "kupcad: dev ast-dump, disasm and lex-dump write their file beside the scri
     defer sb.deinit();
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "heredoc.kup", .data = "x = <<~EOS\n  hi\nEOS\ncube(1)\n" });
     const dumps = [_]struct { name: []const u8, script: []const u8, file: []const u8, starts: []const u8 }{
-        .{ .name = "ast-dump", .script = "valid.kup", .file = "valid.kup.dump", .starts = "└── block" },
+        .{ .name = "ast-dump", .script = "valid.kup", .file = "valid.kup.dump", .starts = "block\n" },
         .{ .name = "disasm", .script = "valid.kup", .file = "valid.kup.disasm", .starts = "== main ==" },
         .{ .name = "lex-dump", .script = "valid.kup", .file = "valid.kup.lex", .starts = "== Lexer Token Dump ==" },
         // A heredoc's tokens: their bodies were leaked

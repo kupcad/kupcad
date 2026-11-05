@@ -2444,10 +2444,10 @@ pub const Compiler = struct {
                 if (arg_node.tag == .symbol or arg_node.tag == .string) {
                     const name_str = self.tree.getString(self.tree.stringId(arg_node));
                     if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAttrReader(self, name_str, is_singleton);
+                        try macros.emitAccessor(self, name_str, .reader, is_singleton);
                     }
                     if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAttrWriter(self, name_str, is_singleton);
+                        try macros.emitAccessor(self, name_str, .writer, is_singleton);
                     }
                 } else {
                     return error.UnknownNode;
