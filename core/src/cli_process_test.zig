@@ -5,6 +5,15 @@
 const std = @import("std");
 const testing = std.testing;
 const options = @import("cli_test_options");
+const pkg_helpers = @import("pkg/test_helpers.zig");
+
+const VALID_SCRIPT = "cube(10)\n";
+/// Runs far past any time limit a test gives, yet ends (test_support.PAST_ANY_TIME_LIMIT, which
+/// this binary doesn't import): a time limit that stopped working fails the test instead of
+/// hanging the run.
+const PAST_ANY_TIME_LIMIT = "i = 0\nwhile i < 100_000_000\n  i += 1\nend\ncube(1)\n";
+/// How long a test waits for what it reads from a kupcad it talks to before failing.
+const READ_DEADLINE: std.Io.Duration = .fromSeconds(60);
 
 /// The built kupcad's real path: the build gives it relative to the core's folder, which
 /// isn't always the working directory. Caller frees.
@@ -13,9 +22,6 @@ fn kupcadPath() ![:0]u8 {
     defer testing.allocator.free(joined);
     return std.Io.Dir.cwd().realPathFileAlloc(testing.io, joined, testing.allocator);
 }
-const pkg_helpers = @import("pkg/test_helpers.zig");
-
-const VALID_SCRIPT = "cube(10)\n";
 
 const Run = struct {
     code: u8,
@@ -29,13 +35,25 @@ const Run = struct {
 };
 
 /// Runs `kupcad args...` with `cwd` as its working directory, in the test's own
-/// environment without the colour variables: the developer's shell (CLICOLOR_FORCE=1 is
-/// common) used to colour the piped output these tests read.
+/// environment without the variables that change what it does (stripKupcadEnv).
 fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
     var env = try testing.environ.createMap(testing.allocator);
     defer env.deinit();
-    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR" }) |name| _ = env.swapRemove(name);
+    stripKupcadEnv(&env);
     return kupcadIn(cwd, args, &env);
+}
+
+/// Takes out of `env` the colour variables, which the developer's shell often sets
+/// (CLICOLOR_FORCE=1 coloured the piped output these tests read), and every KUPCAD_ one: a
+/// developer's KUPCAD_MEMORY_LIMIT, KUPCAD_TIMEOUT, KUPCAD_HOME or KUPCAD_CRASH_DIR reached
+/// the child.
+fn stripKupcadEnv(env: *std.process.Environ.Map) void {
+    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR" }) |name| _ = env.swapRemove(name);
+    var i: usize = 0;
+    while (i < env.count()) {
+        const name = env.keys()[i];
+        if (std.mem.startsWith(u8, name, "KUPCAD_")) _ = env.swapRemove(name) else i += 1;
+    }
 }
 
 fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.Environ.Map) !Run {
@@ -68,7 +86,10 @@ fn kupcadToFile(dir: std.Io.Dir, cwd: []const u8, args: []const []const u8, out_
         const out = try dir.createFile(testing.io, out_file, .{});
         defer out.close(testing.io);
         try out.writeStreamingAll(testing.io, kept);
-        var child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .stdin = .ignore, .stdout = .{ .file = out }, .stderr = .ignore });
+        var env = try testing.environ.createMap(testing.allocator);
+        defer env.deinit();
+        stripKupcadEnv(&env);
+        var child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = &env, .stdin = .ignore, .stdout = .{ .file = out }, .stderr = .ignore });
         try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(testing.io));
     }
     return dir.readFileAlloc(testing.io, out_file, testing.allocator, .limited(1 << 16));
@@ -357,7 +378,7 @@ test "kupcad: run in a subfolder of the project keeps the memory limit of its .k
 test "kupcad: --timeout, else KUPCAD_TIMEOUT, ends a script that never does, and the run fails" {
     var sb = try Sandbox.init();
     defer sb.deinit();
-    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = "while true\nend\ncube(1)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = PAST_ANY_TIME_LIMIT });
 
     const flagged = try kupcad(sb.path, &.{ "build", "forever.kup", "-o", "forever.stl", "--timeout", "100ms" });
     defer flagged.deinit();
@@ -366,6 +387,7 @@ test "kupcad: --timeout, else KUPCAD_TIMEOUT, ends a script that never does, and
 
     var env = try testing.environ.createMap(testing.allocator);
     defer env.deinit();
+    stripKupcadEnv(&env);
     try env.put("KUPCAD_TIMEOUT", "100ms");
     const from_env = try kupcadIn(sb.path, &.{ "run", "forever.kup" }, &env);
     defer from_env.deinit();
@@ -744,7 +766,7 @@ test "kupcad: KUPCAD_CRASH_DIR captures a panic and an abort, and nothing is wri
 
     var env = try testing.environ.createMap(testing.allocator);
     defer env.deinit();
-    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR", "KUPCAD_CRASH_DIR" }) |name| _ = env.swapRemove(name);
+    stripKupcadEnv(&env);
 
     // Off by default: a crash leaves nothing behind.
     const unreported = try kupcadIn(sb.path, &.{ "dev", "crash", "abort" }, &env);
@@ -771,6 +793,138 @@ test "kupcad: KUPCAD_CRASH_DIR captures a panic and an abort, and nothing is wri
 }
 
 /// A `kupcad` process the test talks to on its stdin and stdout, its stderr discarded.
+/// Kills `child` unless disarmed within `limit`: a read waiting on its output then ends,
+/// and `disarm` fails the test, instead of the read hanging the test run.
+const Watchdog = struct {
+    child: *const std.process.Child,
+    disarmed: std.Io.Event = .unset,
+    fired: bool = false,
+    task: std.Io.Future(void) = undefined,
+
+    /// In place: its task points to it.
+    fn arm(self: *Watchdog, child: *const std.process.Child, limit: std.Io.Duration) !void {
+        self.* = .{ .child = child };
+        self.task = try testing.io.concurrent(watch, .{ self, limit });
+    }
+
+    fn watch(self: *Watchdog, limit: std.Io.Duration) void {
+        self.disarmed.waitTimeout(testing.io, .{ .duration = .{ .raw = limit, .clock = .awake } }) catch |err| switch (err) {
+            error.Timeout => {
+                self.fired = true;
+                killNow(self.child);
+            },
+            error.Canceled => {},
+        };
+    }
+
+    /// Stops it; error.Timeout when it had to kill the child.
+    fn disarm(self: *Watchdog) !void {
+        self.disarmed.set(testing.io);
+        self.task.await(testing.io);
+        if (self.fired) return error.Timeout;
+    }
+
+    /// Ends `child` without waiting for it, as the test's thread may be reading its pipes:
+    /// the reads end, and the test reaps it.
+    fn killNow(child: *const std.process.Child) void {
+        const id = child.id orelse return;
+        if (@import("builtin").os.tag == .windows) {
+            _ = std.os.windows.ntdll.NtTerminateProcess(id, .SUCCESS);
+        } else {
+            std.posix.kill(id, .KILL) catch {};
+        }
+    }
+};
+
+/// `kupcad watch` running in the background, what it says read line by line: its builds'
+/// writes on stdout, the rest on stderr.
+const Watching = struct {
+    child: std.process.Child,
+    out: Stream = .{},
+    err: Stream = .{},
+
+    const Stream = struct {
+        buf: [4096]u8 = undefined,
+        reader: std.Io.File.Reader = undefined,
+        /// Everything it said, for a failure's report.
+        said: std.ArrayList(u8) = .empty,
+    };
+
+    /// In place: the readers point into it.
+    fn start(self: *Watching, cwd: []const u8, args: []const []const u8) !void {
+        const exe = try kupcadPath();
+        defer testing.allocator.free(exe);
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(testing.allocator);
+        try argv.append(testing.allocator, exe);
+        try argv.appendSlice(testing.allocator, args);
+        var env = try testing.environ.createMap(testing.allocator);
+        defer env.deinit();
+        stripKupcadEnv(&env);
+        self.* = .{ .child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = &env, .stdin = .ignore, .stdout = .pipe, .stderr = .pipe }) };
+        self.out.reader = self.child.stdout.?.readerStreaming(testing.io, &self.out.buf);
+        self.err.reader = self.child.stderr.?.readerStreaming(testing.io, &self.err.buf);
+    }
+
+    fn stop(self: *Watching) void {
+        self.child.kill(testing.io);
+        self.out.said.deinit(testing.allocator);
+        self.err.said.deinit(testing.allocator);
+    }
+
+    /// Reads what it says on `stream` until a line holds `needle`; fails past READ_DEADLINE.
+    fn waitFor(self: *Watching, stream: *Stream, needle: []const u8) !void {
+        errdefer std.debug.print("waited for '{s}'; kupcad watch said:\n{s}{s}\n", .{ needle, self.out.said.items, self.err.said.items });
+        var dog: Watchdog = undefined;
+        try dog.arm(&self.child, READ_DEADLINE);
+        const found = readUntil(stream, needle);
+        try dog.disarm();
+        return found;
+    }
+
+    fn readUntil(stream: *Stream, needle: []const u8) !void {
+        while (true) {
+            const line = try stream.reader.interface.takeDelimiterInclusive('\n');
+            try stream.said.appendSlice(testing.allocator, line);
+            if (std.mem.find(u8, line, needle) != null) return;
+        }
+    }
+};
+
+test "kupcad: watch rebuilds on each change and writes each build, an import's edit and creation included" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "lib.kup", .data = "w = 5\nexport { w }\nsphere(2)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "main.kup", .data = "import { w } from \"./lib.kup\"\ncube(w)\n" });
+    var watching: Watching = undefined;
+    try watching.start(sb.path, &.{ "watch", "main.kup", "-o", "out.stl", "--errors", "json" });
+    defer watching.stop();
+    try watching.waitFor(&watching.out, "Successfully built out.stl");
+    const first = try sb.tmp.dir.readFileAlloc(testing.io, "out.stl", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(first);
+
+    // An edit of the import that leaves its output the same: the script's model is written
+    // again, not the import's sphere
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "lib.kup", .data = "# the width\nw = 5\nexport { w }\nsphere(2)\n" });
+    try watching.waitFor(&watching.out, "Successfully built out.stl");
+    const again = try sb.tmp.dir.readFileAlloc(testing.io, "out.stl", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(again);
+    try testing.expectEqualSlices(u8, first, again);
+
+    // An edit of the script
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "main.kup", .data = "import { w } from \"./lib.kup\"\ncube(w).translate(x: 1)\n" });
+    try watching.waitFor(&watching.out, "Successfully built out.stl");
+    const moved = try sb.tmp.dir.readFileAlloc(testing.io, "out.stl", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(moved);
+    try testing.expect(!std.mem.eql(u8, first, moved));
+
+    // An import that isn't there fails the build, and a host is told; creating it rebuilds
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "main.kup", .data = "import { h } from \"./more.kup\"\ncube(h)\n" });
+    try watching.waitFor(&watching.err, "{\"error\":{\"kind\":\"runtime\"");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "more.kup", .data = "h = 2\nexport { h }\n" });
+    try watching.waitFor(&watching.out, "Successfully built out.stl");
+}
+
 const Conversation = struct {
     child: std.process.Child,
     in_buf: [64 * 1024]u8 = undefined,
@@ -786,7 +940,10 @@ const Conversation = struct {
         defer argv.deinit(testing.allocator);
         try argv.append(testing.allocator, exe);
         try argv.appendSlice(testing.allocator, args);
-        self.* = .{ .child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore }) };
+        var env = try testing.environ.createMap(testing.allocator);
+        defer env.deinit();
+        stripKupcadEnv(&env);
+        self.* = .{ .child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = &env, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore }) };
         self.reader = self.child.stdout.?.readerStreaming(testing.io, &self.in_buf);
         self.writer = self.child.stdin.?.writerStreaming(testing.io, &self.out_buf);
     }
@@ -811,8 +968,18 @@ const Conversation = struct {
         try self.writer.interface.flush();
     }
 
-    /// The next frame's payload (caller frees).
+    /// The next frame's payload (caller frees); fails past READ_DEADLINE, as a reader with no
+    /// deadline hung the test run when an answer never came.
     fn receiveFrame(self: *Conversation) ![]u8 {
+        var dog: Watchdog = undefined;
+        try dog.arm(&self.child, READ_DEADLINE);
+        const payload = self.readFrame();
+        errdefer if (payload) |p| testing.allocator.free(p) else |_| {};
+        try dog.disarm();
+        return payload;
+    }
+
+    fn readFrame(self: *Conversation) ![]u8 {
         var header: [5]u8 = undefined;
         try self.reader.interface.readSliceAll(&header);
         const payload = try testing.allocator.alloc(u8, std.mem.readInt(u32, header[1..5], .little));
@@ -828,8 +995,17 @@ const Conversation = struct {
         try self.writer.interface.flush();
     }
 
-    /// The next message from the server (caller frees).
+    /// The next message from the server (caller frees); fails past READ_DEADLINE.
     fn receiveJson(self: *Conversation) ![]u8 {
+        var dog: Watchdog = undefined;
+        try dog.arm(&self.child, READ_DEADLINE);
+        const body = self.readJson();
+        errdefer if (body) |b| testing.allocator.free(b) else |_| {};
+        try dog.disarm();
+        return body;
+    }
+
+    fn readJson(self: *Conversation) ![]u8 {
         var len: usize = 0;
         while (true) {
             const line = try self.reader.interface.takeDelimiterInclusive('\n');

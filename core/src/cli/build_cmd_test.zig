@@ -3,6 +3,7 @@ const testing = std.testing;
 const build_cmd = @import("build_cmd.zig");
 const memory_flag = @import("memory_flag.zig");
 const time_flag = @import("time_flag.zig");
+const test_support = @import("../test_support.zig");
 
 const Args = @import("args.zig").Args;
 
@@ -703,7 +704,7 @@ test "build_cmd: KUPCAD_MEMORY_LIMIT stands in for --memory-limit, which wins ov
 
 test "build_cmd: --timeout ends a script that runs past it, saying so" {
     // A CI job, or a host running scripts it didn't write, was held until its own limit
-    var fx = try Fixture.init("while true\nend\ncube(1)\n");
+    var fx = try Fixture.init(test_support.PAST_ANY_TIME_LIMIT);
     defer fx.deinit();
     var stopped = try runBuild(&.{ fx.input, "-o", fx.output, "--timeout", "100ms", "--errors", "json" });
     defer stopped.deinit();
@@ -735,7 +736,7 @@ test "build_cmd: KUPCAD_TIMEOUT stands in for --timeout, which wins over it" {
     var environ: std.process.Environ.Map = .init(testing.allocator);
     defer environ.deinit();
     try environ.put(time_flag.ENV, "100ms");
-    var fx = try Fixture.init("while true\nend\ncube(1)\n");
+    var fx = try Fixture.init(test_support.PAST_ANY_TIME_LIMIT);
     defer fx.deinit();
     var held = try runBuildIn(&.{ fx.input, "-o", fx.output, "--errors", "json" }, &environ);
     defer held.deinit();
@@ -883,6 +884,27 @@ test "build_cmd: --errors json tells a host why, one JSON line last, for each ki
     var refused = try runBuild(&.{ fx.input, "--errors", "yaml" });
     defer refused.deinit();
     try testing.expectEqualStrings("Error: --errors takes text or json, got 'yaml'\n", refused.text());
+}
+
+test "build_cmd: --errors json tells a host of a script in a folder that can't be opened" {
+    // `build missing.kup` told it, `build ../missing/x.kup` didn't
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const cwd = try std.process.currentPathAlloc(testing.io, testing.allocator);
+    defer testing.allocator.free(cwd);
+    // Outside the current directory, in a folder that isn't there
+    const missing = try std.fs.path.join(testing.allocator, &.{ std.fs.path.dirname(cwd).?, &tmp.sub_path, "x.kup" });
+    defer testing.allocator.free(missing);
+    var res = try runBuild(&.{ missing, "-o", "x.stl", "--errors", "json" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+    const text = std.mem.trimEnd(u8, res.text(), "\n");
+    const last = text[(std.mem.lastIndexOfScalar(u8, text, '\n') orelse return error.TestExpectedWords) + 1 ..];
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, last, .{});
+    defer parsed.deinit();
+    const failure = parsed.value.object.get("error").?.object;
+    try testing.expectEqualStrings("read", failure.get("kind").?.string);
+    try testing.expectEqualStrings(missing, failure.get("file").?.string);
 }
 
 test "build_cmd: --memory-limit takes a size greater than zero" {

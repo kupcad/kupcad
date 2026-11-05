@@ -1,6 +1,7 @@
 //! `kupcad watch`: polls the files of a session's workspace (the script and every module it
-//! imports) and the data files their runs read (`import_json`, `import_stl`), and rebuilds
-//! when one changes, telling its host what happened through a Listener.
+//! imports), the modules its imports couldn't read and the data files their runs read
+//! (`import_json`, `import_stl`), and rebuilds when one changes, telling its host what
+//! happened through a Listener.
 
 const std = @import("std");
 const session_mod = @import("session.zig");
@@ -19,10 +20,10 @@ pub const Event = union(enum) {
     changed: []const u8,
     /// Every module built.
     built,
-    /// A module didn't parse or compile; `failure.module` names it.
-    failed: *const session_mod.Failure,
-    /// The run itself failed (a runtime error, which the VM has reported).
-    run_failed: anyerror,
+    /// The build failed with this error: a module didn't parse or compile
+    /// (error.ParseError, error.CompileError; the session's `failure` says which and why), or
+    /// a run failed (a runtime error, which the VM has reported).
+    failed: anyerror,
     /// A changed file couldn't be read again.
     reload_failed: struct { path: []const u8, err: anyerror },
 };
@@ -48,6 +49,15 @@ pub const Watcher = struct {
     /// run's list of them is replaced by the next). A missing file is 0, so creating one
     /// a run couldn't read is a change.
     data_mtimes: std.StringHashMapUnmanaged(i128) = .empty,
+    /// The same for the modules imports couldn't read (ScriptSession.unread_imports), keys
+    /// owned: creating one (writing it, a `kupcad pkg install`) rebuilds, where only the
+    /// modules read were watched.
+    unread_mtimes: std.StringHashMapUnmanaged(i128) = .empty,
+    /// The module whose run the VM must hold after every build: it runs again though nothing
+    /// it reads changed, for a host that reads what the run left (`kupcad watch -o` exports
+    /// the root's model). An edit of an import that left its output the same ran only the
+    /// import, whose model was then exported.
+    run_again: ?[]const u8 = null,
     is_one_shot: bool = false,
 
     pub fn init(session: *ScriptSession, io: std.Io, root: std.Io.Dir, listener: Listener) !Watcher {
@@ -61,18 +71,24 @@ pub const Watcher = struct {
         const allocator = self.session.allocator;
         self.mtimes.deinit(allocator);
         owned_keys.deinit(&self.data_mtimes, allocator, .borrowed);
+        owned_keys.deinit(&self.unread_mtimes, allocator, .borrowed);
     }
 
     /// Builds (or rebuilds) the workspace and reports how it went; false when it failed.
     /// Either way, the data files the runs read are watched from here on.
     pub fn evaluate(self: *Watcher) bool {
-        const ok = if (self.session.evaluateWorkspace()) true else |err| blk: {
-            if (self.session.failure) |*failure| self.listener.notify(.{ .failed = failure }) else self.listener.notify(.{ .run_failed = err });
+        const ok = if (self.build()) true else |err| blk: {
+            self.listener.notify(.{ .failed = err });
             break :blk false;
         };
-        self.rememberDataMtimes() catch |err| self.listener.notify(.{ .run_failed = err });
+        self.rememberDataMtimes() catch |err| self.listener.notify(.{ .failed = err });
         if (ok) self.listener.notify(.built);
         return ok;
+    }
+
+    fn build(self: *Watcher) !void {
+        if (self.run_again) |path| try self.session.runAgain(path);
+        try self.session.evaluateWorkspace();
     }
 
     /// One look at the watched files: the ones whose mtime differs from the last seen
@@ -95,9 +111,31 @@ pub const Watcher = struct {
             };
             changed = true;
         }
+        if (try self.pollUnreadImports()) changed = true;
         if (try self.pollDataFiles()) changed = true;
         if (changed) _ = self.evaluate();
         return changed;
+    }
+
+    /// The modules imports couldn't read whose mtime differs from the last seen (one made,
+    /// at last): the imports are read again, and what they read now runs with its importers.
+    /// Returns whether one had changed.
+    fn pollUnreadImports(self: *Watcher) !bool {
+        var changed = false;
+        var unread = self.session.unread_imports.keyIterator();
+        while (unread.next()) |key| {
+            const path = key.*;
+            const seen = self.unread_mtimes.getPtr(path) orelse continue;
+            const mtime = self.mtimeOf(path) orelse 0;
+            if (seen.* == mtime) continue;
+            seen.* = mtime;
+            self.listener.notify(.{ .changed = path });
+            changed = true;
+        }
+        if (!changed) return false;
+        _ = try self.session.loadUnreadImports();
+        try self.rememberMtimes();
+        return true;
     }
 
     /// The data files the last runs read whose mtime differs from the last seen: the
@@ -151,11 +189,17 @@ pub const Watcher = struct {
         try self.session.markFileEdited(path);
     }
 
-    /// Records the mtime of every module not yet watched.
+    /// Records the mtime of every module, and of every module imports couldn't read, not yet
+    /// watched.
     fn rememberMtimes(self: *Watcher) !void {
         for (self.session.workspace.modules.items) |mod| {
             const entry = try self.mtimes.getOrPut(self.session.allocator, mod.path);
             if (!entry.found_existing) entry.value_ptr.* = self.mtimeOf(mod.path) orelse 0;
+        }
+        var unread = self.session.unread_imports.keyIterator();
+        while (unread.next()) |path| {
+            const entry = try owned_keys.getOrPutOwned(&self.unread_mtimes, self.session.allocator, path.*);
+            if (!entry.found_existing) entry.value_ptr.* = self.mtimeOf(path.*) orelse 0;
         }
     }
 

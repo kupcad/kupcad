@@ -23,7 +23,9 @@ const Recorder = struct {
     fn onEvent(ptr: *anyopaque, event: watcher_mod.Event) void {
         const self: *Recorder = @ptrCast(@alignCast(ptr));
         self.events.append(testing.allocator, event) catch @panic("OOM");
-        if (event == .failed) self.failed_module_path = self.session.workspace.modules.items[@backingInt(event.failed.module)].path;
+        if (event == .failed) if (self.session.failure) |failure| {
+            self.failed_module_path = self.session.workspace.modules.items[@backingInt(failure.module)].path;
+        };
     }
 
     fn deinit(self: *Recorder) void {
@@ -253,7 +255,52 @@ test "Daemon Watcher: a JSON file missing at the first build is watched, so crea
     try fx.write("size.json", "{\"side\": 3}");
     try testing.expect(try watcher.poll());
     try testing.expectApproxEqAbs(@as(f64, 27), fx.rootVolume(root), 1e-6);
-    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .run_failed, .changed, .built }, recorder.events.items);
+    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .failed, .changed, .built }, recorder.events.items);
+}
+
+test "Daemon Watcher: a module an import couldn't read is watched, so creating it rebuilds" {
+    // Only the modules read were watched: making the missing one (or installing the package
+    // it is) rebuilt nothing
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("main.kup", "import { side } from \"./lib.kup\"\nx = cube(side)\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
+    defer watcher.deinit();
+    fx.session.vm.mute_errors = true; // the failed import would print to the test log
+    try testing.expect(!watcher.evaluate());
+    try testing.expect(!try watcher.poll());
+
+    try fx.write("lib.kup", "side = 3\nexport side\n");
+    try testing.expect(try watcher.poll());
+    try testing.expectApproxEqAbs(@as(f64, 27), fx.rootVolume(root), 1e-6);
+    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .failed, .changed, .built }, recorder.events.items);
+    try testing.expect(!try watcher.poll());
+}
+
+test "Daemon Watcher: the module it runs again is the one the VM holds after a build" {
+    // An import edited without changing its output ran alone, early cutoff keeping the root's
+    // output: the VM held the import's run, and `watch -o` exported the import's sphere
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("lib.kup", "w = 5\nexport { w }\nsphere(2)\n");
+    try fx.write("main.kup", "import { w } from \"./lib.kup\"\ncube(w)\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
+    defer watcher.deinit();
+    watcher.run_again = root;
+    try testing.expect(watcher.evaluate());
+
+    try fx.rewrite(&watcher, "lib.kup", "# a comment\nw = 5\nexport { w }\nsphere(2)\n", MTIME_BUMP_NS);
+    try testing.expect(try watcher.poll());
+    const model = try fx.session.vm.ensureConcrete(fx.session.vm.stack[0]);
+    try testing.expectApproxEqAbs(@as(f64, 125), kernel.volume(model), 1e-6);
 }
 
 test "Daemon Watcher: a file restored to an older version counts as a change" {

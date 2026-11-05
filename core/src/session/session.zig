@@ -14,6 +14,7 @@ const import_path = @import("../core/import_path.zig");
 const import_kind = @import("../core/import_kind.zig");
 const limits = @import("../core/limits.zig");
 const exports_fingerprint = @import("exports_fingerprint.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
@@ -156,6 +157,12 @@ pub const ScriptSession = struct {
 
     observer: ?RunObserver = null,
 
+    /// The modules the loaded modules import that couldn't be read (a file not there yet, a
+    /// package not installed) or were too large, by path, keys owned: their imports report
+    /// them, and a host watches for them to appear (the watcher, the language server), which
+    /// it couldn't while they were forgotten.
+    unread_imports: std.StringHashMapUnmanaged(void) = .empty,
+
     /// A session whose scripts read and write files through `files`: the disk for `kupcad
     /// build` and `watch`, the LSP's read-only sandbox, `.none` for no files at all.
     pub fn init(allocator: std.mem.Allocator, io: std.Io, files: Vfs) !ScriptSession {
@@ -192,6 +199,7 @@ pub const ScriptSession = struct {
         self.reverse_deps.deinit(self.allocator);
         self.nodes.deinit(self.allocator);
         self.clearFailure();
+        owned_keys.deinit(&self.unread_imports, self.allocator, .borrowed);
         self.params.deinit(self.allocator);
         self.workspace.deinit();
         self.vm.deinit();
@@ -244,9 +252,12 @@ pub const ScriptSession = struct {
     /// the disk), until none is missing, then links the dependencies. Only the root used to
     /// be in it, and its imports came from the VM's cache, so an edit to a module never
     /// showed. A file that can't be read (a package not installed, a missing one) or is too
-    /// large to parse is left to the import to report.
+    /// large to parse is left to the import to report, and kept in `unread_imports`.
     pub fn loadImports(self: *ScriptSession) !void {
         const ws = &self.workspace;
+        var unread = self.unread_imports.keyIterator();
+        while (unread.next()) |path| self.allocator.free(path.*);
+        self.unread_imports.clearRetainingCapacity();
         var i: usize = 0;
         while (i < ws.modules.items.len) : (i += 1) {
             var wanted: std.ArrayList([]u8) = .empty;
@@ -272,14 +283,37 @@ pub const ScriptSession = struct {
             }
             for (wanted.items) |path| {
                 if (ws.path_to_id.contains(path)) continue;
-                const source = self.vm.vfs.readFile(self.allocator, path) catch continue;
+                const source = self.vm.vfs.readFile(self.allocator, path) catch {
+                    _ = try owned_keys.getOrPutOwned(&self.unread_imports, self.allocator, path);
+                    continue;
+                };
                 defer self.allocator.free(source);
-                if (source.len > limits.MAX_SOURCE_BYTES) continue;
+                if (source.len > limits.MAX_SOURCE_BYTES) {
+                    _ = try owned_keys.getOrPutOwned(&self.unread_imports, self.allocator, path);
+                    continue;
+                }
                 _ = try ws.addModule(path, source);
             }
         }
         try ws.linkDependencies();
         try self.buildReverseGraph();
+    }
+
+    /// Reads the modules imports couldn't read again (`unread_imports`), as a host does once
+    /// one appears: what is read now joins the workspace, and the modules importing it run
+    /// again with it. Whether one was read.
+    pub fn loadUnreadImports(self: *ScriptSession) !bool {
+        const ws = &self.workspace;
+        const before = ws.modules.items.len;
+        try self.loadImports();
+        if (ws.modules.items.len == before) return false;
+        // Its importers' runs failed without it: a module new to the graph is stale already,
+        // so marking it wouldn't reach them
+        for (ws.modules.items[before..]) |mod| {
+            const importers = self.reverse_deps.get(mod.id) orelse continue;
+            for (importers.items) |importer| try self.markFileEdited(ws.modules.items[@backingInt(importer)].path);
+        }
+        return true;
     }
 
     /// Step 2: Selective Invalidation Pass (Reverse BFS)

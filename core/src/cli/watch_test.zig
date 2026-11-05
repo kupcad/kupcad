@@ -89,9 +89,9 @@ test "kupcad watch: each watcher event is reported as build reports it" {
     const cases = [_]struct { event: @import("../session/watcher.zig").Event, says: []const u8 }{
         .{ .event = .{ .changed = "lib.kup" }, .says = "Changed: lib.kup\n" },
         .{ .event = .built, .says = "Built model.kup\n" },
-        .{ .event = .{ .run_failed = error.RuntimeError }, .says = "Build failed: RuntimeError\n" },
+        .{ .event = .{ .failed = error.RuntimeError }, .says = "Build failed: error.RuntimeError\n" },
         .{ .event = .{ .reload_failed = .{ .path = "lib.kup", .err = error.FileNotFound } }, .says = "Could not reload 'lib.kup': FileNotFound\n" },
-        .{ .event = .{ .failed = &session.failure.? }, .says = "Build failed: 1 error in model.kup\n" },
+        .{ .event = .{ .failed = error.ParseError }, .says = "Build failed: 1 error in model.kup\n" },
     };
     for (cases) |case| {
         errdefer std.debug.print("said: {s}\n", .{output.written()});
@@ -100,8 +100,43 @@ test "kupcad watch: each watcher event is reported as build reports it" {
         try testing.expect(std.mem.endsWith(u8, output.written(), case.says));
     }
     // The failure names where it is
-    listener.onEvent(listener.ptr, .{ .failed = &session.failure.? });
+    listener.onEvent(listener.ptr, .{ .failed = error.ParseError });
     try testing.expect(std.mem.find(u8, output.written(), "Cannot use 'break' outside of a loop") != null);
+}
+
+test "kupcad watch: with --errors json, a failed build ends with the line build ends with" {
+    // A compile error was told as a syntax one, and a run's failure not at all
+    const ScriptSession = @import("../session/session.zig").ScriptSession;
+    const cases = [_]struct { source: []const u8, err: anyerror, kind: []const u8, message: []const u8 }{
+        .{ .source = "cube = 5\n", .err = error.CompileError, .kind = "compile", .message = "'cube' is a built-in and can't be assigned" },
+        .{ .source = "x = cube(\n", .err = error.ParseError, .kind = "syntax", .message = "Invalid expression" },
+        .{ .source = "x = undefined_var + 1\n", .err = error.RuntimeError, .kind = "runtime", .message = "NameError: Undefined variable 'undefined_var'" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+        defer session.deinit();
+        session.vm.mute_errors = true;
+        _ = try session.workspace.addModule("model.kup", case.source);
+        try session.workspace.linkDependencies();
+        try session.buildReverseGraph();
+        try testing.expectError(case.err, session.evaluateWorkspace());
+
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer output.deinit();
+        var root = try ScriptRoot.of(testing.io, testing.allocator, "model.kup");
+        defer root.deinit(testing.io, testing.allocator);
+        var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root = &root, .reporter = .{ .io = testing.io, .capture = &output.writer, .errors = .json } };
+        const listener = printer.listener();
+        listener.onEvent(listener.ptr, .{ .failed = case.err });
+        const text = std.mem.trimEnd(u8, output.written(), "\n");
+        const last = text[(std.mem.lastIndexOfScalar(u8, text, '\n') orelse 0)..];
+        var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, std.mem.trim(u8, last, "\n"), .{});
+        defer parsed.deinit();
+        const failure = parsed.value.object.get("error").?.object;
+        try testing.expectEqualStrings(case.kind, failure.get("kind").?.string);
+        try testing.expect(std.mem.find(u8, failure.get("message").?.string, case.message) != null);
+    }
 }
 
 test "kupcad watch: with export options, each build that succeeds writes them; without, nothing" {

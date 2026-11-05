@@ -79,22 +79,32 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, environ: *const std
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }
 
-/// Runs the script `root` names in `session` (reading `root`'s folder), set up as the command
-/// and the project ask: `options`' parameter values (which the session takes), the terminal
-/// debugger, the memory limit (`--memory-limit` or `KUPCAD_MEMORY_LIMIT`, else the project's
-/// `vm_memory_limit` in .kupcad.json; none without any), the time limit (`--timeout` or
-/// `KUPCAD_TIMEOUT`; none without either) and the engine `exports` need (STEP's exact B-Rep). Whether its model was built; false, the failure
-/// reported, when it can't be set up or the script doesn't parse, compile or run.
+/// Runs the script `root` names in `session` (reading `root`'s folder), set up as `setUp`
+/// does, with no memory limit unless one is given. Whether its model was built; false, the
+/// failure reported, when it can't be set up or the script doesn't parse, compile or run.
 pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, options: *ScriptOptions, exports: ?*const ExportFlags, reporter: Reporter) !bool {
+    const source = try setUp(allocator, session, root, options, exports, null, reporter) orelse return false;
+    defer allocator.free(source);
+    return evaluate(allocator, session, root, source, reporter);
+}
+
+/// Sets `session` up to run the script `root` names, as the command and the project ask:
+/// `options`' parameter values (which the session takes), the terminal debugger, the memory
+/// limit (`--memory-limit` or `KUPCAD_MEMORY_LIMIT`, else the project's `vm_memory_limit` in
+/// .kupcad.json, else `default_memory_limit`), the time limit (`--timeout` or
+/// `KUPCAD_TIMEOUT`; none without either) and the engine `exports` need (STEP's exact
+/// B-Rep). The script's source (owned), or null, the failure reported. `kupcad watch` set
+/// itself up with a copy of this, which told a host none of its failures.
+pub fn setUp(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, options: *ScriptOptions, exports: ?*const ExportFlags, default_memory_limit: ?usize, reporter: Reporter) !?[]u8 {
     const io = reporter.io;
     const input_path = root.input;
     // Read first: a file that isn't there is named so, before a session is made for it
     const source = fs.readFile(io, allocator, input_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ input_path, @errorName(err) });
         reporter.fail(.{ .kind = "read", .message = @errorName(err), .file = input_path });
-        return false;
+        return null;
     };
-    defer allocator.free(source);
+    errdefer allocator.free(source);
     session.setParams(&options.params);
     session.vm.debugger_handler = debugger.terminalDebugger(io);
     var failure: ?ProjectConfig.Failure = null;
@@ -105,12 +115,13 @@ pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *c
         const said = try std.fmt.allocPrint(allocator, "{f}", .{f});
         defer allocator.free(said);
         reporter.fail(.{ .kind = "settings", .message = said, .file = f.path, .line = if (f.where.line > 0) @intCast(f.where.line) else null, .column = if (f.where.line > 0) @intCast(f.where.column) else null });
-        return false;
+        allocator.free(source);
+        return null;
     };
-    session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, null));
+    session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, default_memory_limit));
     session.vm.setTimeLimit(options.timeout_ms);
     if (exports) |e| try e.prepare(&session.vm);
-    return evaluate(allocator, session, root, source, reporter);
+    return source;
 }
 
 /// Runs the script `root` names, of `source`, and the modules it imports, dependencies
@@ -120,21 +131,26 @@ fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, root: *const 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
     session.evaluateWorkspace() catch |err| {
-        if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
-            try reportErrors(allocator, session, failure, root, if (err == error.ParseError) "syntax" else "compile", reporter);
-            return false;
-        };
-        reporter.err("Build failed: {}\n", .{err});
-        // The VM reported the error itself as it happened; a host is told it here
-        const position = session.vm.last_error_position;
-        reporter.fail(.{
-            .kind = "runtime",
-            .message = session.vm.last_error orelse @errorName(err),
-            .file = root.input,
-            .line = if (position) |p| p.line else null,
-            .column = if (position) |p| p.column else null,
-        });
+        try reportEvaluationFailure(allocator, session, err, root, reporter);
         return false;
     };
     return true;
+}
+
+/// Reports why an evaluation of `session` failed with `err`, as `build`, `run` and `watch`
+/// report it: a module that doesn't parse or compile with its errors (reportErrors), a run
+/// that failed (which the VM reported as it happened) in a line, and a host is told it.
+pub fn reportEvaluationFailure(allocator: std.mem.Allocator, session: *const ScriptSession, err: anyerror, root: *const ScriptRoot, reporter: Reporter) !void {
+    if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
+        return reportErrors(allocator, session, failure, root, if (err == error.ParseError) "syntax" else "compile", reporter);
+    };
+    reporter.err("Build failed: {}\n", .{err});
+    const position = session.vm.last_error_position;
+    reporter.fail(.{
+        .kind = "runtime",
+        .message = session.vm.last_error orelse @errorName(err),
+        .file = root.input,
+        .line = if (position) |p| p.line else null,
+        .column = if (position) |p| p.column else null,
+    });
 }

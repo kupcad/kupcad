@@ -58,6 +58,7 @@ pub const ScriptRoot = struct {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
                 reporter.err("Error: Could not read '{s}': {s}\n", .{ script_path, @errorName(err) });
+                reporter.fail(.{ .kind = "read", .message = @errorName(err), .file = script_path });
                 return null;
             },
         };

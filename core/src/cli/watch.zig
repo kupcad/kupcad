@@ -1,5 +1,6 @@
-//! `kupcad watch`: builds a script, then rebuilds it through its `ScriptSession` whenever the `Watcher` sees it or a module it imports change; given export options
-//! (export_flags.zig, as `kupcad build` takes them), each build that succeeds writes them.
+//! `kupcad watch`: builds a script, then rebuilds it through its `ScriptSession` whenever the
+//! `Watcher` sees it or a module it imports change; given export options (export_flags.zig,
+//! as `kupcad build` takes them), each build that succeeds writes them.
 
 const std = @import("std");
 const watcher_mod = @import("../session/watcher.zig");
@@ -7,10 +8,7 @@ const Watcher = watcher_mod.Watcher;
 const ScriptSession = @import("../session/session.zig").ScriptSession;
 const Reporter = @import("reporter.zig").Reporter;
 const build_cmd = @import("build_cmd.zig");
-const fs = @import("fs.zig");
-const ProjectConfig = @import("config.zig").ProjectConfig;
 const limits = @import("../core/limits.zig");
-const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const param_flags = @import("param_flags.zig");
@@ -52,34 +50,22 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer script_session.deinit();
     // The watcher holds it for the life of the process
     const session = &script_session;
-    session.setParams(&options.params);
-    session.vm.debugger_handler = debugger.terminalDebugger(init.io);
-    // A long-lived session caps the script heap: --memory-limit or KUPCAD_MEMORY_LIMIT, else
-    // the project's `vm_memory_limit`, else the interactive default, so a runaway loop ends
-    // with an error instead of the machine.
-    var failure: ?ProjectConfig.Failure = null;
-    defer if (failure) |*f| f.deinit(allocator);
-    const config = ProjectConfig.forScript(init.io, allocator, file_path, &failure) catch |err| {
-        if (failure) |f| reporter.err("Error: {f}\n", .{f}) else return err;
-        return .failure;
-    };
-    session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, limits.INTERACTIVE_MEMORY_LIMIT));
-    // --timeout or KUPCAD_TIMEOUT holds each build, which evaluateWorkspace starts it again for.
-    session.vm.setTimeLimit(options.timeout_ms);
-    if (options.writes) try options.exports.prepare(&session.vm);
-
-    const source = fs.readFile(init.io, allocator, file_path) catch |err| {
-        reporter.err("Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
-        return .failure;
-    };
+    // As `kupcad build` sets up, but a long-lived session caps the script heap: without a
+    // limit given or the project's, the interactive default, so a runaway loop ends with an
+    // error instead of the machine. --timeout holds each build, which evaluateWorkspace
+    // starts it again for.
+    const exports: ?*const ExportFlags = if (options.writes) &options.exports else null;
+    const source = try build_cmd.setUp(allocator, session, &root, &options, exports, limits.INTERACTIVE_MEMORY_LIMIT, reporter) orelse return .failure;
     defer allocator.free(source);
 
     _ = try session.workspace.addModule(root.path, source);
     try session.loadImports();
 
-    var printer = EventPrinter{ .allocator = allocator, .session = session, .root = &root, .reporter = reporter, .exports = if (options.writes) &options.exports else null };
+    var printer = EventPrinter{ .allocator = allocator, .session = session, .root = &root, .reporter = reporter, .exports = exports };
     var watcher = try Watcher.init(session, init.io, root.dir, printer.listener());
     defer watcher.deinit();
+    // What is exported is the root's run, which the VM must hold after every build
+    if (exports != null) watcher.run_again = root.path;
 
     // The first build is reported like any other, and a failed one is watched for a fix
     // (the command used to exit on it).
@@ -90,7 +76,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 }
 
 /// Prints the watcher's events the way `kupcad build` reports: diagnostics with their
-/// file, line and column, then a one-line summary.
+/// file, line and column, then a one-line summary, and with `--errors json` the line a host
+/// reads (it told a compile error as a syntax one, and a run's failure not at all).
 pub const EventPrinter = struct {
     allocator: std.mem.Allocator,
     session: *ScriptSession,
@@ -115,10 +102,9 @@ pub const EventPrinter = struct {
                     self.reporter.err("Could not write the model: {s}\n", .{@errorName(err)});
                 };
             },
-            .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.root, "syntax", self.reporter) catch |err| {
+            .failed => |failed| build_cmd.reportEvaluationFailure(self.allocator, self.session, failed, self.root, self.reporter) catch |err| {
                 self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root.input, @errorName(err) });
             },
-            .run_failed => |err| self.reporter.err("Build failed: {s}\n", .{@errorName(err)}),
             .reload_failed => |r| self.reporter.err("Could not reload '{s}': {s}\n", .{ r.path, @errorName(r.err) }),
         }
     }

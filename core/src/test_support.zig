@@ -16,6 +16,11 @@ const preview_frame = @import("preview/frame.zig");
 const model_mod = @import("exporters/model.zig");
 const ExportFormat = @import("exporters/format.zig").ExportFormat;
 
+/// A script that runs far past any time limit a test gives (a hundred million turns of a
+/// loop), yet ends: a time limit that stopped working fails the test instead of hanging the
+/// run, as `while true` did.
+pub const PAST_ANY_TIME_LIMIT = "i = 0\nwhile i < 100_000_000\n  i += 1\nend\ncube(1)\n";
+
 /// A preview frame's header as a front end's types read it (@kupcad/protocol's), strictly:
 /// a field renamed or added fails the test that reads it.
 pub const FrameHeader = struct {

@@ -133,9 +133,9 @@ pub const Preview = struct {
         return self.vtable.fileChanged(self.ptr, path);
     }
 
-    /// The files the modules' last runs read as data, by their paths in the project, sorted
-    /// and each once (owned by `allocator`; freeFiles frees them): what the editor is asked
-    /// to watch.
+    /// The files the modules' last runs read as data, and the modules their imports couldn't
+    /// read, by their paths in the project, sorted and each once (owned by `allocator`;
+    /// freeFiles frees them): what the editor is asked to watch, so creating one is seen.
     pub fn filesRead(self: Preview, allocator: std.mem.Allocator) ![][]u8 {
         return self.vtable.filesRead(self.ptr, allocator);
     }
@@ -407,6 +407,8 @@ pub const SessionPreview = struct {
             try self.reloadModule(path);
             affected = true;
         }
+        // A module an import couldn't read, made (a package installed): fileChanged ignored it
+        if (self.session.unread_imports.contains(path) and try self.session.loadUnreadImports()) affected = true;
         if (affected) self.dropHover();
         return affected;
     }
@@ -448,6 +450,8 @@ pub const SessionPreview = struct {
         for (self.session.nodes.items) |node| {
             for (node.files_read.items) |path| try unique.put(allocator, path, {});
         }
+        var unread = self.session.unread_imports.keyIterator();
+        while (unread.next()) |path| try unique.put(allocator, path.*, {});
         const files = try allocator.alloc([]u8, unique.count());
         var copied: usize = 0;
         errdefer freeFiles(allocator, files[0..copied]);

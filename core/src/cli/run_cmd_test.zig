@@ -4,6 +4,7 @@ const std = @import("std");
 const testing = std.testing;
 const run_cmd = @import("run_cmd.zig");
 const Args = @import("args.zig").Args;
+const test_support = @import("../test_support.zig");
 
 /// Runs `kupcad run` with `args`; the outcome, and what it reported in `output`.
 fn runWith(args: []const []const u8, output: *std.Io.Writer.Allocating) !run_cmd.Outcome {
@@ -35,7 +36,7 @@ test "kupcad run: runs the script with its parameters and writes no model" {
 test "kupcad run: --timeout ends a script that runs past it, as build's does" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = "while true\nend\ncube(1)\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "forever.kup", .data = test_support.PAST_ANY_TIME_LIMIT });
     const input = try tmp.dir.realPathFileAlloc(testing.io, "forever.kup", testing.allocator);
     defer testing.allocator.free(input);
 
