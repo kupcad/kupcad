@@ -167,18 +167,47 @@ fn replaceEmpty(vm: *VM, str: *value.ObjString, replacement: []const u8) !value.
     return vm.allocateStringTakeOwnership(try out.toOwnedSlice(allocator));
 }
 
-/// String#to_f
+/// String#to_f: the decimal number the String is (`"-2.5e3"`), nil for any other text.
 pub fn stringToF(vm: *VM, str: *value.ObjString) !value.Value {
-    _ = vm;
-    const float_val = std.fmt.parseFloat(f64, str.chars) catch return value.Value.initNil();
-    return value.Value.initNumber(float_val);
+    return decimalNumber(vm, str.chars, .any, "String#to_f");
 }
 
-/// String#to_i
+/// String#to_i: the whole decimal number the String is (`"42"`), nil for any other text.
 pub fn stringToI(vm: *VM, str: *value.ObjString) !value.Value {
-    _ = vm;
-    const int_val = std.fmt.parseInt(i64, str.chars, 10) catch return value.Value.initNil();
-    return value.Value.initNumber(@floatFromInt(int_val));
+    return decimalNumber(vm, str.chars, .whole, "String#to_i");
+}
+
+/// The number `text` is, written in decimal: a sign, digits, and for `.any` a fraction and
+/// an exponent too; nil for any other text, a space around it included. std's parsers took
+/// more than that: "nan" and "inf" (a non-finite number a script gets only by asking,
+/// Number::NAN), hex ("0x10".to_f was 16) and underscores ("1_000".to_i was 1000). A number
+/// beyond the largest one is a RangeError, as arithmetic's is: it was Infinity.
+fn decimalNumber(vm: *VM, text: []const u8, comptime kind: enum { whole, any }, comptime method: []const u8) !value.Value {
+    var i: usize = 0;
+    if (i < text.len and (text[i] == '-' or text[i] == '+')) i += 1;
+    var digits = skipDigits(text, &i);
+    if (kind == .any) {
+        if (i < text.len and text[i] == '.') {
+            i += 1;
+            digits += skipDigits(text, &i);
+        }
+        if (digits > 0 and i < text.len and (text[i] == 'e' or text[i] == 'E')) {
+            i += 1;
+            if (i < text.len and (text[i] == '-' or text[i] == '+')) i += 1;
+            if (skipDigits(text, &i) == 0) return value.Value.initNil();
+        }
+    }
+    if (digits == 0 or i != text.len) return value.Value.initNil();
+    const n = std.fmt.parseFloat(f64, text) catch return value.Value.initNil();
+    if (std.math.isInf(n)) return vm.fail(.RangeError, method ++ ": the number is beyond the largest one ({e:.1})", .{std.math.floatMax(f64)});
+    return value.Value.initNumber(n);
+}
+
+/// How many digits there are from `text[i.*]`, `i` left past them.
+fn skipDigits(text: []const u8, i: *usize) usize {
+    const start = i.*;
+    while (i.* < text.len and std.ascii.isDigit(text[i.*])) i.* += 1;
+    return i.* - start;
 }
 
 /// String#trim

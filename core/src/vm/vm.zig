@@ -1096,7 +1096,9 @@ pub const VM = struct {
         const index = self.stack[self.stack_top - 2];
         const target = self.stack[self.stack_top - 3];
 
-        if (target.isArray() and index.isNumber()) {
+        if (target.isArray()) {
+            // Assigned one element at a time: a Range (`a[0..1] = [9]`) is no place to assign
+            if (!index.isNumber()) return self.raiseError(.TypeError, "Array index must be an integer, got {s}", .{self.typeName(index)});
             const arr = target.asArray();
             const idx = self.resolveArrayIndex(arr.items.items.len, index) catch return self.indexError("Array", index, arr.items.items.len);
             arr.items.items[idx] = val;
@@ -2406,10 +2408,7 @@ pub const VM = struct {
             const a_num = a_val.asNumber();
             const b_num = b_val.asNumber();
             if (op == .op_add or op == .op_subtract) {
-                const res = if (op == .op_add) a_num + b_num else a_num - b_num;
-                if (overflowed(a_num, b_num, res)) return self.overflowError(op, a_num, b_num);
-                self.push(value.Value.initNumber(res));
-                return .ok;
+                return self.pushArithmetic(op, a_num, b_num, if (op == .op_add) a_num + b_num else a_num - b_num);
             }
 
             // @intFromFloat is illegal for NaN/inf/out-of-range operands, so bitwise
@@ -2506,31 +2505,16 @@ pub const VM = struct {
         if (!a.isNumber() or !b.isNumber()) return self.binaryOnHost(op, a, b);
         const nums = .{ a.asNumber(), b.asNumber() };
         switch (op) {
-            .op_multiply => {
-                const res = nums[0] * nums[1];
-                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
-                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
-                self.push(value.Value.initNumber(res));
-            },
+            .op_multiply => return self.pushArithmetic(op, nums[0], nums[1], nums[0] * nums[1]),
             .op_divide => {
                 if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Division by zero.", .{});
-                const res = nums[0] / nums[1];
-                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
-                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
-                self.push(value.Value.initNumber(res));
+                return self.pushArithmetic(op, nums[0], nums[1], nums[0] / nums[1]);
             },
             .op_modulo => {
                 if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Modulo by zero.", .{});
-                const res = value.flooredMod(nums[0], nums[1]);
-                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
-                self.push(value.Value.initNumber(res));
+                return self.pushArithmetic(op, nums[0], nums[1], value.flooredMod(nums[0], nums[1]));
             },
-            .op_exponent => {
-                const res = std.math.pow(f64, nums[0], nums[1]);
-                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
-                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
-                self.push(value.Value.initNumber(res));
-            },
+            .op_exponent => return self.pushArithmetic(op, nums[0], nums[1], std.math.pow(f64, nums[0], nums[1])),
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
             .op_greater => self.push(value.Value.initBool(nums[0] > nums[1])),
             .op_less_equal => self.push(value.Value.initBool(nums[0] <= nums[1])),
@@ -3883,6 +3867,17 @@ pub const VM = struct {
         }
 
         instance.fields.items[idx] = val;
+    }
+
+    /// Pushes `res`, the result of `a op b`, as every arithmetic operator does, or raises
+    /// what the arithmetic rule raises instead: a NaN is a MathError (`+` and `-` gave
+    /// `Number::NAN + 1` as NaN, where `*` raised), and Infinity from finite operands a
+    /// RangeError (overflowed).
+    inline fn pushArithmetic(self: *VM, op: chunk.OpCode, a: f64, b: f64, res: f64) InterpretResult {
+        if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
+        if (overflowed(a, b, res)) return self.overflowError(op, a, b);
+        self.push(value.Value.initNumber(res));
+        return .ok;
     }
 
     /// Numbers are 64-bit floats, so a result too large for one (beyond ~1.8e308) would be

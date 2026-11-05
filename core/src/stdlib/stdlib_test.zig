@@ -517,15 +517,15 @@ test "Stdlib: Array#slice follows Ruby arr[start, len] semantics" {
 
 test "Stdlib: dimensions and sweep parameters reject NaN and inf" {
     try expectAllRaise(&.{.ValueError}, &.{
-        "cube(Number::INFINITY - Number::INFINITY)",
+        "cube(Number::NAN)",
         "sphere(Number::INFINITY)",
         "cylinder(r: Number::NAN, h: 1)",
-        "square(10).extrude(Number::INFINITY - Number::INFINITY)",
+        "square(10).extrude(Number::NAN)",
         "square(10).extrude(5, twist: Number::INFINITY)",
         "square(10).extrude(5, scale: Number::NAN)",
         "square(10).helix(Number::INFINITY)",
         "square(10).helix(5, Number::NAN)",
-        "square(10).translate(x: 20).revolve(Number::INFINITY - Number::INFINITY)",
+        "square(10).translate(x: 20).revolve(Number::NAN)",
         "square(10).loft(circle(r: 5), Number::INFINITY)",
     });
 }
@@ -579,7 +579,7 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
         print("cube(1).repeat_linear({d}, [2, 0, 0])", .{MAX_COUNT + 1}),
         "cube(1).repeat_linear(Number::INFINITY, [2, 0, 0])",
         print("cube(1).repeat_polar({d})", .{MAX_COUNT + 1}),
-        "cube(1).repeat_polar(Number::INFINITY - Number::INFINITY)",
+        "cube(1).repeat_polar(Number::NAN)",
     });
     // Negative counts are a no-op (they used to panic in @intFromFloat to usize).
     try expectRuns(.ok, &.{
@@ -673,14 +673,14 @@ test "Stdlib: range and times errors are rescuable with their class and real mes
     const max_mat = std.fmt.comptimePrint("{d}", .{MAX_MATERIALIZE});
     const cases = [_]struct { src: []const u8, prefix: []const u8 }{
         .{ .src = "2.5.times { }", .prefix = "ValueError: times requires an integer" },
-        .{ .src = "(Number::INFINITY - Number::INFINITY).times { }", .prefix = "ValueError: times requires an integer" },
+        .{ .src = "(Number::NAN).times { }", .prefix = "ValueError: times requires an integer" },
         .{ .src = "3.times", .prefix = "ArgumentError: times requires a block" },
         .{ .src = "(0..3).each", .prefix = "ArgumentError: Range#each requires a block" },
         .{ .src = "(0..3).map", .prefix = "ArgumentError: Range#map requires a block" },
         .{ .src = "(0..3).step(0)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
         .{ .src = "(0..3).step(Number::INFINITY)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
         .{ .src = "(0..Number::INFINITY).to_a", .prefix = "ValueError: Range#to_a requires finite bounds" },
-        .{ .src = "(0..(Number::INFINITY - Number::INFINITY)).size", .prefix = "ValueError: Range#size requires finite bounds" },
+        .{ .src = "(0..(Number::NAN)).size", .prefix = "ValueError: Range#size requires finite bounds" },
         .{ .src = "1.upto(2.5) { }", .prefix = "ValueError: upto requires an integer" },
         .{ .src = "1.5.downto(0) { }", .prefix = "ValueError: downto requires an integer" },
         // Building an array one past the cap is rejected before anything is allocated.
@@ -1559,6 +1559,29 @@ test "Stdlib: sum, Range#count and to_h take a block, as in Ruby (it was ignored
         // A `break` gives its value, as in each
         .{ .src = "r = [1, 2, 3].sum { |x| break 99 }", .expected = .{ .num = 99 } },
         .{ .src = "r = (1..5).count { |x| break 7 if x == 2 }", .expected = .{ .num = 7 } },
+    });
+}
+
+test "Stdlib: String#to_f and #to_i read a decimal number, and nothing else" {
+    // std's parsers read more: "nan" and "inf" (non-finite numbers no script asked for),
+    // hex ("0x10".to_f was 16) and underscores ("1_000".to_i was 1000); past the largest
+    // number, Infinity.
+    try expectScripts(&.{
+        .{ .src = "r = [\"42.5\".to_f, \"-2.5e3\".to_f, \"+.5\".to_f, \"1.\".to_f, \"7\".to_f, \"42\".to_i, \"-3\".to_i, \"1e-400\".to_f]", .expected = .{ .nums = &.{ 42.5, -2500, 0.5, 1, 7, 42, -3, 0 } } },
+        .{ .src = "r = [\"nan\", \"inf\", \"Infinity\", \"0x10\", \"2.5mm\", \" 3\", \"3 \", \"\", \"-\", \".\", \"e3\", \"1e\"].map { |s| s.to_f }.compact.size", .expected = .{ .num = 0 } },
+        .{ .src = "r = [\"1_000\", \"0x10\", \"1.5\", \"1e3\", \" 3\", \"+\"].map { |s| s.to_i }.compact.size", .expected = .{ .num = 0 } },
+        .{ .src = comptime rescued("\"1e400\".to_f"), .expected = .{ .str = "RangeError: String#to_f: the number is beyond the largest one (1.8e308)" } },
+        .{ .src = comptime rescued("(\"9\" + \"0\".rjust(400, \"0\")).to_i"), .expected = .{ .str = "RangeError: String#to_i: the number is beyond the largest one (1.8e308)" } },
+    });
+}
+
+test "Stdlib: an Array is assigned at an integer index, and said so for any other" {
+    // A String or a Range index said "Array doesn't support index assignment ([]=)"
+    try expectScripts(&.{
+        .{ .src = comptime rescued("a = [1, 2, 3]\n  a[\"x\"] = 2"), .expected = .{ .str = "TypeError: Array index must be an integer, got String" } },
+        .{ .src = comptime rescued("a = [1, 2, 3]\n  a[0..1] = [9]"), .expected = .{ .str = "TypeError: Array index must be an integer, got Range" } },
+        .{ .src = comptime rescued("a = [1, 2, 3]\n  a[1.5] = 2"), .expected = .{ .str = "TypeError: Array index must be an integer, got 1.5" } },
+        .{ .src = "a = [1, 2, 3]\na[-1] = 9\nr = a", .expected = .{ .nums = &.{ 1, 2, 9 } } },
     });
 }
 
@@ -2476,7 +2499,7 @@ test "Stdlib: geometry coordinates reject NaN and inf" {
         "cube(1).translate(Number::INFINITY, 0, 0)",
         "cube(1).translate(z: Number::NAN)",
         "cube(1).rotate(x: Number::INFINITY)",
-        "square(1).rotate(Number::INFINITY - Number::INFINITY)",
+        "square(1).rotate(Number::NAN)",
         "cube(1).scale(Number::INFINITY, 1, 1)",
         "cube(1).mirror(Number::NAN, 0, 0)",
         "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0,Number::INFINITY])",
@@ -2489,10 +2512,10 @@ test "Stdlib: geometry coordinates reject NaN and inf" {
         "cube(1).repeat_polar(3, Number::NAN)",
         "square(1).offset(Number::INFINITY)",
         "cube(1).trim_by_plane(0, 0, 1, Number::INFINITY)",
-        "cube(1).slice(Number::INFINITY - Number::INFINITY)",
+        "cube(1).slice(Number::NAN)",
         "cube(1).split_by_plane(0, 0, 1, Number::NAN)",
         "cube(1).offset(Number::INFINITY)",
-        "cube(1).simplify(Number::INFINITY - Number::INFINITY)",
+        "cube(1).simplify(Number::NAN)",
         "cube(1).contains?([0, Number::INFINITY, 0])",
         "cube(1).ray_cast([0, 0, Number::NAN], [0, 0, -5])",
         "cube(1).min_gap(cube(1), Number::INFINITY)",
@@ -2597,7 +2620,7 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("cube(1).scale(1, 0, 1)"), .expected = .{ .str = "ValueError: scale factors must be non-zero, got [1, 0, 1]" } },
         // Errors that used to surface as the generic "Native Execution Error" when rescued.
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])"), .expected = .{ .str = "ValueError: polyhedron face index 4 is out of range (0..4)" } },
-        .{ .src = rescued("cube(Number::INFINITY - Number::INFINITY)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got NaN" } },
+        .{ .src = rescued("cube(Number::NAN)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got NaN" } },
         .{ .src = rescued("cube(-1)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got -1" } },
     });
 }
@@ -2744,7 +2767,7 @@ test "Stdlib: non-finite numbers print the same on every platform" {
     // `inf - inf` is a NaN with the sign bit set on x86 (printed "-nan" by {d}) but not on
     // ARM ("nan"), so output and error messages used to differ between machines.
     try expectScripts(&.{
-        .{ .src = "r = (Number::INFINITY - Number::INFINITY).to_s", .expected = .{ .str = "NaN" } },
+        .{ .src = "r = (Number::NAN).to_s", .expected = .{ .str = "NaN" } },
         .{ .src = "r = Number::INFINITY.to_s", .expected = .{ .str = "Infinity" } },
         .{ .src = "r = (-Number::INFINITY).to_s", .expected = .{ .str = "-Infinity" } },
         .{ .src = "r = \"#{Number::NAN} #{-Number::INFINITY}\"", .expected = .{ .str = "NaN -Infinity" } },

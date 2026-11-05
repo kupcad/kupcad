@@ -570,8 +570,8 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         .{ .expr = "1e300 + huge", .number = 2e300 },
         .{ .expr = "inf_v - 1", .number = std.math.inf(f64) },
         .{ .expr = "inf_v | 1", .message = "RangeError" },
-        // inf - inf is the NaN that reaches bytecode (multiply/divide raise on NaN)
-        .{ .expr = "(inf_v - inf_v) ^ 1", .message = "RangeError" },
+        // NaN, which a script has only by asking for it (arithmetic raises on one)
+        .{ .expr = "Number::NAN ^ 1", .message = "RangeError" },
         .{ .expr = "1 & huge", .message = "RangeError" },
         .{ .expr = "1 << 64", .message = "Shift count" },
         .{ .expr = "1 >> -1", .message = "Shift count" },

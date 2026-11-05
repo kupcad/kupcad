@@ -1571,9 +1571,16 @@ test "VM: runtime errors have their own class and a message without a class pref
         .{ .expr = "nope_undefined", .kind = "NameError", .message = "Undefined variable 'nope_undefined'" },
         .{ .expr = "5[0]", .kind = "TypeError", .message = "Number can't be indexed with []" },
         .{ .expr = "1 / 0", .kind = "ZeroDivisionError", .message = "Division by zero." },
+        .{ .expr = "5 % 0", .kind = "ZeroDivisionError", .message = "Modulo by zero." },
+        // Every arithmetic operator: `+` and `-` gave NaN where `*` raised
+        .{ .expr = "Number::NAN + 1", .kind = "MathError", .message = "Operation resulted in NaN." },
+        .{ .expr = "Number::INFINITY - Number::INFINITY", .kind = "MathError", .message = "Operation resulted in NaN." },
+        .{ .expr = "Number::INFINITY * 0", .kind = "MathError", .message = "Operation resulted in NaN." },
+        .{ .expr = "Number::NAN % 2", .kind = "MathError", .message = "Operation resulted in NaN." },
+        .{ .expr = "1e308 + 1e308", .kind = "RangeError", .message = "1e308 + 1e308 overflows: the result is beyond the largest number (1.8e308)" },
         .{ .expr = "1 | Number::INFINITY", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
         .{ .expr = "polygon([[0, 0], [1, \"x\"], [0, 1]])", .kind = "TypeError", .message = "polygon expects a number for a coordinate (point 1, component 1), got String" },
-        .{ .expr = "cube(Number::INFINITY - Number::INFINITY)", .kind = "ValueError", .message = "cube expects x to be a finite number greater than zero, got NaN" },
+        .{ .expr = "cube(Number::NAN)", .kind = "ValueError", .message = "cube expects x to be a finite number greater than zero, got NaN" },
         .{ .expr = "3.times", .kind = "ArgumentError", .message = "times requires a block" },
     };
     for (cases) |case| {
