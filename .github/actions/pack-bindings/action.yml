@@ -1,0 +1,48 @@
+name: Pack the bindings
+description: >-
+  Packs the Ruby gem of a platform into bindings/ruby/pkg/ and builds its Python wheel into
+  bindings/python/dist/, around the libkupcad built for that platform, with the notices and the
+  license texts core/scripts/collect-licenses.sh puts beside it. Ruby, with the gem's bundle
+  installed, and Python come first.
+
+inputs:
+  library:
+    description: The library, by its absolute path
+    required: true
+  gem:
+    description: The gem's platform (x86_64-linux-gnu, arm64-darwin, x64-mingw-ucrt...)
+    required: true
+  wheel:
+    description: >-
+      The wheel's platform tag (manylinux_2_28_x86_64, win_amd64...); on macOS its architecture
+      alone (arm64, x86_64), the macOS it names read from the library
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Pack the gem
+      shell: bash
+      working-directory: bindings/ruby
+      env:
+        GEM: ${{ inputs.gem }}
+        LIBRARY: ${{ inputs.library }}
+      run: bundle exec rake native:gem PLATFORM="$GEM" LIBRARY="$LIBRARY"
+
+    # With the build and the hatchling of the dev group (--no-isolation), pinned, which the build
+    # hook is tested and type-checked with, not the newest. The platform tag: on macOS, the
+    # oldest macOS the library runs on, as Zig built it (its minos), which a tag names by its
+    # major version
+    - name: Build the wheel
+      shell: bash
+      working-directory: bindings/python
+      env:
+        WHEEL: ${{ inputs.wheel }}
+        LIBRARY: ${{ inputs.library }}
+      run: |
+        if [ "$RUNNER_OS" = macOS ]; then
+          major=$(vtool -show-build "$LIBRARY" | awk '/minos/ { split($2, version, "."); print version[1] }')
+          WHEEL="macosx_${major}_0_$WHEEL"
+        fi
+        python -m pip install --group dev
+        KUPCAD_LIBRARY="$LIBRARY" KUPCAD_WHEEL_PLATFORM="$WHEEL" python -m build --wheel --no-isolation

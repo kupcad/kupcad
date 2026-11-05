@@ -80,7 +80,9 @@ To run scripts you don't trust, or keep a crash away from a web server, run the
 
 Each platform gem carries its libkupcad: Linux (x86_64, aarch64; glibc 2.28 or later), macOS
 (arm64, x86_64) and Windows (x64, aarch64), with `THIRD_PARTY_NOTICES.md` and the license texts
-of what it is built from beside it, in `lib/kupcad/native/`. Elsewhere (musl, BSD), build
+of what it is built from beside it, in `lib/kupcad/native/`; each is attested as built by the
+kupcad repository's release from its tag (`gh attestation verify kupcad-<version>-<platform>.gem
+--repo kupcad/kupcad`). Elsewhere (musl, BSD), build
 libkupcad with `zig build lib` in the kupcad repository's `core/`, install the gem from
 `bindings/ruby/` (`gem build kupcad.gemspec && gem install kupcad-*.gem`, a gem without the
 library) and point `KUPCAD_LIBRARY` at the library.

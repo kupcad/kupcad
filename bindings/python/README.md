@@ -77,8 +77,10 @@ too. To run scripts you don't trust, or keep a crash away from a web server, run
 Each wheel carries its libkupcad: Linux (x86_64, aarch64; glibc 2.28 or later), macOS 15 or
 later (arm64, x86_64) and Windows (x64, arm64), for any Python from 3.10, with
 `THIRD_PARTY_NOTICES.md` and the license texts of what it is built from beside it, in the
-`kupcad` package. Elsewhere (musl, BSD), build libkupcad with `zig build lib` in the kupcad
-repository's `core/` and a wheel with it, as the Development section says.
+`kupcad` package; each is attested as built by the kupcad repository's release from its tag, on
+PyPI and on GitHub (`gh attestation verify <wheel> --repo kupcad/kupcad`). Elsewhere (musl,
+BSD), build libkupcad with `zig build lib` in the kupcad repository's `core/` and a wheel with
+it, as the Development section says.
 
 ## Development
 
@@ -95,6 +97,6 @@ python -m venv .venv
 
 A wheel carries the library it is built with, and the notices
 `core/scripts/collect-licenses.sh <the library's folder>` (run from the repository root) puts
-beside it:
-`KUPCAD_LIBRARY=<library> KUPCAD_WHEEL_PLATFORM=<platform tag> python -m build --wheel`, as the
-release builds one for each platform (a relative `KUPCAD_LIBRARY` is from `bindings/python/`).
+beside it: `KUPCAD_LIBRARY=<library> KUPCAD_WHEEL_PLATFORM=<platform tag> python -m build
+--wheel --no-isolation`, with the dev group's build and hatchling, as the release builds one for
+each platform (a relative `KUPCAD_LIBRARY` is from `bindings/python/`).

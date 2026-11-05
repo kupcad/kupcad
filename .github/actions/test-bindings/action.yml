@@ -1,0 +1,30 @@
+name: Test the bindings installed
+description: >-
+  Installs the gem and the wheel pack-bindings made, as a user installs them, and runs the gem's
+  specs and the package's tests against them and the library they carry, not the checkout's
+  sources.
+
+runs:
+  using: composite
+  steps:
+    # Outside Bundler, with the specs' tools at the versions Gemfile.lock holds, not the newest.
+    # The list of them is split into words on purpose: each is name:version
+    - name: Test the installed gem
+      shell: bash
+      working-directory: bindings/ruby
+      run: |
+        gem install --no-document pkg/kupcad-*.gem
+        gem install --no-document --ignore-dependencies $(ruby -rbundler -e '
+          lock = Bundler::LockfileParser.new(Bundler.read_file("Gemfile.lock"))
+          puts lock.specs.filter_map { |spec| "#{spec.name}:#{spec.version}" if spec.name.match?(/\A(rspec|diff-lcs)/) }
+        ')
+        KUPCAD_INSTALLED_GEM=1 ruby -S rspec
+
+    # pytest at the dev group's version
+    - name: Test the installed wheel
+      shell: bash
+      working-directory: bindings/python
+      run: |
+        python -m pip install --group dev dist/*.whl
+        cd tests
+        KUPCAD_INSTALLED_WHEEL=1 python -m pytest -p no:cacheprovider .

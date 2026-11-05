@@ -28,6 +28,7 @@ jobs:
   version:
     name: Check the tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -53,14 +54,21 @@ jobs:
           node scripts/version.js check "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  # The CLI, libkupcad beside it, and the Ruby gem and the Python wheel around libkupcad
+  # (bindings/), on a runner of each system and architecture they ship for: each checked there
+  # as it ships, the gem and the wheel installed as a user installs them and their tests run
+  # against them. No cache goes into what they build: a tag's run restored what main's runs
+  # saved, and a cache a tag's run saves no later run reads
   build:
     name: Build ${{ matrix.platform }}
     needs: version
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: true
       matrix:
+        # library is libkupcad's file name, gem the gem's platform, wheel the wheel's platform
+        # tag (on macOS its architecture: the build reads the rest from the library)
         include:
           # Linux binaries link the glibc they name, so they run on any distribution from
           # 2018 on, not only on ones as new as the runner's
@@ -69,35 +77,53 @@ jobs:
             target: x86_64-linux-gnu.2.28
             binary: kupcad
             library: libkupcad.so
+            gem: x86_64-linux-gnu
+            wheel: manylinux_2_28_x86_64
           - platform: linux_arm64
             os: ubuntu-24.04-arm
             target: aarch64-linux-gnu.2.28
             binary: kupcad
             library: libkupcad.so
+            gem: aarch64-linux-gnu
+            wheel: manylinux_2_28_aarch64
           - platform: darwin_arm64
             os: macos-latest
             target: aarch64-macos
             binary: kupcad
             library: libkupcad.dylib
+            gem: arm64-darwin
+            wheel: arm64
           - platform: darwin_amd64
             os: macos-15-intel
             target: x86_64-macos
             binary: kupcad
             library: libkupcad.dylib
+            gem: x86_64-darwin
+            wheel: x86_64
           - platform: windows_amd64
             os: windows-latest
             target: x86_64-windows-gnu
             binary: kupcad.exe
             library: kupcad.dll
+            gem: x64-mingw-ucrt
+            wheel: win_amd64
           - platform: windows_arm64
             os: windows-11-arm
             target: aarch64-windows-gnu
             binary: kupcad.exe
             library: kupcad.dll
+            gem: aarch64-mingw-ucrt
+            wheel: win_arm64
     defaults:
       run:
         shell: bash
     steps:
+      # The bindings' LICENSE is a link to the repository's: Git on Windows checks a link out as
+      # a file holding its target, unless told to make links
+      - name: Check links out as links
+        if: runner.os == 'Windows'
+        run: git config --global core.symlinks true
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,6 +134,7 @@ jobs:
         uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
+          use-cache: false
 
       # ReleaseSafe, the mode CI tests release builds in (linux release-safe): safety checks
       # stay on
@@ -116,7 +143,7 @@ jobs:
         run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} -p ../out
 
       # libkupcad, the core as a C library (core/include/kupcad.h), for this platform's Ruby
-      # gem and Python wheel (the bindings job), into out/lib
+      # gem and Python wheel, into out/lib
       - name: Build libkupcad
         working-directory: core
         run: zig build lib -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} -p ../out
@@ -176,19 +203,51 @@ jobs:
           path: symbols/
           if-no-files-found: error
 
-      # With the notices and the license texts of what it is built from, which its gem and its
+      # The notices and the license texts of what libkupcad is built from, which its gem and its
       # wheel carry beside it
-      - name: Keep libkupcad
+      - name: Put libkupcad's notices beside it
         run: core/scripts/collect-licenses.sh out/lib
 
-      - name: Upload libkupcad
+      - name: Install Ruby
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          working-directory: bindings/ruby
+
+      # Gemfile.lock's, as setup-ruby's bundler-cache installs them (into vendor/bundle, the lock
+      # frozen: one that names another version than version.rb's fails), without its cache
+      - name: Install the gem's development tools
+        working-directory: bindings/ruby
+        run: |
+          bundle config set --local deployment true
+          bundle install
+
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .tool-versions
+
+      - name: Pack the gem and build the wheel
+        uses: ./.github/actions/pack-bindings
+        with:
+          library: ${{ github.workspace }}/out/lib/${{ matrix.library }}
+          gem: ${{ matrix.gem }}
+          wheel: ${{ matrix.wheel }}
+
+      - name: Test them installed
+        uses: ./.github/actions/test-bindings
+
+      - name: Keep the gem
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: libkupcad-${{ matrix.platform }}
-          path: |
-            out/lib/${{ matrix.library }}
-            out/lib/THIRD_PARTY_NOTICES.md
-            out/lib/licenses/
+          name: gem-${{ matrix.gem }}
+          path: bindings/ruby/pkg/*.gem
+          if-no-files-found: error
+
+      - name: Keep the wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: bindings/python/dist/*.whl
           if-no-files-found: error
 
   desktop:
@@ -243,7 +302,7 @@ jobs:
         with:
           version: '^12.15'
           node-version-file: .tool-versions
-          cache: true
+          cache: false
 
       - name: Read the Rust version
         id: rust
@@ -348,12 +407,13 @@ jobs:
         with:
           version: '^12.15'
           node-version-file: .tool-versions
-          cache: true
+          cache: false
 
       - name: Install Zig
         uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
+          use-cache: false
 
       # Binaryen's own build, checked against the hash of the one this was written with
       - name: Install wasm-opt
@@ -430,7 +490,7 @@ jobs:
         with:
           version: '^12.15'
           node-version-file: .tool-versions
-          cache: true
+          cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --filter 'kupcad-vscode...'
@@ -452,138 +512,12 @@ jobs:
           path: packages/kupcad-vscode/kupcad-vscode-${{ needs.version.outputs.version }}.vsix
           if-no-files-found: error
 
-  # The Ruby gem and the Python wheel of each platform, around the libkupcad built for it
-  # (bindings/): packed, then installed as a user installs them and their tests run against
-  # them, there. Published once the release is out (the rubygems and pypi jobs)
-  bindings:
-    name: Build the gem and the wheel for ${{ matrix.platform }}
-    needs: [version, build]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - platform: linux_amd64
-            os: ubuntu-latest
-            library: libkupcad.so
-            gem: x86_64-linux-gnu
-            wheel: manylinux_2_28_x86_64
-          - platform: linux_arm64
-            os: ubuntu-24.04-arm
-            library: libkupcad.so
-            gem: aarch64-linux-gnu
-            wheel: manylinux_2_28_aarch64
-          # A macOS wheel's tag names the oldest macOS it runs on: the build step reads it
-          - platform: darwin_arm64
-            os: macos-latest
-            library: libkupcad.dylib
-            gem: arm64-darwin
-            wheel: arm64
-          - platform: darwin_amd64
-            os: macos-15-intel
-            library: libkupcad.dylib
-            gem: x86_64-darwin
-            wheel: x86_64
-          - platform: windows_amd64
-            os: windows-latest
-            library: kupcad.dll
-            gem: x64-mingw-ucrt
-            wheel: win_amd64
-          - platform: windows_arm64
-            os: windows-11-arm
-            library: kupcad.dll
-            gem: aarch64-mingw-ucrt
-            wheel: win_arm64
-    defaults:
-      run:
-        shell: bash
-    env:
-      LIBRARY: ${{ github.workspace }}/lib/${{ matrix.library }}
-    steps:
-      # The bindings' LICENSE is a link to the repository's: Git on Windows checks a link out as
-      # a file holding its target, unless told to make links
-      - name: Check links out as links
-        if: runner.os == 'Windows'
-        run: git config --global core.symlinks true
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # The library, with the notices and the license texts beside it
-      - name: Collect libkupcad
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: libkupcad-${{ matrix.platform }}
-          path: lib
-
-      - name: Install Ruby
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
-        with:
-          working-directory: bindings/ruby
-          bundler-cache: true
-
-      - name: Pack the gem
-        working-directory: bindings/ruby
-        env:
-          GEM: ${{ matrix.gem }}
-        run: bundle exec rake native:gem PLATFORM="$GEM" LIBRARY="$LIBRARY"
-
-      # Outside Bundler, and the specs run against it and the library it carries
-      - name: Test the installed gem
-        working-directory: bindings/ruby
-        run: |
-          gem install --no-document pkg/kupcad-*.gem rspec
-          KUPCAD_INSTALLED_GEM=1 ruby -S rspec
-
-      - name: Install Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .tool-versions
-
-      # The wheel's platform tag: on macOS, the oldest macOS the library runs on, as Zig built
-      # it (its minos), which a tag names by its major version
-      - name: Build the wheel
-        working-directory: bindings/python
-        env:
-          WHEEL: ${{ matrix.wheel }}
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            major=$(vtool -show-build "$LIBRARY" | awk '/minos/ { split($2, version, "."); print version[1] }')
-            WHEEL="macosx_${major}_0_$WHEEL"
-          fi
-          python -m pip install --group dev
-          KUPCAD_LIBRARY="$LIBRARY" KUPCAD_WHEEL_PLATFORM="$WHEEL" python -m build --wheel
-
-      # The tests run against it and the library it carries, not the checkout's sources
-      - name: Test the installed wheel
-        working-directory: bindings/python
-        run: |
-          python -m pip install dist/*.whl
-          cd tests
-          KUPCAD_INSTALLED_WHEEL=1 python -m pytest -p no:cacheprovider .
-
-      - name: Keep the gem
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: gem-${{ matrix.gem }}
-          path: bindings/ruby/pkg/*.gem
-          if-no-files-found: error
-
-      - name: Keep the wheel
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: wheel-${{ matrix.platform }}
-          path: bindings/python/dist/*.whl
-          if-no-files-found: error
-
   release:
     name: Publish the release
     # The packages too: a release whose packages can't ship waits for a tag that fixes them
-    needs: [version, build, desktop, packages, vscode, bindings]
+    needs: [version, build, desktop, packages, vscode]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       # The attestations: the job's OIDC token signs them, and they are stored with the repository
@@ -636,7 +570,9 @@ jobs:
       # Each file the release ships attested as built by this workflow from the tag (a Sigstore
       # signature, kept with the repository): `gh attestation verify <file> --repo
       # kupcad/kupcad` checks one, as the VS Code extension does before it installs a kupcad.
-      # checksums.txt comes from the release itself, so it catches a broken download only
+      # The gems and the wheels too, which RubyGems.org and PyPI get (PyPI attests each wheel
+      # itself as well), so every file is checked one way. checksums.txt comes from the release
+      # itself, so it catches a broken download only
       - name: Attest them
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -646,6 +582,8 @@ jobs:
             dist/*.vsix
             dist/latest.json
             dist/checksums.txt
+            artifacts/gem-*/*.gem
+            artifacts/wheel-*/*.whl
 
       # A tag with a suffix (v0.2.0-rc.1) is a pre-release
       - name: Publish
@@ -756,11 +694,11 @@ jobs:
 
   # RubyGems.org's trusted publishing: the job's OIDC token is the credential, which RubyGems
   # takes from this workflow (release.yml) in the rubygems environment only. It pushes what the
-  # bindings job packed, running nothing of the repository's; a gem already there is skipped, so a
+  # build jobs packed, running nothing of the repository's; a gem already there is skipped, so a
   # run stopped halfway can be re-run
   rubygems:
     name: Publish the Ruby gems
-    needs: [version, bindings, release]
+    needs: [version, build, release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -806,11 +744,11 @@ jobs:
 
   # PyPI's trusted publishing: the job's OIDC token is the credential, which PyPI takes from this
   # workflow (release.yml) in the pypi environment only, and attests each wheel. It uploads what
-  # the bindings job built, running nothing of the repository's; a wheel already there is skipped,
+  # the build jobs built, running nothing of the repository's; a wheel already there is skipped,
   # so a run stopped halfway can be re-run
   pypi:
     name: Publish the Python wheels
-    needs: [version, bindings, release]
+    needs: [version, build, release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
