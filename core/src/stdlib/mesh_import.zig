@@ -40,10 +40,8 @@ pub fn nativeImportStl(vm: *VM, args: []const value.Value) !value.Value {
     const request = try requestOf(vm, args, "import_stl", "an STL file");
     const file = try file_import.read(vm, request.path, "STL", limits.MAX_MESH_BYTES);
     defer vm.allocator.free(file);
-    const mesh = stl.parseStlBuffer(vm.allocator, file) catch |err| {
-        if (err == error.OutOfMemory) return error.OutOfMemory;
-        return vm.fail(.ImportError, "could not parse STL file '{s}': {s}", .{ request.path, @errorName(err) });
-    };
+    var diag: Diagnostic = .{};
+    const mesh = stl.parseStlBuffer(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, request.path, "STL", &diag);
     defer mesh.deinit(vm.allocator);
     return solidOf(vm, &.{mesh}, request, "import_stl", "STL");
 }

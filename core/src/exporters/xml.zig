@@ -16,6 +16,8 @@ pub const Tag = struct {
     /// Where its `<` is, and where what follows its `>` starts
     offset: usize,
     end: usize,
+    /// The line its `<` is on, from 1
+    line: usize,
 
     /// The value of the attribute `name`, as written.
     pub fn attribute(self: Tag, name: []const u8) ?[]const u8 {
@@ -63,6 +65,23 @@ pub const Attributes = struct {
 pub const Scanner = struct {
     text: []const u8,
     pos: usize = 0,
+    /// The line of `counted`, up to which the newlines are counted: each once, as the scanner
+    /// moves on (a tag's line counted from the start of the file made reading one quadratic)
+    line: usize = 1,
+    counted: usize = 0,
+
+    /// A scanner from the tag `start` on, as a `use` reads again what it names.
+    pub fn startingAt(text: []const u8, start: Tag) Scanner {
+        return .{ .text = text, .pos = start.offset, .line = start.line, .counted = start.offset };
+    }
+
+    /// The line `offset` is on: at or past where the newlines are counted to, as every
+    /// offset the scanner asks about is.
+    fn lineAt(self: *Scanner, offset: usize) usize {
+        self.line += std.mem.countScalar(u8, self.text[self.counted..offset], '\n');
+        self.counted = offset;
+        return self.line;
+    }
 
     /// The next tag, past text, comments, CDATA, processing instructions and the DOCTYPE.
     pub fn next(self: *Scanner, diag: *Diagnostic) error{Unreadable}!?Tag {
@@ -78,14 +97,14 @@ pub const Scanner = struct {
             } else if (std.mem.startsWith(u8, rest, "<!")) {
                 // A DOCTYPE, its internal subset in brackets
                 const bracket = std.mem.findScalarPos(u8, self.text, open, '[');
-                const close = std.mem.findScalarPos(u8, self.text, open, '>') orelse return diag.fail("line {d}: a declaration doesn't end", .{lineOf(self.text, open)});
+                const close = std.mem.findScalarPos(u8, self.text, open, '>') orelse return diag.fail("line {d}: a declaration doesn't end", .{self.lineAt(open)});
                 self.pos = if (bracket != null and bracket.? < close) try self.past(bracket.?, "]>", "a DOCTYPE", diag) else close + 1;
             } else return try self.tag(open, diag);
         }
     }
 
     fn past(self: *Scanner, from: usize, end: []const u8, what: []const u8, diag: *Diagnostic) error{Unreadable}!usize {
-        const at = std.mem.findPos(u8, self.text, from, end) orelse return diag.fail("line {d}: {s} doesn't end", .{ lineOf(self.text, from), what });
+        const at = std.mem.findPos(u8, self.text, from, end) orelse return diag.fail("line {d}: {s} doesn't end", .{ self.lineAt(from), what });
         return at + end.len;
     }
 
@@ -100,7 +119,7 @@ pub const Scanner = struct {
             } else if (c == '"' or c == '\'') {
                 quote = c;
             } else if (c == '>') break;
-        } else return diag.fail("line {d}: a tag doesn't end", .{lineOf(self.text, open)});
+        } else return diag.fail("line {d}: a tag doesn't end", .{self.lineAt(open)});
         self.pos = i + 1;
         var body = self.text[open + 1 .. i];
         const closing = body.len > 0 and body[0] == '/';
@@ -108,11 +127,6 @@ pub const Scanner = struct {
         const self_closing = body.len > 0 and body[body.len - 1] == '/';
         if (self_closing) body = body[0 .. body.len - 1];
         const name_end = std.mem.findAny(u8, body, &std.ascii.whitespace) orelse body.len;
-        return .{ .name = body[0..name_end], .attributes = body[name_end..], .closing = closing, .self_closing = self_closing, .offset = open, .end = i + 1 };
+        return .{ .name = body[0..name_end], .attributes = body[name_end..], .closing = closing, .self_closing = self_closing, .offset = open, .end = i + 1, .line = self.lineAt(open) };
     }
 };
-
-/// The line of `text` that `offset` is on, from 1.
-pub fn lineOf(text: []const u8, offset: usize) usize {
-    return std.mem.countScalar(u8, text[0..offset], '\n') + 1;
-}

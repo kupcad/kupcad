@@ -4,6 +4,41 @@ const stl = @import("stl.zig");
 const registry = @import("../../stdlib/registry.zig");
 const dag_evaluator = @import("../../vm/dag_evaluator.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const Mesh = @import("imported_mesh.zig").Mesh;
+
+fn parse(bytes: []const u8) !Mesh {
+    var diag: stl.Diagnostic = .{};
+    return stl.parseStlBuffer(testing.allocator, bytes, &diag) catch |err| {
+        std.debug.print("stl: {s}\n", .{diag.message()});
+        return err;
+    };
+}
+
+fn expectRefused(bytes: []const u8, message: []const u8) !void {
+    var diag: stl.Diagnostic = .{};
+    try testing.expectError(error.Unreadable, stl.parseStlBuffer(testing.allocator, bytes, &diag));
+    try testing.expectEqualStrings(message, diag.message());
+}
+
+/// A binary STL of `triangles` (each three corners), its header `header`, with `trailing`
+/// bytes after the records.
+fn binaryStl(comptime header: []const u8, comptime triangles: []const [3][3]f32, comptime trailing: []const u8) [84 + 50 * triangles.len + trailing.len]u8 {
+    var bytes: [84 + 50 * triangles.len + trailing.len]u8 = @splat(0);
+    @memcpy(bytes[0..header.len], header);
+    std.mem.writeInt(u32, bytes[80..84], triangles.len, .little);
+    for (triangles, 0..) |triangle, t| for (triangle, 0..) |corner, v| for (corner, 0..) |c, axis| {
+        std.mem.writeInt(u32, bytes[84 + 50 * t + 12 + (3 * v + axis) * 4 ..][0..4], @bitCast(c), .little);
+    };
+    @memcpy(bytes[bytes.len - trailing.len ..], trailing);
+    return bytes;
+}
+
+/// An ASCII STL of `facets` (each its lines between `facet normal 0 0 0` and `endfacet`).
+fn asciiStl(comptime facets: []const []const u8) []const u8 {
+    comptime var text: []const u8 = "solid t\n";
+    inline for (facets) |facet| text = text ++ "facet normal 0 0 0\nouter loop\n" ++ facet ++ "endloop\nendfacet\n";
+    return text ++ "endsolid t\n";
+}
 
 test "STL: binary triangle count cannot wrap the length check" {
     // 85_899_346 * 50 == 2^32 + 4, so in u32 math 84 + n*50 wraps to 88 and a
@@ -11,7 +46,7 @@ test "STL: binary triangle count cannot wrap the length check" {
     // Not binary, then; as ASCII it has no facets.
     var data: [100]u8 = @splat(0);
     std.mem.writeInt(u32, data[80..84], 85_899_346, .little);
-    try testing.expectError(error.InvalidStl, stl.parseStlBuffer(testing.allocator, &data));
+    try expectRefused(&data, "it isn't STL: as binary STL its header counts 85899346 triangles, and the 16 bytes after it hold 0; as ASCII STL it doesn't start with \"solid\"");
 }
 
 test "STL: an exported cube reads back as the same cube" {
@@ -27,7 +62,7 @@ test "STL: an exported cube reads back as the same cube" {
     try testing.expectEqualStrings("KupCAD Export", bytes[0.."KupCAD Export".len]);
     try testing.expectEqual(@as(u32, 12), std.mem.readInt(u32, bytes[80..84], .little));
 
-    var mesh = try stl.parseStlBuffer(testing.allocator, bytes);
+    var mesh = try parse(bytes);
     defer mesh.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 8), mesh.points.len);
     try testing.expectEqual(@as(usize, 12), mesh.faces.len);
@@ -50,7 +85,7 @@ test "STL: ASCII files are read too" {
         \\endfacet
         \\endsolid t
     ;
-    var mesh = try stl.parseStlBuffer(testing.allocator, ascii);
+    var mesh = try parse(ascii);
     defer mesh.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 3), mesh.points.len);
     try testing.expectEqual([3]u32{ 0, 1, 2 }, mesh.faces[0]);
@@ -67,7 +102,7 @@ test "STL: several parts are written as their union, from the kernel's handles a
     try testing.expectError(error.NoGeometry, stl.buildStlOfParts(testing.allocator, &.{}));
     const bytes = try stl.buildStlOfParts(testing.allocator, &.{ small, large });
     defer testing.allocator.free(bytes);
-    var mesh = try stl.parseStlBuffer(testing.allocator, bytes);
+    var mesh = try parse(bytes);
     defer mesh.deinit(testing.allocator);
     // The small cube is inside the large one: their union is the large cube
     try testing.expectEqual(@as(usize, 12), mesh.faces.len);
@@ -111,7 +146,7 @@ test "STL: every exported solid reads back closed and consistently oriented" {
         errdefer std.debug.print("script: {s}\n", .{source});
         const bytes = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl });
         defer testing.allocator.free(bytes);
-        var mesh = try stl.parseStlBuffer(testing.allocator, bytes);
+        var mesh = try parse(bytes);
         defer mesh.deinit(testing.allocator);
         try mesh_check.expectClosed(testing.allocator, mesh.faces);
     }
@@ -120,13 +155,67 @@ test "STL: every exported solid reads back closed and consistently oriented" {
 test "STL: a vertex that is NaN or infinite is an error, in either format" {
     // The parser took any float, and the mesh it made crashed the build where the DAG
     // checks its points (found by the importer fuzz test).
-    const ascii = "solid x\nfacet normal 0 0 1\nouter loop\nvertex nan 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n";
-    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, ascii));
-    const ascii_inf = "solid x\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex inf 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n";
-    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, ascii_inf));
+    try expectRefused(asciiStl(&.{"vertex nan 0 0\nvertex 1 0 0\nvertex 0 1 0\n"}), "line 4: the vertex coordinate \"nan\" isn't finite as the 32-bit float STL holds");
+    try expectRefused(asciiStl(&.{"vertex 0 0 0\nvertex 1e39 0 0\nvertex 0 1 0\n"}), "line 5: the vertex coordinate \"1e39\" isn't finite as the 32-bit float STL holds");
+    const binary = binaryStl("", &.{.{ .{ 0, 0, 0 }, .{ std.math.inf(f32), 0, 0 }, .{ 0, 1, 0 } }}, "");
+    try expectRefused(&binary, "triangle 1: a vertex coordinate isn't finite");
+}
 
-    var binary: [84 + 50]u8 = @splat(0);
-    std.mem.writeInt(u32, binary[80..84], 1, .little);
-    std.mem.writeInt(u32, binary[84 + 12 ..][0..4], @bitCast(std.math.inf(f32)), .little);
-    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, &binary));
+test "STL: an ASCII file is read facet by facet, and what doesn't read names its line" {
+    // A vertex that wasn't a number was skipped, every corner after it shifting into the next
+    // triangle: `1O` imported "mended", and with repair: false failed on an edge from
+    // [0, 0, 0] to [0, 0, 0].
+    try expectRefused(asciiStl(&.{ "vertex 0 0 0\nvertex 10 0 0\nvertex 0 10 0\n", "vertex 0 0 0\nvertex 10 0 1O\nvertex 0 0 10\n" }), "line 12: the vertex coordinate \"1O\" isn't a number");
+    const cases = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = asciiStl(&.{"vertex 0 0 0\nvertex 1 0 0\n"}), .message = "line 7: the facet on line 2 has 2 vertices: an STL facet is a triangle" },
+        .{ .text = asciiStl(&.{"vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nvertex 1 1 0\n"}), .message = "line 7: the facet on line 2 has more than 3 vertices: an STL facet is a triangle" },
+        .{ .text = asciiStl(&.{"vertex 0 0\nvertex 1 0 0\nvertex 0 1 0\n"}), .message = "line 4: a vertex needs its x, y and z" },
+        .{ .text = asciiStl(&.{"vertex 0 0 0 1\nvertex 1 0 0\nvertex 0 1 0\n"}), .message = "line 4: a vertex has more than its x, y and z: \"1\"" },
+        .{ .text = "solid t\nvertex 0 0 0\n", .message = "line 2: a vertex outside a facet" },
+        .{ .text = "solid t\nfacet normal 0 0 1\nfacet normal 0 0 1\n", .message = "line 3: a facet starts before the one on line 2 ends (endfacet)" },
+        .{ .text = "solid t\nfacet normal 0 0 1\n", .message = "the facet on line 2 doesn't end (endfacet)" },
+        .{ .text = "solid t\nendfacet\n", .message = "line 2: an endfacet ends no facet" },
+        .{ .text = "solid t\ncolor 1 0 0\n", .message = "line 2: \"color\" isn't a word of ASCII STL" },
+        .{ .text = "solid empty\nendsolid empty\n", .message = "it has no facet" },
+        .{ .text = "not an stl at all", .message = "it isn't STL: too short for a binary STL (84 bytes at least) and not ASCII STL (which starts with \"solid\")" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("stl: {s}\n", .{case.text});
+        try expectRefused(case.text, case.message);
+    }
+    // Windows line ends and a byte order mark are read past
+    var mesh = try parse("\xEF\xBB\xBFsolid t\r\nfacet normal 0 0 1\r\nouter loop\r\nvertex 0 0 0\r\nvertex 1 0 0\r\nvertex 0 1 0\r\nendloop\r\nendfacet\r\nendsolid t\r\n");
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), mesh.faces.len);
+}
+
+test "STL: a binary file is its counted triangles, past bytes after them and a header that says solid" {
+    const triangle = [3][3]f32{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } };
+    // Some writers start the header with "solid", as an ASCII file does
+    const solid = binaryStl("solid part", &.{triangle}, "");
+    // ... and some leave bytes after the last record
+    const trailing = binaryStl("", &.{triangle}, "\x00\x01extra");
+    for ([_][]const u8{ &solid, &trailing }) |bytes| {
+        var mesh = try parse(bytes);
+        defer mesh.deinit(testing.allocator);
+        try testing.expectEqual(@as(usize, 3), mesh.points.len);
+        try testing.expectEqual([3]u32{ 0, 1, 2 }, mesh.faces[0]);
+    }
+    try expectRefused(&binaryStl("", &.{}, ""), "it is a binary STL of no triangles");
+}
+
+test "STL: a corner written as -0 is the same point as one written as 0" {
+    // Keyed on its bits, `-0 -0 0` was a point of its own: a closed tetrahedron had a hole,
+    // "mended" with a warning, and refused with repair: false.
+    const tetrahedron = asciiStl(&.{
+        "vertex 0 0 0\nvertex 0 10 0\nvertex 10 0 0\n",
+        "vertex -0 -0 0\nvertex 10 0 0\nvertex 0 0 10\n",
+        "vertex 0 0 0\nvertex 0 0 10\nvertex 0 10 0\n",
+        "vertex 10 0 0\nvertex 0 10 0\nvertex 0 0 10\n",
+    });
+    var mesh = try parse(tetrahedron);
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 4), mesh.points.len);
+    const mesh_repair = @import("../../core/mesh_repair.zig");
+    try testing.expect((try mesh_repair.check(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces })).closed());
 }

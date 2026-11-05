@@ -353,3 +353,26 @@ test "DXF read: numbers far out are read or refused, never past what the reader 
     try text.appendSlice(testing.allocator, "0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nlong\n10\n0\n20\n0\n70\n100\n71\n100\n0\nENDSEC\n0\nEOF\n");
     try expectRefused(text.items, "its blocks would place 20000000 points; a script reads at most 8000000");
 }
+
+test "DXF read: what overflows where it is drawn is refused, never given to the kernel" {
+    // Each number of these is finite as the file gives it: a bulge whose square isn't, and
+    // two INSERTs whose scales multiply past an f64, panicked the geometry graph
+    try expectRefused(file("", "0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n42\n1e308\n10\n1\n20\n0\n10\n1\n20\n1\n"), "line 11: what the entity on layer '0' draws is out of range: scaled, bulged or placed by its blocks, a number of it isn't finite");
+    const twice = "0\nBLOCK\n2\ntwice\n10\n0\n20\n0\n0\nINSERT\n2\nbolt\n10\n0\n20\n0\n41\n1e200\n42\n1e200\n0\nENDBLK\n";
+    // The line of the entity drawn, the circle in the inner block
+    try expectRefused(withBlocks(BOLT ++ twice, "0\nINSERT\n2\ntwice\n10\n0\n20\n0\n41\n1e200\n42\n1e200\n"), "line 15: what the entity on layer '0' draws is out of range: scaled, bulged or placed by its blocks, a number of it isn't finite");
+    // A large bulge whose square is finite is a long way round, and read
+    var bulged = try read(file("", "0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n42\n1e10\n10\n1\n20\n0\n10\n1\n20\n1\n"), null);
+    defer bulged.deinit();
+    try testing.expect(path.isFinite(bulged.outlines[0].start, bulged.outlines[0].segments));
+}
+
+test "DXF read: copies of a block that draws nothing are no work, however many" {
+    // Its copies counted as no points, so any number passed the limit, and each was walked:
+    // 3000 x 3000 copies of 3000 x 3000 copies of nothing ran on for good
+    const empty = "0\nBLOCK\n2\nempty\n10\n0\n20\n0\n0\nTEXT\n10\n0\n20\n0\n1\nnote\n0\nENDBLK\n";
+    const copies = "0\nBLOCK\n2\ncopies\n10\n0\n20\n0\n0\nINSERT\n2\nempty\n10\n0\n20\n0\n70\n3000\n71\n3000\n0\nENDBLK\n";
+    var drawing = try read(withBlocks(empty ++ copies ++ BOLT, "0\nINSERT\n2\ncopies\n10\n0\n20\n0\n70\n3000\n71\n3000\n0\nINSERT\n2\nbolt\n10\n0\n20\n0\n"), null);
+    defer drawing.deinit();
+    try testing.expectEqual(@as(usize, 1), drawing.outlines.len);
+}

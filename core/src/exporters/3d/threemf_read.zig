@@ -202,7 +202,7 @@ const Package = struct {
         var in_build = false;
         while (try scanner.next(diag)) |tag| {
             const name = xml.localName(tag.name);
-            const line = xml.lineOf(text, tag.offset);
+            const line = tag.line;
             if (tag.closing) {
                 if (std.mem.eql(u8, name, "object")) object = null;
                 if (std.mem.eql(u8, name, "build")) in_build = false;

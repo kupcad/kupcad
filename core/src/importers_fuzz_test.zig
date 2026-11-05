@@ -17,6 +17,7 @@ const threemf_read = @import("exporters/3d/threemf_read.zig");
 const dxf_read = @import("exporters/2d/dxf_read.zig");
 const svg_read = @import("exporters/2d/svg_read.zig");
 const path_mod = @import("core/path.zig");
+const DAGBuilder = @import("vm/dag.zig").DAGBuilder;
 const zip = @import("exporters/zip.zig");
 const cafs_mod = @import("pkg/cafs.zig");
 const Lockfile = @import("pkg/lockfile.zig").Lockfile;
@@ -93,7 +94,8 @@ test "fuzz: an STL file a script imports" {
 }
 
 fn checkStl(data: []const u8) !void {
-    var mesh = stl.parseStlBuffer(testing.allocator, data) catch return;
+    var diag: stl.Diagnostic = .{};
+    var mesh = stl.parseStlBuffer(testing.allocator, data, &diag) catch return;
     defer mesh.deinit(testing.allocator);
     // The mesh goes to the kernel, which indexes the points by the faces and computes on them
     for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
@@ -201,15 +203,23 @@ test "fuzz: a DXF drawing a script imports" {
     const drawing = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nbolt\n10\n0\n20\n0\n0\nCIRCLE\n8\n0\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n0\nENDSEC\n" ++
         "0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nINSERT\n2\nbolt\n10\n4\n20\n0\n41\n2\n50\n30\n70\n3\n71\n2\n44\n10\n45\n10\n0\nENDSEC\n0\nEOF\n";
     const far = "0\nSECTION\n2\nENTITIES\n0\nARC\n10\n0\n20\n0\n40\n1e300\n50\n1e300\n51\n-1e300\n0\nLWPOLYLINE\n70\n1e30\n10\n1e300\n20\n0\n0\nENDSEC\n0\nEOF\n";
-    try fuzzParser(checkDxf, &.{ drawing, far });
+    // Numbers that overflow where they are drawn: a bulge whose square isn't finite, and
+    // blocks within blocks scaled past the range of an f64 together
+    const bulge = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n42\n1e308\n10\n1\n20\n0\n42\n-1e308\n10\n1\n20\n1\n0\nENDSEC\n0\nEOF\n";
+    const scaled = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\na\n10\n0\n20\n0\n0\nCIRCLE\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n0\nBLOCK\n2\nb\n10\n0\n20\n0\n0\nINSERT\n2\na\n10\n0\n20\n0\n41\n1e200\n42\n1e200\n0\nENDBLK\n0\nENDSEC\n" ++
+        "0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nb\n10\n0\n20\n0\n41\n1e200\n42\n1e200\n0\nENDSEC\n0\nEOF\n";
+    // Copies of a block that draws nothing, within copies of another: no work at all
+    const empty = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\ne\n10\n0\n20\n0\n0\nENDBLK\n0\nBLOCK\n2\nf\n10\n0\n20\n0\n0\nINSERT\n2\ne\n10\n0\n20\n0\n70\n3000\n71\n3000\n0\nENDBLK\n0\nENDSEC\n" ++
+        "0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nf\n10\n0\n20\n0\n70\n3000\n71\n3000\n0\nENDSEC\n0\nEOF\n";
+    try fuzzParser(checkDxf, &.{ drawing, far, bulge, scaled, empty });
 }
 
 fn checkDxf(data: []const u8) !void {
     var diag: dxf_read.Diagnostic = .{};
     var drawing = dxf_read.read(testing.allocator, data, .{ .tolerance = 1e-3, .keep_open = true, .max_points = FUZZ_DRAWING_POINTS }, &diag) catch return;
     defer drawing.deinit();
-    try expectFinite(drawing.outlines);
-    try expectFinite(drawing.open_paths);
+    try expectNodes(drawing.outlines);
+    try expectNodes(drawing.open_paths);
 }
 
 test "fuzz: an SVG drawing a script imports" {
@@ -221,31 +231,31 @@ test "fuzz: an SVG drawing a script imports" {
         "<polygon points=\"0,50 10,60 0,70\"/><polyline class=\"c\" points=\"20,50 30,60\"/><line x1=\"0\" y1=\"90\" x2=\"10\" y2=\"95\"/>" ++
         "<use href=\"#g\" x=\"100\"/><use href=\"#s\" x=\"150\" width=\"20\" height=\"20\"/></svg>";
     const deep = "<svg width=\"1mm\" viewBox=\"0 0 1 1\"><g id=\"a\"><use href=\"#b\"/></g><g id=\"b\"><use href=\"#a\"/></g></svg>";
-    try fuzzParser(checkSvg, &.{ svg, deep });
+    // Transforms each in range whose product isn't
+    const scaled = "<svg width=\"1mm\" height=\"1mm\" viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\" transform=\"scale(1e308) scale(1e308)\"/></svg>";
+    try fuzzParser(checkSvg, &.{ svg, deep, scaled });
 }
 
 fn checkSvg(data: []const u8) !void {
     var diag: svg_read.Diagnostic = .{};
     var drawing = svg_read.read(testing.allocator, data, .{ .tolerance = 1e-3, .max_cloned = FUZZ_DRAWING_POINTS, .max_reread = FUZZ_DRAWING_BYTES }, &diag) catch return;
     defer drawing.deinit();
-    try expectFinite(drawing.outlines);
-    try expectFinite(drawing.open_paths);
+    try expectNodes(drawing.outlines);
+    try expectNodes(drawing.open_paths);
 }
 
-/// The kernel takes a drawing's runs as they are: each point of them is finite.
-fn expectFinite(runs: []const path_mod.Run) !void {
+/// The kernel takes a drawing's runs as they are, each a path node of the geometry graph
+/// (drawing_import's closedPathNode): adding one verifies it (dag_verifier, in a test
+/// build), so a number of it the graph can't hold (an arc's sweep, a cubic's control) stops
+/// the fuzzer, as it panicked an import.
+fn expectNodes(runs: []const path_mod.Run) !void {
+    var builder = DAGBuilder.init(testing.allocator);
+    defer builder.deinit();
     for (runs) |run| {
-        for (run.start) |c| try testing.expect(std.math.isFinite(c));
-        for (run.segments) |segment| {
-            for (segment.to) |c| try testing.expect(std.math.isFinite(c));
-            if (segment.arc) |arc| {
-                for (arc.center) |c| try testing.expect(std.math.isFinite(c));
-                try testing.expect(std.math.isFinite(arc.radius));
-            }
-            if (segment.cubic) |cubic| for ([_][2]f64{ cubic.c1, cubic.c2 }) |p| for (p) |c| {
-                try testing.expect(std.math.isFinite(c));
-            };
-        }
+        const chords = try testing.allocator.alloc(u32, run.segments.len);
+        defer testing.allocator.free(chords);
+        @memset(chords, 1);
+        _ = try builder.addClosedPath(run.start, run.segments, chords);
     }
 }
 

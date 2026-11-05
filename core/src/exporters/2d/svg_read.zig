@@ -28,7 +28,6 @@ pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 const xml = @import("../xml.zig");
 const Tag = xml.Tag;
 const Scanner = xml.Scanner;
-const lineOf = xml.lineOf;
 const css = @import("css.zig");
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
@@ -135,8 +134,8 @@ const Reader = struct {
     open_paths: std.ArrayList(path.Run) = .empty,
     frames: std.ArrayList(Frame) = .empty,
     seen_root: bool = false,
-    /// Where each element with an `id` starts, for a `use` of it
-    ids: std.StringHashMapUnmanaged(usize) = .empty,
+    /// The start tag of each element with an `id`, for a `use` of it
+    ids: std.StringHashMapUnmanaged(Tag) = .empty,
     /// The ids the `use`s being drawn name, innermost last
     using: std.ArrayList([]const u8) = .empty,
     /// The `use` whose element is about to be drawn: a `symbol` is drawn as a group, sized
@@ -156,7 +155,7 @@ const Reader = struct {
             if (std.mem.eql(u8, xml.localName(tag.name), "style") and !tag.self_closing) try self.sheet.add(self.arena, styleText(self.text, tag));
             const id = tag.attribute("id") orelse continue;
             const entry = try self.ids.getOrPut(self.arena, id);
-            if (!entry.found_existing) entry.value_ptr.* = tag.offset;
+            if (!entry.found_existing) entry.value_ptr.* = tag;
         }
         var scanner = Scanner{ .text = self.text };
         try self.readTags(&scanner, false);
@@ -175,15 +174,15 @@ const Reader = struct {
             }
             from = scanner.pos;
             if (tag.closing) {
-                if (self.frames.items.len == depth) return self.diag.fail("line {d}: </{s}> closes no element", .{ lineOf(self.text, tag.offset), tag.name });
+                if (self.frames.items.len == depth) return self.diag.fail("line {d}: </{s}> closes no element", .{ tag.line, tag.name });
                 const open = self.frames.pop().?;
-                if (!std.mem.eql(u8, open.name, tag.name)) return self.diag.fail("line {d}: </{s}> closes a <{s}>", .{ lineOf(self.text, tag.offset), tag.name, open.name });
+                if (!std.mem.eql(u8, open.name, tag.name)) return self.diag.fail("line {d}: </{s}> closes a <{s}>", .{ tag.line, tag.name, open.name });
                 if (one and self.frames.items.len == depth) return;
                 continue;
             }
             const frame = try self.frameOf(tag);
             if (!tag.self_closing) {
-                if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ lineOf(self.text, tag.offset), MAX_NESTING });
+                if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ tag.line, MAX_NESTING });
                 try self.frames.append(self.arena, frame);
             } else if (one and self.frames.items.len == depth) return;
         }
@@ -191,24 +190,23 @@ const Reader = struct {
 
     /// The element a `use` names, drawn in `frame` (the use's, its x and y the last move).
     fn readUse(self: *Reader, tag: Tag, frame: Frame) Error!void {
-        const line = lineOf(self.text, tag.offset);
         const href = tag.attribute("href") orelse tag.attribute("xlink:href") orelse return;
-        if (href.len < 2 or href[0] != '#') return self.diag.fail("line {d}: a <use> of \"{s}\": only an element of the same file (\"#id\") is read", .{ line, href[0..@min(href.len, 60)] });
+        if (href.len < 2 or href[0] != '#') return self.diag.fail("line {d}: a <use> of \"{s}\": only an element of the same file (\"#id\") is read", .{ tag.line, href[0..@min(href.len, 60)] });
         const id = href[1..];
-        const at = self.ids.get(id) orelse return self.diag.fail("line {d}: a <use> of \"#{s}\", which no element of the file is", .{ line, id });
+        const at = self.ids.get(id) orelse return self.diag.fail("line {d}: a <use> of \"#{s}\", which no element of the file is", .{ tag.line, id });
         for (self.using.items) |outer| {
-            if (std.mem.eql(u8, outer, id)) return self.diag.fail("line {d}: a <use> of \"#{s}\" within that element, which would draw itself forever", .{ line, id });
+            if (std.mem.eql(u8, outer, id)) return self.diag.fail("line {d}: a <use> of \"#{s}\" within that element, which would draw itself forever", .{ tag.line, id });
         }
         var placed = frame;
         placed.matrix = affine2.compose(frame.matrix, affine2.translation(try self.length(tag, "x") orelse 0, try self.length(tag, "y") orelse 0));
         // A use of a use of a use nests as elements do (and the reader with it, on its stack)
-        if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ line, MAX_NESTING });
+        if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ tag.line, MAX_NESTING });
         try self.frames.append(self.arena, placed);
         defer _ = self.frames.pop();
         try self.using.append(self.arena, id);
         defer _ = self.using.pop();
         self.use_root = tag;
-        var scanner = Scanner{ .text = self.text, .pos = at };
+        var scanner = Scanner.startingAt(self.text, at);
         try self.readTags(&scanner, true);
     }
 
@@ -253,7 +251,7 @@ const Reader = struct {
         }
         if (tag.attribute("transform")) |transform| frame.matrix = affine2.compose(frame.matrix, try self.transformOf(tag, transform));
         if (self.property(tag, "fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
-        if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ lineOf(self.text, tag.offset), name });
+        if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ tag.line, name });
 
         if (std.mem.eql(u8, name, "use")) {
             try self.readUse(tag, frame);
@@ -328,11 +326,10 @@ const Reader = struct {
     /// `tag`'s viewBox (its x, y, width and height), null without one.
     fn viewBoxOf(self: *Reader, tag: Tag) Error!?[4]f64 {
         const box = tag.attribute("viewBox") orelse return null;
-        const line = lineOf(self.text, tag.offset);
         var numbers = Numbers{ .text = box };
         var values: [4]f64 = undefined;
-        for (&values) |*v| v.* = numbers.number() orelse return self.diag.fail("line {d}: its viewBox \"{s}\" isn't four numbers", .{ line, box });
-        if (!(values[2] > 0 and values[3] > 0)) return self.diag.fail("line {d}: its viewBox \"{s}\" has no area", .{ line, box });
+        for (&values) |*v| v.* = numbers.number() orelse return self.diag.fail("line {d}: its viewBox \"{s}\" isn't four numbers", .{ tag.line, box });
+        if (!(values[2] > 0 and values[3] > 0)) return self.diag.fail("line {d}: its viewBox \"{s}\" has no area", .{ tag.line, box });
         return values;
     }
 
@@ -353,7 +350,7 @@ const Reader = struct {
     }
 
     fn badAlign(self: *Reader, tag: Tag, text: []const u8) error{Unreadable} {
-        return self.diag.fail("line {d}: the preserveAspectRatio \"{s}\" of a <{s}> isn't SVG's", .{ lineOf(self.text, tag.offset), text, tag.name });
+        return self.diag.fail("line {d}: the preserveAspectRatio \"{s}\" of a <{s}> isn't SVG's", .{ tag.line, text, tag.name });
     }
 
     /// The attribute `name` of `tag`, a viewport's x, y, width or height, in user units:
@@ -361,13 +358,13 @@ const Reader = struct {
     fn viewportLength(self: *Reader, tag: Tag, name: []const u8, viewport: ?[2]f64, axis: u1) Error!?f64 {
         const text = std.mem.trim(u8, tag.attribute(name) orelse return null, &std.ascii.whitespace);
         if (!std.mem.endsWith(u8, text, "%")) return try self.lengthOf(tag, name, text);
-        const share = std.fmt.parseFloat(f64, text[0 .. text.len - 1]) catch return self.diag.fail("line {d}: the {s} \"{s}\" of a <{s}> isn't a length", .{ lineOf(self.text, tag.offset), name, text, tag.name });
+        const share = std.fmt.parseFloat(f64, text[0 .. text.len - 1]) catch return self.diag.fail("line {d}: the {s} \"{s}\" of a <{s}> isn't a length", .{ tag.line, name, text, tag.name });
         return share / 100 * (try self.viewportSize(tag, name, viewport))[axis];
     }
 
     /// The size of `viewport`, the one `tag` is in, which its `name` is (a share of).
     fn viewportSize(self: *Reader, tag: Tag, name: []const u8, viewport: ?[2]f64) Error![2]f64 {
-        return viewport orelse self.diag.fail("line {d}: the {s} of a <{s}> is the drawing's or a share of it, and the drawing has no size: give the <svg> a viewBox", .{ lineOf(self.text, tag.offset), name, tag.name });
+        return viewport orelse self.diag.fail("line {d}: the {s} of a <{s}> is the drawing's or a share of it, and the drawing has no size: give the <svg> a viewBox", .{ tag.line, name, tag.name });
     }
 
     /// The root's `width` or `height` in millimetres; null without one, or with a
@@ -376,7 +373,7 @@ const Reader = struct {
         const text = tag.attribute(name) orelse return null;
         if (std.mem.endsWith(u8, std.mem.trim(u8, text, &std.ascii.whitespace), "%")) return null;
         const px = try self.lengthOf(tag, name, text);
-        if (!(px > 0)) return self.diag.fail("line {d}: its {s} \"{s}\" isn't greater than zero", .{ lineOf(self.text, tag.offset), name, text });
+        if (!(px > 0)) return self.diag.fail("line {d}: its {s} \"{s}\" isn't greater than zero", .{ tag.line, name, text });
         return px * MM_PER_PX;
     }
 
@@ -397,8 +394,8 @@ const Reader = struct {
                 break;
             }
         }
-        const n = std.fmt.parseFloat(f64, digits) catch return self.diag.fail("line {d}: the {s} \"{s}\" of a <{s}> isn't a length", .{ lineOf(self.text, tag.offset), name, text, tag.name });
-        if (!std.math.isFinite(n)) return self.diag.fail("line {d}: the {s} of a <{s}> isn't finite", .{ lineOf(self.text, tag.offset), name, tag.name });
+        const n = std.fmt.parseFloat(f64, digits) catch return self.diag.fail("line {d}: the {s} \"{s}\" of a <{s}> isn't a length", .{ tag.line, name, text, tag.name });
+        if (!std.math.isFinite(n)) return self.diag.fail("line {d}: the {s} of a <{s}> isn't finite", .{ tag.line, name, tag.name });
         return n * per;
     }
 
@@ -442,15 +439,15 @@ const Reader = struct {
     }
 
     fn badTransform(self: *Reader, tag: Tag, text: []const u8) error{Unreadable} {
-        return self.diag.fail("line {d}: the transform \"{s}\" of a <{s}> isn't one SVG has", .{ lineOf(self.text, tag.offset), text[0..@min(text.len, 60)], tag.name });
+        return self.diag.fail("line {d}: the transform \"{s}\" of a <{s}> isn't one SVG has", .{ tag.line, text[0..@min(text.len, 60)], tag.name });
     }
 
     fn readPath(self: *Reader, tag: Tag, frame: Frame) Error!void {
         const data = tag.attribute("d") orelse return;
-        var shape = Shape{ .reader = self, .frame = frame };
+        var shape = Shape{ .reader = self, .tag = tag, .frame = frame };
         var parser = PathData{ .numbers = .{ .text = data } };
         parser.read(&shape) catch |err| switch (err) {
-            error.BadPathData => return self.diag.fail("line {d}: the path data of a <path> isn't SVG's at character {d}: \"{s}\"", .{ lineOf(self.text, tag.offset), parser.numbers.pos + 1, data[parser.numbers.pos..@min(data.len, parser.numbers.pos + 20)] }),
+            error.BadPathData => return self.diag.fail("line {d}: the path data of a <path> isn't SVG's at character {d}: \"{s}\"", .{ tag.line, parser.numbers.pos + 1, data[parser.numbers.pos..@min(data.len, parser.numbers.pos + 20)] }),
             else => |e| return e,
         };
         try shape.finish(false);
@@ -461,14 +458,14 @@ const Reader = struct {
         const y = try self.length(tag, "y") orelse 0;
         const w = try self.length(tag, "width") orelse 0;
         const h = try self.length(tag, "height") orelse 0;
-        if (w < 0 or h < 0) return self.diag.fail("line {d}: a <rect> has a negative width or height", .{lineOf(self.text, tag.offset)});
+        if (w < 0 or h < 0) return self.diag.fail("line {d}: a <rect> has a negative width or height", .{tag.line});
         if (w == 0 or h == 0) return;
         // A radius given alone is both; each at most half the side
         const rx_given = try self.length(tag, "rx");
         const ry_given = try self.length(tag, "ry");
         const rx = @min(@abs(rx_given orelse ry_given orelse 0), w / 2);
         const ry = @min(@abs(ry_given orelse rx_given orelse 0), h / 2);
-        var shape = Shape{ .reader = self, .frame = frame };
+        var shape = Shape{ .reader = self, .tag = tag, .frame = frame };
         if (rx == 0 or ry == 0) {
             try shape.moveTo(.{ x, y });
             try shape.lineTo(.{ x + w, y });
@@ -494,9 +491,9 @@ const Reader = struct {
         const cy = try self.length(tag, "cy") orelse 0;
         const rx = try self.length(tag, rx_name) orelse 0;
         const ry = try self.length(tag, ry_name) orelse 0;
-        if (rx < 0 or ry < 0) return self.diag.fail("line {d}: a <{s}> has a negative radius", .{ lineOf(self.text, tag.offset), tag.name });
+        if (rx < 0 or ry < 0) return self.diag.fail("line {d}: a <{s}> has a negative radius", .{ tag.line, tag.name });
         if (rx == 0 or ry == 0) return;
-        var shape = Shape{ .reader = self, .frame = frame };
+        var shape = Shape{ .reader = self, .tag = tag, .frame = frame };
         try shape.moveTo(.{ cx + rx, cy });
         try shape.arcTo(rx, ry, 0, false, true, .{ cx - rx, cy });
         try shape.arcTo(rx, ry, 0, false, true, .{ cx + rx, cy });
@@ -507,7 +504,7 @@ const Reader = struct {
     fn readLine(self: *Reader, tag: Tag, frame: Frame) Error!void {
         var stroke = frame;
         stroke.filled = false;
-        var shape = Shape{ .reader = self, .frame = stroke };
+        var shape = Shape{ .reader = self, .tag = tag, .frame = stroke };
         try shape.moveTo(.{ try self.length(tag, "x1") orelse 0, try self.length(tag, "y1") orelse 0 });
         try shape.lineTo(.{ try self.length(tag, "x2") orelse 0, try self.length(tag, "y2") orelse 0 });
         try shape.finish(false);
@@ -516,21 +513,22 @@ const Reader = struct {
     fn readPoints(self: *Reader, tag: Tag, frame: Frame, closed: bool) Error!void {
         const text = tag.attribute("points") orelse return;
         var numbers = Numbers{ .text = text };
-        var shape = Shape{ .reader = self, .frame = frame };
+        var shape = Shape{ .reader = self, .tag = tag, .frame = frame };
         var first = true;
         while (numbers.number()) |x| {
-            const y = numbers.number() orelse return self.diag.fail("line {d}: the points of a <{s}> are an odd count of numbers", .{ lineOf(self.text, tag.offset), tag.name });
+            const y = numbers.number() orelse return self.diag.fail("line {d}: the points of a <{s}> are an odd count of numbers", .{ tag.line, tag.name });
             if (first) try shape.moveTo(.{ x, y }) else try shape.lineTo(.{ x, y });
             first = false;
         }
-        if (!numbers.done()) return self.diag.fail("line {d}: the points of a <{s}> aren't all numbers", .{ lineOf(self.text, tag.offset), tag.name });
+        if (!numbers.done()) return self.diag.fail("line {d}: the points of a <{s}> aren't all numbers", .{ tag.line, tag.name });
         try shape.finish(closed);
     }
 };
 
-/// The subpaths of one element, in its user units, each an outline once finished.
+/// The subpaths of one element (`tag`), in its user units, each an outline once finished.
 const Shape = struct {
     reader: *Reader,
+    tag: Tag,
     frame: Frame,
     start: [2]f64 = .{ 0, 0 },
     at: [2]f64 = .{ 0, 0 },
@@ -636,7 +634,9 @@ const Shape = struct {
     }
 
     /// The subpath in millimetres: its arcs kept when the matrix keeps a circle a circle
-    /// (and cubics otherwise), its cubics (any matrix keeps one a cubic) with it.
+    /// (and cubics otherwise), its cubics (any matrix keeps one a cubic) with it. One a
+    /// number of which isn't finite, as transforms multiplied together make it, is refused:
+    /// the kernel can't hold it.
     fn placed(self: *Shape) !path.Run {
         const arena = self.reader.arena;
         const m = self.frame.matrix;
@@ -649,7 +649,9 @@ const Shape = struct {
                 for (try path.arcCubics(arena, from, segment)) |piece| try moved.append(arena, piece.transformed(m));
             } else try moved.append(arena, segment.transformed(m));
         }
-        return .{ .start = affine2.apply(m, self.start), .segments = moved.items };
+        const start = affine2.apply(m, self.start);
+        if (!path.isFinite(start, moved.items)) return self.reader.diag.fail("line {d}: what the <{s}> draws is out of range: scaled by its transforms, a number of it isn't finite", .{ self.tag.line, self.tag.name });
+        return .{ .start = start, .segments = moved.items };
     }
 };
 
@@ -722,7 +724,7 @@ const Numbers = struct {
 const PathData = struct {
     numbers: Numbers,
 
-    const ReadError = error{BadPathData} || std.mem.Allocator.Error;
+    const ReadError = error{ BadPathData, Unreadable } || std.mem.Allocator.Error;
 
     fn read(self: *PathData, shape: *Shape) ReadError!void {
         var command: ?u8 = null;

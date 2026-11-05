@@ -1,7 +1,8 @@
 //! A mesh a file gives (an STL's, an OBJ's, a 3MF's), for the kernel: its points and its
 //! triangles (`Mesh`), built by `Builder`, which merges the points the file repeats (by
-//! their bits, as the file wrote them) and refuses one that isn't finite, which the kernel
-//! can't place (a mesh with one crashed a build; the importer fuzz test found it).
+//! their bits, as the file wrote them, -0 the same point as 0) and refuses one that isn't
+//! finite, which the kernel can't place (a mesh with one crashed a build; the importer fuzz
+//! test found it).
 
 const std = @import("std");
 
@@ -18,7 +19,7 @@ pub const Mesh = struct {
 pub const Builder = struct {
     points: std.ArrayList([3]f64) = .empty,
     faces: std.ArrayList([3]u32) = .empty,
-    /// Each point's index, by its coordinates' bits
+    /// Each point's index, by its coordinates' bits (-0 made 0)
     index: std.AutoHashMapUnmanaged([3]u64, u32) = .empty,
 
     pub fn deinit(self: *Builder, allocator: std.mem.Allocator) void {
@@ -31,7 +32,10 @@ pub const Builder = struct {
     /// error.NonFiniteVertex for a coordinate that is NaN or infinite.
     pub fn point(self: *Builder, allocator: std.mem.Allocator, p: [3]f64) error{ NonFiniteVertex, OutOfMemory }!u32 {
         for (p) |c| if (!std.math.isFinite(c)) return error.NonFiniteVertex;
-        const entry = try self.index.getOrPut(allocator, .{ @bitCast(p[0]), @bitCast(p[1]), @bitCast(p[2]) });
+        // -0 and 0 are one place with two spellings (`-0 -0 0` in an ASCII STL): adding 0
+        // makes -0 0, so a corner written either way is the same point, not a hole
+        const key = [3]u64{ @bitCast(p[0] + 0.0), @bitCast(p[1] + 0.0), @bitCast(p[2] + 0.0) };
+        const entry = try self.index.getOrPut(allocator, key);
         if (!entry.found_existing) {
             entry.value_ptr.* = @intCast(self.points.items.len);
             try self.points.append(allocator, p);

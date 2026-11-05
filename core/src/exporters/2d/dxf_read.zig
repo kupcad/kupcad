@@ -296,6 +296,9 @@ const Reader = struct {
     fn drawInsert(self: *Reader, entity: Entity) Error!void {
         if (try entity.number(67, self.diag) == 1) return;
         const name, const block = try self.blockOf(entity);
+        // A block that draws nothing (pointsOf has counted them all) isn't walked: copies of
+        // it within copies multiply to any number, past the points limit, each walk for nothing
+        if (self.block_points.get(name)) |count| if (count == 0) return;
         const flip = try entity.flipped(self.diag);
         const at = try self.point(entity, 10, false);
         const sx = try entity.number(41, self.diag) orelse 1;
@@ -462,32 +465,36 @@ const Reader = struct {
         return .{ (if (flip) -px else px) * self.scale, py * self.scale };
     }
 
-    /// The piece of `segments` from `start`, placed where the INSERTs around it put it: an
-    /// arc an arc unless they scale it unevenly, which draws it as cubics first.
-    fn addPiece(self: *Reader, layer: []const u8, start: [2]f64, segments: []const path.Segment, closed: bool) !void {
+    /// The piece of `segments` from `start` (drawn by the entity on `line`), placed where the
+    /// INSERTs around it put it: an arc an arc unless they scale it unevenly, which draws it
+    /// as cubics first. A piece a number of which isn't finite, as a huge bulge or scales
+    /// multiplied through nested blocks make it, is refused: the kernel can't hold it.
+    fn addPiece(self: *Reader, line: usize, layer: []const u8, start: [2]f64, segments: []const path.Segment, closed: bool) Error!void {
         if (segments.len == 0) return;
         var list: std.ArrayList(path.Segment) = .empty;
         const m = self.place.matrix;
+        var placed_start = start;
         if (std.meta.eql(m, affine2.identity)) {
             try list.appendSlice(self.arena, segments);
-            try self.pieces.append(self.arena, .{ .start = start, .segments = list, .closed = closed, .layer = layer });
-            return;
+        } else {
+            var from = start;
+            for (segments) |segment| {
+                defer from = segment.to;
+                if (segment.arc == null or self.place.similar) {
+                    try list.append(self.arena, segment.transformed(m));
+                } else for (try path.arcCubics(self.arena, from, segment)) |piece| try list.append(self.arena, piece.transformed(m));
+            }
+            placed_start = affine2.apply(m, start);
         }
-        var from = start;
-        for (segments) |segment| {
-            defer from = segment.to;
-            if (segment.arc == null or self.place.similar) {
-                try list.append(self.arena, segment.transformed(m));
-            } else for (try path.arcCubics(self.arena, from, segment)) |piece| try list.append(self.arena, piece.transformed(m));
-        }
-        try self.pieces.append(self.arena, .{ .start = affine2.apply(m, start), .segments = list, .closed = closed, .layer = layer });
+        if (!path.isFinite(placed_start, list.items)) return self.diag.fail("line {d}: what the entity on layer '{s}' draws is out of range: scaled, bulged or placed by its blocks, a number of it isn't finite", .{ line, layer });
+        try self.pieces.append(self.arena, .{ .start = placed_start, .segments = list, .closed = closed, .layer = layer });
     }
 
     fn readLine(self: *Reader, entity: Entity, layer: []const u8) Error!void {
         const from = try self.point(entity, 10, false);
         const to = try self.point(entity, 11, false);
         if (from[0] == to[0] and from[1] == to[1]) return;
-        try self.addPiece(layer, from, &.{.{ .to = to }}, false);
+        try self.addPiece(entity.line, layer, from, &.{.{ .to = to }}, false);
     }
 
     fn readArc(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -504,14 +511,14 @@ const Reader = struct {
             from = .{ -from[0], from[1] };
         }
         segment = segment.transformed(.{ 1, 0, 0, 1, center[0], center[1] });
-        try self.addPiece(layer, .{ from[0] + center[0], from[1] + center[1] }, &.{segment}, false);
+        try self.addPiece(entity.line, layer, .{ from[0] + center[0], from[1] + center[1] }, &.{segment}, false);
     }
 
     fn readCircle(self: *Reader, entity: Entity, layer: []const u8) Error!void {
         const center = try self.point(entity, 10, try entity.flipped(self.diag));
         const radius = try self.radiusOf(entity);
         const halves = [_]path.Segment{ path.arcByAngles(center, radius, 0, 180), path.arcByAngles(center, radius, 180, 360) };
-        try self.addPiece(layer, .{ center[0] + radius, center[1] }, &halves, true);
+        try self.addPiece(entity.line, layer, .{ center[0] + radius, center[1] }, &halves, true);
     }
 
     fn radiusOf(self: *Reader, entity: Entity) Error!f64 {
@@ -538,7 +545,7 @@ const Reader = struct {
             v.at[0] = -v.at[0];
             v.bulge = -v.bulge;
         };
-        try self.addPolyline(layer, vertices.items, try entity.flags(self.diag) & 1 != 0);
+        try self.addPolyline(entity.line, layer, vertices.items, try entity.flags(self.diag) & 1 != 0);
     }
 
     fn startPolyline(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -562,12 +569,12 @@ const Reader = struct {
         const polyline = self.polyline orelse return;
         self.polyline = null;
         if (polyline.mesh) return;
-        try self.addPolyline(polyline.layer, polyline.vertices.items, polyline.closed);
+        try self.addPolyline(polyline.entity_line, polyline.layer, polyline.vertices.items, polyline.closed);
     }
 
     /// The piece through `vertices`, each bulge the segment's from its vertex (a closed
     /// one's last back to the first); a segment of no length is left out.
-    fn addPolyline(self: *Reader, layer: []const u8, vertices: []const Vertex, closed: bool) Error!void {
+    fn addPolyline(self: *Reader, line: usize, layer: []const u8, vertices: []const Vertex, closed: bool) Error!void {
         if (vertices.len < 2) return;
         var segments: std.ArrayList(path.Segment) = .empty;
         const count = if (closed) vertices.len else vertices.len - 1;
@@ -577,7 +584,7 @@ const Reader = struct {
             if (from.at[0] == to[0] and from.at[1] == to[1]) continue;
             try segments.append(self.arena, bulgeSegment(from.at, to, from.bulge));
         }
-        try self.addPiece(layer, vertices[0].at, segments.items, closed);
+        try self.addPiece(line, layer, vertices[0].at, segments.items, closed);
     }
 
     fn readSpline(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -627,7 +634,7 @@ const Reader = struct {
         const spline = bspline.Spline{ .degree = degree, .knots = knots.items, .controls = controls.items, .weights = if (rational) weights.items else null };
         var segments: std.ArrayList(path.Segment) = .empty;
         const start = try spline.appendSegments(self.arena, &segments, self.options.tolerance) orelse return;
-        try self.addPiece(layer, start, segments.items, false);
+        try self.addPiece(entity.line, layer, start, segments.items, false);
     }
 
     /// A SPLINE given by fit points alone: the cubic through them (bspline.through), along
@@ -656,7 +663,7 @@ const Reader = struct {
         };
         var segments: std.ArrayList(path.Segment) = .empty;
         const from = try spline.appendSegments(self.arena, &segments, self.options.tolerance) orelse return;
-        try self.addPiece(layer, from, segments.items, closed);
+        try self.addPiece(entity.line, layer, from, segments.items, closed);
     }
 
     fn readEllipse(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -677,7 +684,7 @@ const Reader = struct {
             const piece = pieces.next().?;
             segment.* = .{ .to = piece.to, .cubic = piece.cubic };
         }
-        try self.addPiece(layer, from, segments, false);
+        try self.addPiece(entity.line, layer, from, segments, false);
     }
 
     /// Every piece joined into outlines: a closed one as it is, the others end to end (one

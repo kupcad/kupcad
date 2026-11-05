@@ -2839,7 +2839,7 @@ test "Stdlib: import_stl errors are rescuable ImportErrors, a mesh that encloses
         vm.vfs = mem_vfs.vfs();
         try testing.expectEqual(InterpretResult.ok, try runOn(&vm, comptime rescued("import_stl(\"junk.stl\")")));
         const r = vm.globals.get("r") orelse return error.MissingGlobal;
-        try testing.expect(std.mem.startsWith(u8, r.asString().chars, "ImportError: could not parse STL file 'junk.stl': "));
+        try testing.expectEqualStrings("ImportError: could not read STL file 'junk.stl': it isn't STL: too short for a binary STL (84 bytes at least) and not ASCII STL (which starts with \"solid\")", r.asString().chars);
     }
 }
 

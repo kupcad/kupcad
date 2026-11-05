@@ -130,6 +130,23 @@ pub fn arcThrough(from: [2]f64, to: [2]f64, radius: f64, ccw: bool, large: bool)
     return .{ .to = to, .arc = arc, .ccw = ccw, .angle = sweep(center, from, to, ccw) };
 }
 
+/// Whether every number of the path of `segments` from `start` is finite: its points, an
+/// arc's centre, radius and sweep, a cubic's controls. A drawing's reader gives the kernel
+/// nothing else: a number scaled or placed past the range of an f64 isn't geometry.
+pub fn isFinite(start: [2]f64, segments: []const Segment) bool {
+    if (!finitePoint(start)) return false;
+    for (segments) |segment| {
+        if (!finitePoint(segment.to) or !std.math.isFinite(segment.angle)) return false;
+        if (segment.arc) |arc| if (!finitePoint(arc.center) or !std.math.isFinite(arc.radius)) return false;
+        if (segment.cubic) |cubic| if (!finitePoint(cubic.c1) or !finitePoint(cubic.c2)) return false;
+    }
+    return true;
+}
+
+fn finitePoint(p: [2]f64) bool {
+    return std.math.isFinite(p[0]) and std.math.isFinite(p[1]);
+}
+
 /// Where a path of `segments` from `start` ends.
 pub fn endOf(start: [2]f64, segments: []const Segment) [2]f64 {
     return if (segments.len == 0) start else segments[segments.len - 1].to;

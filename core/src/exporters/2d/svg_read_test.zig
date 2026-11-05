@@ -278,4 +278,8 @@ test "SVG read: what can't be read says why and where" {
     try expectRefused(MM ++ "<rect width=\"-1\" height=\"1\"/></svg>", "line 1: a <rect> has a negative width or height");
     try expectRefused(MM ++ "<rect width=\"1cubit\" height=\"1\"/></svg>", "line 1: the width \"1cubit\" of a <rect> isn't a length");
     try expectRefused("<svg viewBox=\"0 0 0 1\"></svg>", "line 1: its viewBox \"0 0 0 1\" has no area");
+    // Transforms each in range whose product isn't (it panicked the geometry graph), and a
+    // path's relative moves that add up past one
+    try expectRefused(MM ++ "<g transform=\"scale(1e308)\">\n<rect width=\"1\" height=\"1\" transform=\"scale(1e308)\"/></g></svg>", "line 2: what the <rect> draws is out of range: scaled by its transforms, a number of it isn't finite");
+    try expectRefused(MM ++ "<path d=\"M1e308 0 l1e308 0 l0 1\"/></svg>", "line 1: what the <path> draws is out of range: scaled by its transforms, a number of it isn't finite");
 }

@@ -168,7 +168,8 @@ fn readImport(case: ImportCase, allocator: std.mem.Allocator) anyerror![]const u
             for (model.objects) |o| try w.print("{s}: {d} points, {d} faces\n", .{ o.name, o.mesh.points.len, o.mesh.faces.len });
         },
         .stl => {
-            const mesh = try stl.parseStlBuffer(allocator, case.bytes);
+            var diag: stl.Diagnostic = .{};
+            const mesh = try stl.parseStlBuffer(allocator, case.bytes, &diag);
             defer mesh.deinit(allocator);
             try w.print("{d} points, {d} faces\n", .{ mesh.points.len, mesh.faces.len });
         },

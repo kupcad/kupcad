@@ -1,13 +1,17 @@
 //! STL: `buildStlBuffer` writes a solid as binary STL, `buildStlOfParts` several as their
 //! union (STL holds one mesh), and `parseStlBuffer` reads binary or ASCII STL into a mesh with
-//! repeated vertices merged. The script's `export_stl` and `import_stl` are in stdlib/files.zig.
+//! repeated vertices merged, or says what is wrong with it (a Diagnostic naming the line of
+//! an ASCII file, as obj_read does). The script's `export_stl` and `import_stl` are in
+//! stdlib/files.zig.
 
 const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
+const byte_order_mark = @import("../../core/byte_order_mark.zig");
 const imported_mesh = @import("imported_mesh.zig");
 const Mesh = imported_mesh.Mesh;
 const Builder = imported_mesh.Builder;
+pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
 // a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
@@ -15,26 +19,38 @@ const HEADER_LEN = 80;
 const PREAMBLE_LEN = HEADER_LEN + 4;
 const RECORD_LEN = 50;
 const HEADER_TITLE = "KupCAD Export";
+/// The words of an ASCII STL that only frame what it holds (a facet's normal is
+/// recomputed, so `facet normal` is read as the facet's start alone).
+const FRAMING = std.StaticStringMap(void).initComptime(.{ .{"solid"}, .{"endsolid"}, .{"outer"}, .{"endloop"} });
 
-/// Reads binary or ASCII STL, merging repeated vertices. A buffer is binary when its
-/// triangle count fits it; the count is checked in usize, so a huge count can't wrap the
-/// length check (in u32, 85_899_346 * 50 wraps to 4).
-pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8) !Mesh {
+pub const Error = error{Unreadable} || std.mem.Allocator.Error;
+
+/// Reads binary or ASCII STL, merging repeated vertices; error.Unreadable, `diag` saying
+/// why, for a file that is neither. A buffer is binary when its triangle count fits it
+/// (bytes after them are left, and so is a header that starts with "solid", as some writers
+/// put there); the count is checked in usize, so a huge count can't wrap the length check
+/// (in u32, 85_899_346 * 50 wraps to 4).
+pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnostic) Error!Mesh {
     if (data.len >= PREAMBLE_LEN) {
         const num_tris = std.mem.readInt(u32, data[HEADER_LEN..PREAMBLE_LEN], .little);
-        if (num_tris > 0 and (data.len - PREAMBLE_LEN) / RECORD_LEN >= num_tris) {
-            return parseBinaryStl(allocator, data, num_tris);
-        }
+        // Text has no NUL bytes: four of them where the count goes are a binary STL's
+        if (num_tris == 0) return diag.fail("it is a binary STL of no triangles", .{});
+        if ((data.len - PREAMBLE_LEN) / RECORD_LEN >= num_tris) return parseBinaryStl(allocator, data, num_tris, diag);
     }
-    return parseAsciiStl(allocator, data);
+    const text = std.mem.trimStart(u8, byte_order_mark.skip(data), &std.ascii.whitespace);
+    if (!std.mem.startsWith(u8, text, "solid")) {
+        if (data.len < PREAMBLE_LEN) return diag.fail("it isn't STL: too short for a binary STL ({d} bytes at least) and not ASCII STL (which starts with \"solid\")", .{PREAMBLE_LEN});
+        return diag.fail("it isn't STL: as binary STL its header counts {d} triangles, and the {d} bytes after it hold {d}; as ASCII STL it doesn't start with \"solid\"", .{ std.mem.readInt(u32, data[HEADER_LEN..PREAMBLE_LEN], .little), data.len - PREAMBLE_LEN, (data.len - PREAMBLE_LEN) / RECORD_LEN });
+    }
+    return parseAsciiStl(allocator, data, diag);
 }
 
-fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32) !Mesh {
+fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32, diag: *Diagnostic) Error!Mesh {
     var mesh: Builder = .{};
     errdefer mesh.deinit(allocator);
     try mesh.faces.ensureTotalCapacity(allocator, num_tris);
     var offset: usize = PREAMBLE_LEN;
-    for (0..num_tris) |_| {
+    for (0..num_tris) |t| {
         // Past the normal, three vertices of three f32 each
         offset += 12;
         var corners: [3]u32 = undefined;
@@ -44,7 +60,10 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
                 c.* = @as(f32, @bitCast(std.mem.readInt(u32, data[offset..][0..4], .little)));
                 offset += 4;
             }
-            corner.* = try mesh.point(allocator, p);
+            corner.* = mesh.point(allocator, p) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.NonFiniteVertex => return diag.fail("triangle {d}: a vertex coordinate isn't finite", .{t + 1}),
+            };
         }
         offset += 2;
         mesh.faces.appendAssumeCapacity(corners);
@@ -52,30 +71,54 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
     return mesh.finish(allocator);
 }
 
-fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !Mesh {
+/// An ASCII STL, facet by facet: each `facet` to its `endfacet` a triangle of the three
+/// `vertex` lines in its loop. What doesn't read so is an error naming its line; a vertex
+/// that wasn't read was skipped, so every corner after it shifted into the wrong triangle.
+fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnostic) Error!Mesh {
     var mesh: Builder = .{};
     errdefer mesh.deinit(allocator);
-    var lines = std.mem.tokenizeAny(u8, data, "\r\n");
+    var lines = std.mem.splitScalar(u8, byte_order_mark.skip(data), '\n');
+    var number: usize = 0;
+    // The line the facet being read starts on, and its corners so far
+    var facet: ?usize = null;
     var corners: [3]u32 = undefined;
     var count: usize = 0;
     while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t");
-        if (!std.mem.startsWith(u8, trimmed, "vertex")) continue;
-        var tokens = std.mem.tokenizeAny(u8, trimmed[6..], " \t");
-        var p: [3]f64 = undefined;
-        for (&p) |*c| {
-            // Read as the f32 a binary STL holds, so both merge alike
-            c.* = std.fmt.parseFloat(f32, tokens.next() orelse break) catch break;
-        } else {
-            corners[count] = try mesh.point(allocator, p);
-            count += 1;
-            if (count == 3) {
-                try mesh.triangle(allocator, corners);
-                count = 0;
+        number += 1;
+        var words = std.mem.tokenizeAny(u8, line, " \t\r");
+        const keyword = words.next() orelse continue;
+        if (std.mem.eql(u8, keyword, "facet")) {
+            if (facet) |start| return diag.fail("line {d}: a facet starts before the one on line {d} ends (endfacet)", .{ number, start });
+            facet = number;
+            count = 0;
+        } else if (std.mem.eql(u8, keyword, "vertex")) {
+            const start = facet orelse return diag.fail("line {d}: a vertex outside a facet", .{number});
+            if (count == corners.len) return diag.fail("line {d}: the facet on line {d} has more than 3 vertices: an STL facet is a triangle", .{ number, start });
+            var p: [3]f64 = undefined;
+            for (&p) |*c| {
+                const word = words.next() orelse return diag.fail("line {d}: a vertex needs its x, y and z", .{number});
+                // Read as the f32 a binary STL holds, so both merge alike
+                const f = std.fmt.parseFloat(f32, word) catch return diag.fail("line {d}: the vertex coordinate \"{s}\" isn't a number", .{ number, word });
+                if (!std.math.isFinite(f)) return diag.fail("line {d}: the vertex coordinate \"{s}\" isn't finite as the 32-bit float STL holds", .{ number, word });
+                c.* = f;
             }
+            if (words.next()) |extra| return diag.fail("line {d}: a vertex has more than its x, y and z: \"{s}\"", .{ number, extra });
+            corners[count] = mesh.point(allocator, p) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.NonFiniteVertex => unreachable, // read finite
+            };
+            count += 1;
+        } else if (std.mem.eql(u8, keyword, "endfacet")) {
+            const start = facet orelse return diag.fail("line {d}: an endfacet ends no facet", .{number});
+            if (count != corners.len) return diag.fail("line {d}: the facet on line {d} has {d} vertices: an STL facet is a triangle", .{ number, start, count });
+            try mesh.triangle(allocator, corners);
+            facet = null;
+        } else if (!FRAMING.has(keyword)) {
+            return diag.fail("line {d}: \"{s}\" isn't a word of ASCII STL", .{ number, keyword[0..@min(keyword.len, 40)] });
         }
     }
-    if (mesh.faces.items.len == 0) return error.InvalidStl;
+    if (facet) |start| return diag.fail("the facet on line {d} doesn't end (endfacet)", .{start});
+    if (mesh.faces.items.len == 0) return diag.fail("it has no facet", .{});
     return mesh.finish(allocator);
 }
 
