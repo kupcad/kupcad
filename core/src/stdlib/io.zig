@@ -6,6 +6,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const limits = @import("../core/limits.zig");
 const VM = @import("../vm/vm.zig").VM;
+const Text = @import("../vm/text.zig").Text;
 
 /// `args` copied into `buf`: each is shown by its own to_s or inspect, a script's, which may
 /// grow the VM stack and move the arguments that lie in it (they stay rooted there). Read in
@@ -19,14 +20,10 @@ inline fn printShared(vm: *VM, args: []const value.Value, append_newline: bool) 
     if (vm.host.print_handler) |print_handler| {
         var buf: [limits.MAX_ARGS]value.Value = undefined;
         for (copied(&buf, args)) |arg| {
-            var out: std.Io.Writer.Allocating = .init(vm.allocator);
+            var out: Text = .init(vm);
             defer out.deinit();
-
-            try vm.writeDisplay(arg, &out.writer);
-            if (append_newline) {
-                try out.writer.writeAll("\n");
-            }
-
+            try out.display(arg);
+            if (append_newline) try out.writeAll("\n");
             print_handler(vm, out.written());
         }
     }
@@ -49,11 +46,11 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
         const loc_prefix: []const u8 = if (vm.currentPosition()) |at| std.mem.print(&loc_buf, "[line {d}, col {d}] ", .{ at.line, at.column }) catch "" else "";
 
         for (shown) |arg| {
-            var out: std.Io.Writer.Allocating = .init(vm.allocator);
+            var out: Text = .init(vm);
             defer out.deinit();
-            try out.writer.writeAll(loc_prefix);
-            try vm.writeInspect(arg, &out.writer);
-            try out.writer.writeAll("\n");
+            try out.writeAll(loc_prefix);
+            try out.inspect(arg);
+            try out.writeAll("\n");
             print_handler(vm, out.written());
         }
     }

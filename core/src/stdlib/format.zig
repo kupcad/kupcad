@@ -11,6 +11,7 @@ const value = @import("../core/value.zig");
 const limits = @import("../core/limits.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
+const Text = @import("../vm/text.zig").Text;
 
 /// The most digits a precision asks for: past it, a number has no more to show.
 const MAX_PRECISION = 100;
@@ -41,30 +42,30 @@ pub fn format(vm: *VM, fmt_val: value.Value, arg: value.Value) !value.Value {
     vm.push(arg);
     const fmt = fmt_val.asString().chars;
 
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    var out: Text = .init(vm);
     defer out.deinit();
     var used: usize = 0;
     var i: usize = 0;
     while (i < fmt.len) {
         if (fmt[i] != '%') {
             const next = std.mem.findScalarPos(u8, fmt, i, '%') orelse fmt.len;
-            try out.writer.writeAll(fmt[i..next]);
+            try out.writeAll(fmt[i..next]);
             i = next;
             continue;
         }
         i += 1;
         if (i < fmt.len and fmt[i] == '%') {
-            try out.writer.writeByte('%');
+            try out.writeAll("%");
             i += 1;
             continue;
         }
         const spec = try parseSpec(vm, fmt, &i);
         if (used >= argCount(arg)) return vm.fail(.ArgumentError, "%: the format has more directives than the {d} argument{s} given", .{ argCount(arg), plural(argCount(arg)) });
-        try writeDirective(vm, &out.writer, spec, argAt(arg, used));
+        writeDirective(vm, out.writer(), spec, argAt(arg, used)) catch |err| return Text.refused(err);
         used += 1;
     }
     if (used < argCount(arg)) return vm.fail(.ArgumentError, "%: {d} argument{s} given, but the format uses {d}", .{ argCount(arg), plural(argCount(arg)), used });
-    return vm.allocateString(out.written());
+    return out.toString();
 }
 
 fn plural(n: usize) []const u8 {
@@ -120,11 +121,11 @@ fn digits(vm: *VM, fmt: []const u8, i: *usize, comptime max: usize, comptime wha
 }
 
 fn writeDirective(vm: *VM, w: *std.Io.Writer, spec: Spec, arg: value.Value) !void {
-    var text: std.Io.Writer.Allocating = .init(vm.allocator);
-    defer text.deinit();
     switch (spec.conversion) {
         's', 'p' => {
-            if (spec.conversion == 's') try vm.writeDisplay(arg, &text.writer) else try vm.writeInspect(arg, &text.writer);
+            var text: Text = .init(vm);
+            defer text.deinit();
+            if (spec.conversion == 's') try text.display(arg) else try text.inspect(arg);
             var shown = text.written();
             if (spec.precision) |p| shown = shown[0..charsEnd(shown, p)];
             return pad(w, spec, "", shown, false);
@@ -149,14 +150,14 @@ fn writeDirective(vm: *VM, w: *std.Io.Writer, spec: Spec, arg: value.Value) !voi
                 else => .{ 10, .lower, "" },
             };
             const magnitude = std.fmt.printInt(&buf, @abs(int), base, case, .{});
-            var body: std.Io.Writer.Allocating = .init(vm.allocator);
-            defer body.deinit();
+            var digits_buf: [MAX_PRECISION + @bitSizeOf(i64)]u8 = undefined;
+            var body: std.Io.Writer = .fixed(&digits_buf);
             // A precision is the fewest digits, as in C
-            if (spec.precision) |p| if (p > magnitude) try body.writer.splatByteAll('0', p - magnitude);
-            try body.writer.writeAll(buf[0..magnitude]);
+            if (spec.precision) |p| if (p > magnitude) try body.splatByteAll('0', p - magnitude);
+            try body.writeAll(buf[0..magnitude]);
             var sign_buf: [3]u8 = undefined;
             const lead = try leading(&sign_buf, spec, int < 0, if (spec.alt and int != 0) prefix else "");
-            return pad(w, spec, lead, body.written(), spec.precision == null);
+            return pad(w, spec, lead, body.buffered(), spec.precision == null);
         },
         else => {},
     }

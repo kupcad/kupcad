@@ -7,6 +7,10 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const arguments = @import("arguments.zig");
+const Text = @import("../vm/text.zig").Text;
+
+/// What `warn` prints before its parts.
+const WARNING_PREFIX = "[Warning] ";
 
 /// assert(condition, message = "Assertion failed.", error_class = AssertionError) { message }
 /// -> raises when the condition is false or nil; the block, if given, builds the message
@@ -54,15 +58,15 @@ fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !val
 /// warning of the run where it is called, which an editor shows on that line and the
 /// preview beside the model. It was printed only.
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    var out: Text = .init(vm);
     defer out.deinit();
-    for (args) |arg| try arg.stringify(false, &out.writer);
-    if (vm.host.print_handler) |print_handler| {
-        const line = try std.fmt.allocPrint(vm.allocator, "[Warning] {s}\n", .{out.written()});
-        defer vm.allocator.free(line);
-        print_handler(vm, line);
-    }
-    vm.keepWarning(try out.toOwnedSlice());
+    try out.writeAll(WARNING_PREFIX);
+    for (args) |arg| try out.stringify(arg, false);
+    try out.writeAll("\n");
+    if (vm.host.print_handler) |print_handler| print_handler(vm, out.written());
+    // The report keeps the parts alone, in a copy of its own
+    const message = out.written();
+    vm.keepWarning(try vm.allocator.dupe(u8, message[WARNING_PREFIX.len .. message.len - 1]));
     return value.Value.initNil();
 }
 

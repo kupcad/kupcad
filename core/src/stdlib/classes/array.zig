@@ -6,6 +6,7 @@ const value = @import("../../core/value.zig");
 const limits = @import("../../core/limits.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
+const Text = @import("../../vm/text.zig").Text;
 const common = @import("common.zig");
 const iteration = @import("iteration.zig");
 const callBlock = iteration.callBlock;
@@ -97,17 +98,13 @@ pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !
 pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: ?*value.ObjString) !value.Value {
     const delim = if (delim_obj) |d| d.chars else "";
 
-    var out: std.Io.Writer.Allocating = .init(vm.gc.trackingAllocator());
-    errdefer out.deinit();
-
+    var out: Text = .init(vm);
+    defer out.deinit();
     for (arr.items.items, 0..) |item, idx| {
-        item.stringify(false, &out.writer) catch return error.RuntimeError;
-        if (idx < arr.items.items.len - 1) {
-            out.writer.writeAll(delim) catch return error.RuntimeError;
-        }
+        try out.stringify(item, false);
+        if (idx < arr.items.items.len - 1) try out.writeAll(delim);
     }
-
-    return vm.allocateStringTakeOwnership(try out.toOwnedSlice());
+    return out.toString();
 }
 
 // The iterators index the receiver afresh on every step and stop at its current length:

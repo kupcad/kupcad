@@ -4,6 +4,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const Text = @import("../../vm/text.zig").Text;
 const kernel = @import("../../kernel/kernel.zig");
 const common = @import("common.zig");
 const arguments = @import("../arguments.zig");
@@ -135,10 +136,10 @@ fn objectClass(vm: *VM, receiver: value.Value) !value.Value {
 /// Object#inspect -> the receiver as it would be written in a script: Strings quoted,
 /// Symbols with their colon (`puts` and interpolation print Strings bare).
 fn objectInspect(vm: *VM, receiver: value.Value) !value.Value {
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    var out: Text = .init(vm);
     defer out.deinit();
-    try receiver.stringify(true, &out.writer);
-    return vm.allocateString(out.written());
+    try out.stringify(receiver, true);
+    return out.toString();
 }
 
 pub const methods = [_]common.MethodDef{

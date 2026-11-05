@@ -30,6 +30,7 @@ const sequence = @import("sequence.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 const run_report = @import("run_report.zig");
 const RunReport = run_report.RunReport;
+const Text = @import("text.zig").Text;
 
 const log = std.log.scoped(.vm);
 
@@ -3534,31 +3535,28 @@ pub const VM = struct {
     }
 
     /// Joins the `count` fragments on top of the stack into one String (writeDisplay for
-    /// each, so an instance's own to_s is called), which replaces them. Short results are
-    /// built on the native stack, longer ones on the heap.
+    /// each, so an instance's own to_s is called), which replaces them.
     fn executeInterpolate(self: *VM, count: usize) InterpretResult {
         const start_idx = self.stack_top - count;
         const depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
-        var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
-        var buffer = std.heap.BufferFirstAllocator.init(&stack_buf, self.allocator);
-        var out: std.Io.Writer.Allocating = .init(buffer.allocator());
+        var out: Text = .init(self);
         defer out.deinit();
         // Each fragment read from the stack as its turn comes: a to_s may grow the stack,
         // which moves it, and a slice taken once read the freed one
         for (start_idx..start_idx + count) |i| {
-            self.writeDisplay(self.stack[i], &out.writer) catch |err| switch (err) {
+            out.display(self.stack[i]) catch |err| switch (err) {
                 // A to_s raised: a rescue has the error (resume there) or the run has failed
                 error.Unwind => {
                     self.restoreAfterUnwind(depth);
                     return .ok;
                 },
                 error.ExecutionLimitExceeded => return .execution_limit_exceeded,
-                error.OutOfMemory, error.WriteFailed => return self.raiseOutOfMemory("building a String", .{}),
+                error.OutOfMemory => return self.raiseOutOfMemory("building a String", .{}),
                 else => return self.alreadyThrown(throw_seq, depth) orelse .runtime_error,
             };
         }
-        const merged = self.allocateString(out.written()) catch |err| return self.allocationFailed(err);
+        const merged = out.toString() catch return self.raiseOutOfMemory("building a String", .{});
         self.popAndRelease(count);
         self.push(merged);
         return .ok;
@@ -3747,10 +3745,10 @@ pub const VM = struct {
     /// `val` written out as an error's message, as a new string (on the heap: a fixed buffer
     /// used to truncate a large one).
     fn messageText(self: *VM, val: value.Value) !value.Value {
-        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        var out: Text = .init(self);
         defer out.deinit();
-        try val.stringify(false, &out.writer);
-        return self.allocateString(out.written());
+        try out.stringify(val, false);
+        return out.toString();
     }
 
     /// No rescue is left: reports the error as "<Class>: <message>" and its backtrace, and

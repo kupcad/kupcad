@@ -625,3 +625,39 @@ test "GC: an object is charged what it takes, not its struct alone, and gives al
     vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(before, vm.gc.bytes_allocated);
 }
+
+fn discardPrinted(_: *VM, _: []const u8) void {}
+
+test "GC: the text a native writes counts against the memory limit as it grows" {
+    // `%`, inspect, interpolation, join, puts, print and warn wrote their text in the VM's own
+    // memory: a String past the limit was refused only once whole, hundreds of megabytes on,
+    // and printed text never was. On memory that runs out a few times past the limit, each
+    // stops at the limit, naming it and what it was building; they ran into that memory
+    // instead ("puts failed (WriteFailed)"), or printed all of it.
+    const support = @import("../test_support.zig");
+    const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
+    // About 29 MB as text, its first item about 14 MB
+    const big = "x = [1]\n22.times { x = [x, x] }\n";
+    const cases = [_]struct { src: []const u8, building: []const u8 }{
+        .{ .src = "f = \"\"\n200.times { f += \"%100000s\" }\nf % Array.new(200, 1)", .building = "%" },
+        .{ .src = big ++ "x.inspect", .building = "inspect" },
+        .{ .src = big ++ "\"#{x[0]}\"", .building = "building a String" },
+        .{ .src = big ++ "x.join(\",\")", .building = "Array#join" },
+        .{ .src = big ++ "puts x", .building = "puts" },
+        .{ .src = big ++ "print x", .building = "print" },
+        .{ .src = big ++ "inspect(x)", .building = "inspect" },
+        .{ .src = big ++ "warn(x)", .building = "warn" },
+    };
+    inline for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        var backing = LimitAllocator.init(testing.allocator, 16 * 1024 * 1024);
+        var vm = try support.initVmWith(backing.allocator());
+        defer vm.deinit();
+        vm.host.print_handler = discardPrinted;
+        const limit = vm.gc.bytes_allocated + 2 * 1024 * 1024;
+        vm.setMemoryLimit(limit);
+        try testing.expectEqual(.ok, try support.runWith(backing.allocator(), &vm, support.rescued(case.src)));
+        var buf: [128]u8 = undefined;
+        try support.expectValue(.{ .str = try std.mem.print(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes ({s})", .{ limit, case.building }) }, vm.globals.get("r").?);
+    }
+}
