@@ -16,7 +16,7 @@ runs:
         gem install --no-document pkg/kupcad-*.gem
         gem install --no-document --ignore-dependencies $(ruby -rbundler -e '
           lock = Bundler::LockfileParser.new(Bundler.read_file("Gemfile.lock"))
-          puts lock.specs.filter_map { |spec| "#{spec.name}:#{spec.version}" if spec.name.match?(/\A(rspec|diff-lcs)/) }
+          puts lock.specs.filter_map { |spec| "#{spec.name}:#{spec.version}" if spec.name.start_with?("rspec", "diff-lcs") }
         ')
         KUPCAD_INSTALLED_GEM=1 ruby -S rspec
 
