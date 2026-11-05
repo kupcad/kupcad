@@ -18,14 +18,31 @@ pub const UniqueNames = struct {
     /// Owns the names given out.
     arena: std.mem.Allocator,
     taken: std.StringHashMapUnmanaged(void) = .empty,
+    /// The number each name was last given out with: the next one is tried from there.
+    /// Trying from 1 each time, a candidate allocated per number, made n shapes of one name
+    /// quadratic (8000 took 32 s and 410 MB).
+    numbers: std.StringHashMapUnmanaged(usize) = .empty,
+    /// Where a candidate is spelt out before it is known to be free.
+    candidate: std.ArrayList(u8) = .empty,
 
     /// `name`, or the first of `name_2`, `name_3`, ... not taken yet; taken from now on.
     pub fn take(self: *UniqueNames, name: []const u8) ![]const u8 {
-        var number: usize = 1;
-        while (true) : (number += 1) {
-            const candidate = try numberedName(self.arena, name, number);
-            const entry = try self.taken.getOrPut(self.arena, candidate);
-            if (!entry.found_existing) return candidate;
+        const last = try self.numbers.getOrPut(self.arena, name);
+        if (!last.found_existing) {
+            last.key_ptr.* = try self.arena.dupe(u8, name);
+            last.value_ptr.* = 0;
         }
+        var number = last.value_ptr.*;
+        while (true) {
+            number += 1;
+            self.candidate.clearRetainingCapacity();
+            try self.candidate.appendSlice(self.arena, name);
+            if (number > 1) try self.candidate.print(self.arena, NAME_NUMBER_SEPARATOR ++ "{d}", .{number});
+            if (!self.taken.contains(self.candidate.items)) break;
+        }
+        last.value_ptr.* = number;
+        const kept = try self.arena.dupe(u8, self.candidate.items);
+        try self.taken.put(self.arena, kept, {});
+        return kept;
     }
 };

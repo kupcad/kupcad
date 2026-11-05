@@ -122,35 +122,49 @@ fn noLayer(vm: *VM, file_path: []const u8, name: []const u8, known: []const []co
 
 /// The graph node of the region `outlines` fill by the even-odd rule: the union of the
 /// outlines enclosed by none, less the union of those enclosed by one, with those enclosed
-/// by two added back, and so on.
-fn evenOddNode(vm: *VM, outlines: []const path_mod.Run) !u32 {
+/// by two added back, and so on. An outline drawn more than once (a DXF's repeated entity,
+/// an SVG's `use`s of one shape in one place) is one node of the graph and counts once:
+/// its copies were each tested against every other, 20,000 of them for most of a minute.
+fn evenOddNode(vm: *VM, drawn: []const path_mod.Run) !u32 {
     const alloc = vm.allocator;
-    const boxes = try alloc.alloc(path_mod.Bounds, outlines.len);
+    var outlines: std.ArrayList(path_mod.Run) = .empty;
+    defer outlines.deinit(alloc);
+    var nodes: std.ArrayList(u32) = .empty;
+    defer nodes.deinit(alloc);
+    var seen: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    defer seen.deinit(alloc);
+    for (drawn) |outline| {
+        const node = try paths.closedPathNode(vm, outline.start, outline.segments, 0);
+        if ((try seen.getOrPut(alloc, node)).found_existing) continue;
+        try outlines.append(alloc, outline);
+        try nodes.append(alloc, node);
+    }
+    const boxes = try alloc.alloc(path_mod.Bounds, outlines.items.len);
     defer alloc.free(boxes);
-    for (outlines, boxes) |outline, *box| box.* = path_mod.bounds(outline.start, outline.segments);
+    for (outlines.items, boxes) |outline, *box| box.* = path_mod.bounds(outline.start, outline.segments);
     // How many others enclose each one, tested at a point of it (the outlines don't cross)
-    const depths = try alloc.alloc(u32, outlines.len);
+    const depths = try alloc.alloc(u32, outlines.items.len);
     defer alloc.free(depths);
     var deepest: u32 = 0;
-    for (outlines, depths, 0..) |outline, *depth, i| {
+    for (outlines.items, depths, 0..) |outline, *depth, i| {
         depth.* = 0;
         const p = outline.start;
-        for (outlines, boxes, 0..) |other, box, j| {
+        for (outlines.items, boxes, 0..) |other, box, j| {
             if (i == j or p[0] < box.min[0] or p[0] > box.max[0] or p[1] < box.min[1] or p[1] > box.max[1]) continue;
             if (path_mod.encloses(other.start, other.segments, p)) depth.* += 1;
         }
         deepest = @max(deepest, depth.*);
     }
-    var nodes: std.ArrayList(u32) = .empty;
-    defer nodes.deinit(alloc);
+    var layer_nodes: std.ArrayList(u32) = .empty;
+    defer layer_nodes.deinit(alloc);
     var region: ?u32 = null;
     for (0..deepest + 1) |level| {
-        nodes.clearRetainingCapacity();
-        for (outlines, depths) |outline, depth| {
-            if (depth == level) try nodes.append(alloc, try paths.closedPathNode(vm, outline.start, outline.segments, 0));
+        layer_nodes.clearRetainingCapacity();
+        for (nodes.items, depths) |node, depth| {
+            if (depth == level) try layer_nodes.append(alloc, node);
         }
-        if (nodes.items.len == 0) continue;
-        const layer = try vm.dag_builder.addBalancedChain(.cs_union_op, nodes.items);
+        if (layer_nodes.items.len == 0) continue;
+        const layer = try vm.dag_builder.addBalancedChain(.cs_union_op, layer_nodes.items);
         region = if (region) |r| try vm.dag_builder.addBinary(if (level % 2 == 1) .cs_difference_op else .cs_union_op, r, layer) else layer;
     }
     return region.?;

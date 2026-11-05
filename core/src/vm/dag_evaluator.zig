@@ -157,7 +157,10 @@ fn isPureTransform(tag: dag.DAGTag) bool {
 /// since `a - b - c` is `a` less `b` and `c` (a difference on its right is no part of the
 /// chain): `a` first, then what it loses. Sketches' chains as solids'. A node of the chain
 /// already in the cache is one operand, so after an edit only the new parts join the cached
-/// rest.
+/// rest. A union takes each operand once: the geometry graph makes a shape built twice one
+/// node, and `a + a` is `a`, while the kernel matched every corner of each copy against every
+/// other's (2,000 copies of one rectangle, an SVG's `use`s, took 3 s and 450 MB; 20,000, a
+/// SVG import, ran past 27 GB). A node of the chain reached again is walked once.
 fn collectChainOperands(vm: *VM, chain: *std.ArrayList(dag.DAGNodeIndex), root: dag.DAGNode) !void {
     chain.clearRetainingCapacity();
     const b = &vm.dag_builder;
@@ -176,9 +179,12 @@ fn collectChainOperands(vm: *VM, chain: *std.ArrayList(dag.DAGNodeIndex), root: 
         .union_op, .cs_union_op => {
             var work: std.ArrayList(dag.DAGNodeIndex) = .empty;
             defer work.deinit(vm.allocator);
+            var seen: std.AutoHashMapUnmanaged(dag.DAGNodeIndex, void) = .empty;
+            defer seen.deinit(vm.allocator);
             const p = b.getBinaryPayload(root);
             try work.appendSlice(vm.allocator, &.{ p.right, p.left });
             while (work.pop()) |idx| {
+                if ((try seen.getOrPut(vm.allocator, idx)).found_existing) continue;
                 if (ofChain(vm, root.tag, idx)) |node| {
                     const q = b.getBinaryPayload(node);
                     try work.appendSlice(vm.allocator, &.{ q.right, q.left });
@@ -281,7 +287,8 @@ pub const EvaluationFrame = struct {
     node_idx: dag.DAGNodeIndex,
     state: EvalState = .visit,
     /// For a boolean at the top of a chain of its kind: how many operands the chain was
-    /// flattened to (see collectChainOperands); 0 for every other node.
+    /// flattened to (see collectChainOperands), when not the node's own two; 0 for every
+    /// other node.
     operands: u32 = 0,
 };
 
@@ -350,7 +357,12 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             _ = f_stack.pop();
             // The settings the node was made under, whatever is in force now.
             const config = vm.dag_builder.settings(node.settings);
-            if (operands > 2) try executeChain(vm, &v_stack, config, node.tag, operands) else try executeNode(vm, &v_stack, node, config);
+            switch (operands) {
+                // A union of one shape is that shape, on the stack already
+                1 => {},
+                0 => try executeNode(vm, &v_stack, node, config),
+                else => try executeChain(vm, &v_stack, config, node.tag, operands),
+            }
             try cacheResult(vm, &v_stack, node.tag, node_hash, config);
         }
     }
@@ -381,9 +393,10 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
     switch (node.tag) {
         .union_op, .difference_op, .cs_union_op, .cs_difference_op => {
             try collectChainOperands(vm, chain, node);
-            // Two operands: the plain binary boolean. More: a batch of them. The count goes
-            // on the frame before anything is pushed (pushing may move the frames).
-            if (chain.items.len > 2) frame.operands = @intCast(chain.items.len);
+            // Two operands: the plain binary boolean. More: a batch of them; one, a union of a
+            // shape with itself. The count goes on the frame before anything is pushed
+            // (pushing may move the frames).
+            if (chain.items.len != 2) frame.operands = @intCast(chain.items.len);
             try pushAll(f_stack, chain.items);
         },
         .intersection_op, .minkowski, .cs_intersection_op => {

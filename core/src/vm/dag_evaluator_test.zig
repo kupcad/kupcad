@@ -82,6 +82,28 @@ test "DAG Evaluator: a chain of unions is one batch, and its links still evaluat
     try testing.expectApproxEqAbs(@as(f64, 5), kernel.volume(try dag_evaluator.evaluateDAG(&vm, abcde)), 1e-9);
 }
 
+test "DAG Evaluator: a chain of unions takes each shape once" {
+    // The kernel matched every corner of each copy against every other's: 2,000 copies of a
+    // square, `acc = acc + square(1)`, took 3 s and 450 MB. `a + a` is `a`, as it was made.
+    var vm = try initVm();
+    defer vm.deinit();
+    const b = &vm.dag_builder;
+    const a = try b.addCube(1, 1, 1, false);
+    const made = try dag_evaluator.evaluateDAG(&vm, a);
+    try testing.expectEqual(made.ptr, (try dag_evaluator.evaluateDAG(&vm, try b.addBinary(.union_op, a, a))).ptr);
+    // Copies among other shapes are one operand of the batch
+    const other = try b.addTranslate(try b.addCube(1, 1, 1, false), 2, 0, 0);
+    var acc = a;
+    for (0..3) |_| acc = try b.addBinary(.union_op, acc, a);
+    acc = try b.addBinary(.union_op, acc, other);
+    try testing.expectApproxEqAbs(@as(f64, 2), kernel.volume(try dag_evaluator.evaluateDAG(&vm, acc)), 1e-9);
+    try support.expectScripts(&.{
+        .{ .src = "acc = square(1)\n2000.times { acc = acc + square(1) }\nr = acc.area", .expected = .{ .num = 1 } },
+        // A union of unions of the same shape: each link walked once, not 2^30 leaves
+        .{ .src = "acc = square(1)\n30.times { acc = acc + acc }\nr = acc.area", .expected = .{ .num = 1 } },
+    });
+}
+
 test "DAG Evaluator: a chain of differences is one batch, the first less the rest" {
     // `acc = acc - hole` made one kernel call per hole, each over the plate so far
     var vm = try initVm();

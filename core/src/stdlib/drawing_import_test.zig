@@ -45,6 +45,31 @@ test "import_dxf: the outlines fill by nesting, a hole's island filled again, ei
     });
 }
 
+test "import_dxf and import_svg: an outline drawn twice is one outline" {
+    // 2,000 uses of one rectangle in one place were 2,000 outlines, each tested against
+    // every other for nesting and all united by the kernel: 3 s and 450 MB (20,000 ran past
+    // 27 GB). They are one outline, the Sketch one path of the geometry graph.
+    var uses: std.ArrayList(u8) = .empty;
+    defer uses.deinit(testing.allocator);
+    try uses.appendSlice(testing.allocator, "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\"><defs><rect id=\"a\" width=\"1\" height=\"1\"/></defs>");
+    for (0..2000) |_| try uses.appendSlice(testing.allocator, "<use href=\"#a\"/>");
+    try uses.appendSlice(testing.allocator, "</svg>");
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("uses.svg", uses.items);
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.vfs = files.vfs();
+    try testing.expectEqual(.ok, try support.runOn(&vm, "logo = import_svg(\"uses.svg\")\nr = logo.area"));
+    try testing.expectEqual(@as(f64, 1), vm.globals.get("r").?.asNumber());
+    const node = vm.dag_builder.nodes.items[vm.globals.get("logo").?.asCrossSection().dag_idx];
+    try testing.expectEqual(.closed_path, node.tag);
+    // A plate and its hole each drawn twice (a DXF's repeated entities) are the plate with
+    // its hole
+    const twice = file(square("cut", "0", "20", true) ++ square("cut", "5", "15", false) ++ square("cut", "0", "20", true) ++ square("cut", "5", "15", false));
+    try expectScripts(&.{.{ .src = "r = import_dxf(\"twice.dxf\").area", .expected = .{ .num = 400 - 100 }, .files = &.{.{ .path = "twice.dxf", .data = twice }} }});
+}
+
 test "import_dxf: ends further apart than the tolerance don't meet, closer ones do" {
     const files = &.{support.ScriptFile{ .path = "gapped.dxf", .data = GAPPED }};
     try expectScripts(&.{
