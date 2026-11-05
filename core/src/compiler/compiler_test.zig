@@ -139,9 +139,9 @@ test "Compiler: compiles compound assignment (x += 5)" {
     const assign_node = try b.assignment(name_id, .add, val, 0);
 
     // Unmanaged ArrayList and the top-level resolver import
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(assign_node) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -172,9 +172,9 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     const safe_call = try b.methodCall(receiver, method_name, empty_args, .none, true, 0, 0);
 
     // Unmanaged ArrayList and the top-level resolver import
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(safe_call) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(safe_call) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -295,9 +295,9 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     const fallback_val = try b.number("0", 0);
     const rescue_node = try b.rescueModifier(dangerous_expr, fallback_val, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(rescue_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(rescue_node) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -331,9 +331,9 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     const begin_body = try b.block(.empty, &.{try b.number("2", 0)}, 0, 0);
     const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(begin_stmt) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -508,7 +508,7 @@ test "Compiler Edge Case: break and next inside an expression drop its operands"
         defer vm.deinit();
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
-        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
         defer comp.deinit();
         try comp.compile(loop);
 
@@ -544,9 +544,9 @@ test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
     const rescues = try b.addRescueClauses(&.{rescue_clause});
     const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(begin_stmt) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -577,9 +577,9 @@ test "Compiler: Protects core globals from variable reassignment" {
     const val = try b.number("10", 0);
     const assign_node = try b.assignment(name_id, null, val, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(assign_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -606,9 +606,9 @@ test "Compiler: Protects core globals from function redefinition" {
     const body = try b.nilNode(0);
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(def_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(def_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -634,9 +634,9 @@ test "Compiler: Protects core classes from complete reassignment" {
     const empty_body = try b.block(.empty, &.{}, 0, 0);
     const class_node = try b.classStmt(class_name_node, .none, empty_body, 0, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(class_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(class_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -668,7 +668,7 @@ test "Compiler: Block intermediate expressions are strictly popped" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(block_node);
@@ -814,7 +814,7 @@ test "Compiler: Break outside of loop scope correctly emits CompileError" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
     // Attempting to compile a break statement without an active loop scope
@@ -875,9 +875,9 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
     const prop_assign = try b.propertyAssignment(target, prop_id, .add, val, 0);
 
     // Provide a generic symbol map to avoid out of bounds
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(prop_assign) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(prop_assign) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -906,9 +906,9 @@ test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
     const val = try b.number("2", 0);
     const idx_assign = try b.indexAssignment(target, index, .multiply, val, 0);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(idx_assign) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(idx_assign) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1638,7 +1638,7 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
     // This MUST fail with TooManyConstants. If the `errdefer` stack restoration is missing
@@ -1854,7 +1854,7 @@ test "Compiler: Jump patch alignments for nested and/or" {
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
 
-        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
         defer comp.deinit();
         try comp.compile(root);
 
@@ -2175,9 +2175,9 @@ fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex, expect
     var b = ast.Builder.init(testing.allocator);
     defer b.deinit();
     const root = try build(&b);
-    const symbols = try testing.allocator.alloc(resolver.ResolvedSymbol, b.tree.nodes.items.len);
+    const symbols = try testing.allocator.alloc(resolver.ScopeKind, b.tree.nodes.items.len);
     defer testing.allocator.free(symbols);
-    @memset(symbols, .{ .kind = .unresolved, .index = 0 });
+    @memset(symbols, .unresolved);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

@@ -166,7 +166,7 @@ pub const Compiler = struct {
     script_globals: std.StringHashMapUnmanaged(void) = .empty,
     imported_symbols: std.StringHashMapUnmanaged(void) = .empty,
 
-    symbols: []const resolver.ResolvedSymbol,
+    symbols: []const resolver.ScopeKind,
     token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
     current_source_offset: u32, // Implictly passed to Chunk
     current_chunk: *chunk.Chunk,
@@ -278,7 +278,7 @@ pub const Compiler = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         tree: *const ast.Tree,
-        symbols: []const resolver.ResolvedSymbol,
+        symbols: []const resolver.ScopeKind,
         token_starts: []const u32,
         output_chunk: *chunk.Chunk,
         vm: *VM,
@@ -507,7 +507,7 @@ pub const Compiler = struct {
         if (manifest.compiler_intrinsics.get(name_str) == .block_given_chk) return self.emitBlockGiven();
 
         const is_local = (self.resolveLocal(name_id) != null) or
-            (sym.kind == .local);
+            (sym == .local);
         const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
         const is_script_global = self.isScriptGlobal(name_id);
 
@@ -698,7 +698,7 @@ pub const Compiler = struct {
         // If it doesn't exist locally/upvalue, and we're at the top-level, it's a global.
         // Otherwise, if it's a new local declaration inside a block:
         const is_new_local = self.enclosing != null and
-            sym.kind == .local and
+            sym == .local and
             kind != .class_var and
             local_slot == null and
             upval_slot == null and
@@ -852,8 +852,7 @@ pub const Compiler = struct {
                     const slot = self.getNextLocalSlot();
                     try self.addLocal(sym_id, slot);
                 }
-                const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-                try self.emitVariableStore(sym_id, dummy_sym);
+                try self.emitVariableStore(sym_id, .local);
             }
 
             try self.emitOp(.op_pop); // Discard the file's value from the stack
@@ -889,8 +888,7 @@ pub const Compiler = struct {
 
                 const slot = self.getNextLocalSlot();
                 try self.addLocal(pair.alias, slot);
-                const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-                try self.emitVariableStore(pair.alias, dummy_sym);
+                try self.emitVariableStore(pair.alias, .local);
             } else {
                 if (self.isScriptGlobal(pair.alias) or self.imported_symbols.contains(alias_str)) {
                     return self.fail(error.VariableAlreadyDeclared, "import '{s}' collides with a variable of the same name", .{alias_str});
@@ -975,7 +973,7 @@ pub const Compiler = struct {
 
         if (node.tag == .def_stmt) {
             const sym = self.symbols[@backingInt(node_idx)];
-            if (self.enclosing == null or sym.kind == .global) {
+            if (self.enclosing == null or sym == .global) {
                 const def_name_str = self.tree.getString(def_name_id);
                 if (manifest.compiler_intrinsics.has(def_name_str)) {
                     return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be redefined", .{def_name_str});
@@ -1530,8 +1528,7 @@ pub const Compiler = struct {
                 const var_str = self.tree.getString(rescue.variable);
                 if (var_str.len > 0) {
                     const name_id = rescue.variable;
-                    const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-                    try self.emitVariableStore(name_id, dummy_sym);
+                    try self.emitVariableStore(name_id, .local);
                 }
 
                 // Always pop the temporary error value off the expression stack!
@@ -1869,7 +1866,7 @@ pub const Compiler = struct {
         const sym = self.symbols[@backingInt(node_idx)];
         if (self.active_namespaces > 1) {
             try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
-        } else if (sym.kind == .local and self.enclosing != null) {
+        } else if (sym == .local and self.enclosing != null) {
             const slot = self.getNextLocalSlot();
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
@@ -2253,7 +2250,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
+    fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ScopeKind) CompileError!void {
         const name_str = self.tree.getString(name_id);
         const classification = try self.classifyStorage(name_id, sym);
 
@@ -2322,7 +2319,7 @@ pub const Compiler = struct {
     /// `classifyVariable`, where inside a def a plain name never writes a script global: every
     /// store path (rescue binding, destructuring, block params) gets the rule plain
     /// assignment has.
-    fn classifyStorage(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!scope_mod.ResolvedVar {
+    fn classifyStorage(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ScopeKind) CompileError!scope_mod.ResolvedVar {
         const name_str = self.tree.getString(name_id);
         const classified = try self.classifyVariable(name_id, sym);
         if (classified.kind == .global and identifier.kindOf(name_str) == .local and self.insideDef()) {
@@ -2351,7 +2348,7 @@ pub const Compiler = struct {
 
     /// Stores the value on top of the stack into the named variable and leaves the
     /// value there, whatever kind of variable the name turns out to be.
-    fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
+    fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ScopeKind) CompileError!void {
         const name_str = self.tree.getString(name_id);
         const classification = try self.classifyStorage(name_id, sym);
 
@@ -2643,11 +2640,9 @@ pub const Compiler = struct {
     fn compileDestructure(self: *Compiler, target: ast.LhsExpr) CompileError!void {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
-            // Provide a dummy symbol. The classification engine will figure out if it's a
-            // constant, class variable, existing local, upvalue, or global automatically!
-            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-
-            try self.emitVariableStore(target.name, dummy_sym);
+            // Stored as a local would be: the classification finds whether the name is a
+            // constant, a class variable, an existing local, an upvalue or a global
+            try self.emitVariableStore(target.name, .local);
 
             // `emitVariableStore` is designed for standard assignments, so it ALWAYS leaves
             // the assigned value on the stack. Destructuring expects to consume the value

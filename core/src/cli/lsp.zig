@@ -914,7 +914,7 @@ pub const Handler = struct {
             const name = if (target_node.tag == .assignment) doc.tree.getString(doc.tree.assignment(target_node).name) else doc.tree.nodeString(target_node);
             const sym = doc.symbols[@backingInt(found_node_idx)];
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
-            out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
+            out.writer.print("**Scope:** `{s}`\n\n", .{@tagName(sym)}) catch return null;
         } else if (target_node.tag == .method_call) {
             const mc = doc.tree.methodCall(target_node);
             const m_name = doc.tree.getString(mc.method_name);
@@ -929,7 +929,7 @@ pub const Handler = struct {
         // (the resolver leaves the script's own unresolved or local), or a top-level one
         // read inside a def (resolved as a global there). A def's parameter or local of
         // the same name used to show the global's facts.
-        const sym_kind = doc.symbols[@backingInt(found_node_idx)].kind;
+        const sym_kind = doc.symbols[@backingInt(found_node_idx)];
         const is_variable = target_node.tag == .identifier or target_node.tag == .assignment;
         const script_variable = sym_kind == .global or (scope.def_name == null and (sym_kind == .local or sym_kind == .unresolved));
         if (!is_variable or script_variable) {

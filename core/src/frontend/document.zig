@@ -26,11 +26,12 @@ pub const Document = struct {
     comments: []const common_token.Comment,
     diagnostics: []const common_errors.Diagnostic,
     line_index: LineIndex,
-    symbols: []resolver.ResolvedSymbol,
+    /// Per node: what a name is, a local, an upvalue, a global or an instance variable (the
+    /// resolver's).
+    symbols: []resolver.ScopeKind,
     /// Per node: the node that declared a local's or an upvalue's name (the resolver's).
     declarations: []ast.NodeIndex,
     parents: []ast.NodeIndex,
-    closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
 
     fn parseInternal(allocator: std.mem.Allocator, source: []const u8, resolve_semantics: bool) !Document {
         // The CLI caps file size before reading, but LSP/WASM hand us buffers directly
@@ -63,9 +64,8 @@ pub const Document = struct {
 
         const line_index = try LineIndex.init(arena_alloc, source);
 
-        var symbols: []resolver.ResolvedSymbol = &[_]resolver.ResolvedSymbol{};
+        var symbols: []resolver.ScopeKind = &.{};
         var declarations: []ast.NodeIndex = &.{};
-        var closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture) = .empty;
         var parents: []ast.NodeIndex = &[_]ast.NodeIndex{};
 
         if (resolve_semantics) {
@@ -73,7 +73,6 @@ pub const Document = struct {
             try res.resolve(root_index);
             symbols = res.symbols;
             declarations = res.declarations;
-            closure_captures = res.closure_captures;
 
             var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
             try pmap.build(&tree, root_index);
@@ -93,7 +92,6 @@ pub const Document = struct {
             .line_index = line_index,
             .symbols = symbols,
             .declarations = declarations,
-            .closure_captures = closure_captures,
             .parents = parents,
         };
     }

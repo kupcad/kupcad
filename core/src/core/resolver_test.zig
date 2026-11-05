@@ -10,29 +10,17 @@ const Parser = @import("../frontend/parser.zig").Parser;
 const ParserTest = @import("../frontend/test_utils.zig").ParserTest;
 const KTest = ParserTest(Lexer, Parser);
 
-/// Helper function to scan the AST for all `.identifier` nodes matching a specific name,
-/// and asserts that the Resolver assigned at least one of them the expected scope kind and slot index.
-fn expectResolved(res: *const resolver.Resolver, tree: *const ast.Tree, name: []const u8, expected_kind: resolver.ScopeKind, expected_index: u24) !void {
-    var found_match = false;
+/// Scans the AST for the `.identifier` nodes named `name`, and asserts that the Resolver gave
+/// at least one of them the kind `expected_kind`.
+fn expectResolved(res: *const resolver.Resolver, tree: *const ast.Tree, name: []const u8, expected_kind: resolver.ScopeKind) !void {
     for (tree.nodes.items, 0..) |node, i| {
-        if (node.tag == .identifier) {
-            const id_str = tree.nodeString(&node);
-            if (std.mem.eql(u8, id_str, name)) {
-                const sym = res.symbols[i];
-                // Because Parsers often leave "dead" orphan nodes behind when transforming
-                // expressions into assignments, we just want to ensure the "live" node was resolved!
-                if (sym.kind == expected_kind and sym.index == expected_index) {
-                    found_match = true;
-                    break;
-                }
-            }
-        }
+        if (node.tag != .identifier or !std.mem.eql(u8, tree.nodeString(&node), name)) continue;
+        // Because Parsers often leave "dead" orphan nodes behind when transforming
+        // expressions into assignments, we just want to ensure the "live" node was resolved!
+        if (res.symbols[i] == expected_kind) return;
     }
-
-    if (!found_match) {
-        std.debug.print("Resolved Identifier '{s}' not found matching {any} at slot/index {d}!\n", .{ name, expected_kind, expected_index });
-        return error.TestExpectedEqual;
-    }
+    std.debug.print("Resolved Identifier '{s}' not found as {any}\n", .{ name, expected_kind });
+    return error.TestExpectedEqual;
 }
 
 test "Resolver: correctly classifies local, instance, and global variables" {
@@ -61,16 +49,16 @@ test "Resolver: correctly classifies local, instance, and global variables" {
 
     const tree = &pt.parser.b.tree;
 
-    // Parameters and declared variables are correctly slotted sequentially as locals
-    try expectResolved(&res, tree, "x", .local, 0); // Param x is slot 0
-    try expectResolved(&res, tree, "y", .local, 1); // Local y is slot 1
+    // Parameters and declared variables are locals
+    try expectResolved(&res, tree, "x", .local);
+    try expectResolved(&res, tree, "y", .local);
 
     // Explicit syntax prefixes are instantly categorized
-    try expectResolved(&res, tree, "@inst", .instance_var, 0);
-    try expectResolved(&res, tree, "$glob", .global, 0);
+    try expectResolved(&res, tree, "@inst", .instance_var);
+    try expectResolved(&res, tree, "$glob", .global);
 
     // Undeclared variables fall back to global runtime lookups
-    try expectResolved(&res, tree, "missing", .global, 0);
+    try expectResolved(&res, tree, "missing", .global);
 }
 
 test "Resolver: correctly resolves upvalues across closure boundaries" {
@@ -97,11 +85,11 @@ test "Resolver: correctly resolves upvalues across closure boundaries" {
 
     const tree = &pt.parser.b.tree;
 
-    // 'x' crosses a lambda boundary, making it an upvalue pointing to outer's slot 0
-    try expectResolved(&res, tree, "x", .upvalue, 0);
+    // 'x' crosses a lambda boundary, making it an upvalue
+    try expectResolved(&res, tree, "x", .upvalue);
 
-    // 'y' belongs to the lambda's own scope, making it a local pointing to lambda's slot 0
-    try expectResolved(&res, tree, "y", .local, 0);
+    // 'y' belongs to the lambda's own scope, making it a local
+    try expectResolved(&res, tree, "y", .local);
 }
 
 test "Resolver: block parameters resolve as local variables" {
@@ -126,9 +114,9 @@ test "Resolver: block parameters resolve as local variables" {
 
     const tree = &pt.parser.b.tree;
 
-    // Block parameters `|i, val|` should map seamlessly into slots 0 and 1
-    try expectResolved(&res, tree, "i", .local, 0);
-    try expectResolved(&res, tree, "val", .local, 1);
+    // Block parameters `|i, val|` are the block's locals
+    try expectResolved(&res, tree, "i", .local);
+    try expectResolved(&res, tree, "val", .local);
 }
 
 test "Resolver: permits break and next inside loops" {
@@ -231,46 +219,7 @@ test "Resolver: a lambda allows next but not break" {
     try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
 }
 
-test "Resolver: single-level upvalue capture" {
-    const source =
-        \\def outer(x)
-        \\  ->() { x }
-        \\end
-    ;
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-
-    const root_idx = try pt.parser.parseProgram();
-
-    var diags = errors.Diagnostics.init(testing.allocator);
-    defer diags.deinit();
-
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
-    defer res.deinit();
-
-    try res.resolve(root_idx);
-    try testing.expectEqual(@as(usize, 0), diags.list.items.len);
-
-    // Find the lambda node in the AST
-    var lambda_node_idx: ast.NodeIndex = .none;
-    for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
-        if (node.tag == .lambda_expr) {
-            lambda_node_idx = @fromBackingInt(@as(u32, @intCast(i)));
-            break;
-        }
-    }
-    try testing.expect(lambda_node_idx != .none);
-
-    // Verify the closure captures side-table
-    const captures = res.closure_captures.get(lambda_node_idx).?;
-    try testing.expectEqual(@as(usize, 1), captures.len);
-
-    // It should capture 'x' directly from outer's local slots (is_local = true)
-    try testing.expectEqual(true, captures[0].is_local);
-    try testing.expectEqual(@as(u24, 0), captures[0].index); // outer's slot 0 (the 'x' param)
-}
-
-test "Resolver: deep recursive upvalue capture" {
+test "Resolver: a name of a closure two levels out is an upvalue" {
     const source =
         \\def outer(x)
         \\  ->() {
@@ -280,48 +229,74 @@ test "Resolver: deep recursive upvalue capture" {
     ;
     var pt = try KTest.init(source);
     defer pt.deinit();
-
     const root_idx = try pt.parser.parseProgram();
-
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
-
     var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
-
     try res.resolve(root_idx);
     try testing.expectEqual(@as(usize, 0), diags.list.items.len);
+    try expectResolved(&res, &pt.parser.b.tree, "x", .upvalue);
+}
 
-    // Because the AST is built bottom-up, the inner lambda is created first in the nodes array.
-    var inner_lambda: ast.NodeIndex = .none;
-    var outer_lambda: ast.NodeIndex = .none;
-
-    for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
-        if (node.tag == .lambda_expr) {
-            if (inner_lambda == .none) {
-                inner_lambda = @fromBackingInt(@as(u32, @intCast(i)));
-            } else {
-                outer_lambda = @fromBackingInt(@as(u32, @intCast(i)));
-            }
-        }
+test "Resolver: an if, while or case body is no scope, as in the parser, linter and compiler" {
+    // A name an `if` body assigned was resolved as a global after it: hover was wrong and
+    // go-to-definition found nothing.
+    const source =
+        \\def f(c)
+        \\  if c
+        \\    y = 2
+        \\  end
+        \\  while c
+        \\    w = 1
+        \\    c = false
+        \\  end
+        \\  case c
+        \\  when 1 then v = 3
+        \\  end
+        \\  y + w + v
+        \\end
+    ;
+    var doc = try @import("../frontend/document.zig").Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const tree = &doc.tree;
+    var checked: usize = 0;
+    for (tree.nodes.items, 0..) |node, i| {
+        if (node.tag != .identifier or doc.parents[i] == .none) continue;
+        const name = tree.nodeString(&node);
+        if (name.len != 1 or std.mem.indexOfScalar(u8, "ywv", name[0]) == null) continue;
+        errdefer std.debug.print("{s}\n", .{name});
+        try testing.expectEqual(resolver.ScopeKind.local, doc.symbols[i]);
+        try testing.expectEqual(ast.Tag.assignment, tree.getNode(doc.declarations[i]).?.tag);
+        checked += 1;
     }
+    try testing.expectEqual(@as(usize, 3), checked);
+}
 
-    try testing.expect(inner_lambda != .none);
-    try testing.expect(outer_lambda != .none);
-
-    // 1. Verify Outer Lambda captures 'x' directly from the 'outer' function locals
-    const outer_captures = res.closure_captures.get(outer_lambda).?;
-    try testing.expectEqual(@as(usize, 1), outer_captures.len);
-    try testing.expectEqual(true, outer_captures[0].is_local);
-    try testing.expectEqual(@as(u24, 0), outer_captures[0].index); // outer function's slot 0
-
-    // 2. Verify Inner Lambda captures 'x' as an UPVALUE from the Outer Lambda
-    const inner_captures = res.closure_captures.get(inner_lambda).?;
-    try testing.expectEqual(@as(usize, 1), inner_captures.len);
-    // It is NOT local to the outer lambda, so is_local must be false!
-    try testing.expectEqual(false, inner_captures[0].is_local);
-    // It targets the 0th upvalue index of the outer lambda's upvalue array
-    try testing.expectEqual(@as(u24, 0), inner_captures[0].index);
+test "Resolver: a call's block, a super's included, is a scope its names end with" {
+    const source =
+        \\[1].each { |a| b = a }
+        \\b
+        \\class C < D
+        \\  def m
+        \\    super { |s| s }
+        \\  end
+        \\end
+    ;
+    var doc = try @import("../frontend/document.zig").Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const tree = &doc.tree;
+    const root_stmts = tree.getNodes(tree.block(tree.getNode(tree.root).?).stmts);
+    // The `b` after the block is no local of the script
+    try testing.expectEqual(resolver.ScopeKind.global, doc.symbols[@backingInt(root_stmts[1])]);
+    // `s`, the parameter of super's block, is a local of it
+    for (tree.nodes.items, 0..) |node, i| {
+        if (node.tag != .identifier or !std.mem.eql(u8, tree.nodeString(&node), "s") or doc.parents[i] == .none) continue;
+        try testing.expectEqual(resolver.ScopeKind.local, doc.symbols[i]);
+        try testing.expectEqual(ast.Tag.block, tree.getNode(doc.declarations[i]).?.tag);
+        return;
+    }
+    return error.NoUseOfS;
 }
 
 test "Resolver: correctly classifies class variables (@@) separately from instance variables (@)" {
@@ -347,10 +322,10 @@ test "Resolver: correctly classifies class variables (@@) separately from instan
     const tree = &pt.parser.b.tree;
 
     // Instance variables start with single '@'
-    try expectResolved(&res, tree, "@instance", .instance_var, 0);
+    try expectResolved(&res, tree, "@instance", .instance_var);
 
     // Class variables start with '@@' and resolve to .global (not .instance_var)
-    try expectResolved(&res, tree, "@@class_var", .global, 0);
+    try expectResolved(&res, tree, "@@class_var", .global);
 }
 
 test "Resolver: a local's or an upvalue's use records the node that declared it" {

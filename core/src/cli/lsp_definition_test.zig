@@ -113,3 +113,13 @@ test "definition: a destructured or splat block parameter goes to where it is wr
         try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(written), .length = @intCast(name.len) } }, target);
     }
 }
+
+test "definition: a name an if body assigns goes there from after the if" {
+    // The resolver scoped if bodies, unlike the parser, the linter and the compiler: the
+    // last `y` was a global with no declaration.
+    const source = "def f\n  if true\n    y = 2\n  end\n  y\nend\n";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const target = definition.definitionAt(&doc, std.mem.findLast(u8, source, "y").?) orelse return error.NoDefinition;
+    try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(std.mem.find(u8, source, "y").?), .length = 1 } }, target);
+}

@@ -58,13 +58,8 @@ fn dumpNode(
 
     // Print Semantic Resolver Scope data (if available)
     const sym = doc.symbols[@backingInt(node_idx)];
-    if (sym.kind != .unresolved) {
-        out.writer.print(" (symbol: {s} slot {d})", .{ @tagName(sym.kind), sym.index }) catch {};
-    }
-
-    // Upvalue closures (Lambda/Def)
-    if (doc.closure_captures.get(node_idx)) |captures| {
-        out.writer.print(" [captures: {d}]", .{captures.len}) catch {};
+    if (sym != .unresolved) {
+        out.writer.print(" (symbol: {s})", .{@tagName(sym)}) catch {};
     }
 
     out.writer.print("\n", .{}) catch {};

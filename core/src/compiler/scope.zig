@@ -57,7 +57,7 @@ pub const ResolvedVar = struct {
 
 // --- Lexical Scope Resolvers ---
 
-pub fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolver.ResolvedSymbol) CompileError!ResolvedVar {
+pub fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolver.ScopeKind) CompileError!ResolvedVar {
     switch (identifier.kindOf(self.tree.getString(name_id))) {
         .constant => return .{ .kind = .constant },
         .class_var => return .{ .kind = .class_var },
@@ -71,7 +71,7 @@ pub fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolv
     if (try self.resolveUpvalue(name_id)) |upv_slot| return .{ .kind = .upvalue, .index = upv_slot };
 
     if (sym_opt) |sym| {
-        if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
+        if (sym == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
             return .{ .kind = .global };
         }
         return .{ .kind = .new_local };

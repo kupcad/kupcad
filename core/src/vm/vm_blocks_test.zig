@@ -100,9 +100,9 @@ test "VM: executes Array.map with functional closure block" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(map_call) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(map_call) + 1);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -278,12 +278,12 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
     // Default all nodes to local (so parameters inside the function resolve correctly)
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
+    try symbols.appendNTimes(testing.allocator, .local, 100);
     // Force the function definition to be global so the methodCall explicitly finds it
-    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
+    symbols.items[@backingInt(def_node)] = .global;
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -349,12 +349,12 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
     // Default all nodes to local (so parameters inside the function resolve correctly)
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
+    try symbols.appendNTimes(testing.allocator, .local, 100);
     // Force the function definition to be global so the methodCall explicitly finds it
-    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
+    symbols.items[@backingInt(def_node)] = .global;
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -459,10 +459,10 @@ test "VM: Named Keyword Arguments with default values" {
     defer vm.deinit();
 
     // Mock the symbols array so the compiler doesn't panic out-of-bounds
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
-    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
+    try symbols.appendNTimes(testing.allocator, .local, 100);
+    symbols.items[@backingInt(def_node)] = .global;
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -1383,7 +1383,7 @@ test "Compiler: Block array destructuring refuses what no array element is, shou
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ScopeKind{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
     // The compiler MUST reject the double splat inside the tuple and return error.UnknownNode!
@@ -1545,9 +1545,9 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
     const mul_node = try b.binary(.multiply, x_node, five, 0);
 
     // --- NEW: Provide a mock symbols array ---
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(mul_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .global, @backingInt(mul_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1584,9 +1584,9 @@ test "VM/Compiler: Assignments in a seeded context dynamically allocate new slot
     const assign_node = try b.assignment(z_id, null, val, 0);
 
     // Trick the compiler into treating `z` as a local, as if we were inside a block scope.
-    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ScopeKind) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .local, @backingInt(assign_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

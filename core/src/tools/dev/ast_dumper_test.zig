@@ -32,14 +32,14 @@ test "AST Dumper: produces correct tree format and semantic metadata" {
         \\    ├── method_call 'translate'
         \\    │   ├── method_call 'chamfer'
         \\    │   │   ├── method_call 'new'
-        \\    │   │   │   ├── identifier 'Box' (symbol: global slot 0)
-        \\    │   │   │   └── identifier 'width' (symbol: local slot 0)
+        \\    │   │   │   ├── identifier 'Box' (symbol: global)
+        \\    │   │   │   └── identifier 'width' (symbol: local)
         \\    │   │   └── number 2
         \\    │   └── number 10
-        \\    └── def_stmt 'create_part' [captures: 0]
+        \\    └── def_stmt 'create_part'
         \\        └── block
         \\            └── method_call 'cube'
-        \\                └── identifier 'h' (symbol: local slot 0)
+        \\                └── identifier 'h' (symbol: local)
         \\
     ;
 
