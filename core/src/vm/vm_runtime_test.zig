@@ -1264,3 +1264,26 @@ test "VM: a to_s that grows the stack doesn't lose what puts, print, inspect and
         try testing.expectEqualStrings(case.printed, vm.report.output.items);
     }
 }
+
+/// How much the scratch arena holds now, as a Number.
+fn scratchBytes(vm_opaque: *anyopaque, _: value.NativeArgs) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    return value.Value.initNumber(@floatFromInt(vm.scratch_arena.queryCapacity()));
+}
+
+test "VM: the scratch arena stays bounded across a loop that rescues errors" {
+    // Each error's message is formatted in the scratch arena, which was freed only as the
+    // outermost run ended: a loop that rescued errors, at the top or in a block, kept every
+    // message, outside the memory limit.
+    const rescues = "begin\n  { a: 1 }.fetch(:b)\nrescue KeyError\nend\n";
+    const source = "i = 0\nwhile i < 20000\n" ++ rescues ++ "i += 1\nend\nin_loop = scratch_bytes()\n" ++
+        "20000.times do\n" ++ rescues ++ "end\nafter_blocks = scratch_bytes()";
+    var vm = try @import("../test_support.zig").initVm();
+    defer vm.deinit();
+    try vm.defineNative("scratch_bytes", scratchBytes);
+    try testing.expectEqual(InterpretResult.ok, try @import("../test_support.zig").runOn(&vm, source));
+    // A loop frees it once it passes the threshold; what is left is less than a turn's growth
+    try testing.expect(vm.globals.get("in_loop").?.asNumber() <= 4 * @import("vm.zig").SCRATCH_RECYCLE_BYTES);
+    // Each block's run has an arena of its own, freed as the block returns
+    try testing.expect(vm.globals.get("after_blocks").?.asNumber() <= vm.globals.get("in_loop").?.asNumber());
+}

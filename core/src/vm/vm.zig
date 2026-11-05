@@ -38,6 +38,10 @@ pub const Host = host_mod.Host;
 
 /// Stack slots every native call may push (GC roots) without reserving them (see VM.push).
 const NATIVE_STACK_RESERVE = 16;
+/// How much a run's scratch arena may hold before one of its loops frees it
+/// (VM.recycleScratch): the messages of hundreds of errors, so a loop that raises a few
+/// frees nothing.
+pub const SCRATCH_RECYCLE_BYTES = 64 * 1024;
 /// Instructions between two looks at the clock under a time limit: a clock read costs tens of
 /// nanoseconds, these instructions tens of microseconds.
 const TIME_CHECK_INTERVAL = 4096;
@@ -656,13 +660,20 @@ pub const VM = struct {
     }
 
     pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
-        // The scratch arena is recycled when the outermost run ends, even after an unwind.
-        // A nested run (a native calling a block through callClosureSync) must not reset
-        // it: the native that called it may still be using scratch memory.
+        // A run nested in a native's call (a block it calls through callClosureSync, an
+        // import) has a scratch arena of its own: the native's is set aside as it is, the
+        // native may still be using it, and the run's goes as the run ends, even after an
+        // unwind. The outermost run's is recycled as it ends; each run's, as its loops go
+        // round (recycleScratch).
         self.run_depth += 1;
+        const outer_scratch: ?std.heap.ArenaAllocator = if (self.run_depth > 1) self.scratch_arena else null;
+        if (outer_scratch != null) self.scratch_arena = .init(self.allocator);
         defer {
             self.run_depth -= 1;
-            if (self.run_depth == 0) _ = self.scratch_arena.reset(.retain_capacity);
+            if (outer_scratch) |outer| {
+                self.scratch_arena.deinit();
+                self.scratch_arena = outer;
+            } else _ = self.scratch_arena.reset(.retain_capacity);
         }
 
         var previous_line: ?u32 = null; // Track line boundary
@@ -860,6 +871,7 @@ pub const VM = struct {
                 .op_loop => {
                     const offset = self.readJumpOffset(exec_chunk, frame);
                     frame.ip -= offset; // Jump backwards
+                    self.recycleScratch();
                 },
                 .op_switch, .op_switch_wide => self.executeSwitch(frame, exec_chunk, op == .op_switch_wide),
                 .op_for_next => if (ended(self.executeForNext(frame, exec_chunk))) |res| return res,
@@ -956,6 +968,16 @@ pub const VM = struct {
         }
 
         return .ok;
+    }
+
+    /// Frees what the run's scratch arena holds once it passes SCRATCH_RECYCLE_BYTES, as one
+    /// of its loops goes round (op_loop): between instructions nothing of the run holds
+    /// scratch memory, and the arena is the run's alone (runUntil). It was freed only as the
+    /// outermost run ended, so a loop that rescued errors kept every message, a million of
+    /// them outside the memory limit.
+    inline fn recycleScratch(self: *VM) void {
+        if (self.scratch_arena.queryCapacity() <= SCRATCH_RECYCLE_BYTES) return;
+        _ = self.scratch_arena.reset(.{ .retain_with_limit = SCRATCH_RECYCLE_BYTES });
     }
 
     /// What ends the run after an instruction gave `res`: nothing when it is .ok (an error
