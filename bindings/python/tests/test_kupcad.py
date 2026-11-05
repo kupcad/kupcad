@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import _thread
+import gc
 import math
+import os
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +15,7 @@ from types import MappingProxyType
 import pytest
 
 import kupcad
+from kupcad import _native
 
 FOREVER = "while true\nend\ncube(1)"
 
@@ -164,6 +170,27 @@ def test_the_timeout_stops_a_script_that_never_ends() -> None:
         kupcad.build(FOREVER, timeout=0.0141)
 
 
+def test_a_result_is_freed_when_an_interrupt_comes_while_it_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    freed: list[int] = []
+    free = _native.lib.kupcad_result_free
+
+    def counted(result: int) -> None:
+        freed.append(result)
+        free(result)
+
+    monkeypatch.setattr(_native.lib, "kupcad_result_free", counted)
+    # Ctrl-C while the build runs, raised in this thread as the call returns, before its result
+    # is read
+    threading.Timer(0.05, _thread.interrupt_main).start()
+    with pytest.raises(KeyboardInterrupt):
+        kupcad.build(FOREVER, timeout=0.3)
+    # Freed as it was dropped, whatever still held it
+    gc.collect()
+    assert len(freed) == 1
+
+
 def test_other_threads_run_while_it_builds() -> None:
     ticks: list[float] = []
     building = True
@@ -205,6 +232,20 @@ def test_every_example_the_repository_ships_builds_with_its_defaults(
 def test_errors_are_kupcad_errors() -> None:
     assert issubclass(kupcad.ScriptError, kupcad.Error)
     assert issubclass(kupcad.Error, Exception)
+
+
+def test_without_the_library_the_import_fails_saying_what_to_do() -> None:
+    environment = {**os.environ, "KUPCAD_LIBRARY": "/nowhere/libkupcad.so"}
+    imported = subprocess.run(
+        [sys.executable, "-c", "import kupcad"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert imported.returncode != 0
+    assert "ImportError: /nowhere/libkupcad.so not found" in imported.stderr
+    assert "KUPCAD_LIBRARY" in imported.stderr
 
 
 def test_format_formats_as_kupcad_fmt_does() -> None:

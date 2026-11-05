@@ -40,7 +40,7 @@ for warning in model.report.warnings:
     graph, not the kernel's meshes; no limit by default.
   - `timeout`: the most time, in seconds, the build may take, to the millisecond; no limit by
     default (or `math.inf`). A script that never ends otherwise holds its thread for good: a
-    native call can't be interrupted, by Ctrl-C or a signal.
+    native call can't be interrupted, by Ctrl-C or a signal, which are raised once it returns.
   - `draco=True` compresses a GLB's or a glTF's meshes.
 - `kupcad.format(source)`: the source as `kupcad fmt` formats it.
 - `kupcad.check(source)`: what `kupcad check` finds, a list of `kupcad.Finding` (severity, rule,

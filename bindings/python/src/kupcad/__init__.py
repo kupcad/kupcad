@@ -231,7 +231,7 @@ def _encoded(text: str) -> bytes:
     return text.encode()
 
 
-def _text(function: Callable[[bytes, int], int], source: str) -> str:
+def _text(function: Callable[[bytes, int], _native.Result], source: str) -> str:
     """The data of libkupcad's `function` for `source`, as text; raises what failed."""
     encoded = _encoded(source)
     return _take(function(encoded, len(encoded)))[0].decode()
@@ -256,7 +256,7 @@ def _milliseconds(seconds: float | None) -> int:
     return _UINT64_MAX if milliseconds >= _UINT64_MAX else max(round(milliseconds), 1)
 
 
-def _take(result: int) -> tuple[bytes, str | None]:
+def _take(result: _native.Result) -> tuple[bytes, str | None]:
     """The data and the report of a call's result; raises what failed."""
     status, data, message, report = _native.take(result)
     if status == _native.OK:

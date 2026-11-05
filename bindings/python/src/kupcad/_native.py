@@ -25,6 +25,24 @@ INVALID_ARGUMENT = 2
 OUT_OF_MEMORY = 3
 
 
+class Result(ctypes.c_void_p):
+    """A call's result (kupcad_result *), which take() reads and frees. ctypes makes it in C as
+    the call returns, so nothing runs before it holds the result: an exception raised before
+    take() (a Ctrl-C that came during the call, raised as it returns) drops it, and it frees the
+    result as it goes, where a plain int lost it."""
+
+    def __del__(self) -> None:
+        free(self)
+
+
+def free(result: Result) -> None:
+    """Frees `result`, once: its pointer is cleared first, so an exception that comes between
+    the two can't have it freed again."""
+    pointer, result.value = result.value, None
+    if pointer:
+        lib.kupcad_result_free(pointer)
+
+
 def _load() -> ctypes.CDLL:
     path = os.environ.get("KUPCAD_LIBRARY") or str(Path(__file__).with_name(LIBRARY))
     if not os.path.isfile(path):
@@ -46,13 +64,13 @@ def _load() -> ctypes.CDLL:
     text = [ctypes.c_char_p, ctypes.c_size_t]
     # Each function's argument and result types, as kupcad.h declares them
     declarations: dict[str, tuple[list[Any], Any]] = {
-        "kupcad_version": ([], ctypes.c_void_p),
-        "kupcad_format": (text, ctypes.c_void_p),
-        "kupcad_check": (text, ctypes.c_void_p),
-        "kupcad_params": (text, ctypes.c_void_p),
+        "kupcad_version": ([], Result),
+        "kupcad_format": (text, Result),
+        "kupcad_check": (text, Result),
+        "kupcad_params": (text, Result),
         "kupcad_build": (
             [*text, ctypes.c_char_p, *text, *text, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_bool],
-            ctypes.c_void_p,
+            Result,
         ),
         "kupcad_result_status": ([ctypes.c_void_p], ctypes.c_int),
         "kupcad_result_data": (
@@ -76,7 +94,7 @@ def _load() -> ctypes.CDLL:
 lib = _load()
 
 
-def take(result: int) -> tuple[int, bytes, str | None, str | None]:
+def take(result: Result) -> tuple[int, bytes, str | None, str | None]:
     """What a call gave, read and freed: its status, data, message and report. The data and the
     message are read by their length: a message can quote a NUL (the report is JSON, which
     escapes one)."""
@@ -93,7 +111,7 @@ def take(result: int) -> tuple[int, bytes, str | None, str | None]:
             report.decode() if report is not None else None,
         )
     finally:
-        lib.kupcad_result_free(result)
+        free(result)
 
 
 def _bytes_at(pointer: int | None, length: int) -> bytes:
