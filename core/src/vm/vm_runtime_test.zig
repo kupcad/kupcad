@@ -1231,3 +1231,36 @@ test "VM: the nested runs the VM allows fit the native stack" {
         try testing.expect(per_level * VM.MAX_NESTED_RUNS <= NESTED_RUN_STACK_BUDGET);
     }
 }
+
+test "VM: a to_s that grows the stack doesn't lose what puts, print, inspect and interpolation show" {
+    // `Deep`'s to_s recurses past the stack's first 64K slots, which moves the stack. puts,
+    // print and inspect read their arguments, and interpolation its fragments, from the
+    // stack as it was: the next one came from freed memory, and the run crashed.
+    const deep =
+        \\class Deep
+        \\  def to_s
+        \\    self.down(30000)
+        \\    "deep"
+        \\  end
+        \\  def down(n) = n == 0 ? 0 : self.down(n - 1)
+        \\end
+        \\s1 = "sec" + "ond"
+        \\s2 = "thi" + "rd"
+        \\
+    ;
+    const cases = [_]struct { src: []const u8, printed: []const u8 }{
+        .{ .src = deep ++ "puts Deep.new, s1, s2", .printed = "deep\nsecond\nthird\n" },
+        .{ .src = deep ++ "print Deep.new, s1, s2", .printed = "deepsecondthird" },
+        .{ .src = deep ++ "x = inspect(Deep.new, s1, s2)\nputs x", .printed = "deep\n\"second\"\n\"third\"\nthird\n" },
+        .{ .src = deep ++ "puts \"#{Deep.new} #{s1} #{s2}\"", .printed = "deep second third\n" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        var vm = try @import("../test_support.zig").initVm();
+        defer vm.deinit();
+        vm.host.print_handler = registry.keepPrinted;
+        try testing.expectEqual(InterpretResult.ok, try @import("../test_support.zig").runOn(&vm, case.src));
+        try testing.expect(vm.stack.len > 65536);
+        try testing.expectEqualStrings(case.printed, vm.report.output.items);
+    }
+}

@@ -3544,8 +3544,10 @@ pub const VM = struct {
         var buffer = std.heap.BufferFirstAllocator.init(&stack_buf, self.allocator);
         var out: std.Io.Writer.Allocating = .init(buffer.allocator());
         defer out.deinit();
-        for (self.stack[start_idx..self.stack_top]) |val| {
-            self.writeDisplay(val, &out.writer) catch |err| switch (err) {
+        // Each fragment read from the stack as its turn comes: a to_s may grow the stack,
+        // which moves it, and a slice taken once read the freed one
+        for (start_idx..start_idx + count) |i| {
+            self.writeDisplay(self.stack[i], &out.writer) catch |err| switch (err) {
                 // A to_s raised: a rescue has the error (resume there) or the run has failed
                 error.Unwind => {
                     self.restoreAfterUnwind(depth);
