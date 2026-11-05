@@ -1092,8 +1092,8 @@ test "VM: DOD map operations (build, insert, spread) transfer memory losslessly"
 }
 
 test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
-    // We test both `executePackSplat` (method parameters) and
-    // `executeUnpackSplat` (multiple assignment) securely.
+    // A call packing its arguments into a splat parameter (padClosureFrame) and a multiple
+    // assignment unpacking one (executeUnpackSplat).
     const source =
         \\ def pack_test(first, *rest)
         \\   rest
@@ -1102,7 +1102,7 @@ test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
         \\ # 1. Test executeUnpackSplat via Multiple Assignment
         \\ a, *b, c = [1, 2, 3, 4, 5]
         \\
-        \\ # 2. Test executePackSplat via Function Invocation
+        \\ # 2. Test the splat parameter via Function Invocation
         \\ packed = pack_test(1, 2, 3, 4, 5)
         \\
         \\ [b, packed]
@@ -1134,7 +1134,7 @@ test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
     try std.testing.expectEqual(@as(f64, 2.0), unpacked_arr[0].asNumber());
     try std.testing.expectEqual(@as(f64, 4.0), unpacked_arr[2].asNumber());
 
-    // --- Verify executePackSplat (packed) ---
+    // --- Verify the splat parameter (packed) ---
     const packed_arr = result_arr[1].asArray().items.items;
     try std.testing.expectEqual(@as(usize, 4), packed_arr.len);
     try std.testing.expectEqual(@as(f64, 2.0), packed_arr[0].asNumber());

@@ -279,7 +279,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Pops 1 (Net: -1) ---
         // These operations consume exactly one value from the stack without pushing anything back.
-        .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_break_block => -1,
+        .op_pop, .op_return, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_break_block => -1,
 
         // --- Pops 2 (Net: -2) ---
         // Consumes two values (e.g. key and value) without replacing them.
@@ -308,7 +308,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Dynamic Ops (Requires manual tracking) ---
         // These operations consume a variable number of arguments based on bytecode operands.
-        .op_call, .op_invoke, .op_invoke_wide, .op_super_invoke, .op_build_array, .op_build_array_wide, .op_build_map, .op_build_map_wide, .op_unpack, .op_unpack_splat, .op_pack_splat, .op_interpolate, .op_yield, .op_build_range => null,
+        .op_call, .op_invoke, .op_invoke_wide, .op_super_invoke, .op_build_array, .op_build_array_wide, .op_build_map, .op_build_map_wide, .op_unpack, .op_unpack_splat, .op_interpolate, .op_yield, .op_build_range => null,
 
         else => 0, // Fallback for any implicitly balanced ops
     };

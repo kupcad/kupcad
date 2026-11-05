@@ -898,9 +898,6 @@ pub const VM = struct {
                     frame.ip += 1;
                     frame.closure.upvalues[slot].?.location.* = self.stack[self.stack_top - 1];
                 },
-                .op_close_upvalue => {
-                    self.closeUpvalues(&self.stack[self.stack_top - 1]);
-                },
                 .op_closure, .op_closure_wide => if (ended(self.executeClosure(frame, exec_chunk, op == .op_closure_wide))) |res| return res,
                 .op_return => {
                     const result = self.pop();
@@ -916,7 +913,6 @@ pub const VM = struct {
                 },
                 .op_unpack => self.executeUnpack(frame, exec_chunk),
                 .op_unpack_splat => if (ended(self.executeUnpackSplat(frame, exec_chunk))) |res| return res,
-                .op_pack_splat => if (ended(self.executePackSplat(frame, exec_chunk))) |res| return res,
                 .op_module, .op_module_wide => if (ended(self.executeModule(frame, exec_chunk, op == .op_module_wide))) |res| return res,
                 .op_class, .op_class_wide => if (ended(self.executeClass(frame, exec_chunk, op == .op_class_wide))) |res| return res,
                 .op_inherit => if (ended(self.executeInherit())) |res| return res,
@@ -2117,13 +2113,7 @@ pub const VM = struct {
                 std.debug.assert(start_idx + 1 + trailing_arity <= self.stack.len);
                 std.debug.assert(start_idx + splat_size + trailing_arity <= self.stack.len);
 
-                const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
-                const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
-                if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
-                    @memmove(dest, src);
-                } else {
-                    @memmove(dest, src);
-                }
+                @memmove(self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity], self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity]);
             }
 
             self.stack[start_idx] = arr_val;
@@ -2985,51 +2975,6 @@ pub const VM = struct {
                 self.push(value.Value.initObj(&arr_obj.obj));
             }
         }
-        return .ok;
-    }
-
-    inline fn executePackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
-        const fixed_arity = exec_chunk.code.items[frame.ip];
-        const trailing_arity = exec_chunk.code.items[frame.ip + 1];
-        frame.ip += 2;
-
-        const block_val = self.stack[self.stack_top - 1]; // Grab the implicit block early
-
-        // The arguments start at frame.base_slot + 1 and end exactly before the block
-        const total_args_passed = (self.stack_top - 1) - (frame.base_slot + 1);
-
-        var splat_size: usize = 0;
-        if (total_args_passed > fixed_arity + trailing_arity) {
-            splat_size = total_args_passed - fixed_arity - trailing_arity;
-        }
-
-        const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
-        const arr_val = value.Value.initObj(&arr_obj.obj);
-
-        self.push(arr_val);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseOutOfMemory("gathering arguments into *", .{});
-        _ = self.pop();
-
-        const start_idx = frame.base_slot + 1 + fixed_arity;
-        arr_obj.items.appendSliceAssumeCapacity(self.stack[start_idx .. start_idx + splat_size]);
-
-        if (splat_size != 1) {
-            std.debug.assert(start_idx + 1 + trailing_arity <= self.stack.len);
-            std.debug.assert(start_idx + splat_size + trailing_arity <= self.stack.len);
-
-            const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
-            const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
-            if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
-                @memmove(dest, src);
-            } else {
-                @memmove(dest, src);
-            }
-        }
-
-        self.stack[start_idx] = arr_val;
-        self.shrinkStack(start_idx + 1 + trailing_arity);
-        self.push(block_val);
-
         return .ok;
     }
 

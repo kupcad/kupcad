@@ -50,7 +50,6 @@ pub const OpCode = enum(u8) {
     op_closure_wide,
     op_get_upvalue,
     op_set_upvalue,
-    op_close_upvalue,
 
     // Object Orientation
     op_class,
@@ -78,7 +77,6 @@ pub const OpCode = enum(u8) {
     op_method_wide,
     op_unpack,
     op_unpack_splat,
-    op_pack_splat,
     op_defined,
     op_defined_wide,
     op_extract_kwarg,
@@ -213,7 +211,7 @@ pub const Operands = enum {
 
 pub fn operandsOf(op: OpCode) Operands {
     return switch (op) {
-        .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block, .op_to_symbol => .none,
+        .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_inherit, .op_mixin, .op_break_block, .op_to_symbol => .none,
         .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => .constant,
         .op_constant_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => .constant_wide,
         .op_get_local, .op_set_local, .op_keyword_rest => .local,
@@ -221,7 +219,7 @@ pub fn operandsOf(op: OpCode) Operands {
         .op_get_upvalue, .op_set_upvalue => .upvalue,
         .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack => .count,
         .op_build_array_wide, .op_build_map_wide => .count_wide,
-        .op_pack_splat, .op_unpack_splat => .count_pair,
+        .op_unpack_splat => .count_pair,
         .op_call, .op_yield, .op_super_invoke => .call,
         .op_extract_kwarg => .kwarg,
         .op_extract_kwarg_wide => .kwarg_wide,
