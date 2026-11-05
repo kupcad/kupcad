@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DRAWINGS = {"cup.kup"}
 
 if not os.environ.get("KUPCAD_INSTALLED_WHEEL"):
+    # By the name kupcad._native.LIBRARY gives it, which can't be read from there: importing any
+    # of kupcad runs its __init__, which loads the library this chooses
     library = {"darwin": "libkupcad.dylib", "win32": "kupcad.dll"}.get(sys.platform, "libkupcad.so")
     os.environ.setdefault("KUPCAD_LIBRARY", str(ROOT / "core" / "zig-out" / "lib" / library))
 

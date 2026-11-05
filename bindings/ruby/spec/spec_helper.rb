@@ -8,7 +8,9 @@ if ENV['KUPCAD_INSTALLED_GEM']
   $LOAD_PATH.delete(File.expand_path('../lib', __dir__))
   gem 'kupcad'
 else
-  # The checkout's own libkupcad (`zig build lib` in core/), unless KUPCAD_LIBRARY names another
+  # The checkout's own libkupcad (`zig build lib` in core/), unless KUPCAD_LIBRARY names another,
+  # by the name Kupcad::Native::LIBRARY gives it, which can't be read from there: requiring
+  # kupcad/native loads the library this chooses
   ENV['KUPCAD_LIBRARY'] ||= File.expand_path(
     "../../../core/zig-out/lib/#{FFI::Platform::LIBPREFIX}kupcad.#{FFI::Platform::LIBSUFFIX}", __dir__
   )
