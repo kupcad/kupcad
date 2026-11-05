@@ -16,6 +16,8 @@
   files, and opens the app's settings (⌘, or Ctrl+, too): a page over the workspace, which stays
   as it was under it, out of reach until Escape, the page's close button or the strip gives it
   back. The app's menu bar is the window's (menu.js), its shortcuts listed in a dialog (Help).
+  An export (the preview's menu) has the script saved first, once the person says so, as the
+  build reads the disk; the bar says it runs, with a Cancel, and when it is done.
   A newer version of the app is looked for once the window opens and from the menu (Check for
   Updates…), and installed, the app restarting on it, when the person says so.
 -->
@@ -119,8 +121,10 @@
   let viewportUrl = $state(/** @type {string | null} */ (null));
   let running = $state(false);
   let editor = $state(/** @type {ScriptEditor | null} */ (null));
-  /** What went wrong last, shown in the bar until something else does. */
-  let problem = $state('');
+  /** What the bar says until something else is said: what went wrong last, or an export done. */
+  let status = $state('');
+  /** The file an export under way writes, by its name, for the bar to say with its Cancel. */
+  let exporting = $state(/** @type {string | null} */ (null));
 
   /** Whether the files show beside the editor: none before a folder is opened. */
   let showsFiles = $state(true);
@@ -179,7 +183,7 @@
     if (limit === serverLimit) return;
     serverLimit = limit;
     const started = untrack(() => server);
-    started?.restart().catch((error) => (problem = `kupcad didn't start: ${errorText(error)}`));
+    started?.restart().catch((error) => (status = `kupcad didn't start: ${errorText(error)}`));
   });
 
   const preview = createHost({
@@ -189,12 +193,15 @@
     },
     save: (options) => platform.save(options),
     tell: (text) => platform.tell(text),
+    beforeExport: (path) => savedForBuild(path),
     exportModel: (...args) => platform.exportModel(...args),
+    cancelExport: () => platform.cancelExport(),
+    exporting: (name) => (exporting = name),
     memoryLimit: () => memoryLimit,
     writeFile: (path, bytes) => platform.writeFile(path, bytes),
     reveal: (uri, line, column, file) =>
       void reveal(file && project ? moduleUri(project.root, file) : uri, line, column),
-    log: (text) => (problem = text),
+    log: (text) => (status = text),
   });
 
   /**
@@ -207,7 +214,7 @@
     // the dialog); one that is gone says so
     const picked = named
       ? await platform.openFolder(named).catch((error) => {
-          problem = `${named} can't be opened: ${errorText(error)}`;
+          status = `${named} can't be opened: ${errorText(error)}`;
           return null;
         })
       : await platform.pickFolder();
@@ -221,7 +228,7 @@
     const mine = ++opened;
     const next = new Project(picked, projectFiles, {
       onproblem: (text) => {
-        if (mine === opened) problem = text;
+        if (mine === opened) status = text;
       },
       onsave: (path) => void saveScript(path, { quiet: true }),
       saveAfterMs: () => (autosave ? AUTOSAVE_MS : null),
@@ -238,7 +245,7 @@
     project = next;
     open = null;
     preview.show(null);
-    problem = '';
+    status = '';
     showsFiles = true;
     settings.set(KEYS.folder, picked);
     settings.set(KEYS.recent, withRecent(recent, picked));
@@ -252,7 +259,7 @@
         if (mine === opened) unwatch = stop;
         else stop();
       })
-      .catch((error) => (problem = `${nameOf(picked)} isn't watched: ${errorText(error)}`));
+      .catch((error) => (status = `${nameOf(picked)} isn't watched: ${errorText(error)}`));
     // What a server says once another took its place (a folder opened since) isn't the window's
     const ours = () => server === started;
     const started = platform.server(
@@ -274,7 +281,7 @@
     try {
       await started.start();
     } catch (error) {
-      if (mine === opened) problem = `kupcad didn't start: ${errorText(error)}`;
+      if (mine === opened) status = `kupcad didn't start: ${errorText(error)}`;
     }
     if (mine !== opened) return;
     const first = next.entries.find((entry) => entry.kind === 'script');
@@ -291,7 +298,7 @@
     if (mine !== opened || !current) return;
     const dropped = await current.scripts.check();
     if (mine !== opened || !open || !dropped.includes(open.path)) return;
-    problem = `${open.name} was removed from the disk.`;
+    status = `${open.name} was removed from the disk.`;
     closeScript();
   }
 
@@ -303,7 +310,7 @@
     try {
       await current.scripts.read(entry.path);
     } catch (error) {
-      if (mine === opening) problem = `${entry.name} wasn't read: ${errorText(error)}`;
+      if (mine === opening) status = `${entry.name} wasn't read: ${errorText(error)}`;
       return;
     }
     if (mine !== opening || current !== project) return;
@@ -355,8 +362,30 @@
       const question = `${nameOf(path)} changed on disk since it was opened. Save yours over it?`;
       if (await platform.confirm(question)) await current.scripts.save(path, { overwrite: true });
     } catch (error) {
-      problem = `${nameOf(path)} wasn't saved: ${errorText(error)}`;
+      status = `${nameOf(path)} wasn't saved: ${errorText(error)}`;
     }
+  }
+
+  /**
+   * Whether the script at `path` is on the disk as the editor has it, for a build, which reads
+   * the disk: one with changes is saved once the person says so (VS Code asks so too); false when
+   * it isn't.
+   * @param {string} path
+   */
+  async function savedForBuild(path) {
+    const current = project;
+    if (!current?.scripts.unsaved.has(path)) return true;
+    const question = `${nameOf(path)} has changes not saved, and kupcad builds the file: save it first?`;
+    if (!(await platform.confirm(question))) return false;
+    await saveScript(path);
+    return !current.scripts.unsaved.has(path);
+  }
+
+  /** Stops the export under way. */
+  function cancelExport() {
+    preview
+      .cancelExport()
+      .catch((error) => (status = `The export wasn't stopped: ${errorText(error)}`));
   }
 
   /**
@@ -496,7 +525,7 @@
       },
       { remove: `Move to ${TRASH}` },
     );
-    platform.popupMenu(menu).catch((error) => (problem = errorText(error)));
+    platform.popupMenu(menu).catch((error) => (status = errorText(error)));
   }
 
   /** Shows the files or hides them; over the settings, shows them as it closes the settings. */
@@ -550,7 +579,7 @@
       try {
         update = await platform.checkUpdate();
       } catch (error) {
-        if (!quiet) problem = `Updates weren't checked: ${errorText(error)}`;
+        if (!quiet) status = `Updates weren't checked: ${errorText(error)}`;
         return;
       }
       if (!update) {
@@ -570,7 +599,7 @@
       await update
         .install()
         .catch(
-          (error) => (problem = `KupCAD ${update.version} wasn't installed: ${errorText(error)}`),
+          (error) => (status = `KupCAD ${update.version} wasn't installed: ${errorText(error)}`),
         );
     } finally {
       checkingUpdates = false;
@@ -586,7 +615,7 @@
     themed = true;
     platform
       .setTheme(wanted)
-      .catch((error) => (problem = `The theme wasn't set: ${errorText(error)}`));
+      .catch((error) => (status = `The theme wasn't set: ${errorText(error)}`));
   });
 
   /** Whether the window was zoomed: until it is, it is drawn at its own size. */
@@ -598,7 +627,7 @@
     zoomed = true;
     platform
       .setZoom(wanted)
-      .catch((error) => (problem = `The zoom wasn't set: ${errorText(error)}`));
+      .catch((error) => (status = `The zoom wasn't set: ${errorText(error)}`));
   });
 
   /** @type {import('./menu.js').MenuActions} */
@@ -629,9 +658,7 @@
       },
       menuActions,
     );
-    platform
-      .setMenu(menus)
-      .catch((error) => (problem = `The menu wasn't set: ${errorText(error)}`));
+    platform.setMenu(menus).catch((error) => (status = `The menu wasn't set: ${errorText(error)}`));
   });
 
   /** @param {KeyboardEvent} event */
@@ -663,7 +690,7 @@
         const chosen = named ?? (typeof last === 'string' ? last : null);
         if (chosen) await openFolder(chosen);
       })
-      .catch((error) => (problem = errorText(error)));
+      .catch((error) => (status = errorText(error)));
     if (checkAtStart) void checkUpdates(true);
     return () => {
       opened++;
@@ -733,8 +760,17 @@
           </button>
         {/if}
         <span class="status" role="status">
-          {#if problem}{problem}{:else if !running}Starting kupcad…{/if}
+          {#if exporting}
+            Exporting {exporting}…
+          {:else if status}
+            {status}
+          {:else if !running}
+            Starting kupcad…
+          {/if}
         </span>
+        {#if exporting}
+          <button type="button" class="kc-control" onclick={cancelExport}>Cancel</button>
+        {/if}
       </header>
     {/if}
     <div class="body" inert={settingsOpen}>
@@ -817,7 +853,7 @@
           <button type="button" class="kc-control kc-primary" onclick={() => openFolder()}>
             Open folder…
           </button>
-          {#if problem}<p class="problem" role="status">{problem}</p>{/if}
+          {#if status}<p class="problem" role="status">{status}</p>{/if}
           {#if recent.length > 0}
             <section class="recent" aria-labelledby="recent-title">
               <h2 id="recent-title">Recent</h2>

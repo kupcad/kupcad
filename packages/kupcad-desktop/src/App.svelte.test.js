@@ -106,7 +106,11 @@ function windowOn({
       for (const kept of disk.keys()) if (kept.startsWith(path)) disk.delete(kept);
       for (const kept of folders) if (kept.startsWith(path)) folders.delete(kept);
     }),
-    save: vi.fn(async () => null),
+    save: vi.fn(
+      async (
+        /** @type {{ defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }} */ _options,
+      ) => /** @type {string | null} */ (null),
+    ),
     tell: vi.fn(async () => {}),
     confirm: vi.fn(async (/** @type {string} */ _question) => false),
     ask: vi.fn(
@@ -118,7 +122,16 @@ function windowOn({
     writeFile: vi.fn(async (/** @type {string} */ path, /** @type {Uint8Array} */ bytes) => {
       disk.set(path, new TextDecoder().decode(bytes));
     }),
-    exportModel: vi.fn(async () => {}),
+    exportModel: vi.fn(
+      async (
+        /** @type {string} */ _script,
+        /** @type {string} */ _output,
+        /** @type {string} */ _format,
+        /** @type {[string, string][]} */ _params,
+        /** @type {number} */ _memoryLimit,
+      ) => {},
+    ),
+    cancelExport: vi.fn(async () => {}),
     server: (
       /** @type {string} */ rootUri,
       /** @type {any} */ on,
@@ -455,6 +468,65 @@ describe('the window', () => {
   });
 });
 
+/** Chooses `format` in the preview's Export menu. @param {string} format */
+const exportAs = (format) =>
+  fireEvent.change(screen.getByRole('combobox', { name: 'Export' }), {
+    target: { value: format },
+  });
+/** What the window's bar says. */
+const bar = () => document.querySelector('.bar [role="status"]')?.textContent?.trim();
+
+describe('an export', () => {
+  it('has a script with changes saved first, once the person says so: kupcad builds the file', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    view.dispatch({ changes: { from: 5, to: 6, insert: '3' } });
+    await tick();
+    await exportAs('stl');
+    await vi.waitFor(() =>
+      expect(window.platform.confirm).toHaveBeenCalledWith(
+        'lid.kup has changes not saved, and kupcad builds the file: save it first?',
+      ),
+    );
+    // Not saved: not built
+    expect(window.platform.save).not.toHaveBeenCalled();
+    expect(window.disk.get('/w/parts/lid.kup')).toBe('cube(2)\n');
+
+    window.platform.confirm.mockResolvedValue(true);
+    window.platform.save.mockResolvedValue('/w/parts/lid.stl');
+    await exportAs('stl');
+    await vi.waitFor(() => expect(window.platform.exportModel).toHaveBeenCalled());
+    expect(window.disk.get('/w/parts/lid.kup')).toBe('cube(3)\n');
+    // Offered beside the script
+    expect(window.platform.save.mock.calls[0][0].defaultPath).toBe('/w/parts/lid.stl');
+    expect(window.platform.exportModel.mock.calls[0].slice(0, 3)).toEqual([
+      '/w/parts/lid.kup',
+      '/w/parts/lid.stl',
+      'stl',
+    ]);
+    await vi.waitFor(() => expect(bar()).toBe('Exported lid.stl.'));
+  });
+
+  it('says it runs, with a Cancel, which stops it and says nothing more', async () => {
+    const window = windowOn();
+    await openFolder();
+    /** Fails the build under way, as the native side does when it is stopped. @type {((error: unknown) => void)[]} */
+    const builds = [];
+    window.platform.exportModel.mockImplementation(
+      () => new Promise((_resolve, reject) => builds.push(reject)),
+    );
+    window.platform.cancelExport.mockImplementation(async () => builds[0]('kupcad was stopped'));
+    window.platform.save.mockResolvedValue('/w/parts/lid.3mf');
+    await exportAs('3mf');
+    await vi.waitFor(() => expect(bar()).toBe('Exporting lid.3mf…'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await vi.waitFor(() => expect(bar()).toBe(''));
+    expect(window.platform.cancelExport).toHaveBeenCalledOnce();
+    expect(window.platform.tell).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+});
+
 describe('the strip', () => {
   it('shows or hides the files, the script kept, and shows them for a folder opened', async () => {
     windowOn();
@@ -636,7 +708,7 @@ describe('the settings', () => {
         [64, false],
       ]),
     );
-    expect(document.querySelector('.bar [role="status"]')?.textContent?.trim()).toBe('');
+    expect(bar()).toBe('');
   });
 
   it("take a kept theme they don't know as the system's", async () => {

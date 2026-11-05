@@ -5,71 +5,21 @@
 //! (its recents), each let into the file system's scope for this run alone: the scope used to
 //! be kept across launches, so it held every folder ever opened; `move_to_trash`, a file or
 //! folder of the one opened, to the system's trash; and `export_model`, which builds a script
-//! with the bundled kupcad (`kupcad build`). The page runs the binary through these alone, its
-//! arguments checked here, and reads and writes only what the user chose.
+//! with the bundled kupcad (`kupcad build`, export.rs). The page runs the binary through these
+//! alone, its arguments checked here, and reads and writes only what the user chose.
 
+mod export;
 mod server;
 
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_fs::FsExt;
-use tauri_plugin_shell::ShellExt;
 
 /// The bundled kupcad, as `bundle.externalBin` names it (`binaries/kupcad-<target triple>`).
 pub(crate) const SIDECAR: &str = "kupcad";
-/// The formats `kupcad build -f` writes (core/src/exporters/format.zig).
-const FORMATS: [&str; 8] = ["stl", "3mf", "step", "glb", "gltf", "obj", "svg", "dxf"];
 /// The largest memory limit the setting may be, in GB: a petabyte (@kupcad/protocol's).
 const MAX_MEMORY_LIMIT_GB: u32 = 1024 * 1024;
-
-/// Builds the script at `script` into `output`, in `format`, each parameter given its value
-/// (`-p name=value`), the script holding no more than `memory_limit` GB (the app's setting), in
-/// the script's folder, where its imports are. Both paths must be ones the user chose: the
-/// script in the folder they opened, the output where they saved it. A failed build's error is
-/// what kupcad said.
-#[tauri::command]
-async fn export_model(
-    app: AppHandle,
-    script: String,
-    output: String,
-    format: String,
-    params: Vec<(String, String)>,
-    memory_limit: u32,
-) -> Result<(), String> {
-    // By their real paths: the scope matches a path as written, and `picked/../elsewhere`
-    // matched the folder picked
-    let script = existing(&script)?;
-    let output = to_write(&output)?;
-    let scope = app.fs_scope();
-    for path in [&script, &output] {
-        if !scope.is_allowed(path) {
-            return Err(format!(
-                "{} isn't in the folder opened, nor where a model was saved",
-                path.display()
-            ));
-        }
-    }
-    let (script, output) = (script.to_string_lossy(), output.to_string_lossy());
-    let args = build_args(&script, &output, &format, &params, memory_limit)?;
-    let folder = Path::new(script.as_ref())
-        .parent()
-        .ok_or("the script has no folder")?;
-    let built = app
-        .shell()
-        .sidecar(SIDECAR)
-        .map_err(|e| format!("the bundled kupcad wasn't found: {e}"))?
-        .args(args)
-        .current_dir(folder)
-        .output()
-        .await
-        .map_err(|e| format!("kupcad didn't start: {e}"))?;
-    if built.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&built.stderr).into_owned())
-    }
-}
 
 /// The folder the app was started with (`kupcad-desktop ~/parts`; `pnpm dev:desktop` gives it the
 /// examples), by its real path, in the file system's scope with what is under it, as a folder
@@ -116,15 +66,13 @@ fn real_folder(folder: &Path) -> Result<PathBuf, String> {
 /// Moves the file or folder at `path`, in the folder the user opened, to the system's trash,
 /// from where they may take it back. A symlink goes itself, not where it leads.
 #[tauri::command]
-fn move_to_trash(app: AppHandle, path: String) -> Result<(), String> {
+fn move_to_trash<R: Runtime>(app: AppHandle<R>, path: String) -> Result<(), String> {
     // The entry's own real path: its folder's, then its name
     let path = to_write(&path)?;
     if std::fs::symlink_metadata(&path).is_err() {
         return Err(format!("{} isn't there", path.display()));
     }
-    if !app.fs_scope().is_allowed(&path) {
-        return Err(format!("{} isn't in the folder opened", path.display()));
-    }
+    allowed(&app, &path, "isn't in the folder opened")?;
     #[allow(unused_mut)]
     let mut trash = trash::TrashContext::default();
     // Not by asking the Finder, the crate's default on macOS: that asks the person to let the
@@ -137,6 +85,16 @@ fn move_to_trash(app: AppHandle, path: String) -> Result<(), String> {
     trash
         .delete(&path)
         .map_err(|e| format!("{} wasn't moved to the trash: {e}", path.display()))
+}
+
+/// That `path` is in the file system's scope (the folder opened, a file saved), or that it
+/// `isnt`.
+fn allowed<R: Runtime>(app: &AppHandle<R>, path: &Path, isnt: &str) -> Result<(), String> {
+    if app.fs_scope().is_allowed(path) {
+        Ok(())
+    } else {
+        Err(format!("{} {isnt}", path.display()))
+    }
 }
 
 /// The real path of the file at `path`, which is there: no `..`, no symlink.
@@ -155,35 +113,6 @@ fn to_write(path: &str) -> Result<PathBuf, String> {
         .filter(|folder| !folder.as_os_str().is_empty())
         .ok_or_else(|| format!("{path} has no folder"))?;
     Ok(existing(&folder.to_string_lossy())?.join(name))
-}
-
-/// `kupcad build`'s arguments for an export, or why they can't be: a format it doesn't write,
-/// a parameter whose name would be read as something else, or a memory limit out of range.
-fn build_args(
-    script: &str,
-    output: &str,
-    format: &str,
-    params: &[(String, String)],
-    memory_limit: u32,
-) -> Result<Vec<String>, String> {
-    if !FORMATS.contains(&format) {
-        return Err(format!("kupcad writes no format '{format}'"));
-    }
-    let mut args: Vec<String> = ["build", script, "-o", output, "-f", format]
-        .iter()
-        .map(|arg| arg.to_string())
-        .collect();
-    for (name, value) in params {
-        if name.is_empty() || name.starts_with('-') || name.contains('=') {
-            return Err(format!("'{name}' is no parameter's name"));
-        }
-        args.push("-p".to_string());
-        args.push(format!("{name}={value}"));
-    }
-    args.extend(memory_limit_arg(memory_limit)?);
-    // A failure told as one JSON line last (the page reads it: @kupcad/protocol's buildFailure)
-    args.extend(["--errors".to_string(), "json".to_string()]);
-    Ok(args)
 }
 
 /// `--memory-limit <n>GB` for a limit of `gigabytes`, from 1 to a petabyte, or why it isn't one:
@@ -208,8 +137,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(server::Server::default())
+        .manage(export::Export::default())
         .invoke_handler(tauri::generate_handler![
-            export_model,
+            export::export_model,
+            export::cancel_export,
             launch_folder,
             open_folder,
             move_to_trash,
@@ -220,25 +151,37 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("the app failed to start")
         .run(|app, event| {
-            // The language server goes with the app
+            // The language server and an export go with the app
             if let RunEvent::Exit = event {
                 app.state::<server::Server>().stop();
+                app.state::<export::Export>().stop();
             }
         });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_args, existing, memory_limit_arg, real_folder, to_write};
+    use super::{existing, memory_limit_arg, move_to_trash, real_folder, to_write};
     use std::path::PathBuf;
+    use tauri::test::{MockRuntime, mock_builder, mock_context, noop_assets};
+    use tauri_plugin_fs::FsExt;
 
-    /// A folder of the test's own, made afresh.
-    fn folder(name: &str) -> PathBuf {
+    /// A folder of the test's own, made afresh, with `picked/sub` in it.
+    pub(crate) fn folder(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("kupcad-desktop-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("picked/sub")).unwrap();
         std::fs::canonicalize(dir).unwrap()
+    }
+
+    /// The app, on no window, with the plugins the commands use: its file system's scope empty.
+    pub(crate) fn mock_app() -> tauri::App<MockRuntime> {
+        mock_builder()
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_shell::init())
+            .build(mock_context(noop_assets()))
+            .unwrap()
     }
 
     #[test]
@@ -297,47 +240,32 @@ mod tests {
     }
 
     #[test]
-    fn an_export_is_kupcad_build_with_its_format_and_values() {
-        let params = vec![("width".to_string(), "40".to_string())];
-        let args = build_args("/w/part.kup", "/out/part.3mf", "3mf", &params, 8).unwrap();
-        assert_eq!(
-            args,
-            [
-                "build",
-                "/w/part.kup",
-                "-o",
-                "/out/part.3mf",
-                "-f",
-                "3mf",
-                "-p",
-                "width=40",
-                "--memory-limit",
-                "8GB",
-                "--errors",
-                "json"
-            ]
-        );
-    }
-
-    #[test]
     fn a_memory_limit_is_a_whole_number_of_gb_from_one_to_a_petabyte() {
         assert_eq!(memory_limit_arg(1).unwrap(), ["--memory-limit", "1GB"]);
         assert_eq!(memory_limit_arg(1024 * 1024).unwrap()[1], "1048576GB");
         for gigabytes in [0, 1024 * 1024 + 1, u32::MAX] {
             assert!(memory_limit_arg(gigabytes).is_err(), "{gigabytes}");
-            assert!(build_args("/w/a.kup", "/o/a.stl", "stl", &[], gigabytes).is_err());
         }
     }
 
     #[test]
-    fn a_format_kupcad_doesnt_write_or_a_name_read_as_an_option_is_refused() {
-        assert!(build_args("/w/a.kup", "/o/a.exe", "exe", &[], 8).is_err());
-        for name in ["", "-o", "a=b"] {
-            let params = vec![(name.to_string(), "1".to_string())];
-            assert!(
-                build_args("/w/a.kup", "/o/a.stl", "stl", &params, 8).is_err(),
-                "{name}"
-            );
-        }
+    fn only_what_is_in_the_folder_opened_is_moved_to_the_trash() {
+        let dir = folder("trash-scope");
+        std::fs::write(dir.join("elsewhere.kup"), "cube(1)").unwrap();
+        let app = mock_app();
+        app.fs_scope()
+            .allow_directory(dir.join("picked"), true)
+            .unwrap();
+        let trash = |path: PathBuf| {
+            move_to_trash(app.handle().clone(), path.to_string_lossy().into_owned()).unwrap_err()
+        };
+        assert!(trash(dir.join("elsewhere.kup")).ends_with("isn't in the folder opened"));
+        assert!(
+            trash(dir.join("picked/sub/../../elsewhere.kup"))
+                .ends_with("isn't in the folder opened")
+        );
+        assert!(trash(dir.join("picked/gone.kup")).ends_with("isn't there"));
+        assert!(dir.join("elsewhere.kup").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

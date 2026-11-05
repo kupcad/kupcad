@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildFailure, whyBuildFailed } from './build-output.js';
+import { buildFailure, failureText, whyBuildFailed } from './build-output.js';
 
 /** What `kupcad build bad.kup --errors json` wrote, captured (scripts/capture-fixtures.js). */
 const FAILED = readFileSync(new URL('./fixtures/build-failed.txt', import.meta.url), 'utf8');
@@ -107,5 +107,15 @@ describe('whyBuildFailed', () => {
     expect(whyBuildFailed(`Build failed: ${'x'.repeat(long)}\n`)).toBe(
       `Build failed: ${'x'.repeat(long)}`,
     );
+  });
+});
+
+describe('failureText', () => {
+  it("says the JSON line's message, else the words, else what the host knows", () => {
+    expect(failureText(FAILED, 'code 1')).toBe("NameError: Undefined variable 'undefined_var'");
+    expect(failureText('error(vm): RuntimeError: too thin\n', 'code 1')).toBe(
+      'RuntimeError: too thin',
+    );
+    expect(failureText('info(x): a log\n', 'kupcad ended (code 1)')).toBe('kupcad ended (code 1)');
   });
 });

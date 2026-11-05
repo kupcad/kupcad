@@ -7,7 +7,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
-use tauri::{AppHandle, State, ipc::Channel};
+use tauri::{AppHandle, Runtime, State, ipc::Channel};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
@@ -29,6 +29,14 @@ impl Server {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Holds `child` as the server, the one before it, if one runs, stopped.
+    fn hold(&self, child: CommandChild) {
+        let before = self.held().replace(child);
+        if let Some(before) = before {
+            let _ = before.kill();
+        }
     }
 
     /// Stops the server, if one runs.
@@ -71,8 +79,8 @@ fn server_args(origin: &str, memory_limit: u32) -> Result<Vec<String>, String> {
 /// Starts the server for the page at `origin`, its previews holding up to `memory_limit` GB (the
 /// app's setting), stopping the one before; what it says goes to `on_event`.
 #[tauri::command]
-pub fn start_server(
-    app: AppHandle,
+pub fn start_server<R: Runtime>(
+    app: AppHandle<R>,
     server: State<'_, Server>,
     origin: String,
     memory_limit: u32,
@@ -87,10 +95,7 @@ pub fn start_server(
         .set_raw_out(true)
         .spawn()
         .map_err(|e| format!("kupcad lsp didn't start: {e}"))?;
-    let before = server.held().replace(child);
-    if let Some(before) = before {
-        let _ = before.kill();
-    }
+    server.hold(child);
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
             let told = match event {
@@ -128,7 +133,7 @@ pub fn stop_server(server: State<'_, Server>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEV_ORIGIN, server_args};
+    use super::{DEV_ORIGIN, Server, server_args};
 
     #[test]
     fn the_server_admits_the_pages_own_origin_and_no_other() {
@@ -155,5 +160,32 @@ mod tests {
     #[test]
     fn vites_origin_is_a_debug_builds_alone() {
         assert_eq!(server_args(DEV_ORIGIN, 8).is_ok(), cfg!(debug_assertions));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_started_replaces_the_one_before_which_is_stopped() {
+        use crate::tests::mock_app;
+        use tauri::async_runtime::block_on;
+        use tauri_plugin_shell::ShellExt;
+        use tauri_plugin_shell::process::CommandEvent;
+
+        let app = mock_app();
+        let sleeping = || app.shell().command("sleep").args(["30"]).spawn().unwrap();
+        let server = Server::default();
+        let (mut first_events, first) = sleeping();
+        let (mut second_events, second) = sleeping();
+        server.hold(first);
+        server.hold(second);
+        assert!(matches!(
+            block_on(first_events.recv()),
+            Some(CommandEvent::Terminated(_))
+        ));
+        assert!(second_events.try_recv().is_err());
+        server.stop();
+        assert!(matches!(
+            block_on(second_events.recv()),
+            Some(CommandEvent::Terminated(_))
+        ));
     }
 }

@@ -183,13 +183,17 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   services, so what the panel asks is done in the page, as the VS Code extension's panel does it.
   The panel's values go to the server (`kupcad.setParams`) and are kept for the script, given
   again to a server started again (a new memory limit, a crash) before it runs the script; an export, in the format
-  the panel's menu chose, asks where to save it (a dialog of that format alone: macOS's save
-  panel offers no choice among file types, so one of them all named the file `.stl` whatever
-  the model) and runs `kupcad build` with them; a screenshot
-  is saved where the person says; a problem's place is shown in the editor. The server's log
+  the panel's menu chose, has the script's changes saved first, once the person says so (the
+  build reads the disk, the preview the editor), asks where to save it, beside the script (a
+  dialog of that format alone: macOS's save panel offers no choice among file types, so one of
+  them all named the file `.stl` whatever the model), and runs `kupcad build` with them: in the
+  format the name says, else the one chosen (`@kupcad/protocol`'s `exportFormatFor`, as the
+  VS Code extension does). One runs at a time; the bar says so, with a Cancel, and says when it
+  is done. A screenshot is saved where the person says, beside the script too; a problem's
+  place is shown in the editor. The server's log
   goes to the panel's console, under the model, with each run (what it printed, its warnings
   and its error). Presets aren't offered yet.
-* **The native side** (`src-tauri/src/lib.rs`): the plugins (dialogs, the file system, the
+* **The native side** (`src-tauri/src/lib.rs`, `export.rs`, `server.rs`): the plugins (dialogs, the file system, the
   settings' store; the window's size and place, window-state) and the app's commands:
   `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder named on the
   command line, put in the file system's scope as a picked one is), `open_folder` (a folder
@@ -199,7 +203,10 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   it leads to; on macOS by NSFileManager, which asks the person nothing, not by the Finder) and
   `export_model`, which builds with the bundled `kupcad` only a script in the folder opened into
   a file the person saved, in a format `kupcad` writes, its parameters' names checked, under the
-  memory limit set (a whole number of GB from 1, else refused).
+  memory limit set (a whole number of GB from 1, else refused). The build is held while it runs,
+  one at a time, as the server is: `cancel_export` stops it, and so does the app as it exits;
+  of its log the last 16 MB are kept (where its failure's JSON line is), however much the script
+  printed.
 
 ## What the page may do
 
@@ -224,13 +231,16 @@ that finds the disk changed, the disk's change taken or held for the person, a s
 a save's own write not taken for another's, renamed and dropped with what they hold); the menus
 (the bar's items, what they do and when they are enabled; a row's); the zoom, font size and
 recent folders as the settings keep them; the preview's host (what the panel is told, an
-export with its values and its formats, a screenshot, a refused message); the language
+export with its values and its formats, saved first, one at a time, cancelled, a screenshot, a
+refused message); the language
 server's lifecycle on a stand-in server (its handshake through the framing, the viewport's URL,
 the commands, restarts, one under a new memory limit, a server that ends before it is up or
 doesn't start again, starts, restarts and stops asked while another runs); the
 settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
 and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
-question on closing, the tree's folders closed and opened, none of it kept, the folder listed
+question on closing, an export saving the script first once asked, said in the bar as it runs
+and once done, and cancelled from it, a restart under a new memory limit asked while the
+server starts, the tree's folders closed and opened, none of it kept, the folder listed
 again as it changes and no longer once another is opened; a script the disk changed followed,
 or held with the person's changes for them to choose, a save asking before it writes over the
 disk's, a script removed closed or saved back; each script's undo history kept; scripts and
@@ -245,5 +255,9 @@ the console followed as the settings are set elsewhere, and the files' width dra
 the drag is done. `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
 model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
-their real paths (no `..`, no symlink, which the file system's scope matched as written), and
-that a release build doesn't admit Vite's origin.
+their real paths (no `..`, no symlink, which the file system's scope matched as written), that
+an export and the trash take only what is in the scope (on Tauri's runtime of no window,
+`tauri::test`), an export by the bundled `kupcad` (the copy `tauri-build` puts beside the tests)
+and why one failed, one export at a time and stopped when asked, a server started replacing and
+stopping the one before, the end of a build's log kept, and that a release build doesn't admit
+Vite's origin.

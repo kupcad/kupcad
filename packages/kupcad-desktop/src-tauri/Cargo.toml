@@ -29,6 +29,10 @@ serde = { version = "1", features = ["derive"] }
 # generate_context! embeds tauri.conf.json's `plugins` (the updater's) as JSON
 serde_json = "1"
 
+[dev-dependencies]
+# The app on a runtime of no window (tauri::test), for the commands' tests
+tauri = { version = "2", features = ["test"] }
+
 # A small app: https://tauri.app/concept/size/
 [profile.release]
 codegen-units = 1

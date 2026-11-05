@@ -47,7 +47,9 @@ import { LanguageServer } from './server.js';
  *   closed), the yes the default
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
  * @property {(script: string, output: string, format: ExportFormat, params: [string, string][], memoryLimit: number) => Promise<void>} exportModel
- *   builds with the bundled kupcad, its script holding up to `memoryLimit` GB
+ *   builds with the bundled kupcad, its script holding up to `memoryLimit` GB, one build at a
+ *   time; rejects with what kupcad said, and when the build is stopped
+ * @property {() => Promise<void>} cancelExport stops the build under way, if one is
  * @property {(rootUri: string, on: ServerEvents, memoryLimit: () => number) => Pick<LanguageServer, 'client' | 'start' | 'restart' | 'stop' | 'preview' | 'setParams' | 'filesChanged'>} server
  * @property {(theme: Theme) => Promise<void>} setTheme the window's appearance, which the page's
  *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
@@ -142,6 +144,7 @@ export const tauri = {
   writeFile: (path, bytes) => writeFile(path, bytes),
   exportModel: (script, output, format, params, memoryLimit) =>
     invoke('export_model', { script, output, format, params, memoryLimit }),
+  cancelExport: () => invoke('cancel_export'),
   server: (rootUri, on, memoryLimit) =>
     new LanguageServer({ rootUri, origin: location.origin, on, memoryLimit }),
   setTheme: (theme) => getCurrentWindow().setTheme(theme === 'system' ? null : theme),

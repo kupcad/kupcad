@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { EXPORT_FORMATS, exportFormatsFor, formatOf } from './index.js';
+import { EXPORT_FORMATS, exportFormatFor, exportFormatsFor, formatOf } from './index.js';
 
 it('offers each format the core writes, once', () => {
   expect(EXPORT_FORMATS.map((f) => f.format).toSorted()).toEqual([
@@ -41,4 +41,12 @@ it('reads an export file name as the format it is written in, by its extension i
   ).toEqual(['stl', 'step', 'step', '3mf', null, null, null]);
   // Each format names files by its first extension, which is its own name
   for (const choice of EXPORT_FORMATS) expect(choice.extensions[0]).toBe(choice.format);
+});
+
+it('writes an export in the format its name says, else in the one the dialog was for', () => {
+  expect(exportFormatFor('/out/part.stp', 'step')).toBe('step');
+  // A name of another format, typed in the STEP dialog
+  expect(exportFormatFor('/out/part.stl', 'step')).toBe('stl');
+  expect(exportFormatFor('/out/part', '3mf')).toBe('3mf');
+  expect(exportFormatFor('/out/part.model', 'glb')).toBe('glb');
 });

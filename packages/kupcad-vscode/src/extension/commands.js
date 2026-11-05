@@ -4,7 +4,7 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { EXPORT_FORMATS, errorText, formatOf } from '@kupcad/protocol';
+import { EXPORT_FORMATS, errorText, exportFormatFor } from '@kupcad/protocol';
 import { buildArguments, runBuild } from './export.js';
 import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptStem } from './scripts.js';
 
@@ -69,9 +69,8 @@ async function exportScript(options, given, format) {
     saveLabel: 'Export',
   });
   if (!target) return;
-  // The name typed may end in another format's extension (`.stp`, `.stl` in the STEP dialog),
-  // which the build writes rather than refusing the name as at odds with the format chosen
-  const written = formatOf(target.fsPath) ?? choice.format;
+  // The name typed may end in another format's extension (`.stp`, `.stl` in the STEP dialog)
+  const written = exportFormatFor(target.fsPath, choice.format);
   const built = await build(options, {
     kupcad,
     document,

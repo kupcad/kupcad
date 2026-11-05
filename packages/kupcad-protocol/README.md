@@ -79,12 +79,16 @@ client.sendRequest('workspace/executeCommand', {
 * `extensionOf(name)`, `stemOf(name)` and `isScriptName(name)`: a file name's (or path's) extension, lower
   case, its stem, and whether it is a script's (`.kup` in any case), split one way for every host;
   `formatOf(path)`, the export format a file name is written in, by its extension (`EXPORT_FORMATS`
-  lists each format's `extensions`).
+  lists each format's `extensions`), and `exportFormatFor(path, chosen)`, the format a file
+  saved from a dialog for `chosen` is written in: its name's, else the chosen one, a rule for
+  every host.
 * `buildFailure(stderr)`: why a `kupcad build` run with `--errors json` failed, from the JSON line
   it writes last (its kind, message, and the file, line and column when known), for a host that
   runs it to tell the person; null without one. `whyBuildFailed(stderr)` reads the words instead
   (the run's error, a syntax error at its place, the CLI's refusal, its summary; not its log nor
   the script's own output), for a failure that said no JSON; null when it said nothing that does.
+  `failureText(stderr, fallback)` is what a host tells the person: the first of them that says
+  something, else `fallback`.
 * `errorText(error)`: what an error says, for a person: an Error's message, anything else
   thrown as text. Every host's messages and logs say it the same way.
 * `characterAt(text, column)`: where a column the core names (1-based, in UTF-8 bytes: a

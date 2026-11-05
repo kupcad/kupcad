@@ -87,6 +87,18 @@ export function formatOf(path) {
 }
 
 /**
+ * The format a file saved at `path` is written in, the save dialog having been `chosen`'s: the
+ * one its name's extension says, else the chosen one (a name without an extension, or with one
+ * of no format). A name typed as `.stp` or `.stl` in the STEP dialog is written as it says, not
+ * refused for differing from the dialog's. The hosts each had a rule: the desktop app refused a
+ * name of no format, the VS Code extension built the chosen one.
+ * @param {string} path
+ * @param {ExportFormat} chosen
+ * @returns {ExportFormat}
+ */
+export const exportFormatFor = (path, chosen) => formatOf(path) ?? chosen;
+
+/**
  * The formats a model of `kind` can be written in: a 2D model's drawings alone, any for a 3D
  * one, and any while there is none to go by (a run that failed says why itself).
  * @param {Kind} kind

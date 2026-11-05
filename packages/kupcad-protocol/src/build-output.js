@@ -132,3 +132,14 @@ export function whyBuildFailed(stderr) {
   }
   return null;
 }
+
+/**
+ * Why a build failed, for the person: what its JSON line says (`buildFailure`), else its words
+ * (`whyBuildFailed`), else `fallback` (what the host knows: how the process ended). Each host
+ * read it so itself.
+ * @param {string} stderr
+ * @param {string} fallback
+ * @returns {string}
+ */
+export const failureText = (stderr, fallback) =>
+  buildFailure(stderr)?.message ?? whyBuildFailed(stderr) ?? fallback;

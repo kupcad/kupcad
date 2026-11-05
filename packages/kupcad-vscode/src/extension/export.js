@@ -2,7 +2,7 @@
 // so what is written is what the CLI builds. Free of the `vscode` import.
 
 import { execFile } from 'node:child_process';
-import { buildFailure, memoryLimitOptions, paramOptions, whyBuildFailed } from '@kupcad/protocol';
+import { failureText, memoryLimitOptions, paramOptions } from '@kupcad/protocol';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
 /** What a build may say, at most: its log and why it failed. */
@@ -51,7 +51,7 @@ export function buildArguments(script, output, format, values, memoryLimit) {
  * @param {string[]} args `buildArguments`'
  * @param {{ cwd: string, signal?: AbortSignal }} options
  * @returns {Promise<void>}
- * @throws {BuildError} saying what kupcad said (`@kupcad/protocol`'s `buildFailure`, else its words)
+ * @throws {BuildError} saying what kupcad said (`@kupcad/protocol`'s `failureText`)
  */
 export function runBuild(kupcad, args, { cwd, signal }) {
   return new Promise((resolve, reject) => {
@@ -62,9 +62,7 @@ export function runBuild(kupcad, args, { cwd, signal }) {
       (error, _stdout, stderr) => {
         if (!error) return resolve();
         if (error.name === 'AbortError') return reject(error);
-        reject(
-          new BuildError(buildFailure(stderr)?.message ?? whyBuildFailed(stderr) ?? error.message),
-        );
+        reject(new BuildError(failureText(stderr, error.message)));
       },
     );
   });

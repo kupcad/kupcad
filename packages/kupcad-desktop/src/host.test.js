@@ -16,6 +16,9 @@ function hostOn({ saveAs = /** @type {string | null} */ ('/out/part.3mf') } = {}
     },
     save: vi.fn(async (/** @type {SaveOptions} */ _options) => saveAs),
     tell: vi.fn(async (/** @type {string} */ _text) => {}),
+    beforeExport: vi.fn(async (/** @type {string} */ _path) => true),
+    cancelExport: vi.fn(async () => {}),
+    exporting: vi.fn((/** @type {string | null} */ _name) => {}),
     exportModel: vi.fn(
       async (
         /** @type {string} */ _script,
@@ -112,7 +115,8 @@ describe('the host', () => {
     // choice on macOS, and named the file .stl)
     const asked = services.save.mock.calls[0][0];
     expect(asked.title).toBe('Export part.kup as 3MF');
-    expect(asked.defaultPath).toBe('part.3mf');
+    // Beside the script: a bare name opened the dialog wherever it was last
+    expect(asked.defaultPath).toBe('/w/part.3mf');
     expect(asked.filters.map((/** @type {{ extensions: string[] }} */ f) => f.extensions)).toEqual([
       ['3mf'],
     ]);
@@ -129,6 +133,48 @@ describe('the host', () => {
       // The setting: the build holds the script to it
       8,
     );
+    // Saved first, and said while it runs and once it is done
+    expect(services.beforeExport).toHaveBeenCalledWith('/w/part.kup');
+    expect(services.exporting.mock.calls).toEqual([['part.3mf'], [null]]);
+    expect(services.log).toHaveBeenLastCalledWith('Exported part.3mf.');
+  });
+
+  it('builds nothing of a script left unsaved', async () => {
+    const { host, show, services } = hostOn();
+    services.beforeExport.mockResolvedValue(false);
+    show(PART);
+    host.post({ type: 'export', uri: PART.uri, format: 'stl' });
+    await settled();
+    expect(services.save).not.toHaveBeenCalled();
+    expect(services.exportModel).not.toHaveBeenCalled();
+  });
+
+  it('runs one export at a time, and says nothing of one cancelled', async () => {
+    const { host, show, services, cancelExport } = hostOn();
+    /** Fails the build under way, as the native side does when it is stopped. @type {((error: unknown) => void)[]} */
+    const builds = [];
+    services.exportModel.mockImplementation(
+      () => new Promise((_resolve, reject) => builds.push(reject)),
+    );
+    services.cancelExport.mockImplementation(async () => builds[0]('kupcad was stopped'));
+    show(PART);
+    host.post({ type: 'export', uri: PART.uri, format: '3mf' });
+    await settled();
+    expect(services.exporting).toHaveBeenLastCalledWith('part.3mf');
+    host.post({ type: 'export', uri: PART.uri, format: 'stl' });
+    await settled();
+    expect(services.log).toHaveBeenLastCalledWith(
+      'An export is under way: cancel it, or wait for it to be done.',
+    );
+    expect(services.exportModel).toHaveBeenCalledOnce();
+    await cancelExport();
+    await settled();
+    expect(services.cancelExport).toHaveBeenCalledOnce();
+    expect(services.exporting).toHaveBeenLastCalledWith(null);
+    expect(services.tell).not.toHaveBeenCalled();
+    // Nothing runs: nothing to stop
+    await cancelExport();
+    expect(services.cancelExport).toHaveBeenCalledOnce();
   });
 
   it('offers a STEP file as .step or .stp', async () => {
@@ -140,14 +186,21 @@ describe('the host', () => {
     expect(services.exportModel.mock.calls[0][2]).toBe('step');
   });
 
-  it("says why an export wasn't made: a name of no format, kupcad's error", async () => {
-    const odd = hostOn({ saveAs: '/out/part.exe' });
-    odd.show(PART);
-    odd.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
-    await settled();
-    expect(odd.services.exportModel).not.toHaveBeenCalled();
-    expect(odd.services.tell.mock.calls[0][0]).toMatch(/names no format kupcad writes: .*\.3mf/);
+  it('writes a name of another format in it, and one of no format in the format chosen', async () => {
+    // As the VS Code extension does: the desktop app refused a name of no format
+    for (const [saveAs, format] of [
+      ['/out/part.stl', 'stl'],
+      ['/out/part.model', '3mf'],
+    ]) {
+      const named = hostOn({ saveAs });
+      named.show(PART);
+      named.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
+      await settled();
+      expect(named.services.exportModel.mock.calls[0].slice(1, 3)).toEqual([saveAs, format]);
+    }
+  });
 
+  it("says why an export wasn't made: kupcad's error", async () => {
     const failing = hostOn();
     failing.services.exportModel.mockRejectedValue(
       'info(x): log\nerror(vm): RuntimeError: too thin\nBuild failed: error.RuntimeError\n',
@@ -182,6 +235,7 @@ describe('the host', () => {
     show(PART);
     host.post({ type: 'screenshot', png: btoa('PNG') });
     await settled();
+    expect(services.save.mock.calls[0][0].defaultPath).toBe('/w/part.png');
     const [path, bytes] = services.writeFile.mock.calls[0];
     expect(path).toBe('/out/part.png');
     expect([...bytes]).toEqual([...new TextEncoder().encode('PNG')]);
