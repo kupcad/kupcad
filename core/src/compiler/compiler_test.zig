@@ -1724,6 +1724,41 @@ test "Compiler: case with duplicate literal keys keeps first-match order" {
     try expectRunsTo("case \"b\" when \"a\", \"b\" then 1 when \"b\" then 2 else 3 end", 1);
 }
 
+test "Compiler: a `when` with several conditions compiles its body once" {
+    // Each condition got a copy of the body: six nested cases of four symbols each compiled
+    // 4096 copies of the innermost, some 1.7 MB of disassembly.
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(testing.allocator);
+    try source.appendSlice(testing.allocator, "x = :d\nr = 0\n");
+    const depth = 6;
+    for (0..depth) |_| try source.appendSlice(testing.allocator, "case x\nwhen :a, :b, :c, :d\n");
+    try source.appendSlice(testing.allocator, "r = 42\n");
+    for (0..depth) |_| try source.appendSlice(testing.allocator, "end\n");
+    try source.appendSlice(testing.allocator, "r\n");
+
+    var doc = try Document.parse(testing.allocator, source.items);
+    defer doc.deinit();
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    // Linear in the conditions: a few dozen bytes for each of the 24 tests
+    try testing.expect(out_chunk.code.items.len < 2000);
+
+    try expectRunsTo(source.items, 42);
+    // Each condition still matches, the last one included, and none falls into the next
+    try expectRunsTo("x = :b\ncase x\nwhen :a, :b, :c then 1\nwhen :d then 2\nelse 3\nend", 1);
+    try expectRunsTo("x = :c\ncase x\nwhen :a, :b, :c then 1\nwhen :d then 2\nelse 3\nend", 1);
+    try expectRunsTo("x = :d\ncase x\nwhen :a, :b, :c then 1\nwhen :d then 2\nelse 3\nend", 2);
+    try expectRunsTo("x = :e\ncase x\nwhen :a, :b, :c then 1\nwhen :d then 2\nelse 3\nend", 3);
+    try expectRunsTo("x = 5\ncase\nwhen x < 0, x > 4 then 1\nelse 2\nend", 1);
+    try expectRunsTo("x = 2\ncase\nwhen x < 0, x > 4 then 1\nelse 2\nend", 2);
+}
+
 test "Compiler: Constant Folding optimizer" {
     const source = "val = 10 * 5.0 + 2";
 

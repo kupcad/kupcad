@@ -1383,36 +1383,51 @@ pub const Compiler = struct {
         if (has_cond) {
             try self.compileNode(cs.condition);
         }
+        // The stack between the tests: the subject, when there is one
+        const test_depth = saved_depth + @intFromBool(has_cond);
 
         var end_jumps: std.ArrayList(usize) = .empty;
         defer end_jumps.deinit(self.allocator);
+        var body_jumps: std.ArrayList(usize) = .empty;
+        defer body_jumps.deinit(self.allocator);
 
         for (branches) |branch| {
+            // Each condition that matches jumps to the branch's one body: `when :a, :b, :c`
+            // compiled the body once per condition, and nested cases multiplied the copies
             const conds = self.tree.getNodes(branch.conditions);
-            for (conds) |cond_idx| {
+            if (conds.len == 0) continue; // nothing matches it
+            body_jumps.clearRetainingCapacity();
+            var next_branch: ?usize = null;
+            for (conds, 0..) |cond_idx, i| {
+                self.current_stack_depth = test_depth;
                 if (has_cond) {
-                    self.current_stack_depth = saved_depth + 1;
                     try self.emitOp(.op_dup);
                     try self.compileNode(cond_idx);
                     try self.emitOp(.op_case_equal);
                 } else {
-                    self.current_stack_depth = saved_depth;
                     try self.compileNode(cond_idx);
                 }
-
                 const skip_jump = try self.emitJump(.op_jump_if_false);
-                try self.emitOp(.op_pop);
-                if (has_cond) try self.emitOp(.op_pop);
-
-                try self.compileNode(branch.body);
-                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-
-                if (has_cond) {
-                    self.current_stack_depth = saved_depth + 2;
-                } else {
-                    self.current_stack_depth = saved_depth + 1;
+                try self.emitOp(.op_pop); // the test's value, true
+                if (i == conds.len - 1) {
+                    next_branch = skip_jump; // the last falls through to the body
+                    break;
                 }
+                try body_jumps.append(self.allocator, try self.emitJump(.op_jump));
+                // False: the test's value is still on the stack
+                self.current_stack_depth = test_depth + 1;
+                self.patchJump(skip_jump);
+                try self.emitOp(.op_pop);
+            }
 
+            for (body_jumps.items) |jmp| self.patchJump(jmp);
+            self.current_stack_depth = test_depth;
+            if (has_cond) try self.emitOp(.op_pop); // the subject
+            try self.compileNode(branch.body);
+            try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+            if (next_branch) |skip_jump| {
+                self.current_stack_depth = test_depth + 1;
                 self.patchJump(skip_jump);
                 try self.emitOp(.op_pop);
             }
