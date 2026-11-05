@@ -5,6 +5,12 @@ allowBuilds:
   # vsce's signing tool: packaging the extension doesn't sign it
   '@vscode/vsce-sign': false
 minimumReleaseAge: 4320
+# The VS Code API's types are those of the oldest VS Code the extension runs on (its
+# engines.vscode): they move with it, by hand, or vsce refuses the extension. `pnpm update
+# --latest` leaves them, as Dependabot does.
+updateConfig:
+  ignoreDependencies:
+    - '@types/vscode'
 # The versions the packages share: a package's dev dependency on one is `catalog:`. A peer
 # range stays the package's own, what a host may bring.
 catalog:
