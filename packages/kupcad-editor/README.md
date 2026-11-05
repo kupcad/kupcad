@@ -61,7 +61,10 @@ const manifest = new Editor(element, { value: text, language: 'json', label: 'ku
   by the host. An editor given `languageServer: { client, uri }` opens its script on the server
   (`kupcad`, its language) and takes the server's diagnostics, completion (in place of the
   vocabulary's: the server knows the script's own names), hovers, signatures, formatting,
-  renaming and definitions; its host gives it no findings then.
+  renaming and definitions; its host gives it no findings then. The server's documentation (a
+  hover's, a completion's, a signature's) keeps only the HTML Markdown writes (`sanitize.js`):
+  any other element shows its text alone, so a script's text the server repeats can't restyle
+  the page or draw a form on it, and a link its text too.
 
   ```js
   const client = languageServerClient({ rootUri: 'file:///work' });
@@ -78,5 +81,6 @@ const manifest = new Editor(element, { value: text, language: 'json', label: 'ku
 Tests: the highlighting, indentation and completion on the parsed text, the findings placed (the
 real core's `check`, through `@kupcad/wasm`) and their fixes made, a snapshot restored (its undo
 history, its selection, a text changed since, one it can't read), the editor and its Svelte
-component under jsdom, the LSP frames cut at every byte, and an editor opening its script on a
-stand-in server whose diagnostics it marks.
+component under jsdom, the LSP frames cut at every byte, an editor opening its script on a
+stand-in server whose diagnostics it marks, and the server's documentation with hostile HTML in
+it.

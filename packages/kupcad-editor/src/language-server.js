@@ -4,6 +4,7 @@
 // diagnostics, completion, hover, signature help, formatting, renaming and definitions.
 
 import { LSPClient, languageServerExtensions } from '@codemirror/lsp-client';
+import { sanitizeHTML } from './sanitize.js';
 
 /** @import { Transport } from '@codemirror/lsp-client' */
 
@@ -150,7 +151,8 @@ export function streamTransport(stream, onError) {
 
 /**
  * A client of the language server, with every feature the editor takes from it: connect it
- * (`client.connect(streamTransport(...))`), then give each editor `client.plugin(uri)`.
+ * (`client.connect(streamTransport(...))`), then give each editor `client.plugin(uri)`. The
+ * server's documentation is shown with the HTML Markdown writes alone (`sanitizeHTML`).
  * @param {LanguageServerOptions} options
  * @returns {LSPClient}
  */
@@ -159,5 +161,6 @@ export function languageServerClient({ rootUri, notifications = {} }) {
     rootUri,
     extensions: languageServerExtensions(),
     notificationHandlers: notifications,
+    sanitizeHTML,
   });
 }

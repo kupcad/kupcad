@@ -1,4 +1,5 @@
 import { forEachDiagnostic } from '@codemirror/lint';
+import { LSPPlugin } from '@codemirror/lsp-client';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from './editor.js';
@@ -179,6 +180,26 @@ describe('an editor with a language server', () => {
     });
     // The server completes, knowing the script's names: the vocabulary is the editor's alone
     expect(view.state.languageDataAt('autocomplete', 0)).not.toContain(completeKupcad);
+  });
+
+  it("shows the server's documentation with the HTML Markdown writes alone", async () => {
+    const stream = serverStream((message, send) => {
+      if (message.method === 'initialize') {
+        send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } });
+      }
+    });
+    const client = languageServerClient({ rootUri: 'file:///work' });
+    client.connect(streamTransport(stream, () => {}));
+    await client.initializing;
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const uri = 'file:///work/part.kup';
+    made.push(new Editor(parent, { value: 'w = 1\n', languageServer: { client, uri } }));
+    const view = /** @type {EditorView} */ (EditorView.findFromDOM(parent));
+    // A script's string, repeated in a hover
+    const hover = '**w** = "<style>*{display:none}</style><button>Sign in</button>"';
+    const html = LSPPlugin.get(view)?.docToHTML({ kind: 'markdown', value: hover });
+    expect(html).toBe('<p><strong>w</strong> = "*{display:none}Sign in"</p>\n');
   });
 
   it("completes the language's words itself without one", () => {
