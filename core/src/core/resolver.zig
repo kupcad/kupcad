@@ -11,6 +11,7 @@ const ast = @import("ast.zig");
 const visitor = @import("visitor.zig");
 const errors = @import("errors.zig");
 const token = @import("token.zig");
+const identifier = @import("identifier.zig");
 
 pub const ScopeKind = enum(u8) {
     unresolved,
@@ -293,20 +294,16 @@ pub const Resolver = struct {
     }
 
     pub fn resolveUsage(self: *Resolver, name: ast.StringId, node: ast.NodeIndex) !void {
-        const name_str = self.tree.getString(name);
-
-        // Check @@ before @ so class variables aren't tagged as instance variables
-        if (std.mem.startsWith(u8, name_str, "@@")) {
-            self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
-            return;
-        }
-        if (std.mem.startsWith(u8, name_str, "@")) {
-            self.symbols[@backingInt(node)] = .{ .kind = .instance_var, .index = 0 };
-            return;
-        }
-        if (std.mem.startsWith(u8, name_str, "$")) {
-            self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
-            return;
+        switch (identifier.kindOf(self.tree.getString(name))) {
+            .class_var, .global => {
+                self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
+                return;
+            },
+            .instance_var => {
+                self.symbols[@backingInt(node)] = .{ .kind = .instance_var, .index = 0 };
+                return;
+            },
+            .local, .constant => {},
         }
 
         // Trigger recursive local/upvalue resolution from the current depth

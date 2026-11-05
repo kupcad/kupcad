@@ -6,6 +6,7 @@ const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
+const identifier = @import("../../../core/identifier.zig");
 
 pub const UnusedVarsRule = struct {
     pub const id = "unused-variable";
@@ -117,7 +118,8 @@ pub const UnusedVarsRule = struct {
     /// `$global` outlive the method: one set in `initialize` and read in another method was
     /// reported unused unless it was the last statement.
     fn isLocal(name: []const u8) bool {
-        return name.len > 0 and name[0] != '@' and name[0] != '$';
+        const kind = identifier.kindOf(name);
+        return kind == .local or kind == .constant;
     }
 
     fn addMembers(self: *UnusedVarsRule, engine: *linter.Linter, tree: *const ast.Tree, body_idx: ast.NodeIndex) !void {
@@ -127,8 +129,7 @@ pub const UnusedVarsRule = struct {
             const node = tree.getNode(stmt).?;
             const is_member = switch (node.tag) {
                 .def_stmt => true,
-                // A name the lexer makes a constant: it starts with a capital
-                .assignment => std.ascii.isUpper(tree.getString(tree.assignment(node).name)[0]),
+                .assignment => identifier.kindOf(tree.getString(tree.assignment(node).name)) == .constant,
                 else => false,
             };
             if (is_member) try self.members.put(engine.allocator, stmt, {});

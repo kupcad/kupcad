@@ -11,6 +11,7 @@ const common_token = @import("../core/token.zig");
 const common_errors = @import("../core/errors.zig");
 const string_escape = @import("../core/string_escape.zig");
 const import_kind = @import("../core/import_kind.zig");
+const identifier = @import("../core/identifier.zig");
 
 const Tag = lexer_mod.Tag;
 const Diagnostics = common_errors.Diagnostics;
@@ -329,10 +330,8 @@ pub const Parser = struct {
     /// A constant, `@field`, `@@class_var`, `$global` or a local in scope: a value, never
     /// a call, where the two would read differently (`x -1`, `X [0]`).
     fn isVariable(self: *const Parser, name_tok: u24) bool {
-        if (self.tokens.tags[name_tok] == .constant) return true;
         const name = self.tokens.lexeme(self.source, name_tok);
-        if (name.len > 0 and (name[0] == '@' or name[0] == '$')) return true;
-        return self.locals.contains(name);
+        return identifier.kindOf(name) != .local or self.locals.contains(name);
     }
 
     fn spaceBefore(self: *const Parser, tok: u24) bool {
@@ -1534,14 +1533,12 @@ pub const Parser = struct {
     fn expectParamName(self: *Parser) ParseError!u24 {
         const name_tok = try self.expect(.ident);
         const name = self.tokens.lexeme(self.source, name_tok);
-        const kind: ?[]const u8 = if (std.mem.startsWith(u8, name, "@@"))
-            "a class variable"
-        else if (std.mem.startsWith(u8, name, "@"))
-            "an instance variable"
-        else if (std.mem.startsWith(u8, name, "$"))
-            "a global variable"
-        else
-            null;
+        const kind: ?[]const u8 = switch (identifier.kindOf(name)) {
+            .class_var => "a class variable",
+            .instance_var => "an instance variable",
+            .global => "a global variable",
+            .local, .constant => null, // a constant isn't an `ident`
+        };
         if (kind) |k| self.reportError(self.getLoc(name_tok), .@"invalid-parameter", "A parameter cannot be {s}: '{s}'", .{ k, name });
         return name_tok;
     }

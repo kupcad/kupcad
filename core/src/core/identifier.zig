@@ -68,6 +68,23 @@ pub fn end(buffer: []const u8, start: usize) usize {
     return i;
 }
 
+/// What a name names, which its first characters say.
+pub const Kind = enum { local, constant, instance_var, class_var, global };
+
+/// The kind of `name`: `@@count` a class variable, `@width` an instance variable, `$total` a
+/// global, `Gear` (a capital first) a constant, anything else a local. The lexer, parser,
+/// resolver, compiler and linter each tested the sigils themselves.
+pub fn kindOf(name: []const u8) Kind {
+    if (std.mem.startsWith(u8, name, "@@")) return .class_var;
+    if (name.len == 0) return .local;
+    return switch (name[0]) {
+        '@' => .instance_var,
+        '$' => .global,
+        'A'...'Z' => .constant,
+        else => .local,
+    };
+}
+
 pub fn isKeyword(name: []const u8) bool {
     return KEYWORD_SET.has(name);
 }

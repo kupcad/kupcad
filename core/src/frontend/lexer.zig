@@ -601,11 +601,10 @@ pub const Lexer = struct {
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
-        const is_constant = std.ascii.isUpper(self.peek());
         const start = self.index;
         self.index = identifier.end(self.buffer, start);
         const lexeme = self.buffer[start..self.index];
-        var tag = if (is_constant) Tag.constant else Tag.ident;
+        var tag = if (identifier.kindOf(lexeme) == .constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             // `self` stays a keyword after `def`, for `def self.name`.
             if (!self.expectsMethodName() or kw_tag == .keyword_self) tag = kw_tag;

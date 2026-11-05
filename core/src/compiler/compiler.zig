@@ -20,16 +20,10 @@ const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
 const Document = @import("../frontend/document.zig").Document;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
+const identifier = @import("../core/identifier.zig");
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
-
-/// True for a name that can become a function-local: not `@ivar`, `@@cvar`,
-/// `$global` or a Constant, which `classifyStorage` routes by their first char.
-fn isPlainLocalName(name: []const u8) bool {
-    if (name.len == 0) return false;
-    return name[0] != '@' and name[0] != '$' and !std.ascii.isUpper(name[0]);
-}
 
 pub const CompileError = error{
     /// A call passed two blocks (`f(&b) { ... }`), or `yield` was given one.
@@ -523,10 +517,7 @@ pub const Compiler = struct {
         // call into the shadowed builtin itself.
         const vm_global = if (self.rootModuleNamespace() != null) self.vm.builtinGlobal(name_str) else self.vm.globals.get(name_str);
 
-        const is_special_or_const = name_str.len == 0 or
-            std.mem.startsWith(u8, name_str, "@") or
-            std.mem.startsWith(u8, name_str, "$") or
-            std.ascii.isUpper(name_str[0]);
+        const is_special_or_const = name_str.len == 0 or identifier.kindOf(name_str) != .local;
 
         // A built-in function is called by name like a def, so a bare `cube` is `cube()`
         // (unless a script variable shadows it). Other VM globals are variables.
@@ -676,7 +667,8 @@ pub const Compiler = struct {
         }
 
         // Intercept Instance Variables (@x) securely
-        if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
+        const kind = identifier.kindOf(name_str);
+        if (kind == .instance_var) {
             try self.emitPushSelf(); // Stack: [self]
 
             // Strip '@' at compile time
@@ -707,8 +699,7 @@ pub const Compiler = struct {
         // Otherwise, if it's a new local declaration inside a block:
         const is_new_local = self.enclosing != null and
             sym.kind == .local and
-            !std.mem.startsWith(u8, name_str, "@@") and
-            !std.mem.startsWith(u8, name_str, "@") and
+            kind != .class_var and
             local_slot == null and
             upval_slot == null and
             !self.writesScriptGlobal(name_id);
@@ -1767,7 +1758,7 @@ pub const Compiler = struct {
         for (targets) |t| {
             if (t.name == .none) continue;
             if (self.enclosing != null and
-                isPlainLocalName(self.tree.getString(t.name)) and
+                identifier.kindOf(self.tree.getString(t.name)) == .local and
                 self.resolveLocal(t.name) == null and
                 (try self.resolveUpvalue(t.name)) == null and
                 !self.writesScriptGlobal(t.name))
@@ -2402,16 +2393,13 @@ pub const Compiler = struct {
         }
     }
 
-    /// `classifyVariable` plus the `$name` sigil. The resolver already marks every
-    /// `$name` read as a global; stores must agree, or `$x = 1` inside a function
-    /// would make a function-local that no other function could read.
+    /// `classifyVariable`, where inside a def a plain name never writes a script global: every
+    /// store path (rescue binding, destructuring, block params) gets the rule plain
+    /// assignment has.
     fn classifyStorage(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!scope_mod.ResolvedVar {
         const name_str = self.tree.getString(name_id);
-        if (std.mem.startsWith(u8, name_str, "$")) return .{ .kind = .global };
         const classified = try self.classifyVariable(name_id, sym);
-        // Every store path (rescue binding, destructuring, block params) gets the same
-        // rule as plain assignment: inside a def, a plain name never writes a script global.
-        if (classified.kind == .global and isPlainLocalName(name_str) and self.insideDef()) {
+        if (classified.kind == .global and identifier.kindOf(name_str) == .local and self.insideDef()) {
             return .{ .kind = .new_local };
         }
         return classified;
@@ -2707,7 +2695,7 @@ pub const Compiler = struct {
                 // reads it: only its global "Foo::BAR" existed, which `::` doesn't look up.
                 if (stmt_node.tag == .assignment) {
                     const name = self.tree.getString(self.tree.assignment(stmt_node).name);
-                    if (name.len > 0 and std.ascii.isUpper(name[0])) {
+                    if (identifier.kindOf(name) == .constant) {
                         try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, try self.makeStringConstant(name));
                     }
                 }

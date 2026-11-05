@@ -6,6 +6,7 @@ const std = @import("std");
 const ast = @import("../core/ast.zig");
 const resolver = @import("../core/resolver.zig");
 const limits = @import("../core/limits.zig");
+const identifier = @import("../core/identifier.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 
@@ -57,10 +58,14 @@ pub const ResolvedVar = struct {
 // --- Lexical Scope Resolvers ---
 
 pub fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolver.ResolvedSymbol) CompileError!ResolvedVar {
-    const name_str = self.tree.getString(name_id);
-    if (std.ascii.isUpper(name_str[0])) return .{ .kind = .constant };
-    if (std.mem.startsWith(u8, name_str, "@@")) return .{ .kind = .class_var };
-    if (std.mem.startsWith(u8, name_str, "@")) return .{ .kind = .instance_var };
+    switch (identifier.kindOf(self.tree.getString(name_id))) {
+        .constant => return .{ .kind = .constant },
+        .class_var => return .{ .kind = .class_var },
+        .instance_var => return .{ .kind = .instance_var },
+        // As the resolver reads it: a `$x = 1` in a function made a local no other one could read
+        .global => return .{ .kind = .global },
+        .local => {},
+    }
 
     if (self.resolveLocal(name_id)) |slot| return .{ .kind = .local, .index = slot };
     if (try self.resolveUpvalue(name_id)) |upv_slot| return .{ .kind = .upvalue, .index = upv_slot };

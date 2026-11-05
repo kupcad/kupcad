@@ -45,3 +45,19 @@ test "identifier: the reserved words are keywords, other names aren't" {
     for (identifier.KEYWORDS) |word| try testing.expect(identifier.isKeyword(word));
     for ([_][]const u8{ "If", "ends", "", "lambda", "puts" }) |name| try testing.expect(!identifier.isKeyword(name));
 }
+
+test "identifier: kindOf reads a name's kind from its first characters" {
+    const cases = [_]struct { name: []const u8, kind: identifier.Kind }{
+        .{ .name = "width", .kind = .local },
+        .{ .name = "_x", .kind = .local },
+        .{ .name = "θ", .kind = .local },
+        .{ .name = "Gear", .kind = .constant },
+        .{ .name = "@size", .kind = .instance_var },
+        .{ .name = "@@count", .kind = .class_var },
+        .{ .name = "$total", .kind = .global },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("name: {s}\n", .{case.name});
+        try testing.expectEqual(case.kind, identifier.kindOf(case.name));
+    }
+}
