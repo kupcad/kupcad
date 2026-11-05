@@ -1128,6 +1128,27 @@ test "kupcad: fmt --stdin formats what is piped in, and --check fails when it is
     }
 }
 
+test "kupcad: fmt --stdin that can't be read fails, saying why" {
+    // A directory as stdin: reading it fails
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    var folder = try sb.tmp.dir.openDir(testing.io, "empty", .{});
+    defer folder.close(testing.io);
+    const exe = try kupcadPath();
+    defer testing.allocator.free(exe);
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    stripKupcadEnv(&env);
+    var child = try std.process.spawn(testing.io, .{ .argv = &.{ exe, "fmt", "--stdin" }, .cwd = .{ .path = sb.path }, .environ_map = &env, .stdin = .{ .file = .{ .handle = folder.handle, .flags = .{ .nonblocking = false } } }, .stdout = .ignore, .stderr = .pipe });
+    var buf: [1024]u8 = undefined;
+    var reader = child.stderr.?.readerStreaming(testing.io, &buf);
+    const said = try reader.interface.allocRemaining(testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(said);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 1 }, try child.wait(testing.io));
+    try testing.expect(std.mem.startsWith(u8, said, "Error: Could not read stdin: "));
+}
+
 fn u32Le(n: u32) [4]u8 {
     var b: [4]u8 = undefined;
     std.mem.writeInt(u32, &b, n, .little);

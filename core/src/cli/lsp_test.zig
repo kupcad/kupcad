@@ -559,6 +559,85 @@ test "LSP: completion offers methods after a dot and globals elsewhere" {
     try testing.expect(Labels.of(global, "translate") == null);
 }
 
+test "LSP: no completion in a string, a comment or after a number's decimal point; a method once each" {
+    // Every global was offered inside a string or a comment, and a solid's methods after `1.`
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "x = \"cu\" # cu\ny = 1.\ncube(1).\n");
+    const arena = s.arena.allocator();
+    const Case = struct { line: u32, character: u32 };
+    for ([_]Case{ .{ .line = 0, .character = 7 }, .{ .line = 0, .character = 14 }, .{ .line = 1, .character = 6 } }) |at| {
+        errdefer std.debug.print("at {d}:{d}\n", .{ at.line, at.character });
+        const items = (try s.handler.@"textDocument/completion"(arena, .{ .textDocument = .{ .uri = URI }, .position = .{ .line = at.line, .character = at.character } })).?.completion_items;
+        try testing.expectEqual(@as(usize, 0), items.len);
+    }
+    // Past the string's closing quote is code again
+    const after_string = (try s.handler.@"textDocument/completion"(arena, .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 0, .character = 8 } })).?.completion_items;
+    try testing.expect(after_string.len > 0);
+    // A solid's methods and an assembly's own, each once
+    const methods = (try s.handler.@"textDocument/completion"(arena, .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 2, .character = 8 } })).?.completion_items;
+    try testing.expect(methods.len > 0);
+    for (methods, 0..) |item, i| {
+        for (methods[i + 1 ..]) |other| try testing.expect(!std.mem.eql(u8, item.label, other.label));
+    }
+}
+
+test "LSP: every request about a document that isn't open is answered with nothing" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    const arena = s.arena.allocator();
+    const closed: lsp.types.TextDocument.Identifier = .{ .uri = "file:///work/never.kup" };
+    const at: lsp.types.Position = .{ .line = 0, .character = 0 };
+    const range: lsp.types.Range = .{ .start = at, .end = at };
+    try testing.expect(s.hover(closed.uri, 0, 0) == null);
+    try testing.expect(try s.handler.@"textDocument/definition"(arena, .{ .textDocument = closed, .position = at }) == null);
+    try testing.expect(try s.handler.@"textDocument/formatting"(arena, .{ .textDocument = closed, .options = .{ .tabSize = 2, .insertSpaces = true } }) == null);
+    try testing.expect(try s.handler.@"textDocument/inlayHint"(arena, .{ .textDocument = closed, .range = range }) == null);
+    try testing.expect(try s.handler.@"textDocument/documentSymbol"(arena, .{ .textDocument = closed }) == null);
+    try testing.expect(try s.handler.@"textDocument/codeAction"(arena, .{ .textDocument = closed, .range = range, .context = .{ .diagnostics = &.{} } }) == null);
+    try testing.expectEqual(@as(usize, 0), (try s.handler.@"textDocument/completion"(arena, .{ .textDocument = closed, .position = at })).?.completion_items.len);
+}
+
+test "LSP: the first workspace folder is the root, before rootUri" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    const folders = [_]lsp.types.workspace.Folder{.{ .uri = "file:///work/folder", .name = "folder" }};
+    _ = s.handler.initialize(s.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work/other", .workspaceFolders = &folders });
+    try testing.expectEqualStrings("/work/folder", s.handler.root.?);
+}
+
+test "LSP: positions past non-ASCII text are the editor's, in UTF-16 and in UTF-8" {
+    // `😀` is two UTF-16 units and four bytes, `é` one unit and two bytes
+    const General = std.meta.Child(@FieldType(@FieldType(lsp.types.InitializeParams, "capabilities"), "general"));
+    const PositionEncoding = std.meta.Child(std.meta.Child(@FieldType(General, "positionEncodings")));
+    const text = "s = \"😀é\"; w = 3; spare = 1\ncube(w)\nputs(s)\n";
+    const Encoding = struct { offered: PositionEncoding, w: u32, spare: u32 };
+    for ([_]Encoding{ .{ .offered = .@"utf-16", .w = 11, .spare = 18 }, .{ .offered = .@"utf-8", .w = 14, .spare = 21 } }) |encoding| {
+        errdefer std.debug.print("{t}\n", .{encoding.offered});
+        var s: Server = undefined;
+        try s.init();
+        defer s.deinit();
+        const arena = s.arena.allocator();
+        _ = s.handler.initialize(arena, .{ .capabilities = .{ .general = .{ .positionEncodings = &.{encoding.offered} } }, .rootUri = "file:///work" });
+        try s.open(URI, text);
+        // The unused variable's warning
+        const diagnostics = try diagnosticsOf(&s, arena, URI);
+        try testing.expectEqual(@as(usize, 1), diagnostics.len);
+        try testing.expectEqual(encoding.spare, diagnostics[0].range.start.character);
+        // Hover and definition of `w`, and its symbol
+        try testing.expect(std.mem.find(u8, s.hover(URI, 0, encoding.w).?, "(variable) w") != null);
+        const defined = (try s.handler.@"textDocument/definition"(arena, .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 1, .character = 5 } })).?;
+        try testing.expectEqual(lsp.types.Position{ .line = 0, .character = encoding.w }, defined.definition.location.range.start);
+        const symbols = (try s.handler.@"textDocument/documentSymbol"(arena, .{ .textDocument = .{ .uri = URI } })).?.document_symbols;
+        for (symbols) |symbol| {
+            if (std.mem.eql(u8, symbol.name, "w")) try testing.expectEqual(encoding.w, symbol.selectionRange.start.character);
+        }
+    }
+}
+
 test "LSP: document symbols list the defs, classes, modules and top-level variables" {
     var s: Server = undefined;
     try s.init();

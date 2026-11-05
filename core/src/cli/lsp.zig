@@ -1037,6 +1037,8 @@ pub const Handler = struct {
 
         // Find the exact byte index of the user's cursor
         const cursor_offset = lsp.offsets.positionToIndex(doc_buf.source, params.position, self.offset_encoding);
+        // No name is typed in a string or a comment: every global was offered there
+        if (doc_buf.doc) |*doc| if (inText(doc, cursor_offset)) return .{ .completion_items = items.items };
 
         var is_method_call = false;
         var i = cursor_offset;
@@ -1051,8 +1053,10 @@ pub const Handler = struct {
                 continue;
             }
 
-            // We hit a boundary! If it's a dot, we are inside a method chain
+            // We hit a boundary! If it's a dot, we are inside a method chain, unless it is a
+            // number's decimal point (`1.`), which no method follows
             if (c == '.') {
+                if (doc_buf.doc) |*doc| if (afterNumber(doc, i)) return .{ .completion_items = items.items };
                 is_method_call = true;
             }
             break;
@@ -1399,6 +1403,40 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
         return err;
     };
     return .{ .uri = argument.uri, .values = values };
+}
+
+/// Whether `offset` of `doc` is inside a string or a comment, where no name is typed.
+fn inText(doc: *const api.Document, offset: usize) bool {
+    for (doc.comments) |comment| {
+        if (offset > comment.loc.offset and offset <= comment.loc.offset + comment.lexeme.len) return true;
+    }
+    // The last token starting at or before it: a string's token is its text between the
+    // quotes, so its end is still inside, before the closing quote
+    const starts = doc.tokens.starts;
+    var lo: usize = 0;
+    var hi: usize = starts.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (starts[mid] <= offset) lo = mid + 1 else hi = mid;
+    }
+    if (lo == 0) return false;
+    const tok = lo - 1;
+    const end = starts[tok] + doc.tokens.lengths[tok];
+    return switch (doc.tokens.tags[tok]) {
+        .string, .raw_string, .string_start, .string_mid, .string_end, .quoted_symbol, .raw_symbol, .symbol_start, .comment, .docstring => offset <= end,
+        // It runs to the end of the file
+        .unterminated_string => true,
+        else => false,
+    };
+}
+
+/// Whether the `.` at `dot` of `doc` ends a number, as its decimal point.
+fn afterNumber(doc: *const api.Document, dot: usize) bool {
+    for ([_]usize{ dot, dot -| 1 }) |at| {
+        const tok = lsp_definition.tokenAt(doc, at) orelse continue;
+        if (doc.tokens.tags[tok] == .number) return true;
+    }
+    return false;
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
