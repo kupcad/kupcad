@@ -108,6 +108,31 @@ test "parity: a mesh wound inward is the solid it bounds, on either engine" {
     }
 }
 
+test "parity: coordinates past what the kernel computes with are refused alike, on either engine" {
+    // An arc of radius 1e300 crashed Manifold's sketch boolean; past 1e100 the engines'
+    // products of coordinates overflow a double
+    const cases = [_][]const u8{
+        "cube(1e101)",
+        "cylinder(r: 1, h: 1e300)",
+        "polyhedron([[0, 0, 0], [1e101, 0, 0], [0, 1, 0], [0, 0, 1]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])",
+    };
+    for (cases) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        var messages: [2][]const u8 = undefined;
+        for ([_][]const u8{ "", BREP_CONFIG }, [_]api.ExportFormat{ .stl, .step }, &messages) |prelude, format, *message| {
+            const script = try std.mem.concat(testing.allocator, u8, &.{ prelude, source });
+            defer testing.allocator.free(script);
+            var diag: api.BuildDiagnostic = .{};
+            errdefer diag.deinit(testing.allocator);
+            try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, script, .{ .format = format, .diagnostic = &diag }));
+            message.* = diag.message.?;
+        }
+        defer for (messages) |message| testing.allocator.free(message);
+        try testing.expect(std.mem.endsWith(u8, messages[0], ": a coordinate reaches past 1e100 mm from the origin, the most the geometry kernel computes with"));
+        try testing.expectEqualStrings(messages[0], messages[1]);
+    }
+}
+
 /// The STEP file of `source` built on the B-Rep engine, reading `files`.
 fn stepOf(source: []const u8, files: Vfs) ![]const u8 {
     const brep = try std.mem.concat(testing.allocator, u8, &.{ BREP_CONFIG, source });

@@ -13,6 +13,9 @@ const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const loft_mod = @import("../core/loft.zig");
 
+/// A shape whose sizes or points the kernel can't compute with (kernel.MAX_COORDINATE).
+const OUT_OF_RANGE_FMT = "{s}: a coordinate reaches past {e} mm from the origin, the most the geometry kernel computes with";
+
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
 pub const ValueHandle = union(enum) {
     geometry: geom.GeometryHandle,
@@ -103,6 +106,18 @@ fn crossSectionOf(entry: StackEntry) !geom.CrossSectionHandle {
 /// operation. Drivers never substitute an operand for a failed result (kernel.zig).
 fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
     return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{dag.scriptName(tag)});
+}
+
+/// Raises a GeometryError naming the kernel's range unless each of `coordinates` (the sizes
+/// or the points a `tag` leaf gives the kernel) is within it, on either engine: past it
+/// their products overflow, and Manifold crashed building such a polygon.
+fn requireInRange(vm: *VM, tag: dag.DAGTag, coordinates: []const f64) error{RuntimeError}!void {
+    if (!kernel.inRange(coordinates)) return vm.fail(.GeometryError, OUT_OF_RANGE_FMT, .{ dag.scriptName(tag), kernel.MAX_COORDINATE });
+}
+
+/// The coordinates of `points` (pairs or triples), one after another.
+fn coordinatesOf(points: anytype) []const f64 {
+    return std.mem.bytesAsSlice(f64, std.mem.sliceAsBytes(points));
 }
 
 /// Raises the vertex-limit error when `verts` passes `limit`. `estimated` is set for a
@@ -460,20 +475,24 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
         },
         .cube => {
             const p = b.getCubeDimensions(node);
+            try requireInRange(vm, node.tag, &.{ p.x, p.y, p.z });
             try pushSolid(vm, v_stack, node.tag, kernel.cube(&config, p.x, p.y, p.z, p.center));
         },
         .cylinder => {
             const p = b.getCylinderPayload(node);
+            try requireInRange(vm, node.tag, &.{ p.r1, p.r2, p.height });
             if (p.r1 != p.r2) try vm.requireFeature(config.engine, .cone);
             try pushSolid(vm, v_stack, node.tag, kernel.cylinder(&config, p.r1, p.r2, p.height, p.center, p.segments));
         },
         .sphere => {
             try vm.requireFeature(config.engine, .sphere);
             const p = b.getSpherePayload(node);
+            try requireInRange(vm, node.tag, &.{p.radius});
             try pushSolid(vm, v_stack, node.tag, kernel.sphere(&config, p.radius, p.segments));
         },
         .polyhedron_op => {
             const p = b.getPolyhedronPayload(node);
+            try requireInRange(vm, node.tag, coordinatesOf(p.pts));
             try pushSolid(vm, v_stack, node.tag, kernel.polyhedron(&config, vm.allocator, p.pts, p.faces));
         },
         .concrete => {
@@ -488,16 +507,19 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
         },
         .square => {
             const p = b.getSquarePayload(node);
+            try requireInRange(vm, node.tag, &.{ p.x, p.y });
             try pushSketch(vm, v_stack, node.tag, kernel.square(&config, p.x, p.y, p.center));
         },
         .circle => {
             const p = b.getCirclePayload(node);
+            try requireInRange(vm, node.tag, &.{p.radius});
             try pushSketch(vm, v_stack, node.tag, kernel.circle(&config, p.radius, p.segments));
         },
         .rounded_square => {
             var pts: std.ArrayList([2]f64) = .empty;
             defer pts.deinit(vm.allocator);
             try b.getRoundedSquarePayload(node).appendPoints(vm.allocator, &pts);
+            try requireInRange(vm, node.tag, coordinatesOf(pts.items));
             try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
         },
         .closed_path => {
@@ -508,11 +530,13 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
             try path_mod.appendPoints(vm.allocator, &pts, closed.start, closed.segments, closed.chords, null);
             // The last segment ends where the path starts, or the polygon closes it straight
             if (pts.items.len > 1 and pts.items[pts.items.len - 1][0] == closed.start[0] and pts.items[pts.items.len - 1][1] == closed.start[1]) _ = pts.pop();
+            try requireInRange(vm, node.tag, coordinatesOf(pts.items));
             try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
         },
         .polygon => {
             const pts = try readPoints(vm, b.extra_data.items[node.data], b.extra_data.items[node.data + 1]);
             defer vm.allocator.free(pts);
+            try requireInRange(vm, node.tag, coordinatesOf(pts));
             try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts));
         },
         .polygons_even_odd => {
@@ -526,6 +550,7 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
             for (contours, 0..) |*contour, i| {
                 const at = node.data + 1 + i * 2;
                 contour.* = try readPoints(vm, b.extra_data.items[at], b.extra_data.items[at + 1]);
+                try requireInRange(vm, node.tag, coordinatesOf(contour.*));
             }
             try pushSketch(vm, v_stack, node.tag, kernel.polygonsEvenOdd(&config, vm.allocator, contours));
         },
@@ -711,6 +736,7 @@ fn ruledLoft(vm: *VM, config: EngineConfig, base: geom.CrossSectionHandle, top: 
             error.Degenerate, error.SelfIntersecting => return vm.fail(.GeometryError, "loft: the profiles' outlines can't be joined (one has no area, crosses itself, or the height is 0)", .{}),
         };
         defer mesh.deinit(vm.allocator);
+        try requireInRange(vm, .loft, coordinatesOf(mesh.points));
         const solid = kernel.polyhedron(&config, vm.allocator, mesh.points, mesh.triangles) orelse return kernelFailed(vm, .loft);
         const so_far = region orelse {
             region = solid;

@@ -81,6 +81,19 @@ test "import_dxf and import_svg: an outline drawn twice is one outline" {
     try expectScripts(&.{.{ .src = "r = import_dxf(\"twice.dxf\").area", .expected = .{ .num = 400 - 100 }, .files = &.{.{ .path = "twice.dxf", .data = twice }} }});
 }
 
+test "import_dxf and paths: a circle past what the kernel computes with is an error, not a crash" {
+    // Its numbers finite, a CIRCLE of radius 1e300 crashed Manifold's sketch boolean, and so
+    // did a script's arc as big
+    const files = &.{support.ScriptFile{ .path = "big.dxf", .data = file("0\nCIRCLE\n10\n0\n20\n0\n40\n1e300\n") }};
+    const message = "GeometryError: close: a coordinate reaches past 1e100 mm from the origin, the most the geometry kernel computes with";
+    try expectScripts(&.{
+        .{ .src = comptime rescued("import_dxf(\"big.dxf\").area"), .expected = .{ .str = message }, .files = files },
+        .{ .src = comptime rescued("arc(center: [0, 0], r: 1e300, start: 0, sweep: 180).line_to([-1e300, -1]).close.area"), .expected = .{ .str = message } },
+        // Within it, built
+        .{ .src = "r = arc(center: [0, 0], r: 1e50, start: 0, sweep: 180).line_to([-1e50, -1]).close.area > 0", .expected = .{ .boolean = true } },
+    });
+}
+
 test "import_dxf: ends further apart than the tolerance don't meet, closer ones do" {
     const files = &.{support.ScriptFile{ .path = "gapped.dxf", .data = GAPPED }};
     try expectScripts(&.{

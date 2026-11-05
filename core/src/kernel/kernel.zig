@@ -18,6 +18,14 @@ const brep_driver = @import("engines/brep/driver.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const vec3 = @import("../core/vec3.zig");
 
+/// The farthest from the origin, in millimetres, a coordinate the kernel builds from may be
+/// (a size, a point). Both engines compute in doubles and multiply coordinates: two at a
+/// time in a sketch's areas and orientations, three in a solid's volumes, and a double
+/// overflows past 1.8e308, whose cube root is 5.6e102. This leaves room for the sums of
+/// such products. Past it Manifold's sketch boolean crashed on the polygon of an arc of
+/// radius 1e300, and solids came out with NaN volumes.
+pub const MAX_COORDINATE: f64 = 1e100;
+
 /// Material slots carried on solids (the Manifold engine stores them as a vertex property).
 /// Slot 0 is the default material and user material `id` (an index into VM.materials) is
 /// slot `id + 1`, so parts without a material never alias the first user material.
@@ -25,6 +33,12 @@ pub const DEFAULT_MATERIAL_SLOT: u32 = 0;
 
 pub fn materialSlot(material_id: u32) u32 {
     return material_id + 1;
+}
+
+/// Whether each of `coordinates` is within MAX_COORDINATE of zero (a NaN isn't).
+pub fn inRange(coordinates: []const f64) bool {
+    for (coordinates) |c| if (!(@abs(c) <= MAX_COORDINATE)) return false;
+    return true;
 }
 
 /// What an engine may not have yet. Callers check `supports` before the kernel call, so a
