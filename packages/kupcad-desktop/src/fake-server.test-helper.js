@@ -9,7 +9,9 @@ import { PROTOCOL_VERSION } from '@kupcad/protocol';
 /**
  * A stand-in for `kupcad lsp`, started as the native side starts it: it answers `initialize`, says
  * its viewport is up at `port` (none for null), and answers every other request with null; with `answers`
- * false, it answers nothing. Each process it starts is kept, with the messages it was sent.
+ * false, it answers nothing (`answers` may be set on what it returns, for the processes started
+ * after). Each process it starts is kept, with the messages it was sent; one killed ends, as the
+ * native side says a process a signal ended did (code null).
  */
 export function fakeServer({
   port = /** @type {number | null} */ (9001),
@@ -18,12 +20,14 @@ export function fakeServer({
 } = {}) {
   /** @type {{ origin: string, memoryLimit: number, on: ProcessEvents, received: any[], killed: boolean }[]} */
   const processes = [];
+  const fake = { spawn, processes, answers };
   /**
    * @param {string} origin
    * @param {number} memoryLimit
    * @param {ProcessEvents} on
    */
-  const spawn = async (origin, memoryLimit, on) => {
+  async function spawn(origin, memoryLimit, on) {
+    const answering = fake.answers;
     const reader = new MessageReader((error) => {
       throw error;
     });
@@ -37,7 +41,7 @@ export function fakeServer({
         for (const text of reader.push(bytes)) {
           const message = JSON.parse(text);
           process.received.push(message);
-          if (!answers) continue;
+          if (!answering) continue;
           if (message.method === 'initialize') {
             send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } });
             if (port !== null) {
@@ -53,9 +57,11 @@ export function fakeServer({
         }
       },
       kill: async () => {
+        if (process.killed) return;
         process.killed = true;
+        queueMicrotask(() => on.exit(null));
       },
     };
-  };
-  return { spawn, processes };
+  }
+  return fake;
 }

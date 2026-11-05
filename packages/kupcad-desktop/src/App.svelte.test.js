@@ -609,6 +609,36 @@ describe('the settings', () => {
     expect(screen.queryByText(/kupcad didn't start/)).toBeNull();
   });
 
+  it('start the server again under a new limit once the start under way is done, failing none', async () => {
+    const settings = memorySettings();
+    const window = windowOn({ settings });
+    // The first server's words held, as a slow start's: it isn't up until they come
+    const spawn = window.fake.spawn;
+    /** @type {(() => void)[]} */
+    const held = [];
+    window.fake.spawn = (origin, memoryLimit, on) =>
+      spawn(
+        origin,
+        memoryLimit,
+        window.fake.processes.length > 0
+          ? on
+          : { ...on, stdout: (chunk) => void held.push(() => on.stdout(chunk)) },
+      );
+    await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+    await vi.waitFor(() => expect(held.length).toBeGreaterThan(0));
+    settings.set('app.memoryLimit', 64);
+    await tick();
+    for (const chunk of held.splice(0)) chunk();
+    await editorView();
+    await vi.waitFor(() =>
+      expect(window.fake.processes.map((p) => [p.memoryLimit, p.killed])).toEqual([
+        [8, true],
+        [64, false],
+      ]),
+    );
+    expect(document.querySelector('.bar [role="status"]')?.textContent?.trim()).toBe('');
+  });
+
   it("take a kept theme they don't know as the system's", async () => {
     const window = windowOn({ settings: memorySettings({ 'app.theme': 'sepia' }) });
     await tick();

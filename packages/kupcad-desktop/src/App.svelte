@@ -253,12 +253,20 @@
         else stop();
       })
       .catch((error) => (problem = `${nameOf(picked)} isn't watched: ${errorText(error)}`));
+    // What a server says once another took its place (a folder opened since) isn't the window's
+    const ours = () => server === started;
     const started = platform.server(
       fileUri(picked),
       {
-        viewport: (url) => (viewportUrl = url),
-        state: (up) => (running = up),
-        log: (text) => preview.log(text),
+        viewport: (url) => {
+          if (ours()) viewportUrl = url;
+        },
+        state: (up) => {
+          if (ours()) running = up;
+        },
+        log: (text) => {
+          if (ours()) preview.log(text);
+        },
       },
       () => memoryLimit,
     );

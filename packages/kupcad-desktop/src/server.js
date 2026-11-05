@@ -3,7 +3,9 @@
 // client (@kupcad/editor's streamTransport). Its viewport socket admits this page by its origin
 // (`--viewport-origin`), and its previews hold no more memory than the app's setting
 // (`--memory-limit`). A server that ends is started again, a little later each time, and the
-// client reconnects to it, opening the scripts the editors hold on it again.
+// client reconnects to it, opening the scripts the editors hold on it again. Its starts, restarts
+// and stops run one after another, as the VS Code extension's do: a restart asked while it was
+// starting failed the start, and a stop left the server being started running.
 
 import { languageServerClient, streamTransport } from '@kupcad/editor';
 import {
@@ -22,6 +24,8 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 
 /** The first wait before starting a server that ended again, and the longest, in milliseconds. */
 export const RESTART_MS = { first: 500, most: 10_000 };
+/** Why a start failed that a stop cut short. */
+const STOPPED_EARLY = 'kupcad lsp was stopped before it was up';
 
 /**
  * A server process, as the app talks to it.
@@ -107,6 +111,10 @@ export class LanguageServer {
   #stopped = false;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   #restart;
+  /** The last start, restart or stop asked: each waits for the one before it. */
+  #steps = Promise.resolve();
+  /** Ends the wait of the start under way for its server to be up, as it is stopped. */
+  #interrupt = () => {};
 
   /** @param {ServerOptions} options */
   constructor({
@@ -136,43 +144,11 @@ export class LanguageServer {
   }
 
   /**
-   * Starts the server, and connects the client to it; it rejects if the server doesn't start, or
-   * ends before it is up.
+   * Starts the server, once what was asked before is done, and connects the client to it; it
+   * rejects if the server doesn't start, ends before it is up, or is stopped first.
    */
-  async start() {
-    this.#stopped = false;
-    /** @type {((chunk: Uint8Array) => void) | null} */
-    let reading = null;
-    /** @type {ServerProcess | null} */
-    let started = null;
-    /** @type {((code: number | null) => void) | null} */
-    let endedEarly = null;
-    /** @type {Promise<never>} */
-    const ends = new Promise((_resolve, reject) => {
-      endedEarly = (code) => reject(new Error(`kupcad lsp ended (code ${code}) before it was up`));
-    });
-    // Once it is up, its end is #ended's alone
-    ends.catch(() => {});
-    started = await this.#spawn(this.#origin, this.#memoryLimit(), {
-      stdout: (chunk) => reading?.(chunk),
-      stderr: (text) => this.#on.log(text),
-      exit: (code) => {
-        endedEarly?.(code);
-        this.#ended(started, code);
-      },
-    });
-    const process = started;
-    this.#process = process;
-    const stream = {
-      write: (/** @type {Uint8Array} */ bytes) =>
-        void process.write(bytes).catch((error) => this.#on.log(`kupcad: ${error}`)),
-      read: (/** @type {(chunk: Uint8Array) => void} */ onChunk) => void (reading = onChunk),
-    };
-    this.client.connect(streamTransport(stream, (error) => this.#on.log(error.message)));
-    this.#on.state(true);
-    // The client's initialization never settles for a process that ends first
-    await Promise.race([this.client.initializing, ends]);
-    this.#wait = RESTART_MS.first;
+  start() {
+    return this.#serially(() => this.#start());
   }
 
   /**
@@ -205,21 +181,91 @@ export class LanguageServer {
 
   /**
    * Starts the server again now, as it is set up now (its memory limit changed): the client
-   * reconnects to the new one, as after a crash, without it being taken for one.
+   * reconnects to the new one, as after a crash, without it being taken for one. A start under
+   * way is waited for, not failed.
    */
-  async restart() {
-    await this.stop();
-    await this.start();
+  restart() {
+    return this.#serially(async () => {
+      await this.#halt();
+      await this.#start();
+    });
   }
 
-  /** Stops the server for good. */
-  async stop() {
+  /**
+   * Stops the server for good: one being started is stopped as soon as it is there, without
+   * waiting for it to be up.
+   */
+  stop() {
+    this.#stopped = true;
+    clearTimeout(this.#restart);
+    this.#interrupt();
+    return this.#serially(() => this.#halt());
+  }
+
+  /**
+   * Runs `step` once the steps asked before it are done, whether they succeeded or not.
+   * @param {() => Promise<void>} step
+   */
+  #serially(step) {
+    const run = this.#steps.then(step);
+    this.#steps = run.catch(() => {});
+    return run;
+  }
+
+  /** Stops the server that runs, if one does: the app is told it is gone, and its end is no crash. */
+  async #halt() {
     this.#stopped = true;
     clearTimeout(this.#restart);
     const process = this.#process;
+    if (!process) return;
     this.#process = null;
-    if (process) this.client.disconnect();
-    await process?.kill();
+    this.client.disconnect();
+    this.#on.viewport(null);
+    this.#on.state(false);
+    await process.kill();
+  }
+
+  /** Starts the server, and connects the client to it, as `start` says. */
+  async #start() {
+    this.#stopped = false;
+    /** @type {((chunk: Uint8Array) => void) | null} */
+    let reading = null;
+    /** @type {ServerProcess | null} */
+    let started = null;
+    /** @type {((code: number | null) => void) | null} */
+    let endedEarly = null;
+    /** @type {Promise<never>} */
+    const ends = new Promise((_resolve, reject) => {
+      endedEarly = (code) => reject(new Error(`kupcad lsp ended (code ${code}) before it was up`));
+      this.#interrupt = () => reject(new Error(STOPPED_EARLY));
+    });
+    // Once it is up, its end is #ended's alone
+    ends.catch(() => {});
+    started = await this.#spawn(this.#origin, this.#memoryLimit(), {
+      stdout: (chunk) => reading?.(chunk),
+      stderr: (text) => this.#on.log(text),
+      exit: (code) => {
+        endedEarly?.(code);
+        this.#ended(started, code);
+      },
+    });
+    const process = started;
+    // Stopped while it was being started: no one is left to stop it
+    if (this.#stopped) {
+      await process.kill();
+      throw new Error(STOPPED_EARLY);
+    }
+    this.#process = process;
+    const stream = {
+      write: (/** @type {Uint8Array} */ bytes) =>
+        void process.write(bytes).catch((error) => this.#on.log(`kupcad: ${error}`)),
+      read: (/** @type {(chunk: Uint8Array) => void} */ onChunk) => void (reading = onChunk),
+    };
+    this.client.connect(streamTransport(stream, (error) => this.#on.log(error.message)));
+    this.#on.state(true);
+    // The client's initialization never settles for a process that ends first
+    await Promise.race([this.client.initializing, ends]);
+    this.#wait = RESTART_MS.first;
   }
 
   /**
@@ -273,9 +319,11 @@ export class LanguageServer {
     this.#restart = this.#later(() => {
       this.#restart = undefined;
       this.start().catch((error) => {
+        // Stopped meanwhile, as it was asked to be
+        if (this.#stopped) return;
         this.#on.log(`kupcad lsp didn't start: ${error}`);
         // One that ended before it was up is started again by #ended; one never started isn't
-        if (!this.#stopped && this.#restart === undefined) this.#startLater();
+        if (this.#restart === undefined) this.#startLater();
       });
     }, this.#wait);
     this.#wait = Math.min(this.#wait * 2, RESTART_MS.most);

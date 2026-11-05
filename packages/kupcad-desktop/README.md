@@ -172,7 +172,10 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   the page and holds it, at most one: a page that loads again replaces the one it left, and the
   app stops it when it exits. Its stdio comes to the page over a Tauri channel and is framed for the editor's client
   (`@kupcad/editor`'s `streamTransport`); a server that ends, or doesn't start again, is started
-  again a little later each time, the editors' scripts opened on it again. Its viewport socket
+  again a little later each time, the editors' scripts opened on it again. Its starts, restarts
+  (a new memory limit) and stops run one after another, as the extension's do: a restart waits
+  for a start under way, and a stop doesn't wait for one to be up, the server being started
+  stopped as soon as it is there. Its viewport socket
   admits the page by its origin, `tauri://localhost` (`http://tauri.localhost` on Windows), and
   no other page; Vite's (under `tauri dev`) in a debug build alone, as a released app would
   admit any other project's dev server on that port.
@@ -224,7 +227,7 @@ recent folders as the settings keep them; the preview's host (what the panel is 
 export with its values and its formats, a screenshot, a refused message); the language
 server's lifecycle on a stand-in server (its handshake through the framing, the viewport's URL,
 the commands, restarts, one under a new memory limit, a server that ends before it is up or
-doesn't start again); the
+doesn't start again, starts, restarts and stops asked while another runs); the
 settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
 and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
 question on closing, the tree's folders closed and opened, none of it kept, the folder listed

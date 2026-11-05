@@ -146,11 +146,13 @@ describe('the language server', () => {
     expect(waits).toEqual([RESTART_MS.first, RESTART_MS.first * 2, RESTART_MS.first * 4]);
   });
 
-  it('stops for good: the process killed, and not started again when it ends', async () => {
-    const { server, fake, timers } = serverOn();
+  it('stops for good: the process killed, the app told, and not started again when it ends', async () => {
+    const { server, events, fake, timers } = serverOn();
     await server.start();
     await server.stop();
     expect(fake.processes[0].killed).toBe(true);
+    expect(events.state).toHaveBeenLastCalledWith(false);
+    expect(events.viewport).toHaveBeenLastCalledWith(null);
     fake.processes[0].on.exit(0);
     expect(timers).toEqual([]);
     await expect(server.preview('file:///w/part.kup')).rejects.toThrow(/isn't running/);
@@ -170,5 +172,66 @@ describe('the language server', () => {
     expect(timers).toEqual([]);
     expect(events.log).not.toHaveBeenCalledWith(expect.stringMatching(/ended/));
     await server.preview('file:///w/part.kup');
+  });
+
+  it('waits for a start under way to restart: the start succeeds, and one server runs', async () => {
+    const { server, events, fake } = serverOn();
+    const starting = server.start();
+    const restarting = server.restart();
+    await expect(starting).resolves.toBeUndefined();
+    await restarting;
+    expect(fake.processes.map((p) => p.killed)).toEqual([true, false]);
+    expect(events.log).not.toHaveBeenCalled();
+    await server.preview('file:///w/part.kup');
+  });
+
+  it('runs restarts asked together one after another: one server runs at the end', async () => {
+    let limit = 8;
+    const { server, fake } = serverOn(fakeServer(), () => limit);
+    await server.start();
+    limit = 32;
+    await Promise.all([server.restart(), server.restart()]);
+    expect(fake.processes.filter((p) => !p.killed)).toHaveLength(1);
+    expect(fake.processes.at(-1)?.memoryLimit).toBe(32);
+  });
+
+  it('stops a server being started again at once, waiting for it to be up no longer', async () => {
+    const fake = fakeServer();
+    const { server, events, timers } = serverOn(fake);
+    await server.start();
+    fake.processes[0].on.exit(1);
+    // The one started again never answers
+    fake.answers = false;
+    timers[0]();
+    await vi.waitFor(() => expect(fake.processes).toHaveLength(2));
+    await server.stop();
+    expect(fake.processes[1].killed).toBe(true);
+    expect(events.state).toHaveBeenLastCalledWith(false);
+    expect(events.viewport).toHaveBeenLastCalledWith(null);
+    // Nothing more: no start again, no word of the start the stop cut short
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(timers).toHaveLength(1);
+    expect(events.log).not.toHaveBeenCalledWith(expect.stringMatching(/didn't start/));
+  });
+
+  it('kills the server a stop finds still being spawned, which no one would own', async () => {
+    const fake = fakeServer();
+    const spawn = fake.spawn;
+    /** Lets the spawn under way go on, once there is one. @type {((value?: unknown) => void)[]} */
+    const spawning = [];
+    fake.spawn = async (origin, memoryLimit, on) => {
+      await new Promise((resolve) => spawning.push(resolve));
+      return spawn(origin, memoryLimit, on);
+    };
+    const { server, events } = serverOn(fake);
+    const starting = server.start();
+    await vi.waitFor(() => expect(spawning).toHaveLength(1));
+    const stopping = server.stop();
+    spawning[0]();
+    await expect(starting).rejects.toThrow('kupcad lsp was stopped before it was up');
+    await stopping;
+    expect(fake.processes[0].killed).toBe(true);
+    expect(events.state).not.toHaveBeenCalled();
+    await expect(server.preview('file:///w/part.kup')).rejects.toThrow(/isn't running/);
   });
 });
