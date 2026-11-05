@@ -11,9 +11,21 @@
  * JSON (`String` wrote `[10, 20]` as `10,20`, which no Array parameter reads).
  * @param {ParamValues} values
  * @returns {string[]}
+ * @throws {Error} for a name kupcad would read as something else (`isParamName`)
  */
 export const paramOptions = (values) =>
-  Object.entries(values).flatMap(([name, value]) => ['-p', `${name}=${paramText(value)}`]);
+  Object.entries(values).flatMap(([name, value]) => {
+    if (!isParamName(name)) throw new Error(`'${name}' is no parameter's name`);
+    return ['-p', `${name}=${paramText(value)}`];
+  });
+
+/**
+ * Whether `name` is read back as itself after `-p`: none, one read as an option (`-o`), or one
+ * with `=` in it (which ends the name there) is no parameter's. The desktop app's native side
+ * checks the names it is given so too (build_args).
+ * @param {string} name
+ */
+const isParamName = (name) => name !== '' && !name.startsWith('-') && !name.includes('=');
 
 /**
  * `value` as the text after `-p name=`.

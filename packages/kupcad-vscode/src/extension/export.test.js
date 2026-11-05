@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BuildError, buildArguments, runBuild } from './export.js';
 
 const POSIX = process.platform !== 'win32';
+/** An export's arguments, as @kupcad/protocol keeps them for the hosts: the desktop's native side holds them too. */
+const BUILD = JSON.parse(
+  fs.readFileSync(
+    new URL('../../../kupcad-protocol/src/fixtures/build-arguments.json', import.meta.url),
+    'utf8',
+  ),
+);
 
 /** @type {string} */
 let dir;
@@ -24,6 +31,16 @@ function kupcad(body) {
 }
 
 describe('export', () => {
+  it("builds as the desktop app's native side does, and refuses the names it refuses", () => {
+    const { script, output, format, values, memoryLimit } = BUILD;
+    expect(buildArguments(script, output, format, values, memoryLimit)).toEqual(BUILD.argv);
+    for (const name of BUILD.refusedNames) {
+      expect(() => buildArguments(script, output, format, { [name]: 1 }, memoryLimit)).toThrow(
+        "is no parameter's name",
+      );
+    }
+  });
+
   it("builds the script to the output in the format picked, a -p for each of the viewer's values, under the memory limit", () => {
     expect(
       buildArguments(

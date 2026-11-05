@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION, ProtocolError } from '@kupcad/protocol';
+import { EXPORT_FORMATS, PROTOCOL_VERSION, ProtocolError } from '@kupcad/protocol';
 import { createKupcad, Kupcad, KupcadCrashError, KupcadError } from './index.js';
 import { WasiExit } from './wasi.js';
 
@@ -27,13 +27,15 @@ beforeAll(async () => {
 
 describe('createKupcad', () => {
   it("instantiates the module this package ships, the core's version, speaking this protocol", async () => {
-    expect(await kupcad.version()).toEqual({
+    const { formats, ...version } = await kupcad.version();
+    expect(version).toEqual({
       version: PACKAGE.version,
       protocolVersion: PROTOCOL_VERSION,
       os: 'wasi',
       arch: 'wasm32',
-      formats: ['stl', 'glb', 'gltf', 'step', '3mf', 'obj', 'svg', 'dxf'],
     });
+    // It writes the formats the hosts offer, in an order of its own
+    expect(formats?.toSorted()).toEqual(EXPORT_FORMATS.map((choice) => choice.format).toSorted());
     const zon = readFileSync(new URL('../../../core/build.zig.zon', import.meta.url), 'utf8');
     expect(zon).toContain(`.version = "${PACKAGE.version}"`);
   });

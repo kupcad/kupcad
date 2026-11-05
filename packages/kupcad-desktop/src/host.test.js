@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createHost } from './host.js';
 
@@ -5,6 +7,11 @@ import { createHost } from './host.js';
 /** @typedef {{ defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }} SaveOptions */
 
 const PART = { uri: 'file:///w/part.kup', name: 'part.kup', path: '/w/part.kup' };
+/** An export's values and the texts the native side is given for them (@kupcad/protocol's). */
+const BUILD = JSON.parse(
+  // From the package's folder, where its tests run (the page's tests have no file URLs)
+  readFileSync(resolvePath('../kupcad-protocol/src/fixtures/build-arguments.json'), 'utf8'),
+);
 const LID = { uri: 'file:///w/lid.kup', name: 'lid.kup', path: '/w/lid.kup' };
 
 /** The host on stand-ins for what it works with, what it tells its panel, and what it does. */
@@ -97,18 +104,7 @@ describe('the host', () => {
   it('exports the script where the person saves it, in its format, with its values', async () => {
     const { host, show, services } = hostOn();
     show(PART);
-    host.post({
-      type: 'setParams',
-      uri: PART.uri,
-      values: {
-        width: 40,
-        hollow: true,
-        holes: [
-          [0, 0],
-          [10, 0],
-        ],
-      },
-    });
+    host.post({ type: 'setParams', uri: PART.uri, values: BUILD.values });
     host.post({ type: 'export', uri: PART.uri, format: '3mf' });
     await settled();
     // The page's menu chose the format: the dialog is of it alone (one of them all offered no
@@ -124,12 +120,9 @@ describe('the host', () => {
       '/w/part.kup',
       '/out/part.3mf',
       '3mf',
-      [
-        ['width', '40'],
-        ['hollow', 'true'],
-        // An array as kupcad build -p reads one
-        ['holes', '[[0,0],[10,0]]'],
-      ],
+      // Each value's text, an array's as kupcad build -p reads one: what the native side's
+      // build_args is held to give as the VS Code extension's arguments
+      BUILD.params,
       // The setting: the build holds the script to it
       8,
     );

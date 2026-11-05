@@ -65,7 +65,9 @@ client.sendRequest('workspace/executeCommand', {
 * What every host of the viewer does alike (`host.js`): `ScriptValues`, the values each
   script's parameters were given (what the server runs it with, what an export builds it
   with), and `paramOptions(values)`, those values as `kupcad build`'s `-p` options (`paramText`,
-  an array's as JSON); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
+  an array's as JSON; a name kupcad would read as something else refused, as the desktop app's
+  native side refuses it: both hosts' tests hold their export's arguments to
+  `src/fixtures/build-arguments.json`); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
   names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
   message names when it isn't the one shown, which a host refuses.
 * `createPreviewHost(services)`: the host of a preview page, as the VS Code extension's panel

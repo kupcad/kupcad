@@ -1,0 +1,42 @@
+{
+  "script": "/w/part.kup",
+  "output": "/out/part.3mf",
+  "format": "3mf",
+  "values": {
+    "width": 40,
+    "hollow": true,
+    "label": "A b=c",
+    "holes": [
+      [0, 0],
+      [10, 0]
+    ]
+  },
+  "params": [
+    ["width", "40"],
+    ["hollow", "true"],
+    ["label", "A b=c"],
+    ["holes", "[[0,0],[10,0]]"]
+  ],
+  "memoryLimit": 8,
+  "argv": [
+    "build",
+    "/w/part.kup",
+    "-o",
+    "/out/part.3mf",
+    "-f",
+    "3mf",
+    "-p",
+    "width=40",
+    "-p",
+    "hollow=true",
+    "-p",
+    "label=A b=c",
+    "-p",
+    "holes=[[0,0],[10,0]]",
+    "--memory-limit",
+    "8GB",
+    "--errors",
+    "json"
+  ],
+  "refusedNames": ["", "-o", "a=b"]
+}

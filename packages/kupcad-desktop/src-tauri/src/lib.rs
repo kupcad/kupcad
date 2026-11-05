@@ -18,7 +18,8 @@ use tauri_plugin_fs::FsExt;
 
 /// The bundled kupcad, as `bundle.externalBin` names it (`binaries/kupcad-<target triple>`).
 pub(crate) const SIDECAR: &str = "kupcad";
-/// The largest memory limit the setting may be, in GB: a petabyte (@kupcad/protocol's).
+/// The largest memory limit the setting may be, in GB: a petabyte (@kupcad/protocol's, which
+/// src/native.test.js holds it to).
 const MAX_MEMORY_LIMIT_GB: u32 = 1024 * 1024;
 
 /// The folder the app was started with (`kupcad-desktop ~/parts`; `pnpm dev:desktop` gives it the

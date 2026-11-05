@@ -16,7 +16,8 @@ use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 
 use crate::{SIDECAR, allowed, existing, memory_limit_arg, to_write};
 
-/// The formats `kupcad build -f` writes (core/src/exporters/format.zig).
+/// The formats `kupcad build -f` writes (core/src/exporters/format.zig): @kupcad/protocol's
+/// EXPORT_FORMATS, which src/native.test.js holds it to.
 const FORMATS: [&str; 8] = ["stl", "3mf", "step", "glb", "gltf", "obj", "svg", "dxf"];
 /// The most of a build's log kept, in bytes: as much as the VS Code extension's export reads.
 const MAX_LOG_BYTES: usize = 16 * 1024 * 1024;
@@ -198,39 +199,43 @@ mod tests {
     use tauri::async_runtime::block_on;
     use tauri_plugin_fs::FsExt;
 
+    /// An export's arguments, as @kupcad/protocol keeps them for the hosts: the VS Code
+    /// extension's tests hold them too.
+    const BUILD: &str = include_str!("../../../kupcad-protocol/src/fixtures/build-arguments.json");
+
     #[test]
-    fn an_export_is_kupcad_build_with_its_format_and_values() {
-        let params = vec![("width".to_string(), "40".to_string())];
-        let args = build_args("/w/part.kup", "/out/part.3mf", "3mf", &params, 8).unwrap();
-        assert_eq!(
-            args,
-            [
-                "build",
-                "/w/part.kup",
-                "-o",
-                "/out/part.3mf",
-                "-f",
-                "3mf",
-                "-p",
-                "width=40",
-                "--memory-limit",
-                "8GB",
-                "--errors",
-                "json"
-            ]
+    fn an_export_is_kupcad_build_as_the_vs_code_extensions_is() {
+        let build: serde_json::Value = serde_json::from_str(BUILD).unwrap();
+        let text = |key: &str| build[key].as_str().unwrap();
+        let params: Vec<(String, String)> =
+            serde_json::from_value(build["params"].clone()).unwrap();
+        let argv: Vec<String> = serde_json::from_value(build["argv"].clone()).unwrap();
+        let limit = u32::try_from(build["memoryLimit"].as_u64().unwrap()).unwrap();
+        let args = build_args(
+            text("script"),
+            text("output"),
+            text("format"),
+            &params,
+            limit,
         );
+        assert_eq!(args.unwrap(), argv);
+        // A name read as something else, as the extension refuses it
+        for name in build["refusedNames"].as_array().unwrap() {
+            let params = vec![(name.as_str().unwrap().to_string(), "1".to_string())];
+            let args = build_args(
+                text("script"),
+                text("output"),
+                text("format"),
+                &params,
+                limit,
+            );
+            assert!(args.is_err(), "{name}");
+        }
     }
 
     #[test]
-    fn a_format_kupcad_doesnt_write_or_a_name_read_as_an_option_is_refused() {
+    fn a_format_kupcad_doesnt_write_or_a_memory_limit_out_of_range_is_refused() {
         assert!(build_args("/w/a.kup", "/o/a.exe", "exe", &[], 8).is_err());
-        for name in ["", "-o", "a=b"] {
-            let params = vec![(name.to_string(), "1".to_string())];
-            assert!(
-                build_args("/w/a.kup", "/o/a.stl", "stl", &params, 8).is_err(),
-                "{name}"
-            );
-        }
         for gigabytes in [0, 1024 * 1024 + 1] {
             assert!(build_args("/w/a.kup", "/o/a.stl", "stl", &[], gigabytes).is_err());
         }

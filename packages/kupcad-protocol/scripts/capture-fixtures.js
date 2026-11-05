@@ -1,6 +1,8 @@
 // Writes src/fixtures/*.json: the headers of the frames the core's preview worker gives for a
 // few scripts, their timings made fixed so the files change only when the protocol does; and
 // src/fixtures/build-failed.txt, what `kupcad build --errors json` writes for a script that fails.
+// build-arguments.json beside them is written by hand: an export's `kupcad build` arguments,
+// which the hosts' tests (the VS Code extension's, the desktop app's native side's) hold.
 //
 //   node scripts/capture-fixtures.js [path/to/kupcad]   (default: the core's dev build)
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   anotherDocument,
@@ -5,9 +6,15 @@ import {
   memoryLimitOf,
   memoryLimitOptions,
   paramOptions,
+  paramText,
   ScriptValues,
   viewportUrl,
 } from './host.js';
+
+/** An export's arguments, which the hosts' tests hold too (the desktop's native side's). */
+const BUILD = JSON.parse(
+  readFileSync(new URL('./fixtures/build-arguments.json', import.meta.url), 'utf8'),
+);
 
 describe('host', () => {
   it('writes values as kupcad build takes them: an array or an object as JSON', () => {
@@ -33,6 +40,25 @@ describe('host', () => {
       '-p',
       'at={"x":1}',
     ]);
+  });
+
+  it("refuses a name kupcad would read as something else, as the desktop's native side does", () => {
+    for (const name of BUILD.refusedNames) {
+      expect(() => paramOptions({ [name]: 1 })).toThrow(`'${name}' is no parameter's name`);
+    }
+  });
+
+  it("gives an export's values as the fixture the hosts hold has them", () => {
+    // The desktop app's page gives its native side each value's text (paramText)
+    expect(Object.entries(BUILD.values).map(([name, value]) => [name, paramText(value)])).toEqual(
+      BUILD.params,
+    );
+    expect(paramOptions(BUILD.values)).toEqual(
+      BUILD.params.flatMap((/** @type {[string, string]} */ [name, text]) => [
+        '-p',
+        `${name}=${text}`,
+      ]),
+    );
   });
 
   it("reads the viewport socket's URL from a port, and none from what is no port", () => {
