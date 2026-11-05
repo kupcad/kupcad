@@ -46,7 +46,12 @@ test "import_3mf: what a 3MF package's build places is a Solid, each copy where 
         "</triangles></mesh></object></resources><build><item objectid=\"1\"/><item objectid=\"1\" transform=\"1 0 0 0 1 0 0 0 1 3 0 0\"/></build></model>";
     const package = try zip.write(std.testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = cube_model }});
     defer std.testing.allocator.free(package);
-    const files = &.{ support.ScriptFile{ .path = "cubes.3mf", .data = package }, support.ScriptFile{ .path = "junk.3mf", .data = "not a zip" } };
+    // The cube with its last triangle left out: open along three edges
+    const open_model = try std.mem.replaceOwned(u8, std.testing.allocator, cube_model, "<triangle v1=\"1\" v2=\"6\" v3=\"5\"/>", "");
+    defer std.testing.allocator.free(open_model);
+    const open = try zip.write(std.testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = open_model }});
+    defer std.testing.allocator.free(open);
+    const files = &.{ support.ScriptFile{ .path = "cubes.3mf", .data = package }, support.ScriptFile{ .path = "junk.3mf", .data = "not a zip" }, support.ScriptFile{ .path = "open.3mf", .data = open } };
     try expectScripts(&.{
         // Two cubes of 1 cm, 3 cm apart
         .{ .src = "r = import_3mf(\"cubes.3mf\").volume", .expected = .{ .num = 2000 }, .files = files },
@@ -54,6 +59,9 @@ test "import_3mf: what a 3MF package's build places is a Solid, each copy where 
         // What export_3mf writes, each part once and each copy an item, reads back as it was
         .{ .src = "b = cylinder(r: 2, h: 5, segments: 12)\nassemble(name: \"set\", parts: [b, b.translate(x: 10), cube(3).translate(y: 8)]).export_3mf(\"p.3mf\")\nr = (import_3mf(\"p.3mf\").volume - (b + b.translate(x: 10) + cube(3).translate(y: 8)).volume).abs < 1e-3", .expected = .{ .boolean = true }, .files = files },
         .{ .src = comptime rescued("import_3mf(\"junk.3mf\")"), .expected = .{ .str = "ImportError: could not read 3MF file 'junk.3mf': it isn't a zip archive, which a 3MF package is" }, .files = files },
+        // A mesh with a hole is mended, as an STL's is, unless repair: false refuses it
+        .{ .src = "r = import_3mf(\"open.3mf\").volume.round(6)", .expected = .{ .num = 2000 }, .files = files },
+        .{ .src = comptime rescued("import_3mf(\"open.3mf\", repair: false)"), .expected = .{ .str = "ImportError: could not read 3MF file 'open.3mf': its mesh isn't closed: 3 edges are on one triangle only; the first from [10, 0, 0] to [10, 0, 10]; import_3mf(path) mends what it can" }, .files = files },
     });
 }
 

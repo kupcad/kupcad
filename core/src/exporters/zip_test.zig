@@ -175,3 +175,39 @@ test "zip: an entry whose offset or size runs past the archive is refused, howev
     long.compressed = std.math.maxInt(u32);
     try testing.expectError(error.Corrupt, read.read(testing.allocator, long, 1 << 16));
 }
+
+test "zip: an archive damaged where a reader trusts it is refused, opening it or reading its file" {
+    // Each refusal of the reader, by hand: an archive of one stored file, a field of it
+    // changed. Offsets from the end record (22 bytes before the end) or the central header.
+    const data = "Hello world\n";
+    const crc = std.hash.Crc32.hash(data);
+    const Field = enum { end_record, central };
+    const cases = [_]struct { what: []const u8, method: u16 = 0, packed_data: []const u8 = data, field: Field = .end_record, at: usize = 0, value: u32 = 0, width: u8 = 4, on_open: ?anyerror = null, on_read: ?anyerror = null }{
+        .{ .what = "zip64's count", .at = 10, .value = 0xFFFF, .width = 2, .on_open = error.Unsupported },
+        .{ .what = "zip64's offset", .at = 16, .value = 0xFFFF_FFFF, .on_open = error.Unsupported },
+        .{ .what = "a directory past the end record", .at = 12, .value = 1000, .on_open = error.Corrupt },
+        .{ .what = "a central header that isn't one", .field = .central, .at = 0, .value = 0x01020304, .on_open = error.Corrupt },
+        .{ .what = "a name past the end record", .field = .central, .at = 28, .value = 1000, .width = 2, .on_open = error.Corrupt },
+        .{ .what = "a stored file of another size than its packed bytes", .field = .central, .at = 24, .value = 13, .on_read = error.Corrupt },
+        .{ .what = "a deflate stream that isn't one", .method = 8, .packed_data = "\xff\xff\xff\xff\xff\xff", .on_read = error.Corrupt },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("case: {s}\n", .{case.what});
+        const archive = try oneFile("hello.txt", case.method, 0, case.packed_data, data.len, crc);
+        defer testing.allocator.free(archive);
+        if (case.on_open != null or case.field == .central or case.at != 0) {
+            const at = switch (case.field) {
+                .end_record => archive.len - 22 + case.at,
+                .central => 30 + "hello.txt".len + case.packed_data.len + case.at,
+            };
+            if (case.width == 2) std.mem.writeInt(u16, archive[at..][0..2], @intCast(case.value), .little) else std.mem.writeInt(u32, archive[at..][0..4], case.value, .little);
+        }
+        if (case.on_open) |err| {
+            try testing.expectError(err, zip.Archive.open(testing.allocator, archive));
+            continue;
+        }
+        const read = try zip.Archive.open(testing.allocator, archive);
+        defer read.deinit(testing.allocator);
+        try testing.expectError(case.on_read.?, read.read(testing.allocator, read.entries[0], 1 << 16));
+    }
+}

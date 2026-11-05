@@ -510,6 +510,20 @@ test "WASM Interop: a build imports the files given with it, and the next call n
     try testing.expectEqualStrings("Build Error: MalformedFiles", std.mem.sliceTo(wasm.get_last_error(), 0));
 }
 
+test "WASM Interop: a build of a format that isn't one, and a preview of files packed wrong, fail saying so" {
+    const src = "cube(1)";
+    const format = "stp";
+    var len: usize = 0;
+    try testing.expectEqual(null, wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, format.ptr, format.len, false, &len));
+    try testing.expectEqual(@as(usize, 0), len);
+    try testing.expectEqualStrings("Unsupported Format", std.mem.sliceTo(wasm.get_last_error(), 0));
+    // A length that runs past the end: the frame can't be made, so no frame
+    const files = "\x09\x00\x00\x00lib";
+    try testing.expectEqual(null, wasm.preview_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, files.ptr, files.len, &len));
+    try testing.expectEqual(@as(usize, 0), len);
+    try testing.expectEqualStrings("Preview Error: MalformedFiles", std.mem.sliceTo(wasm.get_last_error(), 0));
+}
+
 test "WASM Interop: a preview imports the files given with it" {
     const lib: kupcad.vfs_packed.File = .{ .path = "lib.kup", .content = "side = 2\nexport side\n" };
     const packed_bytes = try kupcad.vfs_packed.pack(testing.allocator, &.{lib});

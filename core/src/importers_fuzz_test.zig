@@ -140,7 +140,7 @@ test "fuzz: a 3MF package a script imports" {
 
 fn check3mf(data: []const u8) !void {
     var diag: threemf_read.Diagnostic = .{};
-    var model = threemf_read.read(testing.allocator, data, &diag) catch return;
+    var model = threemf_read.read(testing.allocator, data, .{}, &diag) catch return;
     defer model.deinit();
     // Each mesh goes to the kernel, as an STL's does
     try testing.expect(model.meshes.len > 0);

@@ -69,7 +69,7 @@ pub fn nativeImport3mf(vm: *VM, args: []const value.Value) !value.Value {
     const file = try file_import.read(vm, request.path, "3MF", limits.MAX_MESH_BYTES);
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
-    var model = threemf_read.read(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, request.path, "3MF", &diag);
+    var model = threemf_read.read(vm.allocator, file, .{}, &diag) catch |err| return file_import.unreadable(vm, err, request.path, "3MF", &diag);
     defer model.deinit();
     return solidOf(vm, model.meshes, request, "import_3mf", "3MF");
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const obj_read = @import("obj_read.zig");
+const support = @import("../../test_support.zig");
 
 /// A unit cube's corners and its six faces as quads, each counter-clockwise from outside.
 const CUBE = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n" ++
@@ -71,4 +72,6 @@ test "OBJ read: what can't be read says why and where" {
     try expectRefused("v 0 0 0\nv 1 0 0\nf 1 2\n", "line 3: a face needs at least 3 corners, got 2");
     try expectRefused("v 0 0 0\nf 1 a 1\n", "line 2: the face corner \"a\" isn't a vertex's number");
     try expectRefused("# nothing\nv 0 0 0\n", "it has no faces");
+    // A face of more corners than a face holds
+    try expectRefused("v 0 0 0\nf" ++ comptime support.repeat(" 1", 4097) ++ "\n", "line 2: a face has more than 4096 corners");
 }

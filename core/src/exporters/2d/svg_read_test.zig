@@ -282,5 +282,10 @@ test "SVG read: what can't be read says why and where" {
     // Transforms each in range whose product isn't (it panicked the geometry graph), and a
     // path's relative moves that add up past one
     try expectRefused(MM ++ "<g transform=\"scale(1e308)\">\n<rect width=\"1\" height=\"1\" transform=\"scale(1e308)\"/></g></svg>", "line 2: what the <rect> draws is out of range: scaled by its transforms, a number of it isn't finite");
+    try expectRefused("<svg></svg></svg>", "line 1: </svg> closes no element");
+    try expectRefused("<svg width=\"0mm\" viewBox=\"0 0 1 1\"></svg>", "line 1: its width \"0mm\" isn't greater than zero");
+    try expectRefused(MM ++ "<rect width=\"1e999\" height=\"1\"/></svg>", "line 1: the width of a <rect> isn't finite");
+    try expectRefused(MM ++ "<circle r=\"-1\"/></svg>", "line 1: a <circle> has a negative radius");
+    try expectRefused(MM ++ "<polygon points=\"0 0 1 1 x\"/></svg>", "line 1: the points of a <polygon> aren't all numbers");
     try expectRefused(MM ++ "<path d=\"M1e308 0 l1e308 0 l0 1\"/></svg>", "line 1: what the <path> draws is out of range: scaled by its transforms, a number of it isn't finite");
 }

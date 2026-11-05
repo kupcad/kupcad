@@ -45,15 +45,20 @@ pub const Model = struct {
     }
 };
 
+pub const Options = struct {
+    /// How many bytes the parts read may unpack to, together.
+    max_unpacked: usize = limits.MAX_PACKAGE_PART_BYTES,
+};
+
 pub const Error = error{Unreadable} || std.mem.Allocator.Error;
 
-/// The meshes of the 3MF package `data`.
-pub fn read(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnostic) Error!Model {
+/// The meshes of the 3MF package `data`, as `options` says.
+pub fn read(allocator: std.mem.Allocator, data: []const u8, options: Options, diag: *Diagnostic) Error!Model {
     var model = Model{ .meshes = &.{}, .arena = .init(allocator) };
     errdefer model.deinit();
     const arena = model.arena.allocator();
-    const archive = zip.Archive.open(arena, data) catch |err| return archiveError(err, "it", diag);
-    var package = Package{ .arena = arena, .archive = archive, .diag = diag };
+    const archive = zip.Archive.open(arena, data) catch |err| return archiveError(err, "it", options.max_unpacked, diag);
+    var package = Package{ .arena = arena, .archive = archive, .diag = diag, .max_unpacked = options.max_unpacked };
     const root = try package.part(try package.modelPath());
     if (root.items.len == 0) return diag.fail("{s}: its build places nothing", .{root.path});
 
@@ -156,9 +161,10 @@ const Package = struct {
     diag: *Diagnostic,
     /// The model parts read, by path
     parts: std.StringHashMapUnmanaged(*Part) = .empty,
-    /// What the parts read unpacked to, together: they all stay while the package is read,
-    /// so many of them, each under the limit, were as much as memory held
+    /// What the parts read unpacked to, together, and the most they may: they all stay while
+    /// the package is read, so many of them, each under the limit, were as much as memory held
     unpacked: usize = 0,
+    max_unpacked: usize,
 
     /// Where the 3D model is: the relationship to it the package's relationships give, or
     /// the default.
@@ -188,7 +194,7 @@ const Package = struct {
     }
 
     fn unpack(self: *Package, entry: zip.Archive.Entry, name: []const u8) Error![]const u8 {
-        const text = self.archive.read(self.arena, entry, limits.MAX_PACKAGE_PART_BYTES - self.unpacked) catch |err| return archiveError(err, name, self.diag);
+        const text = self.archive.read(self.arena, entry, self.max_unpacked - self.unpacked) catch |err| return archiveError(err, name, self.max_unpacked, self.diag);
         self.unpacked += text.len;
         return text;
     }
@@ -315,12 +321,14 @@ const Package = struct {
 };
 
 /// What a zip reading error of `what` (the package, or a part of it) means, said.
-fn archiveError(err: zip.ReadError, what: []const u8, diag: *Diagnostic) Error {
+/// Why the archive, or its part `what`, can't be read, the parts allowed `max_unpacked`
+/// bytes together.
+fn archiveError(err: zip.ReadError, what: []const u8, max_unpacked: usize, diag: *Diagnostic) Error {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.NotAnArchive => diag.fail("it isn't a zip archive, which a 3MF package is", .{}),
         error.Corrupt => diag.fail("{s} is damaged: a record of the archive doesn't fit, or its data isn't what its checksum says", .{what}),
         error.Unsupported => diag.fail("{s} is stored in a way this reader doesn't read (zip64, encrypted, or packed but stored or deflated)", .{what}),
-        error.TooLarge => diag.fail("{s} unpacks to more than {d} bytes; a script reads at most that", .{ what, limits.MAX_PACKAGE_PART_BYTES }),
+        error.TooLarge => diag.fail("{s} unpacks to more than {d} bytes; a script reads at most that", .{ what, max_unpacked }),
     };
 }

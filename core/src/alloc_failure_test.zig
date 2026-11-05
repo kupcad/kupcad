@@ -175,7 +175,7 @@ fn readImport(case: ImportCase, allocator: std.mem.Allocator) anyerror![]const u
         },
         .@"3mf" => {
             var diag: threemf_read.Diagnostic = .{};
-            var model = try threemf_read.read(allocator, case.bytes, &diag);
+            var model = try threemf_read.read(allocator, case.bytes, .{}, &diag);
             defer model.deinit();
             for (model.meshes) |m| try w.print("{d} points, {d} faces\n", .{ m.points.len, m.faces.len });
         },

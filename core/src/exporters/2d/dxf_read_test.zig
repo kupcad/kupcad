@@ -327,6 +327,22 @@ test "DXF read: what can't be read says why and where" {
     // Flags (group 70) are a 16-bit number
     try expectRefused(file("", "0\nLWPOLYLINE\n70\n1e30\n10\n0\n20\n0\n10\n1\n20\n0\n"), "line 11: the LWPOLYLINE on layer '0' has flags (group 70) of 1e30: they are a 16-bit number");
     try expectRefused(file("", "0\nPOLYLINE\n70\n1\n0\nVERTEX\n70\n-1e19\n10\n0\n20\n0\n0\nSEQEND\n"), "line 15: the VERTEX on layer '0' has flags (group 70) of -1e19: they are a 16-bit number");
+    // Each of the reader's refusals, with its words
+    const refused = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = file("", "0\nLINE\n10\n1e999\n20\n0\n11\n1\n21\n0\n"), .message = "line 14: group 10 isn't a finite number" },
+        .{ .text = file("", "0\nINSERT\n10\n0\n20\n0\n"), .message = "line 11: an INSERT names no block (group 2)" },
+        .{ .text = withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n0\n20\n0\n70\n20000\n"), .message = "line 33: an INSERT copies its block 20000 times across, at most 10000" },
+        .{ .text = withBlocks("0\nBLOCK\n10\n0\n20\n0\n0\nENDBLK\n", ""), .message = "line 5: a BLOCK has no name (group 2)" },
+        .{ .text = file("", "0\nSPLINE\n71\n40\n10\n0\n20\n0\n"), .message = "line 11: the SPLINE on layer '0' is of degree 40: 1 to 32 are read" },
+        .{ .text = file("", "0\nSPLINE\n71\n3\n"), .message = "line 11: the SPLINE on layer '0' has no control points" },
+        .{ .text = file("", "0\nSPLINE\n71\n1\n10\n0\n20\n0\n10\n1\n20\n0\n40\n0\n40\n1\n40\n0\n40\n1\n"), .message = "line 11: the SPLINE on layer '0' has knots out of order" },
+        .{ .text = file("", "0\nSPLINE\n71\n1\n10\n0\n20\n0\n10\n1\n20\n0\n40\n0\n40\n0\n40\n1\n40\n1\n41\n1\n41\n-1\n"), .message = "line 11: the SPLINE on layer '0' has a weight of -1: they must be greater than zero" },
+        .{ .text = file("", "0\nELLIPSE\n10\n0\n20\n0\n11\n2\n21\n0\n40\n2\n"), .message = "line 11: the ELLIPSE on layer '0' has a major axis of 2 and a ratio of 2" },
+    };
+    for (refused) |case| {
+        errdefer std.debug.print("dxf: {s}\n", .{case.text});
+        try expectRefused(case.text, case.message);
+    }
 }
 
 test "DXF read: numbers far out are read or refused, never past what the reader holds" {
