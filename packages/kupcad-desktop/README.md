@@ -191,7 +191,8 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   format the name says, else the one chosen (`@kupcad/protocol`'s `exportFormatFor`, as the
   VS Code extension does). One runs at a time; the bar says so, with a Cancel, and says when it
   is done. A screenshot is saved where the person says, beside the script too; a problem's
-  place is shown in the editor. The server's log
+  place is shown in the editor, a library's opened by its path where the tree doesn't list it
+  (a package's, under `.kupcad/`). The server's log
   goes to the panel's console, under the model, with each run (what it printed, its warnings
   and its error). Presets aren't offered yet.
 * **The native side** (`src-tauri/src/lib.rs`, `export.rs`, `server.rs`): the plugins (dialogs, the file system, the
@@ -239,7 +240,8 @@ the commands, restarts, one under a new memory limit, a server that ends before 
 doesn't start again, starts, restarts and stops asked while another runs); the
 settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
 and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
-question on closing, an export saving the script first once asked, said in the bar as it runs
+question on closing, a place in a library the tree leaves out shown, an export saving the
+script first once asked, said in the bar as it runs
 and once done, and cancelled from it, a restart under a new memory limit asked while the
 server starts, the tree's folders closed and opened, none of it kept, the folder listed
 again as it changes and no longer once another is opened; a script the disk changed followed,

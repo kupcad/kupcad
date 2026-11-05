@@ -45,7 +45,7 @@
     rowMenu,
     within,
   } from '@kupcad/files';
-  import { fileUri, moduleUri } from './folder.js';
+  import { fileUri, modulePath } from './folder.js';
   import { createHost } from './host.js';
   import { keysOf, menuBar, SHORTCUTS, shortcutKeys } from './menu.js';
   import { fontSizeOf, KEYS, recentOf, withRecent, zoomOf, zoomStep } from './prefs.js';
@@ -188,8 +188,10 @@
     exporting: (name) => (exporting = name),
     memoryLimit: () => memoryLimit,
     writeFile: (path, bytes) => platform.writeFile(path, bytes),
-    reveal: (uri, line, column, file) =>
-      void reveal(file && project ? moduleUri(project.root, file) : uri, line, column),
+    reveal: (uri, line, column, file) => {
+      const path = file && project ? modulePath(project.root, file) : null;
+      void reveal(path ? fileUri(path) : uri, line, column, path);
+    },
     log: (text) => (status = text),
   });
 
@@ -291,7 +293,7 @@
     closeScript();
   }
 
-  /** @param {Entry} entry */
+  /** @param {Pick<Entry, 'path' | 'name'>} entry a script, or a file of the folder the tree may not list */
   async function openScript(entry) {
     const current = project;
     if (!current) return;
@@ -388,16 +390,20 @@
   }
 
   /**
-   * Shows a script at a place its run named, opening it first if another is open.
+   * Shows a script at a place its run named, opening it first if another is open: one the tree
+   * doesn't list (a package's, under .kupcad/) by its `path`. Looked for in the tree alone, a
+   * library there was never shown.
    * @param {string} uri
    * @param {number} line
    * @param {number} column
+   * @param {string | null} [path]
    */
-  async function reveal(uri, line, column) {
+  async function reveal(uri, line, column, path = null) {
     if (open?.uri !== uri) {
-      const entry = project?.entries.find((candidate) => fileUri(candidate.path) === uri);
-      if (!entry) return;
-      await openScript(entry);
+      const listed = project?.entries.find((candidate) => fileUri(candidate.path) === uri);
+      const script = listed ?? (path ? { path, name: nameOf(path) } : null);
+      if (!script) return;
+      await openScript(script);
       await tick();
     }
     editor?.reveal(line, column);

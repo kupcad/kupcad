@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   changesTree,
   fileUri,
-  moduleUri,
+  modulePath,
   pickFolder,
   WATCH_DELAY_MS,
   watchFolder,
@@ -96,10 +96,10 @@ it('watches everything under the folder, telling of a file written, and whether 
   expect(stop).toHaveBeenCalledOnce();
 });
 
-it('gives a library the URI of its path in the folder, as a frame names it', () => {
-  expect(moduleUri('/w', 'lib/holes.kup')).toBe('file:///w/lib/holes.kup');
-  expect(moduleUri('/w/', 'lib/my holes.kup')).toBe('file:///w/lib/my%20holes.kup');
-  expect(moduleUri('C:\\w', 'lib/a.kup')).toBe('file:///C%3A/w/lib/a.kup');
+it('gives a library its path in the folder, as a frame names it', () => {
+  expect(modulePath('/w', 'lib/holes.kup')).toBe('/w/lib/holes.kup');
+  expect(modulePath('/w/', 'lib/my holes.kup')).toBe('/w/lib/my holes.kup');
+  expect(modulePath('C:\\w', 'lib/a.kup')).toBe('C:\\w\\lib\\a.kup');
 });
 
 it('gives a file the URI the server knows it by, each segment percent-encoded', () => {

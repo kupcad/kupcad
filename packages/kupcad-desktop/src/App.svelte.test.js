@@ -3,6 +3,7 @@ import { stubRenderer } from '@kupcad/ui/testing';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PROTOCOL_VERSION } from '@kupcad/protocol';
 import { memorySettings } from '@kupcad/ui';
 import App from './App.svelte';
 import { fakeServer } from './fake-server.test-helper.js';
@@ -35,8 +36,9 @@ function windowOn({
   settings = memorySettings(),
   update = /** @type {string | Error | null} */ (null),
   checkUpdates = false,
+  port = /** @type {number | null} */ (null),
 } = {}) {
-  const fake = fakeServer({ port: null });
+  const fake = fakeServer({ port });
   /** @type {(() => Promise<boolean>) | null} */
   let canClose = null;
   /** Each folder watched: what it is told when it changes, and what stopping it was asked. */
@@ -468,6 +470,43 @@ describe('the window', () => {
   });
 });
 
+/**
+ * A stand-in for the browser's WebSocket, which the preview's viewer opens on the server's
+ * viewport socket: each made is kept, for the test to open it and send it frames.
+ */
+class FakeSocket {
+  /** @type {FakeSocket[]} */
+  static made = [];
+  /** @type {Record<string, ((event: any) => void)[]>} */
+  listeners = {};
+  binaryType = 'blob';
+  /** @param {string} url */
+  constructor(url) {
+    this.url = url;
+    FakeSocket.made.push(this);
+  }
+  /** @param {string} kind @param {(event: any) => void} listener */
+  addEventListener(kind, listener) {
+    (this.listeners[kind] ??= []).push(listener);
+  }
+  close() {}
+  /** @param {string} kind @param {unknown} [event] */
+  fire(kind, event = {}) {
+    for (const listener of this.listeners[kind] ?? []) listener(event);
+  }
+  /**
+   * Sends the viewer a frame of no model with `header`'s fields.
+   * @param {object} header
+   */
+  frame(header) {
+    const json = new TextEncoder().encode(JSON.stringify(header));
+    const bytes = new Uint8Array(4 + json.length);
+    new DataView(bytes.buffer).setUint32(0, json.length, true);
+    bytes.set(json, 4);
+    this.fire('message', { data: bytes.buffer });
+  }
+}
+
 /** Chooses `format` in the preview's Export menu. @param {string} format */
 const exportAs = (format) =>
   fireEvent.change(screen.getByRole('combobox', { name: 'Export' }), {
@@ -475,6 +514,48 @@ const exportAs = (format) =>
   });
 /** What the window's bar says. */
 const bar = () => document.querySelector('.bar [role="status"]')?.textContent?.trim();
+
+describe('a place a run named', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    FakeSocket.made.length = 0;
+  });
+
+  it("is shown in a library the tree doesn't list, opened by its path", async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const window = windowOn({ port: 9001 });
+    // A package's module: its folder hidden, the tree leaves it out
+    const gear = '/w/.kupcad/packages/gears/gear.kup';
+    window.disk.set(gear, 'def gear(teeth)\n  warn("too thin") if teeth < 8\nend\n');
+    window.folders.add('/w/.kupcad');
+    await openFolder();
+    expect(screen.queryByRole('button', { name: 'gear.kup' })).toBeNull();
+    const socket = await vi.waitFor(() => {
+      if (!FakeSocket.made[0]) throw new Error('no socket yet');
+      return FakeSocket.made[0];
+    });
+    socket.fire('open');
+    socket.frame({
+      protocolVersion: PROTOCOL_VERSION,
+      document: 'file:///w/parts/lid.kup',
+      kind: 'none',
+      parts: [],
+      warnings: [
+        { message: 'too thin', line: 2, column: 3, file: '.kupcad/packages/gears/gear.kup' },
+      ],
+      params: { schema: { meta: {}, parameters: [] }, values: {} },
+      error: null,
+      timing: { runMs: 1, renderMs: 0 },
+    });
+    // The warning under the model, with its place
+    const [problem] = await screen.findAllByRole('button', { name: /too thin/ });
+    await fireEvent.click(problem);
+    await vi.waitFor(async () =>
+      expect((await editorView()).state.doc.toString()).toBe(window.disk.get(gear)),
+    );
+    expect(document.querySelector('.bar .script')?.textContent).toBe('gear.kup');
+  });
+});
 
 describe('an export', () => {
   it('has a script with changes saved first, once the person says so: kupcad builds the file', async () => {
