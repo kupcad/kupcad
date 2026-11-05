@@ -4,7 +4,9 @@
 //! and `CAD` objects, `params`, and the host hooks.
 
 const std = @import("std");
-const VM = @import("../vm/vm.zig").VM;
+const vm_mod = @import("../vm/vm.zig");
+const VM = vm_mod.VM;
+const BuiltinClass = vm_mod.BuiltinClass;
 const value = @import("../core/value.zig");
 const common = @import("classes/common.zig");
 const std_exceptions = @import("exceptions.zig");
@@ -38,17 +40,17 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
     return class_obj;
 }
 
-/// A built-in kind of value (see ObjClass.is_value_class), under Object.
-fn defineValueClass(vm: *VM, name: []const u8) !*value.ObjClass {
-    const class = try defineBuiltinClass(vm, name, vm.object_class);
+/// A class of built-in values (see ObjClass.is_value_class), under `superclass`.
+fn defineValueClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !*value.ObjClass {
+    const class = try defineBuiltinClass(vm, name, superclass);
     class.is_value_class = true;
     return class;
 }
 
-/// A kind of shape (Solid, Sketch, Path), under `shape`: a value class, as Shape is.
-fn defineShapeClass(vm: *VM, name: []const u8, shape: *value.ObjClass) !*value.ObjClass {
-    const class = try defineBuiltinClass(vm, name, shape);
-    class.is_value_class = true;
+/// The class of the kind of value `kind`, under `superclass`, kept as its class (VM.classes).
+fn defineKindClass(vm: *VM, kind: BuiltinClass, superclass: ?*value.ObjClass) !*value.ObjClass {
+    const class = try defineValueClass(vm, kind.scriptName(), superclass);
+    vm.classes.set(kind, class);
     return class;
 }
 
@@ -79,97 +81,82 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     }
 
     // Object class
-    vm.object_class = try defineBuiltinClass(vm, "Object", null);
+    const object = try defineBuiltinClass(vm, BuiltinClass.object.scriptName(), null);
+    vm.classes.set(.object, object);
 
     // Register Universal Object Protocol on Object root class
     for (object_mod.methods) |def| {
-        try bindNativeMethod(vm, vm.object_class.?, def.name, def.func);
+        try bindNativeMethod(vm, object, def.name, def.func);
     }
 
     // Bootstrap Exception Hierarchy AFTER Object exists
     try std_exceptions.registerExceptions(vm);
 
     // Bootstrap Primitive Classes for Monkey-Patching
-    vm.array_class = try defineValueClass(vm, "Array");
-    vm.string_class = try defineValueClass(vm, "String");
-    vm.map_class = try defineValueClass(vm, "Map");
-    vm.json_object_class = try defineValueClass(vm, "JsonObject");
-    vm.font_class = try defineValueClass(vm, "Font");
-    vm.random_class = try defineValueClass(vm, "Random");
-    vm.number_class = try defineValueClass(vm, "Number");
+    for ([_]BuiltinClass{ .array, .string, .map, .json_object, .font, .random, .range, .symbol, .boolean, .bbox, .nil, .proc, .method, .class, .module, .assembly }) |kind| {
+        _ = try defineKindClass(vm, kind, object);
+    }
+    const number = try defineKindClass(vm, .number, object);
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("NAN"), value.Value.initNumber(std.math.nan(f64)));
+    try number.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
+    try number.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("NAN"), value.Value.initNumber(std.math.nan(f64)));
     // The gap between 1 and the next number, Ruby's Float::EPSILON: a scale for tolerances.
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("EPSILON"), value.Value.initNumber(std.math.floatEps(f64)));
-    vm.range_class = try defineValueClass(vm, "Range");
-    vm.symbol_class = try defineValueClass(vm, "Symbol");
-    vm.boolean_class = try defineValueClass(vm, "Boolean");
-    vm.bbox_class = try defineValueClass(vm, "BoundingBox");
+    try number.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("EPSILON"), value.Value.initNumber(std.math.floatEps(f64)));
     // The shapes: each made by its constructors (cube, square, line), none by `.new`
-    const shape_class = try defineValueClass(vm, "Shape");
-    vm.solid_class = try defineShapeClass(vm, "Solid", shape_class);
-    vm.sketch_class = try defineShapeClass(vm, "Sketch", shape_class);
-    vm.path_class = try defineShapeClass(vm, "Path", shape_class);
-    vm.nil_class = try defineValueClass(vm, "NilClass");
-    vm.proc_class = try defineValueClass(vm, "Proc");
-    vm.method_class = try defineValueClass(vm, "Method");
-    vm.class_class = try defineValueClass(vm, "Class");
-    vm.module_class = try defineValueClass(vm, "Module");
-    vm.assembly_class = try defineValueClass(vm, "Assembly");
+    const shape_class = try defineValueClass(vm, "Shape", object);
+    for ([_]BuiltinClass{ .solid, .sketch, .path }) |kind| _ = try defineKindClass(vm, kind, shape_class);
     // Workplane is hidden until the fluent sketching API exists (see manifest.zig, on_face);
     // its class stays unregistered, so the name is free for scripts.
-    // vm.workplane_class = try defineValueClass(vm, "Workplane");
 
     // Array.new / String.new / Map.new build real empty values, as in Ruby.
-    try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(array_class_mod.arrayNew));
-    try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(string_class_mod.stringNew));
-    try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
-    try bindNew(vm, vm.random_class.?, "Random.new", common.wrapMethod(random_class_mod.randomNew));
+    try bindNew(vm, vm.classes.get(.array).?, "Array.new", common.wrapMethod(array_class_mod.arrayNew));
+    try bindNew(vm, vm.classes.get(.string).?, "String.new", common.wrapMethod(string_class_mod.stringNew));
+    try bindNew(vm, vm.classes.get(.map).?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
+    try bindNew(vm, vm.classes.get(.random).?, "Random.new", common.wrapMethod(random_class_mod.randomNew));
 
-    const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
+    const kernel_class = try defineBuiltinClass(vm, "Kernel", object);
 
     // Kernel.puts, Solid.cube, Sketch.square, Path.line: the global functions, as class
     // methods too.
     for (manifest.global_functions) |def| {
         const class = switch (def.category) {
             .io => kernel_class,
-            .primitive_3d => vm.solid_class.?,
-            .primitive_2d => vm.sketch_class.?,
-            .primitive_path => vm.path_class.?,
+            .primitive_3d => vm.classes.get(.solid).?,
+            .primitive_2d => vm.classes.get(.sketch).?,
+            .primitive_path => vm.classes.get(.path).?,
             else => continue,
         };
         try bindNativeClassMethod(vm, class, def.name, def.func);
     }
 
     // Bind CAD methods natively to the classes
-    try vm.solid_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
-    try vm.sketch_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
-    try vm.assembly_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
-    for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.assembly_class.?, def.name, def.func);
-    try vm.path_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.path_methods.len);
-    for (manifest.path_methods) |def| try bindNativeMethod(vm, vm.path_class.?, def.name, def.func);
+    try vm.classes.get(.solid).?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.classes.get(.sketch).?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.classes.get(.assembly).?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
+    for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.classes.get(.assembly).?, def.name, def.func);
+    try vm.classes.get(.path).?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.path_methods.len);
+    for (manifest.path_methods) |def| try bindNativeMethod(vm, vm.classes.get(.path).?, def.name, def.func);
     for (manifest.mesh_methods) |def| {
-        if (def.isOn(.solids)) try bindNativeMethod(vm, vm.solid_class.?, def.name, def.func);
-        if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.sketch_class.?, def.name, def.func);
+        if (def.isOn(.solids)) try bindNativeMethod(vm, vm.classes.get(.solid).?, def.name, def.func);
+        if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.classes.get(.sketch).?, def.name, def.func);
     }
 
     // Set up GC module (as an instance of a pseudo-class)
-    const gc_class = try defineBuiltinClass(vm, "GC", vm.object_class);
+    const gc_class = try defineBuiltinClass(vm, "GC", object);
     const gc_inst = try vm.gc.allocateInstance(vm, gc_class);
     try vm.setGlobal("GC", value.Value.initObj(&gc_inst.obj));
 
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)
-    const math_class = try defineBuiltinClass(vm, "Math", vm.object_class);
+    const math_class = try defineBuiltinClass(vm, "Math", object);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
     const math_constants = [_]struct { []const u8, f64 }{ .{ "PI", std.math.pi }, .{ "TAU", std.math.tau }, .{ "E", std.math.e } };
     for (math_constants) |c| try vm.setInstanceField(math_inst, try vm.staticString(c[0]), value.Value.initNumber(c[1]), null);
     try vm.setGlobal("Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
-    const cad_module = try defineBuiltinClass(vm, "CAD", vm.object_class);
+    const cad_module = try defineBuiltinClass(vm, "CAD", object);
     const cad_inst = try vm.gc.allocateInstance(vm, cad_module);
     try vm.setGlobal("CAD", value.Value.initObj(&cad_inst.obj));
 

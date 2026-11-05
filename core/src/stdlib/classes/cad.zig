@@ -46,7 +46,7 @@ fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !Engine
 /// `current` with the settings of the Map `v` applied; its keys are T's fields.
 fn applyGroup(comptime T: type, vm: *VM, v: value.Value, current: T, what: []const u8) !T {
     if (!v.isMap()) {
-        return vm.fail(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, arguments.typeName(vm, v) });
+        return vm.fail(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, vm.typeName(v) });
     }
     return (try arguments.parseKwargsOnto(T, current, vm, &.{v}, what)).opts;
 }

@@ -123,7 +123,7 @@ pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
 /// used to be passed through (or dropped) without being shown.
 fn requireSolidResult(vm: *VM, result: value.Value, method: []const u8) !void {
     if (result.isGeometry()) return;
-    return vm.fail(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, arguments.typeName(vm, result) });
+    return vm.fail(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, vm.typeName(result) });
 }
 
 /// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model

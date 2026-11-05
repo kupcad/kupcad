@@ -42,10 +42,11 @@ pub fn registerExceptions(vm: *VM) !void {
     // Base Exception. The class names are static strings, never collected, so nothing
     // needs rooting while the classes are made.
     const exc_name = try vm.staticString("Exception");
-    const exc_class = try vm.gc.allocateClass(vm, exc_name.asString(), vm.object_class);
+    const exc_class = try vm.gc.allocateClass(vm, exc_name.asString(), vm.classes.get(.object));
 
     // Note: vm.globals.put safely stays vm.allocator because globals are tied to VM lifetime, not sandbox GC
     try vm.setGlobal("Exception", value.Value.initObj(&exc_class.obj));
+    vm.classes.set(.exception, exc_class);
 
     const init_fn = try vm.gc.allocateNative("Exception#initialize", common.wrapMethod(exceptionInit));
     const init_key = try vm.staticString("initialize");

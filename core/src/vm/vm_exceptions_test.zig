@@ -55,7 +55,7 @@ fn defineRaisingInitClass(vm: *VM) !void {
     const name_val = try vm.allocateString("RaisingInit");
     vm.push(name_val);
     defer _ = vm.pop();
-    const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
+    const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.classes.get(.object));
     try vm.setGlobal("RaisingInit", value.Value.initObj(&class_obj.obj));
 
     const init_fn = try vm.gc.allocateNative("raise_then_fail", raiseThenFail);

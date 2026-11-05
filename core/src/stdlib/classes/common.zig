@@ -121,7 +121,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             if (has_receiver) {
                 const receiver = args.receiver();
                 call_args[1] = unboxValue(param_types[1].?, receiver, vm) catch |err| {
-                    if (err == error.WrongType) return vm.fail(.TypeError, "{s} can't be called on {s}", .{ args.name, arguments.typeName(vm, receiver) });
+                    if (err == error.WrongType) return vm.fail(.TypeError, "{s} can't be called on {s}", .{ args.name, vm.typeName(receiver) });
                     return err;
                 };
             }
@@ -142,7 +142,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
                     call_args[slot] = null;
                 } else {
                     call_args[slot] = unboxValue(T.?, given[next], vm) catch |err| {
-                        if (err == error.WrongType) return vm.fail(.TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, arguments.typeName(vm, given[next]) });
+                        if (err == error.WrongType) return vm.fail(.TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, vm.typeName(given[next]) });
                         return err;
                     };
                     next += 1;

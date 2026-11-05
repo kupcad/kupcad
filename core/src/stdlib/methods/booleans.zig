@@ -54,11 +54,9 @@ fn appendOperand(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayList(u32), v
     if (index) |i| {
         // An optional part left out is a nil in the list.
         const hint = if (val.isNil()) "; leave out the nils with .compact" else "";
-        _ = vm.raiseError(.TypeError, "{s} expects {s} at index {d} of argument {d}, got {s}{s}", .{ method, expected, i, argument, arguments.typeName(vm, val), hint });
-    } else {
-        _ = vm.raiseError(.TypeError, "{s} expects {s} or an Array of them for argument {d}, got {s}", .{ method, expected, argument, arguments.typeName(vm, val) });
+        return vm.fail(.TypeError, "{s} expects {s} at index {d} of argument {d}, got {s}{s}", .{ method, expected, i, argument, vm.typeName(val), hint });
     }
-    return error.RuntimeError;
+    return vm.fail(.TypeError, "{s} expects {s} or an Array of them for argument {d}, got {s}", .{ method, expected, argument, vm.typeName(val) });
 }
 
 pub fn meshUnion(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {

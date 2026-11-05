@@ -33,17 +33,17 @@ fn bindMethods(vm: *VM, class: *value.ObjClass, comptime prefix: []const u8, com
 }
 
 pub fn registerCoreClasses(vm: *VM) !void {
-    if (vm.array_class) |cls| try bindMethods(vm, cls, "Array#", &array_class.methods);
-    if (vm.map_class) |cls| try bindMethods(vm, cls, "Map#", &map_class.methods);
-    if (vm.json_object_class) |cls| try bindMethods(vm, cls, "JsonObject#", &json_object_class.methods);
-    if (vm.string_class) |cls| try bindMethods(vm, cls, "String#", &string_class.methods);
-    if (vm.number_class) |cls| try bindMethods(vm, cls, "Number#", &number_class.methods);
-    if (vm.range_class) |cls| try bindMethods(vm, cls, "Range#", &range_class.methods);
-    if (vm.symbol_class) |cls| try bindMethods(vm, cls, "Symbol#", &symbol_class.methods);
-    if (vm.boolean_class) |cls| try bindMethods(vm, cls, "Boolean#", &boolean_class.methods);
-    if (vm.bbox_class) |cls| try bindMethods(vm, cls, "BoundingBox#", &bbox_class.methods);
-    if (vm.font_class) |cls| try bindMethods(vm, cls, "Font#", &font_class.methods);
-    if (vm.random_class) |cls| try bindMethods(vm, cls, "Random#", &random_class.methods);
+    if (vm.classes.get(.array)) |cls| try bindMethods(vm, cls, "Array#", &array_class.methods);
+    if (vm.classes.get(.map)) |cls| try bindMethods(vm, cls, "Map#", &map_class.methods);
+    if (vm.classes.get(.json_object)) |cls| try bindMethods(vm, cls, "JsonObject#", &json_object_class.methods);
+    if (vm.classes.get(.string)) |cls| try bindMethods(vm, cls, "String#", &string_class.methods);
+    if (vm.classes.get(.number)) |cls| try bindMethods(vm, cls, "Number#", &number_class.methods);
+    if (vm.classes.get(.range)) |cls| try bindMethods(vm, cls, "Range#", &range_class.methods);
+    if (vm.classes.get(.symbol)) |cls| try bindMethods(vm, cls, "Symbol#", &symbol_class.methods);
+    if (vm.classes.get(.boolean)) |cls| try bindMethods(vm, cls, "Boolean#", &boolean_class.methods);
+    if (vm.classes.get(.bbox)) |cls| try bindMethods(vm, cls, "BoundingBox#", &bbox_class.methods);
+    if (vm.classes.get(.font)) |cls| try bindMethods(vm, cls, "Font#", &font_class.methods);
+    if (vm.classes.get(.random)) |cls| try bindMethods(vm, cls, "Random#", &random_class.methods);
     if (vm.globals.get("GC")) |v| try bindMethods(vm, v.asInstance().class, "GC.", &gc_class.methods);
     if (vm.globals.get("Math")) |v| try bindMethods(vm, v.asInstance().class, "Math.", &math_class.methods);
     if (vm.globals.get("CAD")) |v| try bindMethods(vm, v.asInstance().class, "CAD.", &cad_class.methods);

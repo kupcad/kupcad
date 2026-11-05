@@ -1588,6 +1588,11 @@ test "Stdlib: built-in methods check their argument count, types and block" {
         .{ .src = "r = \"#{[Math.sqrt(9), Math.clamp(5, 0, 3), Math.min(3, 1, 2), Math.max]}\"", .expected = .{ .str = "[3, 3, 1, nil]" } },
         .{ .src = comptime rescued("assert(false, \"boom\")"), .expected = .{ .str = "AssertionError: boom" } },
         .{ .src = comptime rescued("assert(false) { \"lazy\" }"), .expected = .{ .str = "AssertionError: lazy" } },
+        // The class it raises is an error's: it raised an Array, a rescued `e` that answered
+        // nothing an Array does
+        .{ .src = comptime rescued("assert(false, \"m\", Array)"), .expected = .{ .str = "TypeError: Array is not an Exception class, so it can't be raised" } },
+        .{ .src = "class Plain\nend\n" ++ comptime rescued("assert(false, \"m\", Plain)"), .expected = .{ .str = "TypeError: Plain is not an Exception class, so it can't be raised" } },
+        .{ .src = "class Bad < ValueError\nend\nr = begin\n  assert(false, \"m\", Bad)\nrescue Bad => e\n  e.message\nend", .expected = .{ .str = "m" } },
         .{ .src = "r = benchmark(\"x\") { 5 }", .expected = .{ .num = 5 } },
     });
 }

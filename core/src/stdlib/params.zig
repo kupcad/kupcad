@@ -172,7 +172,7 @@ fn refuse(vm: *VM, name: []const u8, refusal: rules.Refusal) error{RuntimeError}
 /// "a Solid", or the value itself where it is one a person writes (nil).
 fn described(vm: *VM, v: value.Value) []const u8 {
     if (v.isNil()) return "nil";
-    const type_name = arguments.typeName(vm, v);
+    const type_name = vm.typeName(v);
     const vowel = type_name.len > 0 and std.mem.findScalar(u8, "AEIOUaeiou", type_name[0]) != null;
     return vm.scratch_arena.allocator().print("a{s} {s}", .{ if (vowel) "n" else "", type_name }) catch type_name;
 }

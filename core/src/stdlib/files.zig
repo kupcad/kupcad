@@ -104,7 +104,7 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, args: []const value.Value) 
     const parsed = try arguments.parseKwargsOver(Opts, .{}, sig.EXPORT_OBJ.keywords, vm, args, "export_obj");
     const opts = parsed.opts;
     if (parsed.positional.len == 0) return vm.fail(.ArgumentError, "export_obj needs a path: export_obj(path)", .{});
-    if (!parsed.positional[0].isString()) return vm.fail(.TypeError, "export_obj expects a String for argument 1, got {s}", .{arguments.typeName(vm, parsed.positional[0])});
+    if (!parsed.positional[0].isString()) return vm.fail(.TypeError, "export_obj expects a String for argument 1, got {s}", .{vm.typeName(parsed.positional[0])});
     const filepath = parsed.positional[0].asString().chars;
     const mtl_path: ?[]u8 = if (opts.mtl) try export_mod.materialLibraryPath(vm.allocator, filepath) else null;
     defer if (mtl_path) |p| vm.allocator.free(p);

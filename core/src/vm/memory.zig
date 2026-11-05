@@ -673,13 +673,10 @@ pub const GC = struct {
             self.markValue(val);
         }
 
-        if (vm.string_class) |c| self.markObject(&c.obj);
-        if (vm.array_class) |c| self.markObject(&c.obj);
-        if (vm.map_class) |c| self.markObject(&c.obj);
-        if (vm.number_class) |c| self.markObject(&c.obj);
-        if (vm.symbol_class) |c| self.markObject(&c.obj);
-        if (vm.boolean_class) |c| self.markObject(&c.obj);
-        if (vm.bbox_class) |c| self.markObject(&c.obj);
+        // The classes the VM keeps at hand, which a script may no longer name (`Array = 5`)
+        for (vm.classes.values ++ vm.error_classes.values) |class| {
+            if (class) |c| self.markObject(&c.obj);
+        }
     }
 
     /// A declared parameter's values: in the run's registry, or in an import cached with it.

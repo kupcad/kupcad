@@ -13,9 +13,6 @@ const common = @import("common.zig");
 const GOLDEN_GAMMA: u64 = 0x9e3779b97f4a7c15;
 const MIX_1: u64 = 0xbf58476d1ce4e5b9;
 const MIX_2: u64 = 0x94d049bb133111eb;
-/// Past 2^53 a Number no longer holds every whole number: the bound of a seed and of a
-/// whole-number draw.
-const MAX_EXACT_INT: f64 = 9007199254740992;
 /// The bits of a draw a float in [0, 1) takes: a double's mantissa and its hidden bit.
 const FLOAT_BITS = 53;
 
@@ -48,7 +45,7 @@ fn indexBelow(r: *value.ObjRandom, len: usize) usize {
 }
 
 fn isWhole(n: f64) bool {
-    return @trunc(n) == n and @abs(n) <= MAX_EXACT_INT;
+    return @trunc(n) == n and @abs(n) <= value.MAX_EXACT_INT;
 }
 
 /// Random.new(seed) -> a generator that gives the same numbers for the same seed, a whole

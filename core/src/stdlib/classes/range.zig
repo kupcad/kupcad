@@ -42,14 +42,11 @@ pub fn rangeCount(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value
     return iteration.countWhere(vm, spanOf(r), b, "Range#count");
 }
 
-/// Range#include?(x) / #cover?(x): same rule as `case`/`when` matching in the VM; x
-/// does not have to lie on a step.
+/// Range#include?(x) / #cover?(x): whether x lies between its ends (ObjRange.covers), as
+/// `case`/`when` matches it.
 pub fn rangeInclude(vm: *VM, r: *value.ObjRange, x: value.Value) !value.Value {
     _ = vm;
-    if (!x.isNumber()) return value.Value.initBool(false);
-    const n = x.asNumber();
-    const hit = if (r.is_exclusive) n >= r.start and n < r.end else n >= r.start and n <= r.end;
-    return value.Value.initBool(hit);
+    return value.Value.initBool(x.isNumber() and r.covers(x.asNumber()));
 }
 
 /// Range#first

@@ -113,7 +113,7 @@ fn vertexAt(mesh: geom.Mesh, i: usize) [3]f64 {
 /// than the tolerance cubed; solids that only touch (a face on a face) don't.
 pub fn meshIntersects(vm: *VM, receiver: value.Value, other: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "intersects?", receiver);
-    if (!other.isGeometry()) return vm.fail(.TypeError, "intersects? expects a Solid to test against, got {s}", .{arguments.typeName(vm, other)});
+    if (!other.isGeometry()) return vm.fail(.TypeError, "intersects? expects a Solid to test against, got {s}", .{vm.typeName(other)});
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(other);
     try vm.requireSameEngine(handle.engine, other_handle.engine);
@@ -145,7 +145,7 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "min_gap", receiver);
     if (args.len < 1 or !args[0].isGeometry()) {
-        return vm.fail(.TypeError, "min_gap expects a Solid to measure against, got {s}", .{if (args.len < 1) "nothing" else arguments.typeName(vm, args[0])});
+        return vm.fail(.TypeError, "min_gap expects a Solid to measure against, got {s}", .{if (args.len < 1) "nothing" else vm.typeName(args[0])});
     }
     const search_length: ?f64 = if (args.len > 1) try arguments.requireNumber(vm, args[1], "min_gap", "search_length") else null;
     const handle = try vm.ensureConcrete(receiver);

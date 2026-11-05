@@ -243,7 +243,7 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
             // Allow skipping target_align: align(target, axes, my_align, offset)
             offset = try arguments.requireNumber(vm, args[3], "align", "offset");
         } else if (!args[3].isNil()) { // nil keeps target_align = my_align
-            return vm.fail(.TypeError, "align expects a String or Symbol target_align or a number offset as argument 4, got {s}", .{arguments.typeName(vm, args[3])});
+            return vm.fail(.TypeError, "align expects a String or Symbol target_align or a number offset as argument 4, got {s}", .{vm.typeName(args[3])});
         }
     }
     if (args.len > 4) offset = try arguments.requireNumber(vm, args[4], "align", "offset");
@@ -261,7 +261,7 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
     // The target used to be evaluated as a Geometry whatever it was.
     if (!target.isGeometry() and !target.isCrossSection()) {
-        return vm.fail(.TypeError, "align expects a Solid or Sketch to align to, got {s}", .{arguments.typeName(vm, target)});
+        return vm.fail(.TypeError, "align expects a Solid or Sketch to align to, got {s}", .{vm.typeName(target)});
     }
     // An empty shape stays as it is (as `center`'s); an empty target has no side to meet
     const my_bbox = try arguments.boundsOf(vm, receiver, "align") orelse return receiver;

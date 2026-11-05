@@ -68,6 +68,94 @@ const I64_FLOAT_BOUND: f64 = 0x1p63;
 /// of a loop, so even 32 bits don't wrap in practice.
 var next_global_generation = std.atomic.Value(usize).init(1);
 
+/// A class the VM keeps at hand (VM.classes): Object's and Exception's, and the class of each
+/// kind of value that is no instance of a script's class, a Shape's among them (Ruby's
+/// NilClass, Proc, Method, Class and Module too), so every value has a class.
+pub const BuiltinClass = enum {
+    object,
+    exception,
+    string,
+    symbol,
+    array,
+    map,
+    json_object,
+    number,
+    range,
+    boolean,
+    bbox,
+    solid,
+    sketch,
+    path,
+    nil,
+    proc,
+    method,
+    class,
+    module,
+    assembly,
+    font,
+    random,
+    workplane,
+
+    /// The kind of `val`; null for an instance of a script's class, or a value no script
+    /// holds (an upvalue).
+    pub fn of(val: value.Value) ?BuiltinClass {
+        if (val.isNumber()) return .number;
+        if (val.isBool()) return .boolean;
+        if (val.isNil()) return .nil;
+        return switch (val.asObj().obj_type) {
+            .string => .string,
+            .symbol => .symbol,
+            .array => .array,
+            .map => .map,
+            .json_object => .json_object,
+            .bbox => .bbox,
+            .range => .range,
+            .geometry => .solid,
+            .cross_section => .sketch,
+            .path => .path,
+            .closure, .function => .proc,
+            .bound_method, .native => .method,
+            .class => .class,
+            .module => .module,
+            .assembly => .assembly,
+            .workplane => .workplane,
+            .font => .font,
+            .random => .random,
+            .instance, .upvalue => null,
+        };
+    }
+
+    /// Its name in a script: the standard library names it so, and an error names a value's
+    /// type so where it hasn't.
+    pub fn scriptName(self: BuiltinClass) []const u8 {
+        return switch (self) {
+            .object => "Object",
+            .exception => "Exception",
+            .string => "String",
+            .symbol => "Symbol",
+            .array => "Array",
+            .map => "Map",
+            .json_object => "JsonObject",
+            .number => "Number",
+            .range => "Range",
+            .boolean => "Boolean",
+            .bbox => "BoundingBox",
+            .solid => "Solid",
+            .sketch => "Sketch",
+            .path => "Path",
+            .nil => "NilClass",
+            .proc => "Proc",
+            .method => "Method",
+            .class => "Class",
+            .module => "Module",
+            .assembly => "Assembly",
+            .font => "Font",
+            .random => "Random",
+            .workplane => "Workplane",
+        };
+    }
+};
+
 pub const MethodLookupResult = struct {
     method: ?value.Value,
     is_private: bool,
@@ -224,34 +312,11 @@ pub const VM = struct {
     /// Where the script was when `last_error` was reported; null where it wasn't running.
     last_error_position: ?LinePosition = null,
 
-    // std classes
-    string_class: ?*value.ObjClass = null,
-    array_class: ?*value.ObjClass = null,
-    map_class: ?*value.ObjClass = null,
-    json_object_class: ?*value.ObjClass = null,
-    number_class: ?*value.ObjClass = null,
-    range_class: ?*value.ObjClass = null,
+    /// The class of each built-in kind of value and of the others the VM finds a value's
+    /// class or a method in, registered by the standard library (stdlib/registry.zig).
+    classes: std.EnumArray(BuiltinClass, ?*value.ObjClass) = .initFill(null),
     /// The class for each runtime error kind, registered by stdlib/exceptions.zig.
     error_classes: std.EnumArray(ErrorKind, ?*value.ObjClass) = .initFill(null),
-    symbol_class: ?*value.ObjClass = null,
-    boolean_class: ?*value.ObjClass = null,
-    bbox_class: ?*value.ObjClass = null,
-    object_class: ?*value.ObjClass = null,
-    /// The shapes' classes, each a Shape: a solid's, a sketch's and a path's.
-    solid_class: ?*value.ObjClass = null,
-    sketch_class: ?*value.ObjClass = null,
-    path_class: ?*value.ObjClass = null,
-    /// The classes of values that are not instances (Ruby's NilClass, Proc, Method,
-    /// Class, Module), so every value has a class.
-    nil_class: ?*value.ObjClass = null,
-    proc_class: ?*value.ObjClass = null,
-    method_class: ?*value.ObjClass = null,
-    class_class: ?*value.ObjClass = null,
-    module_class: ?*value.ObjClass = null,
-    assembly_class: ?*value.ObjClass = null,
-    font_class: ?*value.ObjClass = null,
-    random_class: ?*value.ObjClass = null,
-    workplane_class: ?*value.ObjClass = null,
 
     // DOD Memory Fields
     scratch_arena: std.heap.ArenaAllocator,
@@ -739,7 +804,7 @@ pub const VM = struct {
                 .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => if (ended(self.executeNumericBinary(op))) |res| return res,
                 .op_negate, .op_positive, .op_bitwise_not => if (ended(self.executeUnary(op))) |res| return res,
                 .op_not => {
-                    self.push(value.Value.initBool(isFalsey(self.pop())));
+                    self.push(value.Value.initBool(self.pop().isFalsey()));
                 },
                 .op_equal => {
                     const b = self.pop();
@@ -851,7 +916,7 @@ pub const VM = struct {
                 },
                 .op_jump_if_false => {
                     const offset = self.readJumpOffset(exec_chunk, frame);
-                    if (isFalsey(self.stack[self.stack_top - 1])) {
+                    if (self.stack[self.stack_top - 1].isFalsey()) {
                         frame.ip += offset;
                     }
                 },
@@ -1230,7 +1295,7 @@ pub const VM = struct {
             self.push(existing);
             return .ok;
         }
-        const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch |err| return self.allocationFailed(err);
+        const class_obj = self.gc.allocateClass(self, name_str_obj, self.classes.get(.object)) catch |err| return self.allocationFailed(err);
         self.push(value.Value.initObj(&class_obj.obj));
         return .ok;
     }
@@ -2838,14 +2903,14 @@ pub const VM = struct {
             is_private_call = resolved.is_private;
 
             // Fallback to Object methods (so Class.respond_to? works)
-            if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_val);
+            if (method_val == null and self.classes.get(.object) != null) method_val = self.findMethod(self.classes.get(.object).?, method_name_val);
         } else if (receiver.isModule()) {
             // Check the module's own methods first
             if (receiver.asModule().methods.get(method_name_val)) |m| {
                 method_val = m;
-            } else if (self.object_class != null) {
+            } else if (self.classes.get(.object) != null) {
                 // Fallback to Object methods for modules
-                method_val = self.findMethod(self.object_class.?, method_name_val);
+                method_val = self.findMethod(self.classes.get(.object).?, method_name_val);
             }
         } else if (class_obj) |c| {
             // A field read written as a call (`p.x`): the cache remembers it is a field, so
@@ -2862,7 +2927,7 @@ pub const VM = struct {
             const resolved = self.findMethodWithPrivacy(c, method_name_val, ic);
             method_val = resolved.method;
             is_private_call = resolved.is_private;
-        } else if (self.object_class) |object_class| {
+        } else if (self.classes.get(.object)) |object_class| {
             // Every value is an Object: nil or a lambda still answer `inspect`, `class`, ...
             method_val = self.findMethod(object_class, method_name_val);
         }
@@ -3189,47 +3254,11 @@ pub const VM = struct {
 
     // --- Centralized Type & Operand Resolution Helpers ---
 
-    /// Unified Receiver Type-to-Class resolution used by executeInvoke and Native methods
+    /// The class of `receiver`: an instance's own, else its kind's (BuiltinClass); null
+    /// before the standard library registers it.
     pub inline fn getClass(self: *VM, receiver: value.Value) ?*value.ObjClass {
-        if (receiver.isInstance()) {
-            return receiver.asInstance().class;
-        } else if (receiver.isGeometry()) {
-            return self.solid_class;
-        } else if (receiver.isCrossSection()) {
-            return self.sketch_class;
-        } else if (receiver.isObject()) {
-            switch (receiver.asObj().obj_type) {
-                .string => return self.string_class,
-                .symbol => return self.symbol_class,
-                .array => return self.array_class,
-                .map => return self.map_class,
-                .json_object => return self.json_object_class,
-                .bbox => return self.bbox_class,
-                .range => return self.range_class,
-                .closure, .function => return self.proc_class,
-                .bound_method, .native => return self.method_class,
-                .class => return self.class_class,
-                .module => return self.module_class,
-                .assembly => return self.assembly_class,
-                .path => return self.path_class,
-                .workplane => return self.workplane_class,
-                .font => return self.font_class,
-                .random => return self.random_class,
-                else => return null,
-            }
-        } else if (receiver.isNumber()) {
-            return self.number_class;
-        } else if (receiver.isBool()) {
-            return self.boolean_class;
-        } else if (receiver.isNil()) {
-            return self.nil_class;
-        }
-        return null;
-    }
-
-    /// Centralized Truthiness definition (Only nil and false are falsey)
-    pub inline fn isFalsey(val: value.Value) bool {
-        return val.isNil() or (val.isBool() and !val.asBool());
+        if (receiver.isInstance()) return receiver.asInstance().class;
+        return self.classes.get(BuiltinClass.of(receiver) orelse return null);
     }
 
     /// Extracts a String constant from the bytecode stream
@@ -3377,7 +3406,7 @@ pub const VM = struct {
     /// e.g. Exception's) if the class has one. Leaves the instance at `base_slot`.
     fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize, has_block: bool, has_kwargs: bool) InterpretResult {
         if (class_obj.is_value_class) {
-            const hint = if (class_obj == self.proc_class) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
+            const hint = if (class_obj == self.classes.get(.proc)) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
             return self.raiseError(.NoMethodError, "undefined method 'new' for {s}{s}", .{ class_obj.name.chars, hint });
         }
         const instance = self.gc.allocateInstance(self, class_obj) catch |err| return self.allocationFailed(err);
@@ -3560,7 +3589,7 @@ pub const VM = struct {
         if (val.isInstance()) {
             const class = val.asInstance().class;
             const inspect_name = try self.staticString("inspect");
-            const default = if (self.object_class) |object| self.findMethod(object, inspect_name) else null;
+            const default = if (self.classes.get(.object)) |object| self.findMethod(object, inspect_name) else null;
             if (self.findMethod(class, inspect_name)) |method| {
                 if (default == null or method.asObj() != default.?.asObj()) return self.writeShown(val, method, "inspect", writer);
             }
@@ -3800,14 +3829,7 @@ pub const VM = struct {
             const class = self.getClass(test_val) orelse return false;
             return isSubclassOf(class, case_val.asClass());
         } else if (case_val.isRange()) {
-            const range = case_val.asRange();
-            if (!test_val.isNumber()) return false;
-            const n = test_val.asNumber();
-            if (range.is_exclusive) {
-                return n >= range.start and n < range.end;
-            } else {
-                return n >= range.start and n <= range.end;
-            }
+            return test_val.isNumber() and case_val.asRange().covers(test_val.asNumber());
         }
 
         // Fallback to standard equality
@@ -3906,18 +3928,7 @@ pub const VM = struct {
     pub fn typeName(self: *VM, val: value.Value) []const u8 {
         if (val.isNil()) return "nil";
         if (self.getClass(val)) |class| return class.name.chars;
-        if (val.isObject()) return switch (val.asObj().obj_type) {
-            .closure, .function, .native, .bound_method => "Proc",
-            .class => "Class",
-            .module => "Module",
-            .workplane => "Workplane",
-            .assembly => "Assembly",
-            .font => "Font",
-            .random => "Random",
-            .path => "Path",
-            else => "Object",
-        };
-        return "Object";
+        return if (BuiltinClass.of(val)) |kind| kind.scriptName() else "Object";
     }
 
     /// A native failed without raising an error of its own (out of memory, or a bug in
@@ -4148,29 +4159,36 @@ pub const VM = struct {
         if (kind == .OutOfMemoryError) self.gc.raising_out_of_memory = true;
         defer self.gc.raising_out_of_memory = was_raising;
 
+        const message = self.allocateString(msg) catch return self.raisingOutOfMemory();
         if (self.error_classes.get(kind)) |class| {
-            if (self.gc.allocateInstance(self, class) catch null) |inst| {
-                // Root the newly allocated instance IMMEDIATELY
-                self.push(value.Value.initObj(&inst.obj));
-
-                if (self.allocateString(msg) catch null) |str_val| {
-                    self.setErrorFields(inst, str_val) catch return self.raisingOutOfMemory();
-                    // inst is already safely on the top of the stack, call executeThrow to bubble it
-                    return self.executeThrow();
-                }
-
-                // Cleanup if string alloc failed
-                _ = self.pop();
-            }
+            if (self.throwError(class, message)) |res| return res else |_| {}
         }
-        // Fallback to string if the standard library isn't loaded yet
-        if (self.allocateString(msg) catch null) |err_val| {
-            self.push(err_val);
-            return self.executeThrow();
-        } else {
-            self.runtimeError("Fatal: out of memory while raising an error.", .{});
-            return .runtime_error;
-        }
+        // The message alone, before the standard library defines the error classes, or
+        // without room for the error
+        self.push(message);
+        return self.executeThrow();
+    }
+
+    /// Raises a new error of `class` with `message`, a String (rooted by the caller until
+    /// this takes it): raiseError's, and assert's of the class it is given. A class that is no
+    /// Exception (Array, a script's own) is a TypeError instead: assert raised it, and the
+    /// script rescued an Array that answered nothing an Array does.
+    pub fn throwError(self: *VM, class: *value.ObjClass, message: value.Value) error{OutOfMemory}!InterpretResult {
+        if (!self.isErrorClass(class)) return self.raiseError(.TypeError, "{s} is not an Exception class, so it can't be raised", .{class.name.chars});
+        // The message rooted while the instance is made, whose slot then roots it instead
+        self.push(message);
+        errdefer _ = self.pop();
+        const inst = try self.gc.allocateInstance(self, class);
+        self.stack[self.stack_top - 1] = value.Value.initObj(&inst.obj);
+        try self.setErrorFields(inst, message);
+        return self.executeThrow();
+    }
+
+    /// Whether `class` is Exception or a class under it; any class before the standard
+    /// library defines Exception.
+    fn isErrorClass(self: *const VM, class: *value.ObjClass) bool {
+        const exception = self.classes.get(.exception) orelse return true;
+        return isSubclassOf(class, exception);
     }
 
     /// An allocation the run needed failed: raises an OutOfMemoryError the script may rescue,

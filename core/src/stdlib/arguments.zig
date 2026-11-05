@@ -25,19 +25,14 @@ const VEC3_LEN = 3;
 /// The keywords (and positional names) of a 3D vector: translate, scale and the rest.
 pub const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
 
-/// The script-facing name of a value's type, for TypeError messages.
-pub fn typeName(vm: *VM, val: value.Value) []const u8 {
-    return vm.typeName(val);
-}
-
 fn typeError(vm: *VM, method: []const u8, expected: []const u8, what: []const u8, got: value.Value) error{RuntimeError} {
-    return vm.fail(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
+    return vm.fail(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, vm.typeName(got) });
 }
 
 /// A method for Solids only called on a Sketch, or the other way round: the same
 /// NoMethodError as for any method the receiver doesn't have.
 pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{RuntimeError} {
-    return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
+    return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, vm.typeName(receiver) });
 }
 
 /// The bounding box of a Solid, of a Sketch (flat, at z = 0), or of an Assembly (the box
@@ -169,12 +164,8 @@ pub fn parseNumberArray(comptime N: usize, vm: *VM, val: value.Value, arg: Numbe
     const items = val.asArray().items.items;
     if (items.len < min_len or items.len > N) {
         const name = arrayName(&name_buf, arg);
-        if (min_len == N) {
-            _ = vm.raiseError(.ValueError, "{s} expects {s} to have {d} numbers, got {d}", .{ arg.method, name, N, items.len });
-        } else {
-            _ = vm.raiseError(.ValueError, "{s} expects {s} to have {d} to {d} numbers, got {d}", .{ arg.method, name, min_len, N, items.len });
-        }
-        return error.RuntimeError;
+        if (min_len == N) return vm.fail(.ValueError, "{s} expects {s} to have {d} numbers, got {d}", .{ arg.method, name, N, items.len });
+        return vm.fail(.ValueError, "{s} expects {s} to have {d} to {d} numbers, got {d}", .{ arg.method, name, min_len, N, items.len });
     }
     var out: [N]f64 = @splat(fill);
     for (items, 0..) |item, i| {
@@ -343,7 +334,7 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
     next_key: while (it.next()) |entry| {
         const key = entry.key;
         const name = key.nameChars() orelse {
-            return vm.fail(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
+            return vm.fail(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, vm.typeName(key) });
         };
         inline for (accepted) |field_name| {
             if (std.mem.eql(u8, name, field_name)) {

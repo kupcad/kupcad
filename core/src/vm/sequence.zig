@@ -5,12 +5,6 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("vm.zig").VM;
 
-/// Largest count whose indices are all exactly representable as f64 (2^53). Beyond it,
-/// `start + i * step` stops producing distinct values, so iteration would be wrong, not just
-/// long. This is a correctness bound, not a resource limit: block iteration is governed by
-/// the VM's instruction budget and cancellation, exactly like a `while` loop.
-const MAX_EXACT_COUNT: u64 = 1 << std.math.floatMantissaBits(f64) + 1;
-
 /// An arithmetic sequence start, start + step, ... bounded by `end`.
 pub const Span = struct {
     start: f64,
@@ -57,11 +51,14 @@ pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
     return span.count();
 }
 
-/// Count for a block-driven iteration: no resource cap, only MAX_EXACT_COUNT.
+/// Count for a block-driven iteration: no resource cap, only value.MAX_EXACT_INT, the most
+/// indices a float holds exactly. Beyond it `start + i * step` stops producing distinct
+/// values, so iteration would be wrong, not just long; block iteration is governed by the
+/// VM's instruction budget and cancellation, exactly like a `while` loop.
 pub fn iterationCount(vm: *VM, span: Span, method: []const u8) !u64 {
     const n = try validatedCount(vm, span, method);
-    if (n > @as(f64, @floatFromInt(MAX_EXACT_COUNT))) {
-        return vm.fail(.ValueError, "{s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, MAX_EXACT_COUNT });
+    if (n > value.MAX_EXACT_INT) {
+        return vm.fail(.ValueError, "{s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, value.MAX_EXACT_INT });
     }
     // Finite, non-negative and at most 2^53, so the cast is defined.
     return @intFromFloat(n);

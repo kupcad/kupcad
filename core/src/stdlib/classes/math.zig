@@ -28,9 +28,6 @@ const EXACT_ATAN = [_]Exact{ .{ .at = -1, .value = -45 }, .{ .at = 0, .value = 0
 /// Math.close?'s tolerance when none is given.
 const DEFAULT_TOLERANCE = 1e-9;
 
-/// Past 2^53 a float no longer holds every whole number.
-const MAX_EXACT_INT: f64 = 9007199254740992;
-
 // Math functions are methods of the Math object; the receiver carries nothing.
 
 /// A one-number Math function such as Math.sin.
@@ -227,7 +224,7 @@ fn mathLcm(vm: *VM, receiver: value.Value, a: f64, b: f64) !value.Value {
 fn gcdOf(vm: *VM, comptime name: []const u8, a: f64, b: f64) !u64 {
     try iteration.requireInteger(vm, a, name);
     try iteration.requireInteger(vm, b, name);
-    if (@abs(a) > MAX_EXACT_INT or @abs(b) > MAX_EXACT_INT) {
+    if (@abs(a) > value.MAX_EXACT_INT or @abs(b) > value.MAX_EXACT_INT) {
         return vm.fail(.RangeError, name ++ " works on whole numbers up to 2^53, got {f} and {f}", .{ value.fmtNumber(a), value.fmtNumber(b) });
     }
     var x: u64 = @intFromFloat(@abs(a));

@@ -17,6 +17,8 @@ const MIN_PLAIN_MAGNITUDE = 1e-6;
 /// plain digits above it look exact but aren't (2^60 printed as 1152921504606846976).
 /// Ruby and Crystal switch at the same point.
 const MAX_PLAIN_MAGNITUDE = 1e16;
+/// Past 2^53 a Number no longer holds every whole number: 2^53 + 1 is 2^53.
+pub const MAX_EXACT_INT: f64 = 0x1p53;
 
 /// Containers nested deeper than this print as `[...]`; see Printing.
 const MAX_STRINGIFY_DEPTH = 256;
@@ -516,6 +518,11 @@ pub const ObjRange = struct {
     end: f64,
     step: f64,
     is_exclusive: bool,
+
+    /// Whether `n` lies between its ends, on a step or not: `include?` and `case`/`when`.
+    pub fn covers(self: *const ObjRange, n: f64) bool {
+        return n >= self.start and if (self.is_exclusive) n < self.end else n <= self.end;
+    }
 };
 
 pub const GeometryState = union(enum) {

@@ -16,7 +16,7 @@ const WARNING_PREFIX = "[Warning] ";
 /// -> raises when the condition is false or nil; the block, if given, builds the message
 /// lazily (only for a failure).
 pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, error_class: ?*value.ObjClass, block: ?*value.ObjClosure) anyerror!value.Value {
-    if (!value.Value.isFalsey(condition)) return value.Value.initNil();
+    if (!condition.isFalsey()) return value.Value.initNil();
 
     const err_class = error_class orelse vm.error_classes.get(.AssertionError) orelse {
         return vm.fail(.RuntimeError, "AssertionError class not found", .{});
@@ -29,29 +29,16 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
     else
         try vm.allocateString("Assertion failed.");
 
-    // Construct and Throw Exception
-    vm.push(msg_val); // A fresh message is otherwise unrooted while the instance is allocated
-    const inst = try vm.gc.allocateInstance(vm, err_class);
-    _ = vm.pop();
-    // The thrown slot roots the instance from here on
-    vm.push(value.Value.initObj(&inst.obj));
-    try vm.setErrorFields(inst, msg_val);
-
-    // Throw directly into the VM's rescue system
-    const res = vm.executeThrow();
-
-    if (res == .ok) {
-        // A rescue block caught it! Tell the Native Wrapper to sync the instruction pointer.
-        return error.Unwind;
-    } else {
-        // Uncaught exception
-        return error.FatalError;
-    }
+    // Thrown into the VM's rescue system: a rescue that caught it takes over from here
+    return switch (try vm.throwError(err_class, msg_val)) {
+        .ok => error.Unwind,
+        else => error.FatalError,
+    };
 }
 
 fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !value.Value {
     if (msg.isString()) return msg;
-    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{arguments.typeName(vm, msg)});
+    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{vm.typeName(msg)});
 }
 
 /// `warn(*parts)`: prints `[Warning] ` and the parts, as `puts` would, and keeps them as a

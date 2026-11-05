@@ -661,3 +661,22 @@ test "GC: the text a native writes counts against the memory limit as it grows" 
         try support.expectValue(.{ .str = try std.mem.print(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes ({s})", .{ limit, case.building }) }, vm.globals.get("r").?);
     }
 }
+
+test "GC: the classes the VM keeps at hand live once no global names them" {
+    // The collector kept 7 of them (String, Array, ...): a class no global named any more
+    // (Range, Proc, an error's) was swept while the VM still gave it as values' class.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(testing.allocator);
+    var it = vm.globals.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.isClass()) try names.append(testing.allocator, entry.key_ptr.*);
+    }
+    for (names.items) |name| _ = vm.globals.remove(name);
+    vm.globalsChanged();
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "e = begin\n  {}.fetch(:a)\nrescue => e\n  e\nend\nr = [(1..2).class, -> { 1 }.class, 1.0.class, nil.class, e.class].inspect"));
+    try support.expectValue(.{ .str = "[Range, Proc, Number, NilClass, KeyError]" }, vm.globals.get("r").?);
+}

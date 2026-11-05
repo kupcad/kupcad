@@ -11,10 +11,13 @@ const kernel = @import("../../kernel/kernel.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 const booleans = @import("booleans.zig");
 
-// --- Utilizing Strongly Typed Receivers ---
-
 /// split_by_plane's arguments, positionally or as kwargs.
 const PLANE_ARGS = sig.SPLIT_BY_PLANE.positional;
+/// How far a miter join's corner may reach, in multiples of the offset, before it is
+/// squared off: without `miter_limit:`, and at least (the kernel raises a lower one to it).
+const MIN_MITER_LIMIT = 2.0;
+
+// --- Utilizing Strongly Typed Receivers ---
 
 /// `hull(others...)`: the convex hull of the shape and any others of its kind, Solids or
 /// Sketches.
@@ -93,10 +96,6 @@ pub fn parsePlane(vm: *VM, args: []const value.Value, default_normal: ?[3]f64, c
 
 /// Offset corner styles; the values are the kernel's join_type codes.
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
-/// How far a miter join's corner may reach, in multiples of the offset, before it is
-/// squared off: without `miter_limit:`, and at least (the kernel raises a lower one to it).
-const MIN_MITER_LIMIT = 2.0;
-
 /// `offset(delta, join:, miter_limit:, segments:)`. A Sketch grows by `delta` (shrinks,
 /// when it is negative), its corners joined as `join` says, a miter's reaching at most
 /// `miter_limit` times `delta` before it is squared off. A Solid grows by `delta` in every
@@ -234,7 +233,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
             return vm.fail(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
         }
     } else {
-        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{arguments.typeName(vm, dir_arg)});
+        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{vm.typeName(dir_arg)});
     }
 
     const tolerance = vm.settingsOf(receiver).tolerance;

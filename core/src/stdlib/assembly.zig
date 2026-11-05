@@ -22,13 +22,13 @@ pub fn nativeAssemble(vm: *VM, args: []const value.Value) !value.Value {
     const name = parsed.opts.name orelse value.Value.initNil();
     const parts = parsed.opts.parts orelse value.Value.initNil();
     if (!name.isString()) {
-        return vm.fail(.TypeError, "assemble expects a String for name, got {s}", .{arguments.typeName(vm, name)});
+        return vm.fail(.TypeError, "assemble expects a String for name, got {s}", .{vm.typeName(name)});
     }
     _ = try arguments.requireArray(vm, parts, "assemble", "parts");
     for (parts.asArray().items.items, 0..) |part, i| {
         if (part.isGeometry() or part.isAssembly()) continue;
         const hint = if (part.isNil()) "; leave out the nils with .compact" else "";
-        return vm.fail(.TypeError, "assemble expects Solids and assemblies in parts, got {s} at index {d}{s}", .{ arguments.typeName(vm, part), i, hint });
+        return vm.fail(.TypeError, "assemble expects Solids and assemblies in parts, got {s} at index {d}{s}", .{ vm.typeName(part), i, hint });
     }
     const size = sizeOf(parts.asArray().items.items);
     if (size.depth > limits.MAX_MODEL_NESTING) return vm.fail(.ValueError, "assemble: assemblies nest at most {d} deep", .{limits.MAX_MODEL_NESTING});
@@ -119,7 +119,7 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
             for (parts.items.items, 0..) |part, i| {
                 if (!part.isGeometry()) {
                     const hint = if (part.isNil()) "; leave out the nils with .compact" else "";
-                    return vm.fail(.TypeError, name ++ " expects only Solids, got {s} at index {d}{s}", .{ arguments.typeName(vm, part), i, hint });
+                    return vm.fail(.TypeError, name ++ " expects only Solids, got {s} at index {d}{s}", .{ vm.typeName(part), i, hint });
                 }
                 try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);
             }

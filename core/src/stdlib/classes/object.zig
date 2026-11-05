@@ -41,7 +41,7 @@ fn objectRespondTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value
 
 /// The class whose methods `receiver` answers: its own, or Object's for a value without one.
 fn classOrObject(vm: *VM, receiver: value.Value) ?*value.ObjClass {
-    return vm.getClass(receiver) orelse vm.object_class;
+    return vm.getClass(receiver) orelse vm.classes.get(.object);
 }
 
 /// Object#nil?
@@ -89,7 +89,7 @@ fn objectMethod(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Va
     const query_val = try vm.allocateString(method_name);
     const class = classOrObject(vm, receiver);
     const method_val = (if (class) |c| vm.findMethod(c, query_val) else null) orelse {
-        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, arguments.typeName(vm, receiver) });
+        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, vm.typeName(receiver) });
     };
     const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val);
     return value.Value.initObj(&bound.obj);
