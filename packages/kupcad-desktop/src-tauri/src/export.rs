@@ -1,8 +1,8 @@
 //! The export: `kupcad build` run for the page with the bundled kupcad, a script in the folder
 //! the user opened built into a file they saved. It is held while it runs, one at a time: the
-//! page cancels it (`cancel_export`), and the app stops it as it exits. Its log is kept up to
-//! MAX_LOG_BYTES, the end of it, where a failure's JSON line is: all of it went to the page,
-//! however much a script printed.
+//! page cancels it (`cancel_export`), and the app stops it as it exits. Of its log the last
+//! MAX_LOG_BYTES are kept, where a failure's JSON line is: all of it went to the page, however
+//! much a script printed.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -132,7 +132,8 @@ pub async fn export_model<R: Runtime>(
         .map_err(|e| format!("the bundled kupcad wasn't found: {e}"))?
         .args(args)
         .current_dir(folder)
-        // As it comes: a line is read whole, however long a script made it
+        // As it comes, not by lines: a line was held whole until it ended, however long a
+        // script made it
         .set_raw_out(true);
     let (mut events, number) = export.start(command)?;
     let mut said = Tail::new(MAX_LOG_BYTES);
