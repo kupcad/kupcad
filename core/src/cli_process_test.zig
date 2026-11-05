@@ -54,6 +54,26 @@ fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.
     return .{ .code = code, .stdout = res.stdout, .stderr = res.stderr };
 }
 
+/// Runs `kupcad args...` in `dir` with its stdout on `out_file` there, a shell's `>`, or `>>`
+/// when `kept` is given: written first, so the file's offset is at its end, as `>>` leaves
+/// it. Pipes hid a writer that writes each print at offset 0. The file's text after the run.
+fn kupcadToFile(dir: std.Io.Dir, cwd: []const u8, args: []const []const u8, out_file: []const u8, kept: []const u8) ![]u8 {
+    const exe = try kupcadPath();
+    defer testing.allocator.free(exe);
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(testing.allocator);
+    try argv.append(testing.allocator, exe);
+    try argv.appendSlice(testing.allocator, args);
+    {
+        const out = try dir.createFile(testing.io, out_file, .{});
+        defer out.close(testing.io);
+        try out.writeStreamingAll(testing.io, kept);
+        var child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .stdin = .ignore, .stdout = .{ .file = out }, .stderr = .ignore });
+        try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(testing.io));
+    }
+    return dir.readFileAlloc(testing.io, out_file, testing.allocator, .limited(1 << 16));
+}
+
 /// A temp dir holding `valid.kup` and one script per kind of error; tests run kupcad
 /// inside it.
 const Sandbox = struct {
@@ -194,6 +214,28 @@ test "kupcad: commands succeed with exit 0 on valid input" {
         .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
         .{ .args = &.{ "build", "valid.kup", "-o", "out.stl" }, .code = 0, .contains = "Successfully built out.stl" },
     });
+}
+
+test "kupcad: stdout on a file keeps every line printed, after what the file held" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "two");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "two/a.kup", .data = "a=1\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "two/b.kup", .data = "b=2\n" });
+
+    const formatted = try kupcadToFile(sb.tmp.dir, sb.path, &.{ "fmt", "two" }, "fmt.txt", "");
+    defer testing.allocator.free(formatted);
+    try testing.expect(std.mem.find(u8, formatted, "a = 1\n") != null);
+    try testing.expect(std.mem.find(u8, formatted, "b = 2\n") != null);
+
+    const built = try kupcadToFile(sb.tmp.dir, sb.path, &.{ "build", "valid.kup", "-o", "a.stl", "-o", "b.glb" }, "build.txt", "");
+    defer testing.allocator.free(built);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, built, "\n"));
+    try testing.expect(std.mem.find(u8, built, "a.stl") != null and std.mem.find(u8, built, "b.glb") != null);
+
+    const appended = try kupcadToFile(sb.tmp.dir, sb.path, &.{"version"}, "log.txt", "earlier line\n");
+    defer testing.allocator.free(appended);
+    try testing.expect(std.mem.startsWith(u8, appended, "earlier line\nkupcad "));
 }
 
 test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for them" {

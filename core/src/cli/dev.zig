@@ -190,7 +190,8 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     defer report.deinit();
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
+    // Streaming, as log.printStdout writes: stdout may be a file it appends to
+    var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
     const stdout = &stdout_writer.interface;
     if (json) try report.writeJson(stdout) else try report.writeText(stdout, path);
     try stdout.flush();

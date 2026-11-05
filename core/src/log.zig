@@ -48,8 +48,10 @@ pub fn printStderr(io: std.Io, comptime fmt: []const u8, args: anytype) void {
 pub fn printStdout(io: std.Io, comptime fmt: []const u8, args: anytype) void {
     var buf: [8192]u8 = undefined;
 
-    // Initialize standard out writer using the required local buffer
-    var stdout_w = std.Io.File.stdout().writer(io, &buf);
+    // A streaming writer, which writes where the stream is: a positional one starts each
+    // call at offset 0, so with stdout on a file (`kupcad fmt dir > out.txt`) every print
+    // overwrote the one before, and `>>` overwrote the file's start.
+    var stdout_w = std.Io.File.stdout().writerStreaming(io, &buf);
     const stdout = &stdout_w.interface;
 
     stdout.print(fmt, args) catch return;

@@ -394,7 +394,8 @@ const Terminal = struct {
 pub fn debuggerLoop(vm: *VM) void {
     var terminal: Terminal = .{};
     defer terminal.history.deinit(vm.allocator);
-    var stderr = std.Io.File.stderr().writer(vm.io, &.{});
+    // Streaming, as log.printStderr writes: stderr may be a file it appends to
+    var stderr = std.Io.File.stderr().writerStreaming(vm.io, &.{});
     session(vm, &terminal, &stderr.interface);
 }
 
