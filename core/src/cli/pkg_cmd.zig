@@ -224,6 +224,11 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
 
     if (added != null) try manifest.save(fs);
     try lockfile.save(fs);
+    // The project is the working directory, where it linked
+    resolver.unlinkStale(std.Io.Dir.cwd()) catch |err| {
+        log_helpers.printStderr(init.io, "Error: removing the packages kupcad.lock no longer has failed: {s}\n", .{@errorName(err)});
+        return .failure;
+    };
     log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});
 
     var gc = GC.init(allocator, init.io, cafs, store, .{ .io = init.io });

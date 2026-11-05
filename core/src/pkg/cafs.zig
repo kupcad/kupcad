@@ -8,12 +8,19 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const limits = @import("limits.zig");
 const string_map = @import("string_map.zig");
 const owned_keys = @import("../core/owned_keys.zig");
+const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const log = std.log.scoped(.pkg);
 
 /// Extra decompressed bytes allowed beyond file contents for tar headers/padding.
 const TAR_METADATA_SLACK_BYTES: u64 = 64 * 1024 * 1024;
+/// The start of the name of a blob being written in the store's tmp/ (saveExact).
+const TMP_BLOB_PREFIX = "blob_";
+/// How old a blob being written must be before it counts as left by an install that was
+/// stopped (Ctrl+C, a kill: no defer runs then) and is removed: a younger one may be a
+/// running install's.
+pub const STALE_TMP_SECONDS: i64 = 60 * 60;
 
 /// How an archive's entries map onto the package's files.
 pub const ArchiveLayout = enum {
@@ -213,6 +220,13 @@ pub const Cafs = struct {
                 .flat => entry_path,
                 .wrapped => try archive.unwrap(self.allocator, entry_path),
             };
+            // The package's own installed packages (an archive made of a project's folder,
+            // as the docs say to make one) are no files of it, and its dependencies are
+            // linked where they were
+            if (std.mem.startsWith(u8, rel_path, PACKAGE_DIR ++ "/")) {
+                log.debug("Skipping '{s}' in a package archive: installed packages aren't the package's", .{entry.name});
+                continue;
+            }
 
             if (file_map.count() >= self.extract_limits.max_file_count) return error.ArchiveTooManyFiles;
             if (entry.size > max_total - total_bytes) return error.ArchiveTooLarge;
@@ -275,7 +289,7 @@ pub const Cafs = struct {
 
         var rand_buf: [8]u8 = undefined;
         self.io.random(&rand_buf);
-        const tmp_path = try self.allocator.print("{s}/tmp/blob_{x}", .{ self.global_dir_path, &rand_buf });
+        const tmp_path = try self.allocator.print("{s}/tmp/" ++ TMP_BLOB_PREFIX ++ "{x}", .{ self.global_dir_path, &rand_buf });
         defer self.allocator.free(tmp_path);
 
         const cwd = std.Io.Dir.cwd();
@@ -320,6 +334,34 @@ pub const Cafs = struct {
         }
 
         return hash_hex;
+    }
+
+    /// Removes the blobs being written in tmp/ that are older than STALE_TMP_SECONDS (left by
+    /// installs that were stopped, which piled up: saveExact removes its file in a defer,
+    /// which a Ctrl+C or a kill doesn't run). How many it removed.
+    pub fn removeStaleTemporaries(self: *Cafs) !usize {
+        const tmp_path = try self.allocator.print("{s}/tmp", .{self.global_dir_path});
+        defer self.allocator.free(tmp_path);
+        var dir = std.Io.Dir.cwd().openDir(self.io, tmp_path, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return 0,
+            else => return err,
+        };
+        defer dir.close(self.io);
+        const now = std.Io.Clock.real.now(self.io);
+        const age: i96 = @as(i96, STALE_TMP_SECONDS) * std.time.ns_per_s;
+        var removed: usize = 0;
+        var it = dir.iterate();
+        while (try it.next(self.io)) |entry| {
+            if (entry.kind != .file or !std.mem.startsWith(u8, entry.name, TMP_BLOB_PREFIX)) continue;
+            const stat = dir.statFile(self.io, entry.name, .{}) catch continue; // gone meanwhile
+            if (stat.mtime.durationTo(now).nanoseconds < age) continue;
+            dir.deleteFile(self.io, entry.name) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => return err,
+            };
+            removed += 1;
+        }
+        return removed;
     }
 
     /// error.BlobCorrupted unless the blob at `path` hashes to `hash_hex`, its name.

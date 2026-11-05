@@ -192,3 +192,26 @@ test "GarbageCollector: prune(false) keeps the blobs of a package an install jus
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, path, .{}));
     try testing.expect(!try fx.store.hasPackage("pkg", "c1"));
 }
+
+test "GarbageCollector: prune removes the half-written blobs a stopped install left, an hour old" {
+    // A Ctrl+C or a kill ran no defer, and tmp/ kept every blob being written
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    var tmp = try fx.tmp.dir.openDir(testing.io, "tmp", .{});
+    defer tmp.close(testing.io);
+    const old = std.Io.Clock.real.now(testing.io).addDuration(.fromSeconds(-2 * 60 * 60));
+    for ([_][]const u8{ "blob_old", "blob_new", "other_old" }) |name| {
+        const file = try tmp.createFile(testing.io, name, .{});
+        defer file.close(testing.io);
+        if (std.mem.endsWith(u8, name, "_old")) try file.setTimestamps(testing.io, .{ .modify_timestamp = .{ .new = old } });
+    }
+
+    var gc = fx.gc();
+    try gc.prune(false);
+    try testing.expectError(error.FileNotFound, tmp.access(testing.io, "blob_old", .{}));
+    // A running install's, and none of the store's
+    try tmp.access(testing.io, "blob_new", .{});
+    try tmp.access(testing.io, "other_old", .{});
+    try testing.expect(std.mem.find(u8, fx.out.written(), "Removed 1 file that stopped installs left.") != null);
+}

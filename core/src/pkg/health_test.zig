@@ -183,3 +183,28 @@ test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
     try testing.expect(!try store.hasBlob(evil_name));
     try std.Io.Dir.cwd().access(testing.io, path, .{});
 }
+
+test "Doctor: removes the half-written blobs a stopped install left, an hour old" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_path);
+    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
+    defer cafs.deinit();
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    {
+        const file = try tmp.dir.createFile(testing.io, "tmp/blob_left", .{});
+        defer file.close(testing.io);
+        try file.setTimestamps(testing.io, .{ .modify_timestamp = .{ .new = std.Io.Clock.real.now(testing.io).addDuration(.fromSeconds(-2 * 60 * 60)) } });
+    }
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
+    try doc.run();
+    try testing.expect(std.mem.find(u8, out.written(), "[4/4] Removing what stopped installs left... removed 1 file\n") != null);
+    try testing.expectError(error.FileNotFound, tmp.dir.access(testing.io, "tmp/blob_left", .{}));
+}

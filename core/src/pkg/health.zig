@@ -1,7 +1,7 @@
 //! `kupcad pkg doctor`: `Doctor.run` checks the package database's SQLite integrity, evicts
 //! index entries whose blob file is gone from the content-addressed store or doesn't hold
-//! what its name says (removing it), and re-registers blob files the index doesn't list
-//! that do, printing each step.
+//! what its name says (removing it), re-registers blob files the index doesn't list that do,
+//! and removes what stopped installs left half-written, printing each step.
 
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
@@ -36,12 +36,13 @@ pub const Doctor = struct {
         try self.checkDbIntegrity();
         try self.healMissingBlobs();
         try self.healOrphanedBlobs();
+        try self.removeLeftovers();
 
         self.printer.print("System health check complete.\n", .{});
     }
 
     fn checkDbIntegrity(self: *Doctor) !void {
-        self.printer.print("[1/3] Checking SQLite integrity... ", .{});
+        self.printer.print("[1/4] Checking SQLite integrity... ", .{});
         if (try self.store.quickCheck()) {
             self.printer.print("OK\n", .{});
             return;
@@ -52,7 +53,7 @@ pub const Doctor = struct {
     }
 
     fn healMissingBlobs(self: *Doctor) !void {
-        self.printer.print("[2/3] Scanning for missing or corrupt physical files... ", .{});
+        self.printer.print("[2/4] Scanning for missing or corrupt physical files... ", .{});
 
         // Listed first, as evicting while stepping a SELECT over the same table is unsafe.
         const hashes = try self.store.blobHashes(self.allocator);
@@ -87,8 +88,18 @@ pub const Doctor = struct {
         }
     }
 
+    fn removeLeftovers(self: *Doctor) !void {
+        self.printer.print("[4/4] Removing what stopped installs left... ", .{});
+        const removed = try self.cafs.removeStaleTemporaries();
+        if (removed > 0) {
+            self.printer.print("removed {d} file{s}\n", .{ removed, if (removed == 1) "" else "s" });
+        } else {
+            self.printer.print("OK\n", .{});
+        }
+    }
+
     fn healOrphanedBlobs(self: *Doctor) !void {
-        self.printer.print("[3/3] Scanning for orphaned physical files... ", .{});
+        self.printer.print("[3/4] Scanning for orphaned physical files... ", .{});
 
         const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);

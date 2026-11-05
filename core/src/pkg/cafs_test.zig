@@ -350,6 +350,22 @@ test "Cafs: a wrapped archive's top folder is not part of the package" {
     try testing.expectEqualStrings("", flat.root);
 }
 
+test "Cafs: a package's own installed packages aren't its files" {
+    // An archive of a project's folder (`tar czf part.tar.gz -C part .`, as the docs say) held
+    // its store's files, where the package's own dependencies are linked
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    var files = try fx.extract(&.{
+        .{ .name = "main.kup", .data = "x = 1" },
+        .{ .name = ".kupcad/pkg/.store/b-1/pkg/main.kup", .data = "y = 2" },
+        .{ .name = ".kupcad.json", .data = "{}" },
+    });
+    defer freeMap(&files);
+    try testing.expectEqual(@as(u32, 2), files.count());
+    try testing.expect(files.contains("main.kup") and files.contains(".kupcad.json"));
+}
+
 test "Cafs: a wrapped archive must have exactly one top folder" {
     var fx: Fixture = undefined;
     try fx.init();

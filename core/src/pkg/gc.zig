@@ -1,6 +1,7 @@
 //! `GarbageCollector`: removes from the global package store the blobs no project links
-//! and none used within `RETENTION_SECONDS`, with their index rows (`prune`), and runs that
-//! after an install when the last prune is older than the retention (`lazyPrune`).
+//! and none used within `RETENTION_SECONDS`, with their index rows, and what stopped installs
+//! left half-written (`prune`), and runs that after an install when the last prune is older
+//! than the retention (`lazyPrune`).
 
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
@@ -38,6 +39,9 @@ pub const GarbageCollector = struct {
     /// another device), the link count can't show the use: a package installed a moment
     /// ago from old blobs used to be pruned, and evicted, right after.
     pub fn prune(self: *GarbageCollector, force: bool) !void {
+        const left = try self.cafs.removeStaleTemporaries();
+        if (left > 0) self.printer.print("Removed {d} file{s} that stopped installs left.\n", .{ left, if (left == 1) "" else "s" });
+
         const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
 

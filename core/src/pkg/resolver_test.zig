@@ -13,6 +13,9 @@ const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const ParsedPackage = @import("providers/provider.zig").ParsedPackage;
 const helpers = @import("test_helpers.zig");
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
+const kernel = @import("../kernel/kernel.zig");
 const TarEntry = helpers.TarEntry;
 
 const SAMPLE_PKG = [_]TarEntry{.{ .name = "main.kup", .data = "def f() 1 end" }};
@@ -172,6 +175,83 @@ test "Resolver: linkWorkspace links locked packages (flat and nested files) into
     }
     // The script's `import "testpkg"` reaches the package through its alias
     try fx.expectSymlink(".kupcad/pkg/testpkg", package_dir);
+}
+
+test "Resolver: a package's own dependencies are linked in its folder, where its imports find them" {
+    // They were linked beside its files, where no import looked: `import "b"` in a read the
+    // project's packages, and failed
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    // On disk, where the links are followed
+    var disk = NativeVfs.init(testing.io, fx.tmp.dir);
+    fx.cafs.fs = disk.vfs();
+
+    const b_main = try fx.writeBlob("w = 2\nexport { w }\n");
+    var b_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer b_files.deinit();
+    try b_files.put("main.kup", &b_main);
+    const b_id = try fx.addPackage("b", "github.com/user/b", "commit2", &b_files);
+    defer testing.allocator.free(b_id);
+    // The project depends on a alone
+    const project_b = fx.manifest.dependencies.fetchRemove("b").?;
+    testing.allocator.free(project_b.key);
+    testing.allocator.free(project_b.value);
+
+    const a_main = try fx.writeBlob("import { w } from \"b\"\nv = w + 1\nexport { v }\n");
+    var a_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer a_files.deinit();
+    try a_files.put("main.kup", &a_main);
+    const a_id = try fx.addPackage("a", "github.com/user/a", "commit1", &a_files);
+    defer testing.allocator.free(a_id);
+    try (try fx.entry(a_id)).dependencies.put(try testing.allocator.dupe(u8, "b"), try testing.allocator.dupe(u8, "github.com/user/b"));
+
+    var resolver = Resolver.init(testing.allocator, testing.io, &fx.cafs, &fx.store, &fx.manifest, &fx.lockfile, fx.tmp_path);
+    defer resolver.deinit();
+    try resolver.linkWorkspace(disk.vfs());
+
+    var session = try ScriptSession.init(testing.allocator, testing.io, disk.vfs());
+    defer session.deinit();
+    _ = try session.workspace.addModule("main.kup", "import { v } from \"a\"\ncube(v)\n");
+    try session.loadImports();
+    try session.evaluateWorkspace();
+    const id = session.workspace.path_to_id.get("main.kup").?;
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(session.nodes.items[@backingInt(id)].cached_handle.?), 1e-6);
+}
+
+test "Resolver: unlinkStale removes the links and store folders an install no longer makes, and nothing else" {
+    // `pkg install` only added: a dependency taken out of kupcad.json still imported, and an
+    // upgrade's old commit kept its blobs from the store's prune
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    const pkg_id = try fx.addPackage("kept", "github.com/user/kept", "commit1", &files);
+    defer testing.allocator.free(pkg_id);
+
+    const dir = fx.tmp.dir;
+    const locked = try testing.allocator.print(".kupcad/pkg/.store/{s}-commit1/pkg", .{pkg_id});
+    defer testing.allocator.free(locked);
+    for ([_][]const u8{ locked, ".kupcad/pkg/.store/gone-commit0/pkg", ".kupcad/pkg/.store/odd name", ".kupcad/pkg/mine" }) |folder| try dir.createDirPath(testing.io, folder);
+    try dir.writeFile(testing.io, .{ .sub_path = ".kupcad/pkg/.store/gone-commit0/pkg/main.kup", .data = "x = 1" });
+    try dir.writeFile(testing.io, .{ .sub_path = ".kupcad/pkg/notes.txt", .data = "mine" });
+    for ([_][]const u8{ "kept", "gone", ".hidden" }) |link| {
+        const path = try testing.allocator.print(".kupcad/pkg/{s}", .{link});
+        defer testing.allocator.free(path);
+        try dir.symLink(testing.io, ".store/gone-commit0/pkg", path, .{});
+    }
+
+    var resolver = Resolver.init(testing.allocator, testing.io, &fx.cafs, &fx.store, &fx.manifest, &fx.lockfile, fx.tmp_path);
+    defer resolver.deinit();
+    try resolver.unlinkStale(dir);
+
+    for ([_][]const u8{ ".kupcad/pkg/gone", ".kupcad/pkg/.store/gone-commit0" }) |gone| {
+        errdefer std.debug.print("{s} is still there\n", .{gone});
+        try testing.expectError(error.FileNotFound, dir.access(testing.io, gone, .{ .follow_symlinks = false }));
+    }
+    for ([_][]const u8{ locked, ".kupcad/pkg/.store/odd name", ".kupcad/pkg/mine", ".kupcad/pkg/notes.txt" }) |kept| try dir.access(testing.io, kept, .{});
+    for ([_][]const u8{ ".kupcad/pkg/kept", ".kupcad/pkg/.hidden" }) |link| try dir.access(testing.io, link, .{ .follow_symlinks = false });
 }
 
 test "Resolver: linkWorkspace refuses a locked package the store doesn't have" {

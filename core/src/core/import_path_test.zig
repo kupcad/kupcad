@@ -36,3 +36,19 @@ test "Import path: a package import is looked up by alias among the linked packa
     try expectResolves("parts/main.kup", "hardware/screws.kup", ".kupcad/pkg/hardware/screws.kup");
     try expectResolves("parts/main.kup", "/etc/x.kup", "/etc/x.kup");
 }
+
+test "Import path: a package's bare imports are of its own dependencies, linked in its folder" {
+    // They read the project's packages, where a package's dependency isn't
+    try expectResolves(".kupcad/pkg/a/main.kup", "b", ".kupcad/pkg/a/.kupcad/pkg/b/main.kup");
+    try expectResolves(".kupcad/pkg/a/parts/x.kup", "b/screws.kup", ".kupcad/pkg/a/.kupcad/pkg/b/screws.kup");
+    try expectFile(".kupcad/pkg/a/main.kup", "b/data.json", ".kupcad/pkg/a/.kupcad/pkg/b/data.json");
+    // A dependency's dependency, in turn
+    try expectResolves(".kupcad/pkg/a/.kupcad/pkg/b/main.kup", "c", ".kupcad/pkg/a/.kupcad/pkg/b/.kupcad/pkg/c/main.kup");
+    // Its own files stay its own
+    try expectResolves(".kupcad/pkg/a/main.kup", "./parts/x.kup", ".kupcad/pkg/a/parts/x.kup");
+    // A folder only named like the packages' is the project's own
+    try expectResolves("my.kupcad/pkg/a/main.kup", "b", ".kupcad/pkg/b/main.kup");
+    try expectResolves("parts/main.kup", "b", ".kupcad/pkg/b/main.kup");
+    // A file in the packages' folder itself is in no package
+    try expectResolves(".kupcad/pkg/x.kup", "b", ".kupcad/pkg/b/main.kup");
+}

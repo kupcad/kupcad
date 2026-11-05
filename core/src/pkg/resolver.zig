@@ -1,6 +1,12 @@
 //! `Resolver`: installs a manifest's dependency tree, fetching packages concurrently,
 //! verifying them against kupcad.lock, recording their lock entries and dropping stale ones,
-//! then links them into the project (`linkWorkspace`).
+//! then links them into the project (`linkWorkspace`) and removes the links an install no
+//! longer makes (`unlinkStale`).
+//!
+//! The project's PACKAGE_DIR holds a link per dependency, `<alias>` to
+//! `.store/<id>-<commit>/pkg`, the package's files; a package's own dependencies are linked
+//! in its PACKAGE_DIR there, `pkg/.kupcad/pkg/<alias>`, which its modules' imports read
+//! through the alias it is imported by (core/import_path.zig).
 
 const std = @import("std");
 const owned_keys = @import("../core/owned_keys.zig");
@@ -27,9 +33,28 @@ const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
 /// Hex chars of the content integrity used as the pseudo-commit of http/local archives.
 const CONTENT_COMMIT_LEN = 40;
 /// Where installed packages live, by content: PACKAGE_DIR/<alias> links into it.
-const STORE_DIR = PACKAGE_DIR ++ "/.store";
+const STORE_FOLDER = ".store";
+const STORE_DIR = PACKAGE_DIR ++ "/" ++ STORE_FOLDER;
+/// The folder of a package's files in its store folder (`<id>-<commit>/pkg`).
+const FILES_FOLDER = "pkg";
 
 const log = std.log.scoped(.pkg);
+
+/// Names of a folder's entries, each owned.
+const StaleNames = struct {
+    names: std.ArrayList([]u8) = .empty,
+
+    fn append(self: *StaleNames, allocator: std.mem.Allocator, name: []const u8) !void {
+        const copy = try allocator.dupe(u8, name);
+        errdefer allocator.free(copy);
+        try self.names.append(allocator, copy);
+    }
+
+    fn deinit(self: *StaleNames, allocator: std.mem.Allocator) void {
+        for (self.names.items) |name| allocator.free(name);
+        self.names.deinit(allocator);
+    }
+};
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
@@ -343,7 +368,7 @@ pub const Resolver = struct {
             try validate.validatePathSegment(pkg_id);
             try validate.validatePathSegment(locked.resolved);
 
-            const versioned_folder = try self.allocator.print(STORE_DIR ++ "/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+            const versioned_folder = try self.allocator.print(STORE_DIR ++ "/{s}-{s}/" ++ FILES_FOLDER, .{ pkg_id, locked.resolved });
             defer self.allocator.free(versioned_folder);
 
             try fs.makePath(versioned_folder);
@@ -377,8 +402,10 @@ pub const Resolver = struct {
                 try self.cafs.linkBlob(row.value_ptr.*, dest_path);
             }
 
+            // In the package's files, reached through the alias it is imported by, as its
+            // imports read them: beside its files, where they were, no import found them
             if (locked.dependencies.count() > 0) {
-                const nested_pkg_dir_path = try self.allocator.print(STORE_DIR ++ "/{s}-{s}/" ++ PACKAGE_DIR, .{ pkg_id, locked.resolved });
+                const nested_pkg_dir_path = try self.allocator.print("{s}/" ++ PACKAGE_DIR, .{versioned_folder});
                 defer self.allocator.free(nested_pkg_dir_path);
                 try fs.makePath(nested_pkg_dir_path);
 
@@ -396,7 +423,8 @@ pub const Resolver = struct {
                     const link_name = try self.allocator.print("{s}/{s}", .{ nested_pkg_dir_path, dep_alias });
                     defer self.allocator.free(link_name);
 
-                    const target_path = try self.allocator.print("../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
+                    // Up from `<id>-<commit>/pkg/.kupcad/pkg` to the store
+                    const target_path = try self.allocator.print("../../../../{s}-{s}/" ++ FILES_FOLDER, .{ dep_pkg_id, dep_locked.resolved });
                     defer self.allocator.free(target_path);
 
                     try validate.validatePathSegment(dep_locked.resolved);
@@ -421,7 +449,7 @@ pub const Resolver = struct {
             const link_name = try self.allocator.print(PACKAGE_DIR ++ "/{s}", .{alias});
             defer self.allocator.free(link_name);
 
-            const target_path = try self.allocator.print(".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+            const target_path = try self.allocator.print(STORE_FOLDER ++ "/{s}-{s}/" ++ FILES_FOLDER, .{ pkg_id, locked.resolved });
             defer self.allocator.free(target_path);
 
             fs.symLink(target_path, link_name) catch |err| {
@@ -429,6 +457,67 @@ pub const Resolver = struct {
                 return err;
             };
         }
+    }
+
+    /// Removes from the project at `project` (where `linkWorkspace` linked) what this install
+    /// doesn't link: the links in PACKAGE_DIR of aliases the manifest doesn't have, and the
+    /// store folders no lock entry is (an upgrade's old commit). They stayed: a dependency
+    /// taken out of kupcad.json still imported, and each old commit's hard links kept its
+    /// blobs from the global store's prune. Only a symlink named as an alias and a folder
+    /// named as a store entry go, nothing else a person put there.
+    pub fn unlinkStale(self: *Resolver, project: std.Io.Dir) !void {
+        var packages = project.openDir(self.io, PACKAGE_DIR, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer packages.close(self.io);
+        var stale_links = try self.staleEntries(packages, .sym_link);
+        defer stale_links.deinit(self.allocator);
+        for (stale_links.names.items) |name| try packages.deleteFile(self.io, name);
+
+        var store = packages.openDir(self.io, STORE_FOLDER, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer store.close(self.io);
+        var stale_folders = try self.staleEntries(store, .directory);
+        defer stale_folders.deinit(self.allocator);
+        for (stale_folders.names.items) |name| try store.deleteTree(self.io, name);
+    }
+
+    /// The names (owned by `self.allocator`) of the entries of `dir` of `kind` that are named
+    /// as an alias (a link) or a store entry (a folder) this install doesn't make. Gathered
+    /// before any is deleted, as a folder may skip entries removed while it is read.
+    fn staleEntries(self: *Resolver, dir: std.Io.Dir, kind: std.Io.File.Kind) !StaleNames {
+        var stale: StaleNames = .{};
+        errdefer stale.deinit(self.allocator);
+        var it = dir.iterate();
+        while (try it.next(self.io)) |entry| {
+            if (entry.kind != kind) continue;
+            const wanted = switch (kind) {
+                .sym_link => blk: {
+                    validate.validateAlias(entry.name) catch continue;
+                    break :blk self.manifest.dependencies.contains(entry.name);
+                },
+                else => blk: {
+                    validate.validatePathSegment(entry.name) catch continue;
+                    break :blk self.isLockedFolder(entry.name);
+                },
+            };
+            if (!wanted) try stale.append(self.allocator, entry.name);
+        }
+        return stale;
+    }
+
+    /// Whether `name` is the store folder of a package kupcad.lock has, `<id>-<commit>`.
+    fn isLockedFolder(self: *Resolver, name: []const u8) bool {
+        var it = self.lockfile.packages.iterator();
+        while (it.next()) |entry| {
+            const id = entry.key_ptr.*;
+            const commit = entry.value_ptr.resolved;
+            if (name.len == id.len + 1 + commit.len and std.mem.startsWith(u8, name, id) and name[id.len] == '-' and std.mem.endsWith(u8, name, commit)) return true;
+        }
+        return false;
     }
 
     /// A dependency resolve should have locked isn't in kupcad.lock: the install fails, as
