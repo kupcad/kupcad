@@ -411,7 +411,7 @@ pub const Lexer = struct {
 
         // Identify the end of the first line, stripping \r for tag parsing
         var first_line_end = self.index;
-        if (first_line_end > start and self.buffer[first_line_end - 1] == '\r') first_line_end -= 1;
+        while (first_line_end > start and self.buffer[first_line_end - 1] == '\r') first_line_end -= 1;
 
         const first_line = self.buffer[start..first_line_end];
         var i: usize = 1; // Start after '#'
@@ -448,9 +448,11 @@ pub const Lexer = struct {
             }
         }
 
-        // Trim trailing \r from the final docstring or comment lexeme
+        // Trim the trailing \r, a CRLF's and any before it, from the final docstring or comment
+        // lexeme: the formatter ends the line with \n, which would make the last one left a
+        // CRLF's, trimmed when the output is read again
         var end_idx = self.index;
-        if (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
+        while (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
     }
 

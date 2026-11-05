@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
@@ -46,11 +47,13 @@ const CORPUS = blk: {
 test "fuzz: a JSON file a script reads" {
     const buf = try testing.allocator.create(Buffer);
     defer testing.allocator.destroy(buf);
+    const inputs = try support.fuzzCorpus(testing.allocator, &CORPUS, buf.len);
+    defer support.freeFuzzCorpus(testing.allocator, inputs);
     try testing.fuzz(buf, struct {
         fn one(b: *Buffer, smith: *testing.Smith) anyerror!void {
             _ = try checkJson(b[0..smith.slice(b)]);
         }
-    }.one, .{ .corpus = &CORPUS });
+    }.one, .{ .corpus = inputs });
 }
 
 test "json fuzz corpus: each seed is read or refused as it says, and every file is listed" {

@@ -77,11 +77,13 @@ const BINARY_STL = blk: {
 fn fuzzParser(comptime check: fn ([]const u8) anyerror!void, seeds: []const []const u8) !void {
     const buf = try testing.allocator.create(Buffer);
     defer testing.allocator.destroy(buf);
+    const inputs = try support.fuzzCorpus(testing.allocator, seeds, buf.len);
+    defer support.freeFuzzCorpus(testing.allocator, inputs);
     try testing.fuzz(buf, struct {
         fn one(b: *Buffer, smith: *testing.Smith) anyerror!void {
             try check(b[0..smith.slice(b)]);
         }
-    }.one, .{ .corpus = seeds });
+    }.one, .{ .corpus = inputs });
 }
 
 // --- STL ---

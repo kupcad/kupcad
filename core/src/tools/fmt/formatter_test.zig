@@ -1084,6 +1084,15 @@ test "Formatter: a comment ending the file without a newline stays on its own li
     try expectStableFormat("def f\n  1\nend\n# c", "def f\n  1\nend\n# c\n");
 }
 
+test "Formatter: a comment ending in carriage returns keeps its text" {
+    // The lexer left one of them in the comment, which the formatter's newline made a CRLF's,
+    // so the comment read back shorter and the formatter refused the file: found by the
+    // front-end fuzz test.
+    try expectStableFormat("a #c\r\r", "a #c\n");
+    try expectStableFormat("#\r\r\r", "#\n");
+    try expectStableFormat("a #c\r\r\nb", "a #c\nb\n");
+}
+
 test "Formatter: a call on an expression with no name keeps its form" {
     // `(f)(2)` (which fails when run: a lambda takes .call) was printed `(f).(2)`, which
     // doesn't parse, so the formatter refused the file: found by the front-end fuzz test.

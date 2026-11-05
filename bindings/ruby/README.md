@@ -92,7 +92,7 @@ bundle install
 bundle exec rake                             # specs, RuboCop, RBS
 ```
 
-The specs load the checkout's library (`KUPCAD_LIBRARY` names another). `rake
-native:gem[PLATFORM,LIBRARY]` packs a platform gem around a library built for it, as the release
-does, with the notices `core/scripts/collect-licenses.sh <the library's folder>` (run from the
-repository root) puts beside it.
+The specs load the checkout's library (`KUPCAD_LIBRARY` names another). `rake native:gem
+PLATFORM=arm64-darwin LIBRARY=path/libkupcad.dylib` packs a platform gem around a library built
+for it, as the release does, with the notices `core/scripts/collect-licenses.sh <the library's
+folder>` (run from the repository root) puts beside it.

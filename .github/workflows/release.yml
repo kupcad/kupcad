@@ -528,7 +528,7 @@ jobs:
         working-directory: bindings/ruby
         env:
           GEM: ${{ matrix.gem }}
-        run: bundle exec rake "native:gem[$GEM,$LIBRARY]"
+        run: bundle exec rake native:gem PLATFORM="$GEM" LIBRARY="$LIBRARY"
 
       # Outside Bundler, and the specs run against it and the library it carries
       - name: Test the installed gem

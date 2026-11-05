@@ -288,3 +288,34 @@ pub fn instructionAt(c: *const chunk.Chunk, n: usize) !usize {
     for (0..n) |_| offset = try disassembler.disassembleInstruction(c, offset, &sink.writer);
     return offset;
 }
+
+/// `inputs` as a fuzz test's corpus, for a test that reads its input with `smith.slice` into a
+/// buffer of `max_bytes`: each as testing.Smith reads a slice, its length (4 bytes,
+/// little-endian) and then its bytes. Given as they are, an input's first 4 bytes were read as
+/// its length, so a plain test run replayed every input without its start; and one longer
+/// than the buffer is read as empty, so it is refused. Free with freeFuzzCorpus.
+pub fn fuzzCorpus(allocator: std.mem.Allocator, inputs: []const []const u8, max_bytes: usize) ![]const []const u8 {
+    for (inputs, 0..) |input, n| if (input.len > max_bytes) {
+        std.debug.print("fuzz corpus input {d} is {d} bytes, past the {d} the test reads\n", .{ n, input.len, max_bytes });
+        return error.FuzzInputTooLong;
+    };
+    const corpus = try allocator.alloc([]const u8, inputs.len);
+    var encoded: usize = 0;
+    errdefer {
+        for (corpus[0..encoded]) |entry| allocator.free(entry);
+        allocator.free(corpus);
+    }
+    for (inputs, corpus) |input, *entry| {
+        const bytes = try allocator.alloc(u8, 4 + input.len);
+        std.mem.writeInt(u32, bytes[0..4], @intCast(input.len), .little);
+        @memcpy(bytes[4..], input);
+        entry.* = bytes;
+        encoded += 1;
+    }
+    return corpus;
+}
+
+pub fn freeFuzzCorpus(allocator: std.mem.Allocator, corpus: []const []const u8) void {
+    for (corpus) |entry| allocator.free(entry);
+    allocator.free(corpus);
+}

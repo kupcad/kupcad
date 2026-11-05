@@ -859,6 +859,16 @@ test "KupCAD Lexer: Multi-line Docstring with Windows CRLF line endings" {
     });
 }
 
+test "KupCAD Lexer: a comment's text ends before every carriage return ending it" {
+    // A carriage return alone isn't a line break, so one inside a comment is its text; those
+    // ending it are the line's, all of them. Only the last was left out, and the formatter's
+    // newline made the one before it a CRLF's, which left the comment shorter when read back.
+    try expectTokens("a #c\r\r\nb", &.{
+        t(.ident, "a"), t(.comment, "#c"), t(.newline, "\n"), t(.ident, "b"), t(.eof, ""),
+    });
+    try expectTokens("#c\r b\r\r\r", &.{ t(.comment, "#c\r b"), t(.eof, "") });
+}
+
 test "KupCAD Lexer: Modulo operator following variable identifiers" {
     try expectTokens("width%(2 + 3)\nx % (y)", &.{
         t(.ident, "width"), t(.percent, "%"), t(.l_paren, "("), t(.number, "2"),

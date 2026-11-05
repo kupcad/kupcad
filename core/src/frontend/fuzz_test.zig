@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const support = @import("../test_support.zig");
 const api = @import("../api.zig");
 const Document = @import("document.zig").Document;
 const corpus = @import("fuzz_corpus.zig");
@@ -21,7 +22,9 @@ const PLAIN_RUN_PROGRAMS = 100;
 test "fuzz: the front end takes any input" {
     const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
     defer testing.allocator.destroy(buf);
-    try testing.fuzz(buf, frontEnd, .{ .corpus = &corpus.CORPUS });
+    const inputs = try support.fuzzCorpus(testing.allocator, &corpus.CORPUS, buf.len);
+    defer support.freeFuzzCorpus(testing.allocator, inputs);
+    try testing.fuzz(buf, frontEnd, .{ .corpus = inputs });
 }
 
 fn frontEnd(buf: *[corpus.MAX_INPUT_BYTES]u8, smith: *testing.Smith) anyerror!void {
@@ -81,6 +84,17 @@ fn checkFrontEnd(source: []const u8, from: Source) !void {
     const twice = try api.formatDocument(testing.allocator, &again, .{});
     defer testing.allocator.free(twice);
     try testing.expectEqualStrings(formatted, twice);
+}
+
+test "Fuzz corpus: each entry reaches the fuzz tests whole" {
+    const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
+    defer testing.allocator.destroy(buf);
+    const inputs = try support.fuzzCorpus(testing.allocator, &corpus.CORPUS, buf.len);
+    defer support.freeFuzzCorpus(testing.allocator, inputs);
+    for (corpus.CORPUS, inputs) |entry, input| {
+        var smith: testing.Smith = .{ .in = input };
+        try testing.expectEqualStrings(entry, buf[0..smith.slice(buf)]);
+    }
 }
 
 test "Fuzz corpus: every program in fuzz_corpus/ is listed" {

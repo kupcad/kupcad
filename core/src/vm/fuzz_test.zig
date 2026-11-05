@@ -29,7 +29,9 @@ const PLAIN_RUN_PROGRAMS = 100;
 test "fuzz: a script runs without crashing the VM" {
     const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
     defer testing.allocator.destroy(buf);
-    try testing.fuzz(buf, run, .{ .corpus = &corpus.CORPUS });
+    const inputs = try support.fuzzCorpus(testing.allocator, &corpus.CORPUS, buf.len);
+    defer support.freeFuzzCorpus(testing.allocator, inputs);
+    try testing.fuzz(buf, run, .{ .corpus = inputs });
 }
 
 fn run(buf: *[corpus.MAX_INPUT_BYTES]u8, smith: *testing.Smith) anyerror!void {
