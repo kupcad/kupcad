@@ -114,13 +114,16 @@ describe('ViewerPanel', () => {
     webview.receive({ type: 'setting', key: 'preview.paramsOpen', value: false });
     webview.receive({ type: 'setting', key: 'preview.params', value: 320 });
     webview.receive({ type: 'setting', key: 'preview.params', value: 336 });
+    webview.receive({ type: 'setting', key: 'view.renderMode', value: 'xray' });
     expect(state.kept.get(SETTINGS_KEY)).toEqual({
       'preview.paramsOpen': false,
       'preview.params': 336,
+      'view.renderMode': 'xray',
     });
     // The page made again (a restarted server's) has them, and so does the next session's
     server.restart(9002);
-    const kept = '{&quot;preview.paramsOpen&quot;:false,&quot;preview.params&quot;:336}';
+    const kept =
+      '{&quot;preview.paramsOpen&quot;:false,&quot;preview.params&quot;:336,&quot;view.renderMode&quot;:&quot;xray&quot;}';
     expect(webview.html).toContain(`<meta name="kupcad-settings" content="${kept}">`);
     expect(open(serverAt(9001), state).webview.html).toContain(kept);
   });
@@ -132,7 +135,7 @@ describe('ViewerPanel', () => {
     const { webview, log } = open(serverAt(9001), state);
     webview.receive({ type: 'setting', key: 'k0', value: 100 });
     webview.receive({ type: 'setting', key: 'one.more', value: 1 });
-    webview.receive({ type: 'setting', key: 'k1', value: 'text' });
+    webview.receive({ type: 'setting', key: 'k1', value: { mode: 'xray' } });
     expect(state.kept.get(SETTINGS_KEY)).toEqual({ ...full, k0: 100 });
     expect(log.lines.join('\n')).toContain("one.more isn't");
   });

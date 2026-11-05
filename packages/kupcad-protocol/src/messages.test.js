@@ -91,15 +91,18 @@ describe('isViewerMessage', () => {
     expect(isViewerMessage({ type: 'document', document: null })).toBe(false);
   });
 
-  it('takes a setting of a size or a pane shown, under a key of a setting', () => {
+  it("takes a setting of a size, a pane shown or a choice of the view's, under a key of a setting", () => {
     expect(isViewerMessage({ type: 'setting', key: 'preview.params', value: 320 })).toBe(true);
     expect(isViewerMessage({ type: 'setting', key: 'preview.paramsOpen', value: false })).toBe(
       true,
     );
+    expect(isViewerMessage({ type: 'setting', key: 'view.renderMode', value: 'xray' })).toBe(true);
+    expect(isSettingValue('o'.repeat(64))).toBe(true);
     expect(isViewerMessage({ type: 'setting', key: 'preview.params' })).toBe(false);
     expect(isViewerMessage({ type: 'setting', key: 7, value: 1 })).toBe(false);
     expect(isViewerMessage({ type: 'setting', key: 'k'.repeat(65), value: 1 })).toBe(false);
-    for (const value of [Infinity, NaN, '320', null, {}, [1]]) {
+    // A text longer than any choice would only fill the host's state
+    for (const value of [Infinity, NaN, 'o'.repeat(65), null, {}, [1]]) {
       expect(isSettingValue(value)).toBe(false);
       expect(isViewerMessage({ type: 'setting', key: 'preview.params', value })).toBe(false);
     }

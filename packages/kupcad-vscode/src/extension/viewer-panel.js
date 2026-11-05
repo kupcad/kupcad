@@ -4,7 +4,7 @@
 // and passes on what it asks: a frame (`ready`), new values, a screenshot to save, a place in the
 // script to show in its editor. It keeps the document's presets (presets-file.js): their names
 // for the page, again when their file changes, one applied, the panel's values saved as one;
-// and the page's settings (its panes' sizes, whether they show) between sessions, written into
+// and the page's settings (its panes' sizes, whether they show, the view) between sessions, written into
 // each page it makes.
 
 import * as vscode from 'vscode';

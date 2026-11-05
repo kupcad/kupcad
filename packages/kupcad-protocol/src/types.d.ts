@@ -283,8 +283,8 @@ export type ViewerMessage =
   /** The document is shown in its editor at a place its run named: a Warning's line and column. */
   /** `file`: a library's place, its path in the project; the place is in the document without it. */
   | { type: 'reveal'; uri: string; line: number; column: number; file?: string }
-  /** A setting of the viewer's changed (a pane's size, whether it shows): the host keeps it, for the page it makes next. */
+  /** A setting of the viewer's changed (a pane's size, whether it shows, a choice of the view's): the host keeps it, for the page it makes next. */
   | { type: 'setting'; key: string; value: SettingValue };
 
-/** What a viewer keeps as a setting (`isSettingValue`): a pane's size, or whether it shows. */
-export type SettingValue = number | boolean;
+/** What a viewer keeps as a setting (`isSettingValue`): a pane's size, whether it shows, or a short text (a choice of the view's, as its render mode). */
+export type SettingValue = number | boolean | string;

@@ -9,8 +9,9 @@ import { isExportFormat } from './formats.js';
 
 /** How deep a parameter's value nests (core/src/core/param_rules.zig's): a list of tuples or of objects. */
 export const MAX_PARAM_DEPTH = 2;
-/** The longest key a viewer keeps a setting under. */
+/** The longest key a viewer keeps a setting under, and the longest text a setting holds. */
 const MAX_SETTING_KEY = 64;
+const MAX_SETTING_TEXT = 64;
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -55,12 +56,16 @@ function isParamValue(value, depth) {
 }
 
 /**
- * Whether `value` is one a viewer keeps as a setting: a pane's size (a finite number), or
- * whether it shows.
+ * Whether `value` is one a viewer keeps as a setting: a pane's size (a finite number), whether
+ * it shows, or a short text (a choice of the view's: its render mode, floor or projection,
+ * which a page forgot as it was made again).
  * @param {unknown} value
  * @returns {value is SettingValue}
  */
-export const isSettingValue = (value) => typeof value === 'boolean' || Number.isFinite(value);
+export const isSettingValue = (value) =>
+  typeof value === 'boolean' ||
+  Number.isFinite(value) ||
+  (isString(value) && value.length <= MAX_SETTING_TEXT);
 
 /** Each host message's fields, checked: by its type. */
 const HOST_MESSAGES = {
