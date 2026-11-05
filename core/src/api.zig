@@ -220,7 +220,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     if (vm.interpret(&program) != .ok) return null;
 
     var hasher = std.hash.Wyhash.init(0);
-    if (!value_hash.hashValue(&hasher, vm.dag_builder.node_hashes.items, vm.finalValue(), value_hash.MAX_DEPTH)) return null;
+    if (!value_hash.hashValue(allocator, &hasher, vm.dag_builder.node_hashes.items, vm.finalValue())) return null;
     for (vm.display_list.items) |ghost| {
         if (!(kernel.hashMesh(&hasher, allocator, ghost) catch return null)) hasher.update(std.mem.asBytes(&ghost.engine));
     }

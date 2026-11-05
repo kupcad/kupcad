@@ -22,7 +22,15 @@ const MAX_PLAIN_MAGNITUDE = 1e16;
 const MAX_STRINGIFY_DEPTH = 256;
 /// Two structures nesting (or holding themselves) deeper than this aren't equal (`==`, a
 /// Map's keys).
-pub const MAX_EQUALITY_DEPTH: usize = 64;
+const MAX_EQUALITY_DEPTH: usize = 64;
+/// How many pairs of containers a comparison compares before it keeps those it finds equal
+/// (Equality): a small one is over before then, and allocates nothing.
+const MIN_PAIRS_KEPT = 64;
+/// How deep in containers a Map key's hash looks (contentHash), and at how many of each
+/// one's items: past them only equality tells keys apart. Hashed whole, a key that shares
+/// its parts took a time that doubled with each level.
+const MAX_HASHED_DEPTH = 4;
+const MAX_HASHED_ITEMS = 8;
 
 // --- NaN Tagging Constants ---
 const QNAN: u64 = 0x7FFC000000000000;
@@ -110,13 +118,13 @@ pub const ObjArray = struct {
 pub const ValueContext = struct {
     pub fn hash(self: ValueContext, key: Value) u32 {
         _ = self;
-        return @truncate(contentHash(key, MAX_EQUALITY_DEPTH));
+        return @truncate(contentHash(key, MAX_HASHED_DEPTH));
     }
 
     pub fn eql(self: ValueContext, a: Value, b: Value, b_index: usize) bool {
         _ = self;
         _ = b_index;
-        return contentEqual(a, b, MAX_EQUALITY_DEPTH);
+        return contentEqual(a, b);
     }
 };
 
@@ -127,49 +135,88 @@ pub fn comparesByContent(v: Value) bool {
 }
 
 /// Whether `a` and `b` are equal as `==` has it: the same value, or containers holding equal
-/// values, `depth` deep at most.
-pub fn contentEqual(a: Value, b: Value, depth: usize) bool {
+/// values, MAX_EQUALITY_DEPTH deep at most.
+pub fn contentEqual(a: Value, b: Value) bool {
     if (a.isEqual(b)) return true;
-    if (!a.isObject() or !b.isObject()) return false;
-    if (depth == 0) return false;
-    if (a.isArray() and b.isArray()) {
-        const xs = a.asArray().items.items;
-        const ys = b.asArray().items.items;
+    if (!comparesByContent(a) or !comparesByContent(b)) return false;
+    var equality: Equality = .{};
+    defer equality.deinit();
+    return equality.equal(a, b, MAX_EQUALITY_DEPTH);
+}
+
+/// One comparison of two containers. Once it is large (MIN_PAIRS_KEPT), it keeps the pairs
+/// of containers it finds equal that held containers themselves, so a structure that shares
+/// its parts is compared once per pair, not once per path to it: `x = [x, x]` twenty-seven
+/// times over took 2^27 comparisons (12 s, which no time limit could stop), forty times over
+/// longer than anyone waits. A pair it finds unequal ends the comparison. Its memory is its
+/// own, from the C allocator: a Map comparing its keys has no VM's at hand. Without room to
+/// keep a pair, it compares it again when met again.
+const Equality = struct {
+    /// The pairs of containers compared so far.
+    compared: usize = 0,
+    proven: std.AutoHashMapUnmanaged(Pair, void) = .empty,
+
+    const Pair = struct { a: *const Obj, b: *const Obj };
+
+    fn deinit(self: *Equality) void {
+        self.proven.deinit(std.heap.c_allocator);
+    }
+
+    fn equal(self: *Equality, a: Value, b: Value, depth: usize) bool {
+        if (a.isEqual(b)) return true;
+        if (!a.isObject() or !b.isObject()) return false;
+        if (depth == 0) return false;
+        if (a.isRange() and b.isRange()) {
+            const x = a.asRange();
+            const y = b.asRange();
+            return x.start == y.start and x.end == y.end and x.step == y.step and x.is_exclusive == y.is_exclusive;
+        }
+        const arrays = a.isArray() and b.isArray();
+        if (!arrays and !(a.isMap() and b.isMap()) and !(a.isJsonObject() and b.isJsonObject())) return false;
+
+        const pair: Pair = .{ .a = a.asObj(), .b = b.asObj() };
+        if (self.proven.contains(pair)) return true;
+        const before = self.compared;
+        self.compared += 1;
+        const same = if (arrays) self.itemsEqual(a.asArray().items.items, b.asArray().items.items, depth) else self.entriesEqual(.of(a), .of(b), depth);
+        // A pair whose items held no containers compares again as fast as it is looked up
+        const held_containers = self.compared > before + 1;
+        if (same and held_containers and self.compared > MIN_PAIRS_KEPT) self.proven.put(std.heap.c_allocator, pair, {}) catch {};
+        return same;
+    }
+
+    fn itemsEqual(self: *Equality, xs: []const Value, ys: []const Value, depth: usize) bool {
         if (xs.len != ys.len) return false;
         for (xs, ys) |x, y| {
-            if (!contentEqual(x, y, depth - 1)) return false;
+            if (!self.equal(x, y, depth - 1)) return false;
         }
         return true;
     }
-    if ((a.isMap() and b.isMap()) or (a.isJsonObject() and b.isJsonObject())) return entriesEqual(.of(a), .of(b), depth);
-    if (a.isRange() and b.isRange()) {
-        const x = a.asRange();
-        const y = b.asRange();
-        return x.start == y.start and x.end == y.end and x.step == y.step and x.is_exclusive == y.is_exclusive;
-    }
-    return false;
-}
 
-/// Whether two Maps (or two JsonObjects) hold the same keys with equal values.
-fn entriesEqual(xs: Entries, ys: Entries, depth: usize) bool {
-    if (xs.count != ys.count) return false;
-    var it = xs;
-    while (it.next()) |x| {
-        const y = ys.table.get(x.key) orelse return false;
-        if (!contentEqual(x.value, y, depth - 1)) return false;
+    /// Whether two Maps (or two JsonObjects) hold the same keys with equal values.
+    fn entriesEqual(self: *Equality, xs: Entries, ys: Entries, depth: usize) bool {
+        if (xs.count != ys.count) return false;
+        var it = xs;
+        while (it.next()) |x| {
+            const y = ys.table.get(x.key) orelse return false;
+            if (!self.equal(x.value, y, depth - 1)) return false;
+        }
+        return true;
     }
-    return true;
-}
+};
 
 /// A hash of `v` that values `contentEqual` takes for equal share: a container's of what
 /// it holds (a Map's entries in any order, as it compares them), any other value's of its
-/// bits. Past `depth` it is one constant, which equality still tells apart.
+/// bits. It takes in `depth` levels of containers, and MAX_HASHED_ITEMS items of each: an
+/// Array's first ones, a Map's entries only when it has no more (which of them come first
+/// is no part of what it holds); past them, its size alone.
 fn contentHash(v: Value, depth: usize) u64 {
     if (!comparesByContent(v)) return mixed(v.val);
     if (depth == 0) return 0;
     if (v.isArray()) {
-        var h = mixed(v.asArray().items.items.len);
-        for (v.asArray().items.items) |item| h = mixed(h ^ contentHash(item, depth - 1));
+        const items = v.asArray().items.items;
+        var h = mixed(items.len);
+        for (items[0..@min(items.len, MAX_HASHED_ITEMS)]) |item| h = mixed(h ^ contentHash(item, depth - 1));
         return h;
     }
     if (v.isRange()) {
@@ -177,8 +224,9 @@ fn contentHash(v: Value, depth: usize) u64 {
         return mixed(@as(u64, @bitCast(r.start)) ^ mixed(@as(u64, @bitCast(r.end)) ^ mixed(@as(u64, @bitCast(r.step)) +% @intFromBool(r.is_exclusive))));
     }
     var entries: Entries = .of(v);
-    // A sum of the entries' hashes, which their order doesn't change
     var h = mixed(entries.count);
+    if (entries.count > MAX_HASHED_ITEMS) return h;
+    // A sum of the entries' hashes, which their order doesn't change
     while (entries.next()) |entry| h +%= mixed(contentHash(entry.key, depth - 1) ^ (contentHash(entry.value, depth - 1) *% 31));
     return h;
 }

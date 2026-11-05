@@ -42,3 +42,14 @@ test "exports fingerprint: a function or an object counts as changed whenever it
     try testing.expectEqual(@as(?u64, null), try fingerprint("def f\n  1\nend\nexport { f }"));
     try testing.expectEqual(@as(?u64, null), try fingerprint("class P\nend\nexport { P }"));
 }
+
+test "exports fingerprint: a structure that shares its parts is hashed once per part" {
+    // Forty times `x = [x, x]` is 41 Arrays but 2^40 paths through them, which the
+    // fingerprint walked after every run of the module
+    const shared = (try fingerprint("x = [1]\n40.times { x = [x, x] }\nexport { x }")).?;
+    try testing.expectEqual(shared, (try fingerprint("x = [1]\n40.times { x = [x, x] }\nexport { x }")).?);
+    try testing.expect(shared != (try fingerprint("x = [2]\n40.times { x = [x, x] }\nexport { x }")).?);
+    try testing.expect(shared != (try fingerprint("x = [1]\n39.times { x = [x, x] }\nexport { x }")).?);
+    // One that holds itself too
+    try testing.expect((try fingerprint("x = [1]\nx.push(x)\nexport { x }")) != null);
+}

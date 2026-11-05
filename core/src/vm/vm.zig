@@ -2295,7 +2295,7 @@ pub const VM = struct {
     /// compared by identity before, so `[1] == [1]` was false.
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
         _ = self;
-        return value.contentEqual(a, b, value.MAX_EQUALITY_DEPTH);
+        return value.contentEqual(a, b);
     }
 
     /// What `object` holds under `key`, a String or the Symbol of the same name (its keys

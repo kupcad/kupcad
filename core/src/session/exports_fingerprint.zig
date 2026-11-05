@@ -19,8 +19,8 @@ pub fn hashExports(hasher: *std.hash.Wyhash, vm: *const VM) bool {
     const node_hashes = vm.dag_builder.node_hashes.items;
     const members = &exports.asModule().methods;
     for (members.keys(), members.values()) |name, v| {
-        if (!value_hash.hashValue(hasher, node_hashes, name, value_hash.MAX_DEPTH)) return false;
-        if (!value_hash.hashValue(hasher, node_hashes, v, value_hash.MAX_DEPTH)) return false;
+        if (!value_hash.hashValue(vm.allocator, hasher, node_hashes, name)) return false;
+        if (!value_hash.hashValue(vm.allocator, hasher, node_hashes, v)) return false;
     }
     return true;
 }

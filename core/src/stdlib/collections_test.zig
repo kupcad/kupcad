@@ -123,6 +123,22 @@ test "Array and Map: an iterator keeps what it uses after the block, which the b
     });
 }
 
+test "Array and Map: comparing and hashing structures that share their parts takes a time their parts take" {
+    // Forty times `x = [x, x]` is 41 Arrays but 2^40 paths through them, and `==`, a Map
+    // key's hash, uniq, include? and case/when walked every path, past what `--timeout` stops.
+    const shared = "x = [1]\ny = [1]\nz = [2]\n40.times { x = [x, x]\ny = [y, y]\nz = [z, z] }\n";
+    try expectScripts(&.{
+        .{ .src = shared ++ "r = [x == y, x == z, x != y].inspect", .expected = .{ .str = "[true, false, false]" } },
+        .{ .src = shared ++ "h = {}\n20.times { |i| h[i] = i }\nh[x] = 1\nr = [h[y], h[z]].inspect", .expected = .{ .str = "[1, nil]" } },
+        .{ .src = shared ++ "r = [x, y, z].uniq.size", .expected = .{ .num = 2 } },
+        .{ .src = shared ++ "r = [[x].include?(y), [x].include?(z)].inspect", .expected = .{ .str = "[true, false]" } },
+        .{ .src = shared ++ "r = case y\nwhen z then \"z\"\nwhen x then \"x\"\nend", .expected = .{ .str = "x" } },
+        .{ .src = shared ++ "r = [x, y, z].group_by { |v| v }.size", .expected = .{ .num = 2 } },
+        // One that holds itself is still equal only to itself
+        .{ .src = "a = [1]\na.push(a)\nb = [1]\nb.push(b)\nr = [a == a, a == b].inspect", .expected = .{ .str = "[true, false]" } },
+    });
+}
+
 test "Map: a block that deletes entries is given the others, each once" {
     // Deleting the entry given moved the next into its place, which the walk then passed
     const m = "h = { 1 => :a, 2 => :b, 3 => :c, 4 => :d }\n";
