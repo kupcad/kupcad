@@ -43,9 +43,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         .density = opts.density,
     };
 
-    // Insert into VM registry to get an ID
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    try vm.materials.append(vm.allocator, mat_def);
+    const material_id = try material.intern(vm.allocator, &vm.materials, mat_def);
 
     if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchMaterial(receiver.asCrossSection().dag_idx, material_id));
     if (receiver.isPath()) return paths.withMaterial(vm, receiver, material_id);
@@ -69,9 +67,7 @@ fn solidWithMaterial(vm: *VM, solid: value.Value, material_id: u32) !value.Value
 fn solidWithRole(vm: *VM, solid: value.Value, role: material.MaterialRole) !value.Value {
     var def = parts.materialOf(vm, solid) orelse material.MaterialDef{};
     def.role = role;
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    try vm.materials.append(vm.allocator, def);
-    return solidWithMaterial(vm, solid, material_id);
+    return solidWithMaterial(vm, solid, try material.intern(vm.allocator, &vm.materials, def));
 }
 
 /// Material factors are fractions: `roughness: 5` used to be accepted as is.

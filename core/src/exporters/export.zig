@@ -202,7 +202,7 @@ fn exportSolids(
             var parts = try namedParts(allocator, vm, solids, ghosts);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
-            return obj_exporter.build(allocator, parts.items, title, options.mtl_name);
+            return obj_exporter.build(allocator, parts.items, vm.materials.items.len, title, options.mtl_name);
         },
         .svg, .dxf => unreachable, // 2D: exportDrawing
         .step => {

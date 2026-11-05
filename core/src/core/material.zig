@@ -32,7 +32,20 @@ pub const MaterialDef = struct {
             hasher.update(std.mem.asBytes(&d));
         } else hasher.update(&.{0});
     }
+
+    pub fn eql(self: MaterialDef, other: MaterialDef) bool {
+        return std.meta.eql(self, other);
+    }
 };
+
+/// The id of `def` in `table`: an equal one's, or a new one's at its end. A material is known
+/// by what it is, so a run made again finds the ids it made before, and the Solids that kept
+/// them (a session's cached imports) keep their colours.
+pub fn intern(allocator: std.mem.Allocator, table: *std.ArrayList(MaterialDef), def: MaterialDef) !u32 {
+    for (table.items, 0..) |known, id| if (known.eql(def)) return @intCast(id);
+    try table.append(allocator, def);
+    return @intCast(table.items.len - 1);
+}
 
 /// The sRGB bytes of "#RRGGBB" or "#RGB" (each digit doubled), or null for anything else.
 /// Each digit is read as one (a number parse took "#+10000", its sign, as red).

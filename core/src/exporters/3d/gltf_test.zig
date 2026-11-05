@@ -258,6 +258,22 @@ test "GLTF: a model without materials uses only the default material" {
     try std.testing.expectEqual(@as(usize, 1), glb.array("materials").len);
 }
 
+test "GLTF: a material slot past the materials it is given is the default material" {
+    // A session's run cleared the materials while an imported part kept its slot: the
+    // primitive named a material past the table, which validators refuse and three.js's
+    // loader throws on
+    var vm = try @import("../../test_support.zig").initVm();
+    defer vm.deinit();
+    try std.testing.expectEqual(.ok, try @import("../../test_support.zig").runOn(&vm, "r = cube(1).material(color: \"#FF0000\")"));
+    const parts = [_]MeshPart{.{ .handle = try vm.ensureConcrete(vm.globals.get("r").?) }};
+    const bytes = try gltf.buildGltfBuffer(std.testing.allocator, &.{}, &parts, null, .glb);
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    try expectValidLayout(&glb);
+    try std.testing.expectEqual(@as(usize, 1), glb.array("materials").len);
+}
+
 /// A `.gltf` file: JSON whose one buffer is a base64 data URI, decoded into `bin`
 /// (owned) so the GLB layout checks apply unchanged.
 fn parseGltfJson(bytes: []const u8, bin_storage: *[]u8) !Glb {

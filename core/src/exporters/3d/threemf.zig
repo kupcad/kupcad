@@ -11,6 +11,7 @@ const material = @import("../../core/material.zig");
 const MaterialDef = material.MaterialDef;
 const Placement = @import("../../core/placement.zig").Placement;
 const MeshPart = @import("mesh_part.zig").MeshPart;
+const material_groups = @import("material_groups.zig");
 const zip = @import("../zip.zig");
 
 pub const MODEL_PATH = "3D/3dmodel.model";
@@ -121,8 +122,8 @@ fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, 
     while (t < mesh.tri_verts.len) : (t += 3) {
         const tri = mesh.tri_verts[t..][0..3];
         try w.print("     <triangle v1=\"{d}\" v2=\"{d}\" v3=\"{d}\"", .{ tri[0], tri[1], tri[2] });
-        const slot: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[tri[0] * mesh.num_prop + 3]) else kernel.DEFAULT_MATERIAL_SLOT;
-        if (slot != kernel.DEFAULT_MATERIAL_SLOT and slot <= material_count) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, slot });
+        const slot = material_groups.slotOf(mesh, t, material_count);
+        if (slot != kernel.DEFAULT_MATERIAL_SLOT) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, slot });
         try w.writeAll("/>\n");
     }
     try w.writeAll("    </triangles>\n   </mesh>\n  </object>\n");

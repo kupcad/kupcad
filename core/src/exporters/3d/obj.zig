@@ -22,9 +22,10 @@ const DEFAULT_GREY = 0.8;
 
 /// `parts` as OBJ text, owned by `allocator`; their engine must tessellate (the caller
 /// checks). `title` is a comment at the top (an assembly's name). With `mtl_name`, the file
-/// names that library (`mtllib`) and each run of faces its material. error.NoGeometry when
-/// no part has a triangle.
-pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
+/// names that library (`mtllib`, of the default and `material_count` materials:
+/// buildMaterialLibrary's) and each run of faces its material. error.NoGeometry when no
+/// part has a triangle.
+pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_count: usize, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -61,7 +62,7 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, title: ?[]co
         }
         // The faces by material, each run under its `usemtl`; a normal per face, in the
         // faces' order
-        var groups = try material_groups.Groups.collect(allocator, mesh);
+        var groups = try material_groups.Groups.collect(allocator, mesh, material_count);
         defer groups.deinit(allocator);
         for (0..groups.count()) |g| {
             for (groups.at(g).tri_starts) |tri| {

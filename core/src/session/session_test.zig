@@ -511,6 +511,43 @@ test "ScriptSession: materials and ghosts don't accumulate across runs" {
     try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
 }
 
+test "ScriptSession: a module run again keeps the colours of the Solids it imports" {
+    // Each run cleared the materials while the VM's import cache kept the imported Solids,
+    // which name theirs by id: after an edit of main.kup the red box was blue (the run's
+    // first material) and the green one named a material past the table, which a glTF can't
+    // hold (validators refuse it, three.js's loader throws).
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    const part = "red_box = cube(10).material(color: \"#FF0000\")\ngreen_box = cube(5).translate(20, 0, 0).material(color: \"#00FF00\")\nexport { red_box, green_box }\n";
+    const main = "import { red_box, green_box } from \"./part.kup\"\nblue = cube(3).translate(-10, 0, 0).material(color: \"#0000FF\")\n[red_box, green_box, blue]\n";
+    try files.vfs().writeFile("part.kup", part);
+    _ = try session.workspace.addModule("part.kup", part);
+    const main_id = try session.workspace.addModule("main.kup", main);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWithImports("main.kup");
+    try session.workspace.updateModuleSource(main_id, main ++ "# edited\n");
+    try session.markFileEdited("main.kup");
+    try session.evaluateWithImports("main.kup");
+
+    const parts = @import("../exporters/parts.zig");
+    const colours = [_][3]u8{ .{ 0xFF, 0, 0 }, .{ 0, 0xFF, 0 }, .{ 0, 0, 0xFF } };
+    for (session.vm.finalValue().asArray().items.items, colours) |solid, rgb| {
+        try testing.expectEqual(rgb, (parts.materialOf(&session.vm, solid) orelse return error.NoMaterial).rgb);
+    }
+    // Every primitive of the glTF names one of its materials
+    const gltf = try api.exportModelFromVm(testing.allocator, &session.vm, .gltf, .{});
+    defer testing.allocator.free(gltf);
+    const json = try std.json.parseFromSlice(std.json.Value, testing.allocator, gltf, .{});
+    defer json.deinit();
+    const materials = json.value.object.get("materials").?.array.items.len;
+    for (json.value.object.get("meshes").?.array.items) |mesh| for (mesh.object.get("primitives").?.array.items) |primitive| {
+        try testing.expect(@as(usize, @intCast(primitive.object.get("material").?.integer)) < materials);
+    };
+}
+
 test "ScriptSession: a long editing session keeps the geometry graph to what it uses" {
     // Every edit added its nodes to the graph for good: 200 edits of one part left 609.
     var session = try ScriptSession.init(testing.allocator, testing.io, .none);

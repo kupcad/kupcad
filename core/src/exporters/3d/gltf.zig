@@ -144,7 +144,7 @@ pub fn buildGltfBuffer(
 ) ![]const u8 {
     var parts: Parts = .{};
     defer parts.deinit(allocator);
-    for (model) |part| try parts.add(allocator, part);
+    for (model) |part| try parts.add(allocator, part, materials.len);
     if (parts.vertexCount() == 0) return error.NoGeometry;
 
     var doc: Gltf = .{};
@@ -191,7 +191,7 @@ const Parts = struct {
 
     /// Meshes `part` and adds its vertices and its primitives; one with no vertices has
     /// no mesh in the file.
-    fn add(self: *Parts, allocator: std.mem.Allocator, part: MeshPart) !void {
+    fn add(self: *Parts, allocator: std.mem.Allocator, part: MeshPart, material_count: usize) !void {
         const handle = part.handle;
         // A part the kernel can't mesh is an error: skipping it exported a model without it.
         if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
@@ -201,7 +201,7 @@ const Parts = struct {
         if (mesh.vert_props.len / mesh.num_prop == 0) return;
         const base_vertex = self.vertexCount();
 
-        var groups = try material_groups.Groups.collect(allocator, mesh);
+        var groups = try material_groups.Groups.collect(allocator, mesh, material_count);
         defer groups.deinit(allocator);
 
         var v: usize = 0;

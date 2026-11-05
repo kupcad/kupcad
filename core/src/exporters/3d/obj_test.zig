@@ -10,7 +10,7 @@ test "OBJ: parts from the kernel's handles alone, an object each, indexed across
     const large = kernel.cube(&.{}, 2, 2, 2, false) orelse return error.KernelFailed;
     defer kernel.destruct(large);
 
-    const text = try obj.build(testing.allocator, &.{ .{ .handle = small, .name = "bolt" }, .{ .handle = large, .name = "bolt 2" } }, "rack", null);
+    const text = try obj.build(testing.allocator, &.{ .{ .handle = small, .name = "bolt" }, .{ .handle = large, .name = "bolt 2" } }, 0, "rack", null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.startsWith(u8, text, "# KupCAD Export\n# millimetres, Z up\n# rack\no bolt\n"));
     try testing.expect(std.mem.indexOf(u8, text, "\no bolt 2\n") != null);
@@ -34,13 +34,13 @@ test "OBJ: parts from the kernel's handles alone, an object each, indexed across
         }
     }
 
-    try testing.expectError(error.NoGeometry, obj.build(testing.allocator, &.{}, null, null));
+    try testing.expectError(error.NoGeometry, obj.build(testing.allocator, &.{}, 0, null, null));
 }
 
 test "OBJ: with a material library, the file names it and each run of faces its material" {
     const part = kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed;
     defer kernel.destruct(part);
-    const text = try obj.build(testing.allocator, &.{.{ .handle = part, .name = "p" }}, null, "p.mtl");
+    const text = try obj.build(testing.allocator, &.{.{ .handle = part, .name = "p" }}, 0, null, "p.mtl");
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "\nmtllib p.mtl\no p\n") != null);
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\nusemtl default\n"));
@@ -50,7 +50,7 @@ test "OBJ: a part's name stays on its line, every control character a space" {
     // A line break became a statement of its own; a NUL reached the file raw
     const part = kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed;
     defer kernel.destruct(part);
-    const text = try obj.build(testing.allocator, &.{.{ .handle = part, .name = "a\nb\x00c\td\x7fe" }}, "rack", null);
+    const text = try obj.build(testing.allocator, &.{.{ .handle = part, .name = "a\nb\x00c\td\x7fe" }}, 0, "rack", null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "\no a b c d e\n") != null);
 }

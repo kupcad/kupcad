@@ -1755,11 +1755,14 @@ pub const VM = struct {
     /// handles, clones taken by ghost(), see materials.zig), its materials, the files it
     /// read, its report, the parameters it declared and the settings it put in force. A
     /// session running a script again and again kept them all, so every viewport export
-    /// carried every material ever made and every ghost ever shown.
+    /// carried every material ever made and every ghost ever shown. The materials stay while
+    /// the import cache keeps a module, whose Solids name them by id (the table cleared,
+    /// an imported red part turned the colour of the run's first material); a run made
+    /// again adds none (material.intern).
     pub fn resetRunOutput(self: *VM) void {
         for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.clearRetainingCapacity();
-        self.materials.clearRetainingCapacity();
+        if (self.modules.count() == 0) self.materials.clearRetainingCapacity();
         self.forgetFilesRead();
         self.report.clear(self.allocator);
         self.warned_features = .empty;
