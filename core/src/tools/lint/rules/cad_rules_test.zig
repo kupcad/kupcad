@@ -40,6 +40,11 @@ test "Lint: shape-mismatch names the kind a method or operator belongs to" {
         // A join, a Path's own methods, and a method on an object of the script's own
         .{ .source = "p = line([0, 0], [1, 0])\np + p.translate(x: 1)\np.close.extrude(1)\np.stroke(1)", .message = null },
         .{ .source = "class Hook\n  def extrude(h)\n    h\n  end\nend\nHook.new.extrude(1)", .message = null },
+        // An assignment's value is checked against what its variable held: the new value
+        // was recorded first, so the sketch `s` was taken for the Solid it becomes
+        .{ .source = "s = circle(1)\ns = s.extrude(2)", .message = null },
+        .{ .source = "t = square(1)\nt = t.offset(1).revolve(90)", .message = null },
+        .{ .source = "s = circle(1)\ns = s.extrude(2)\ns.extrude(1)", .message = "extrude isn't a Solid's method (a Sketch's), so this fails when the script runs" },
     };
     for (cases) |case| {
         errdefer std.debug.print("source: {s}\n", .{case.source});

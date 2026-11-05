@@ -10,7 +10,6 @@ const literals = @import("literals.zig");
 const token_span = @import("../../../core/token_span.zig");
 const token = @import("../../../core/token.zig");
 const Signature = @import("../../../stdlib/signature.zig").Signature;
-const Shapes = @import("../shapes.zig").Shapes;
 
 /// Most edits between a misspelt keyword and the one it suggests (`sise` to `size` is 1).
 const MAX_SUGGESTION_DISTANCE = 2;
@@ -26,32 +25,22 @@ pub const UnknownKeywordRule = struct {
     pub const id = "unknown-keyword";
     pub const description = "A keyword a built-in doesn't take, such as cube(sise: 3)";
 
-    shapes: Shapes = .{},
-
     pub fn rule(self: *@This()) LintRule {
         return .{
             .id = id,
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .deinit = deinit,
             },
         };
     }
 
-    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
-        const self: *UnknownKeywordRule = @ptrCast(@alignCast(ptr));
-        self.shapes.deinit(allocator);
-    }
-
-    fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        const self: *UnknownKeywordRule = @ptrCast(@alignCast(ptr));
+    fn checkNode(_: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx) orelse return;
-        try self.shapes.observe(engine.allocator, tree, node);
         if (node.tag != .method_call) return;
         const call = tree.methodCall(node);
         const method = tree.getString(call.method_name);
-        const signature = self.signatureFor(tree, call, method) orelse return;
+        const signature = signatureFor(engine, tree, call, method) orelse return;
 
         for (tree.getNamedArgs(call.args)) |arg| {
             if (arg.name == .none or arg.modifier != null) continue;
@@ -75,9 +64,9 @@ pub const UnknownKeywordRule = struct {
     }
 
     /// The built-in a call surely is: a primitive, or a method of a known solid or sketch.
-    fn signatureFor(self: *const UnknownKeywordRule, tree: *const ast.Tree, call: ast.MethodCall, method: []const u8) ?*const Signature {
+    fn signatureFor(engine: *const linter.Linter, tree: *const ast.Tree, call: ast.MethodCall, method: []const u8) ?*const Signature {
         if (call.receiver == .none) return manifest.signatureOf(method);
-        _ = self.shapes.of(tree, call.receiver) orelse return null;
+        _ = engine.shapes.of(tree, call.receiver) orelse return null;
         return manifest.methodSignatureOf(method);
     }
 

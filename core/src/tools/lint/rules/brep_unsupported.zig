@@ -9,7 +9,6 @@ const token_span = @import("../../../core/token_span.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 const literals = @import("literals.zig");
-const Shapes = @import("../shapes.zig").Shapes;
 
 /// Warns, before the script runs, about what the engine it runs on can't do yet: a call
 /// such as `translate`, a boolean on shapes (`a - b`), or a call to a method of the script
@@ -27,7 +26,6 @@ pub const BrepUnsupportedRule = struct {
     scoped: std.ArrayList(Scoped) = .empty,
     /// The script's methods, by the tokens of their bodies and their names.
     methods: std.ArrayList(Method) = .empty,
-    shapes: Shapes = .{},
 
     const Scoped = struct { first: u32, last: u32, engine: EngineType };
     const Method = struct {
@@ -60,7 +58,6 @@ pub const BrepUnsupportedRule = struct {
         const self: *BrepUnsupportedRule = @ptrCast(@alignCast(ptr));
         self.scoped.deinit(allocator);
         self.methods.deinit(allocator);
-        self.shapes.deinit(allocator);
         self.* = .{};
     }
 
@@ -72,14 +69,13 @@ pub const BrepUnsupportedRule = struct {
                 const def = tree.defStmt(node);
                 try self.methods.append(engine.allocator, .{ .name = tree.getString(def.name), .first = token_span.first(tree, def.body), .last = token_span.last(tree, def.body) });
             },
-            .assignment, .import_stmt => try self.shapes.observe(engine.allocator, tree, node),
             .binary_op => {
                 const b = tree.binaryExpr(node);
                 switch (b.op) {
                     .add, .subtract, .bitwise_and => {},
                     else => return,
                 }
-                const shape = self.shapes.of(tree, b.left) orelse self.shapes.of(tree, b.right) orelse return;
+                const shape = engine.shapes.of(tree, b.left) orelse engine.shapes.of(tree, b.right) orelse return;
                 const feature: kernel.Feature = if (shape == .solid) .boolean else .sketch_boolean;
                 try self.found(engine, node, .{ .feature = feature, .what = opName(b.op) });
             },
@@ -95,7 +91,7 @@ pub const BrepUnsupportedRule = struct {
                     }
                     return;
                 }
-                const need = self.needOf(tree, node, call) orelse return;
+                const need = self.needOf(engine, tree, node, call) orelse return;
                 try self.found(engine, node, need);
             },
             else => {},
@@ -129,10 +125,10 @@ pub const BrepUnsupportedRule = struct {
     /// script it calls. A kernel method's
     /// name counts only on a shape (or as a bare builtin): `gear.volume` on a class of the
     /// script's own used to be reported too.
-    fn needOf(self: *BrepUnsupportedRule, tree: *const ast.Tree, node: *const ast.Node, call: ast.MethodCall) ?Need {
+    fn needOf(self: *BrepUnsupportedRule, engine: *const linter.Linter, tree: *const ast.Tree, node: *const ast.Node, call: ast.MethodCall) ?Need {
         const name = tree.getString(call.method_name);
         if (literals.isCall(tree, node, null, "cylinder") and isCone(tree, call)) return .{ .feature = .cone, .what = "cylinder(r1:, r2:)" };
-        const shape = if (call.receiver == .none) null else self.shapes.of(tree, call.receiver);
+        const shape = if (call.receiver == .none) null else engine.shapes.of(tree, call.receiver);
         // A solid's offset (and shell) is a Minkowski sum with a sphere; a sketch's is the
         // kernel's offset.
         if (shape == .solid and (std.mem.eql(u8, name, "offset") or std.mem.eql(u8, name, "shell"))) return .{ .feature = .minkowski, .what = name };

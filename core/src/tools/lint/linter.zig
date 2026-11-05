@@ -12,6 +12,7 @@ const Config = config_mod.Config;
 const LintRule = @import("rules/rule.zig").LintRule;
 const visitor = @import("../../core/visitor.zig");
 const Document = @import("../../frontend/document.zig").Document;
+const Shapes = @import("shapes.zig").Shapes;
 
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
@@ -190,6 +191,10 @@ const LintContext = struct {
     pub fn leaveNode(self: *LintContext, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx).?;
 
+        // What an assignment or an import binds counts from here, once its value is checked:
+        // in `s = s.extrude(2)`, the `s` extruded is the sketch it was
+        try self.linter.shapes.observe(self.linter.allocator, tree, node);
+
         // Close the scope now that all children have been traversed
         if (self.linter.opensScope(node.tag, node_idx)) {
             try self.linter.popScope();
@@ -214,6 +219,10 @@ pub const Linter = struct {
     body_depth: usize = 0,
     /// The script's own block, as passed to `check`.
     root: ast.NodeIndex = .none,
+    /// Which variables hold a Solid, a Sketch or a Path where the walk is, as far as the
+    /// script says: the rules ask it. Each one kept its own, which it updated before
+    /// checking an assignment's value.
+    shapes: Shapes = .{},
 
     // Token location lookup
     source: []const u8 = "",
@@ -438,6 +447,7 @@ pub const Linter = struct {
         if (root == .none) return;
         self.root = root;
         defer for (self.rules.items) |rule| rule.deinit(self.allocator);
+        defer self.shapes.deinit(self.allocator);
 
         // Establish the global scope
         try self.pushScope();

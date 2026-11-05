@@ -9,7 +9,6 @@ const manifest = @import("../../../stdlib/manifest.zig");
 const Signature = @import("../../../stdlib/signature.zig").Signature;
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
-const Shapes = @import("../shapes.zig").Shapes;
 const literals = @import("literals.zig");
 
 /// Flags a size given as a literal zero or negative number, which the built-in rejects when
@@ -22,30 +21,18 @@ pub const NegativeDimRule = struct {
     pub const id = "nonpositive-size";
     pub const description = "A size written as zero or a negative number";
 
-    /// Which variables hold solids and sketches, as far as the script says.
-    shapes: Shapes = .{},
-
     pub fn rule(self: *@This()) LintRule {
         return .{
             .id = id,
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .deinit = deinit,
             },
         };
     }
 
-    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
-        const self: *NegativeDimRule = @ptrCast(@alignCast(ptr));
-        self.shapes.deinit(allocator);
-        self.* = .{};
-    }
-
-    fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        const self: *NegativeDimRule = @ptrCast(@alignCast(ptr));
+    fn checkNode(_: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx) orelse return;
-        if (node.tag == .assignment or node.tag == .import_stmt) return self.shapes.observe(engine.allocator, tree, node);
         if (node.tag != .method_call) return;
         const call = tree.methodCall(node);
         const method = tree.getString(call.method_name);
@@ -53,7 +40,7 @@ pub const NegativeDimRule = struct {
         const signature = if (call.receiver == .none)
             manifest.signatureOf(method) orelse return
         else blk: {
-            const shape = self.shapes.of(tree, call.receiver) orelse return;
+            const shape = engine.shapes.of(tree, call.receiver) orelse return;
             on_solid = shape == .solid;
             break :blk manifest.methodSignatureOf(method) orelse return;
         };

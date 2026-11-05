@@ -8,8 +8,6 @@ const manifest = @import("../../../stdlib/manifest.zig");
 const OPEN_PATH_HINT = @import("../../../core/path.zig").OPEN_PATH_HINT;
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
-const shapes_mod = @import("../shapes.zig");
-const Shapes = shapes_mod.Shapes;
 
 /// Flags a shape method called on a shape the script shows to be of a kind that doesn't
 /// have it, and `+`, `-` and `&` between a Path and another shape (a Path joins another
@@ -20,33 +18,23 @@ pub const ShapeMismatchRule = struct {
     pub const id = "shape-mismatch";
     pub const description = "A method or operator used on a kind of shape that doesn't have it, such as extrude on a Path";
 
-    shapes: Shapes = .{},
-
     pub fn rule(self: *@This()) LintRule {
         return .{
             .id = id,
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .deinit = deinit,
             },
         };
     }
 
-    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
-        const self: *ShapeMismatchRule = @ptrCast(@alignCast(ptr));
-        self.shapes.deinit(allocator);
-    }
-
-    fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        const self: *ShapeMismatchRule = @ptrCast(@alignCast(ptr));
+    fn checkNode(_: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx) orelse return;
-        try self.shapes.observe(engine.allocator, tree, node);
         switch (node.tag) {
             .method_call => {
                 const call = tree.methodCall(node);
                 if (call.receiver == .none) return;
-                const shape = self.shapes.of(tree, call.receiver) orelse return;
+                const shape = engine.shapes.of(tree, call.receiver) orelse return;
                 const name = tree.getString(call.method_name);
                 const allowed = manifest.methodAllows(name, shape.on()) orelse return;
                 if (allowed) return;
@@ -65,8 +53,8 @@ pub const ShapeMismatchRule = struct {
                     .bitwise_and => "&",
                     else => return,
                 };
-                const left = self.shapes.of(tree, b.left) orelse return;
-                const right = self.shapes.of(tree, b.right) orelse return;
+                const left = engine.shapes.of(tree, b.left) orelse return;
+                const right = engine.shapes.of(tree, b.right) orelse return;
                 if (left != .path and right != .path) return;
                 const loc = engine.getLoc(node.main_token);
                 if (left == .path and right == .path) {

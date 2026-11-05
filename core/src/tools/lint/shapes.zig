@@ -1,8 +1,9 @@
 //! Which expressions of a script are solids, sketches or paths, as far as it says before it runs:
 //! a primitive, a variable last assigned one or bound by a file's import (`import logo from
-//! "./logo.svg"`), a method that keeps or makes one, a boolean of them. A rule feeds it the
-//! script's statements in order (`observe`) and asks `of`. `globalResult` is what a call of
-//! a built-in gives back, for the editor's type hints too.
+//! "./logo.svg"`), a method that keeps or makes one, a boolean of them. The linter feeds it
+//! each assignment and import once their values are walked (`observe`), and its rules ask
+//! `of`; the editor's hints keep one too. `globalResult` is what a call of a built-in gives
+//! back, for those hints as well.
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
