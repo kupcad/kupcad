@@ -81,8 +81,11 @@ pub const Shapes = struct {
 /// can't hold (a Sketch in STL, a mesh in STEP) is raised in the VM. error.Canceled, the run
 /// failed, when it ends past the run's time limit.
 pub fn exportShapes(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, shapes: Shapes) ![]const u8 {
+    // Only the viewer's formats hold ghosts (showsGhosts): a file for a slicer or a CAD
+    // package gets the model alone, decided here once for every writer
+    const ghosts = if (format.showsGhosts()) shapes.ghosts else &.{};
     const bytes = try switch (format.dimension()) {
-        .@"3d" => exportSolids(allocator, vm, format, options, shapes.solids, shapes.ghosts, shapes.title),
+        .@"3d" => exportSolids(allocator, vm, format, options, shapes.solids, ghosts, shapes.title),
         .@"2d" => exportDrawing(allocator, vm, format, options, shapes.sketches, shapes.solids, shapes.paths),
     };
     // The kernel computes a chain of booleans as it meshes them, in one call the evaluator's
@@ -180,8 +183,9 @@ fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]
     return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .tolerance = tolerance, .outlines = outlines };
 }
 
-/// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
-/// a 3MF model. error.NoGeometry when what is written has no triangle.
+/// `solids` (rooted by the caller), with the meshes of `ghosts` (none unless the format
+/// shows them), in `format`; `title` names a 3MF model. error.NoGeometry when what is
+/// written has no triangle.
 fn exportSolids(
     allocator: std.mem.Allocator,
     vm: *VM,
@@ -192,11 +196,10 @@ fn exportSolids(
     title: ?[]const u8,
 ) ![]const u8 {
     switch (format) {
-        // The parts once each, placed per copy: the Solids themselves, not their meshes. The
-        // ghosts are the viewer's, as in an STL.
+        // The parts once each, placed per copy: the Solids themselves, not their meshes.
         .@"3mf" => return threemfOf(allocator, vm, solids, title),
         .obj => {
-            var parts = try namedParts(allocator, vm, solids, &.{});
+            var parts = try namedParts(allocator, vm, solids, ghosts);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             return obj_exporter.build(allocator, parts.items, title, options.mtl_name);
@@ -208,9 +211,9 @@ fn exportSolids(
             try requireExactParts(vm, handles.items);
             return step_exporter.buildStepBuffer(allocator, handles.items);
         },
-        // STL holds one mesh: the model's parts are united, the ghosts left out.
+        // STL holds one mesh: the model's parts are united.
         .stl => {
-            var handles = try model_mod.handlesOf(allocator, vm, solids, &.{});
+            var handles = try model_mod.handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
             // Refuse parts the engine can't tessellate, or unite, before any work on them.
             for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
@@ -237,14 +240,10 @@ fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{Runtim
     for (handles, 1..) |h, n| {
         if (h.engine == .brep_native) continue;
         const fmt = "STEP export needs exact geometry, and {s} was built by the {s} engine (a mesh); build it with engine: :brep";
-        if (handles.len == 1) {
-            _ = vm.raiseError(.NotImplementedError, fmt, .{ "the model", h.engine.scriptName() });
-        } else {
-            var buf: [48]u8 = undefined;
-            const which = std.mem.print(&buf, "part {d} of {d}", .{ n, handles.len }) catch "a part";
-            _ = vm.raiseError(.NotImplementedError, fmt, .{ which, h.engine.scriptName() });
-        }
-        return error.RuntimeError;
+        if (handles.len == 1) return vm.fail(.NotImplementedError, fmt, .{ "the model", h.engine.scriptName() });
+        var buf: [48]u8 = undefined;
+        const which = std.mem.print(&buf, "part {d} of {d}", .{ n, handles.len }) catch "a part";
+        return vm.fail(.NotImplementedError, fmt, .{ which, h.engine.scriptName() });
     }
 }
 
@@ -326,9 +325,13 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
     const grouping = try parts_mod.group(vm, allocator, model.solids.items);
     defer grouping.deinit(allocator);
 
+    // One errdefer for the files and their list: a `defer` of the list, run before an
+    // errdefer declared above it, left the errdefer walking freed memory
     var files: std.ArrayList(PartFile) = .empty;
-    errdefer freePartFiles(allocator, files.items);
-    defer files.deinit(allocator);
+    errdefer {
+        freePartFiles(allocator, files.items);
+        files.deinit(allocator);
+    }
     for (grouping.parts) |part| {
         // Rooted while it is evaluated and written; a scope, as an error raised in it
         // unwinds the stack

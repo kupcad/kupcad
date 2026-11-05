@@ -287,6 +287,45 @@ test "API: a STEP build builds the modules the script imports on the B-Rep engin
     try testing.expect(std.mem.startsWith(u8, step, "ISO-10303-21;"));
 }
 
+test "API: only the viewer's formats hold the script's ghosts" {
+    // STEP wrote each ghost as a solid of its own: the decision was repeated per format.
+    // Each format's solids are counted by what starts one in it.
+    const formats = [_]struct { format: api.ExportFormat, solid: []const u8, prelude: []const u8 = "" }{
+        .{ .format = .@"3mf", .solid = "<object " },
+        .{ .format = .obj, .solid = "\no " },
+        .{ .format = .step, .solid = "MANIFOLD_SOLID_BREP(", .prelude = "CAD.config(engine: :brep)\n" },
+        .{ .format = .gltf, .solid = "\"primitives\"" },
+    };
+    for (formats) |case| {
+        errdefer std.debug.print("format: {s}\n", .{@tagName(case.format)});
+        const source = try std.mem.concat(testing.allocator, u8, &.{ case.prelude, "cube(50).ghost\ncube(10)" });
+        defer testing.allocator.free(source);
+        const bytes = try api.buildModel(testing.allocator, testing.io, source, .{ .format = case.format });
+        defer testing.allocator.free(bytes);
+        try testing.expectEqual(@as(usize, if (case.format.showsGhosts()) 2 else 1), std.mem.count(u8, bytes, case.solid));
+    }
+    // An STL is the model's triangles alone: the cube's 12
+    const stl = try api.buildModel(testing.allocator, testing.io, "cube(50).ghost\ncube(10)", .{ .format = .stl });
+    defer testing.allocator.free(stl);
+    try testing.expectEqual(@as(u32, 12), std.mem.readInt(u32, stl[80..84], .little));
+}
+
+test "API: a split that fails after its first file frees what it wrote, once" {
+    // The list of files was freed before the files in it, so the errdefer that frees them
+    // walked freed memory: `kupcad build --split` crashed.
+    const cases = [_]struct { source: []const u8, format: api.ExportFormat, failure: anyerror }{
+        .{ .source = "[cube(1), cube(1) - cube(2)]", .format = .stl, .failure = error.NoGeometry },
+        .{ .source = "[cube(2), circle(r: 1) - circle(r: 2)]", .format = .svg, .failure = error.RuntimeError },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        try testing.expectEqual(.ok, try support.runOn(&vm, case.source));
+        try testing.expectError(case.failure, api.exportPartsFromVm(testing.allocator, &vm, case.format, .{}));
+    }
+}
+
 test "API: an STL of several parts is their union; glTF keeps them apart" {
     const source = "[cube(10), cube(10).translate(5, 0, 0)]";
     const stl = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl });
