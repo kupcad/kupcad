@@ -56,7 +56,7 @@ const TESTS = [
         "broken.kup's diagnostics",
       );
       assert.equal(diagnostic.severity, vscode.DiagnosticSeverity.Error);
-      assert.match(diagnostic.message, /r_paren/);
+      assert.match(diagnostic.message, /Expected '\)'/);
       assert.equal(diagnostic.range.start.line, 1);
     },
   ],

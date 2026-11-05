@@ -243,6 +243,10 @@ test "kupcad: commands succeed with exit 0 on valid input" {
 }
 
 test "kupcad: stdout on a file keeps every line printed, after what the file held" {
+    // Windows: std's spawn opens the file again for the child, a file object of its own whose
+    // position starts at 0, so this can't stand for a shell's `>` or `>>`, whose child shares
+    // the shell's. The streaming writer is the same code on every system.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var sb = try Sandbox.init();
     defer sb.deinit();
     try sb.tmp.dir.createDirPath(testing.io, "two");
@@ -495,8 +499,8 @@ test "kupcad: check and fmt read each file's settings from the nearest .kupcad.j
         // --config still holds for every file
         .{ .args = &.{ "check", "--config", "strict.json", "sub/a.kup" }, .code = 1, .contains = "unused-variable" },
         // Settings that can't be read fail the files they hold for, and are named
-        .{ .args = &.{ "check", "broken/b.kup", "valid.kup" }, .code = 1, .contains = "broken/.kupcad.json" },
-        .{ .args = &.{ "fmt", "--check", "broken/b.kup" }, .code = 1, .contains = "broken/.kupcad.json" },
+        .{ .args = &.{ "check", "broken/b.kup", "valid.kup" }, .code = 1, .contains = "broken" ++ std.fs.path.sep_str ++ ".kupcad.json" },
+        .{ .args = &.{ "fmt", "--check", "broken/b.kup" }, .code = 1, .contains = "broken" ++ std.fs.path.sep_str ++ ".kupcad.json" },
     });
 }
 
