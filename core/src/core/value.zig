@@ -89,9 +89,40 @@ pub const Obj = struct {
     obj_type: ObjType,
     is_marked: bool,
 
-    /// The object this header begins: `obj.as(ObjArray)` for one whose obj_type is .array.
+    /// The object this header begins: `obj.as(ObjArray)` for one whose obj_type is .array,
+    /// which a safe build checks. Every accessor of an object goes through it.
     pub inline fn as(self: *Obj, comptime T: type) *T {
+        std.debug.assert(self.obj_type == comptime typeOf(T));
         return @alignCast(@fieldParentPtr("obj", self));
+    }
+
+    /// The obj_type of an object of type T.
+    fn typeOf(comptime T: type) ObjType {
+        return switch (T) {
+            ObjString => .string,
+            ObjSymbol => .symbol,
+            ObjNative => .native,
+            ObjArray => .array,
+            ObjMap => .map,
+            ObjJsonObject => .json_object,
+            ObjFunction => .function,
+            ObjUpvalue => .upvalue,
+            ObjClosure => .closure,
+            ObjClass => .class,
+            ObjModule => .module,
+            ObjInstance => .instance,
+            ObjBoundMethod => .bound_method,
+            ObjRange => .range,
+            ObjBBox => .bbox,
+            ObjCrossSection => .cross_section,
+            ObjPath => .path,
+            ObjGeometry => .geometry,
+            ObjAssembly => .assembly,
+            ObjWorkplane => .workplane,
+            ObjFont => .font,
+            ObjRandom => .random,
+            else => @compileError(@typeName(T) ++ " is no object type"),
+        };
     }
 };
 
@@ -763,48 +794,43 @@ pub const Value = packed struct {
     }
 
     pub inline fn asGeometry(self: Value) *ObjGeometry {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjGeometry);
     }
     pub inline fn asCrossSection(self: Value) *ObjCrossSection {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjCrossSection);
     }
     pub inline fn asPath(self: Value) *ObjPath {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjPath);
     }
     pub inline fn asInstance(self: Value) *ObjInstance {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjInstance);
     }
     pub inline fn asClass(self: Value) *ObjClass {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjClass);
     }
     pub inline fn asModule(self: Value) *ObjModule {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjModule);
     }
     pub inline fn asClosure(self: Value) *ObjClosure {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjClosure);
     }
     pub inline fn asNative(self: Value) *ObjNative {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjNative);
     }
     pub inline fn asArray(self: Value) *ObjArray {
-        std.debug.assert(self.isArray());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjArray);
     }
     pub inline fn asMap(self: Value) *ObjMap {
-        std.debug.assert(self.isMap());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjMap);
     }
     pub inline fn asJsonObject(self: Value) *ObjJsonObject {
-        std.debug.assert(self.isJsonObject());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjJsonObject);
     }
     pub inline fn asString(self: Value) *ObjString {
-        std.debug.assert(self.isString());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjString);
     }
     pub inline fn asSymbol(self: Value) *ObjSymbol {
-        std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjSymbol);
     }
     /// The text of a String or a Symbol, which a script writes a name as either way
     /// (`halign: :center` or `"center"`); null for any other value.
@@ -814,37 +840,31 @@ pub const Value = packed struct {
         return null;
     }
     pub inline fn asFunction(self: Value) *ObjFunction {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjFunction);
     }
 
     pub inline fn asRange(self: Value) *ObjRange {
-        std.debug.assert(self.isRange());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjRange);
     }
 
     pub inline fn asBBox(self: Value) *ObjBBox {
-        std.debug.assert(self.isBBox());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjBBox);
     }
 
     pub inline fn asAssembly(self: Value) *ObjAssembly {
-        std.debug.assert(self.isAssembly());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjAssembly);
     }
 
     pub inline fn asFont(self: Value) *ObjFont {
-        std.debug.assert(self.isFont());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjFont);
     }
 
     pub inline fn asRandom(self: Value) *ObjRandom {
-        std.debug.assert(self.isRandom());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjRandom);
     }
 
     pub inline fn asBoundMethod(self: Value) *ObjBoundMethod {
-        std.debug.assert(self.isBoundMethod());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return self.asObj().as(ObjBoundMethod);
     }
 
     // --- Operations & Equality ---
@@ -890,7 +910,7 @@ pub const Value = packed struct {
             const obj = self.asObj();
             switch (obj.obj_type) {
                 .string => {
-                    const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", obj));
+                    const str_obj = obj.as(ObjString);
                     if (is_inspect) {
                         try writeQuoted(writer, str_obj.chars);
                     } else {
@@ -901,13 +921,13 @@ pub const Value = packed struct {
                     // As in Ruby: `:name` when inspected, the bare name otherwise (puts,
                     // interpolation, join), which used to keep the colon too. A name `:name`
                     // wouldn't read back as is quoted, `:"a b"`; it was `:a b`.
-                    const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
+                    const sym = obj.as(ObjSymbol);
                     if (!is_inspect) return writer.writeAll(sym.chars);
                     try writer.writeAll(":");
                     if (identifier.isBareSymbol(sym.chars)) try writer.writeAll(sym.chars) else try writeQuoted(writer, sym.chars);
                 },
                 .array => {
-                    const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                    const arr = obj.as(ObjArray);
                     const here = Printing.enter(up, obj) orelse return writer.writeAll("[...]");
                     try writer.writeAll("[");
                     for (arr.items.items, 0..) |item, i| {
@@ -919,20 +939,20 @@ pub const Value = packed struct {
                 // A JsonObject as a Map of its entries: `{"teeth" => 12}`
                 .map, .json_object => try writeEntries(.of(self), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}")),
                 .class => {
-                    const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
+                    const cls = obj.as(ObjClass);
                     try writer.writeAll(cls.name.chars); // `puts 5.class` prints Number, as in Ruby
                 },
                 // By its name, as a class (`Fasteners`, `Hw::Std`): it was <Object>
                 .module => try writer.writeAll(obj.as(ObjModule).name.chars),
                 .instance => {
-                    const inst: *ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
+                    const inst = obj.as(ObjInstance);
                     try writer.print("#<{s}>", .{inst.class.name.chars});
                 },
                 .closure, .function => try writer.writeAll("<Function>"),
                 .native => try writer.writeAll("<Native Function>"),
                 .bound_method => try writer.writeAll("<Bound Method>"),
                 .range => {
-                    const r: *ObjRange = @alignCast(@fieldParentPtr("obj", obj));
+                    const r = obj.as(ObjRange);
                     const op_str = if (r.is_exclusive) "..." else "..";
                     try writer.print("{f}{s}{f}", .{ fmtNumber(r.start), op_str, fmtNumber(r.end) });
                 },
@@ -941,7 +961,7 @@ pub const Value = packed struct {
                 .geometry => try writer.writeAll("#<Solid>"),
                 .cross_section => try writer.writeAll("#<Sketch>"),
                 .path => {
-                    const p: *ObjPath = @alignCast(@fieldParentPtr("obj", obj));
+                    const p = obj.as(ObjPath);
                     const end = p.end();
                     try writer.print("#<Path {d} segment{s} from [{f}, {f}] to [{f}, {f}]>", .{ p.segments.len, if (p.segments.len == 1) "" else "s", fmtNumber(p.start[0]), fmtNumber(p.start[1]), fmtNumber(end[0]), fmtNumber(end[1]) });
                 },
@@ -958,7 +978,7 @@ pub const Value = packed struct {
                 },
                 .random => try writer.print("#<Random seed: {f}>", .{fmtNumber(obj.as(ObjRandom).seed)}),
                 .bbox => {
-                    const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
+                    const bx = obj.as(ObjBBox);
                     const f = fmtNumber;
                     try writer.print("BoundingBox(min: [{f}, {f}, {f}], max: [{f}, {f}, {f}])", .{ f(bx.min[0]), f(bx.min[1]), f(bx.min[2]), f(bx.max[0]), f(bx.max[1]), f(bx.max[2]) });
                 },
