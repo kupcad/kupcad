@@ -235,7 +235,7 @@ webview and the desktop app to the language server.
   presets, which the toolbar's Parameters button hides for the model's width. It talks to the
   host as a `ViewerHost` (`@kupcad/protocol`'s `HostMessage` and `ViewerMessage`): the panel's
   values, a preset, an export (in the format its toolbar's `ExportMenu` chose, those the model's
-  kind can be written in), a screenshot (base64) or a problem's place go to the host, which
+  kind can be written in), a screenshot (base64, `@kupcad/protocol`'s `pngBase64`) or a problem's place go to the host, which
   gives them to the server or acts on them. Its console (`console`, by default shown) keeps each
   run of the document shown, a frame sent again once, and the lines the host's `log` messages
   give. A host that keeps no presets passes

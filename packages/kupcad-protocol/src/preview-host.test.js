@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPreviewHost, pngBytes } from './preview-host.js';
+import { createPreviewHost } from './preview-host.js';
 
 /** @import { ParamValues } from './types.js' */
 
@@ -138,9 +138,5 @@ describe('the preview host', () => {
     stop();
     host.log('more');
     expect(told.at(-1)).toEqual({ type: 'log', text: 'info(lsp): ready\n' });
-  });
-
-  it('decodes a screenshot from its base64', () => {
-    expect([...pngBytes(btoa('PNG'))]).toEqual([80, 78, 71]);
   });
 });

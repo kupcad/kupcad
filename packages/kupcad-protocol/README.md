@@ -74,7 +74,8 @@ client.sendRequest('workspace/executeCommand', {
   and the desktop app's page have one: `post` takes the page's messages, done through the
   host's services (the server, an export, a screenshot, a place to show, the presets and
   settings a host keeps), and `listen` gives it the host's (the document shown, its values,
-  presets, the log); `pngBytes(base64)`, a screenshot's bytes. Each host handled the messages
+  presets, the log); `pngBase64(bytes)` and `pngBytes(base64)`, a screenshot's bytes as the
+  page's message carries them (base64: VS Code takes a webview's messages as JSON) and back. Each host handled the messages
   itself, and the two drifted. Before it asks the server for a frame (a document shown, a page
   ready on its socket) it gives the server the document's values: a server started again
   knows none.

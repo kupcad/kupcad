@@ -16,7 +16,7 @@
 -->
 <script>
   import { onMount, untrack } from 'svelte';
-  import { errorText } from '@kupcad/protocol';
+  import { errorText, pngBase64 } from '@kupcad/protocol';
   import ConsolePanel from './ConsolePanel.svelte';
   import ExportMenu from './ExportMenu.svelte';
   import { appendLines, linesOfLog, linesOfRun } from './console.js';
@@ -25,7 +25,6 @@
   import { memorySettings, paneKeys, sizeSetting } from './settings.js';
   import Splitter from './Splitter.svelte';
   import ViewerPane from './ViewerPane.svelte';
-  import { toBase64 } from './base64.js';
   import { problemsOf, runStatusOf } from './run-status.js';
   import { connectViewport } from './viewport-socket.js';
 
@@ -218,7 +217,7 @@
 
   /** @param {Blob} image */
   async function screenshot(image) {
-    host.post({ type: 'screenshot', png: toBase64(new Uint8Array(await image.arrayBuffer())) });
+    host.post({ type: 'screenshot', png: pngBase64(new Uint8Array(await image.arrayBuffer())) });
   }
 
   /** @param {unknown} error the viewer's: a model it can't show */

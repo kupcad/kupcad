@@ -18,7 +18,8 @@ import { anotherDocument, ScriptValues } from './host.js';
  * @property {(text: string) => void} warn a message refused, or a problem the page reports
  * @property {(text: string) => void} fail a request to the server that failed
  * @property {(uri: string, format: ExportFormat) => void} export
- * @property {(png: string) => void} screenshot the image's bytes in base64 (`pngBytes`)
+ * @property {(png: string) => void} screenshot the image's bytes in base64 (screenshot.js's
+ *   `pngBytes`)
  * @property {(uri: string, line: number, column: number, file: string | null) => void} reveal
  *   shows the script there; with a `file`, that module of the project (a library) instead
  * @property {(uri: string) => void} [presets] tells the page the document's presets
@@ -167,9 +168,3 @@ export function createPreviewHost(services) {
     },
   };
 }
-
-/**
- * A screenshot's bytes from the base64 the page sends them as.
- * @param {string} png
- */
-export const pngBytes = (png) => Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
