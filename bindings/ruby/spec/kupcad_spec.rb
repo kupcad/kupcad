@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require 'fileutils'
 require 'open3'
 require 'pathname'
 require 'timeout'
+require 'tmpdir'
 
 RSpec.describe Kupcad do
   let(:forever) { "while true\nend\ncube(1)" }
@@ -221,6 +223,21 @@ RSpec.describe Kupcad do
                                          Gem.ruby, '-I', lib, '-e', 'require "kupcad"')
       expect(status).not_to be_success
       expect(stderr).to include('/nowhere/libkupcad.so not found', 'KUPCAD_LIBRARY')
+    end
+
+    # On Windows, where ffi read the path in the system's code page: a user folder (C:\Users\José)
+    # holds the gems
+    it 'loads the library from a folder whose name is past ASCII' do
+      lib = File.dirname(described_class.method(:build).source_location.first)
+      library = ENV.fetch('KUPCAD_LIBRARY') { File.join(lib, 'kupcad', 'native', Kupcad::Native::LIBRARY) }
+      Dir.mktmpdir do |dir|
+        folder = File.join(dir, 'José Юрий 日本')
+        FileUtils.mkdir_p(folder)
+        FileUtils.cp(library, folder)
+        stdout, stderr, = Open3.capture3({ 'KUPCAD_LIBRARY' => File.join(folder, File.basename(library)) }, Gem.ruby,
+                                         '-I', lib, '-e', 'require "kupcad"; print Kupcad.library_version')
+        expect(stdout).to eq(Kupcad::VERSION), stderr
+      end
     end
   end
 

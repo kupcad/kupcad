@@ -19,7 +19,35 @@ module Kupcad
                        "(this is #{RUBY_PLATFORM}). Set KUPCAD_LIBRARY to a libkupcad you built (`zig build lib` in " \
                        "the kupcad repository's core/), or run the kupcad CLI."
     end
-    ffi_lib path
+
+    # ffi opens a library on Windows with LoadLibraryExA, which reads the path in the system's
+    # code page, not as the UTF-8 Ruby gives it: a path past ASCII (C:\Users\José\...) wasn't
+    # found. There the library is loaded by its path in UTF-16 first, as ffi loads one by its
+    # path (its own folder searched for what it needs), then ffi opens it by its file name, which
+    # Windows resolves to the module of that name already loaded, searching no folder.
+    if FFI::Platform.windows?
+      # Windows' loader, which takes a path in UTF-16
+      module Kernel32
+        extend FFI::Library
+
+        ffi_lib 'kernel32'
+        ffi_convention :stdcall
+
+        LOAD_WITH_ALTERED_SEARCH_PATH = 0x8
+
+        attach_function :LoadLibraryExW, %i[buffer_in pointer uint32], :pointer
+      end
+      private_constant :Kernel32
+
+      wide = "#{File.expand_path(path).tr('/', '\\')}\0".encode(Encoding::UTF_16LE)
+      if Kernel32.LoadLibraryExW(wide, nil, Kernel32::LOAD_WITH_ALTERED_SEARCH_PATH).null?
+        raise LoadError, "#{path} can't be loaded: Windows error #{FFI::LastError.winapi_error}"
+      end
+
+      ffi_lib File.basename(path)
+    else
+      ffi_lib path
+    end
 
     # First, so a library of another ABI is refused as one, not for a function it lacks
     attach_function :kupcad_abi_version, [], :uint32
