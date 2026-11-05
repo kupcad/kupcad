@@ -19,7 +19,7 @@ export const DATA_EXTENSIONS = new Set([
 ]);
 export { SCRIPT_EXTENSION } from '@kupcad/protocol';
 /** A package's lockfile, JSON though its extension doesn't say so. */
-export const LOCK_FILE = 'kupcad.lock';
+const LOCK_FILE = 'kupcad.lock';
 /** Folders that hold no file of the user's: hidden ones (.git, .kupcad's packages) and build output. */
 export const SKIPPED_FOLDER = /^\.|^node_modules$|^target$/;
 /** A folder with more files than this is no project: the list stops there. */

@@ -60,7 +60,7 @@ export function themeFromTokens(element) {
  * `only light`), else the system's (`light dark`, or none said).
  * @param {CSSStyleDeclaration} style its computed style
  */
-export function isDark(style) {
+function isDark(style) {
   const scheme = (style.colorScheme ?? '').split(/\s+/);
   const light = scheme.includes('light');
   if (scheme.includes('dark') !== light) return !light;

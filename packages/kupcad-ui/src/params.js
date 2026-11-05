@@ -329,7 +329,7 @@ function readScalar(rule, input, path) {
  * @param {Value | null} input
  * @returns {number | null}
  */
-export function numberOf(input) {
+function numberOf(input) {
   if (typeof input === 'number') return Number.isFinite(input) ? input : null;
   if (typeof input !== 'string') return null;
   const hex = HEX_NUMBER.exec(input);
@@ -372,7 +372,7 @@ function hexNumber(match) {
  * @param {Value | null} input
  * @returns {boolean | null}
  */
-export function booleanOf(input) {
+function booleanOf(input) {
   if (typeof input === 'boolean') return input;
   if (input === 1 || input === 'true' || input === '1') return true;
   if (input === 0 || input === 'false' || input === '0') return false;

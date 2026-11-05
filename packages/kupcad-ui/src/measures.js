@@ -15,10 +15,10 @@ const MM3_PER_CM3 = 1000;
 const decimal = (n, digits) => n.toLocaleString('en', { maximumFractionDigits: digits });
 
 /** @param {number} mm */
-export const formatLength = (mm) => decimal(mm, 2);
+const formatLength = (mm) => decimal(mm, 2);
 
 /** @param {number} mm2 */
-export const formatArea = (mm2) => `${decimal(mm2, 1)} mm²`;
+const formatArea = (mm2) => `${decimal(mm2, 1)} mm²`;
 
 /** @param {number} mm3 */
 export const formatVolume = (mm3) =>
