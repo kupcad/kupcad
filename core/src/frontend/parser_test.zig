@@ -4686,3 +4686,24 @@ test "Parser: several names take `=` alone; another operator is invalid-assignme
         try testing.expectEqual(.@"invalid-assignment", doc.diagnostics[0].code);
     }
 }
+
+test "Parser: a comment it can't keep for lack of memory is noted, for the document to fail" {
+    // It was logged and dropped, and the formatter deleted it (Document fails on the note).
+    const source = "# a\nx = 1 # b\n# c\ny = [\n  # d\n  2,\n]\n";
+    var index: usize = 0;
+    while (true) : (index += 1) {
+        var once: @import("../test_support.zig").FailOnce = .{ .backing = testing.allocator, .index = index };
+        const allocator = once.allocator();
+        var lex = Lexer.init(source, 0);
+        var tokens = lex.lexAll(allocator) catch continue;
+        defer tokens.deinit(allocator);
+        var parser = Parser.init(tokens, source, allocator) catch continue;
+        defer parser.deinit();
+        _ = parser.parseProgram() catch |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        try testing.expect(parser.comments.items.len == 4 or parser.comments_dropped);
+        if (!once.failed) break;
+    }
+}

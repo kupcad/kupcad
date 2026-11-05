@@ -424,8 +424,10 @@ pub const Linter = struct {
         self.token_starts = token_starts;
         self.token_lengths = token_lengths;
 
+        // Room first: a copied message that couldn't be kept leaked
+        try self.diagnostics.ensureUnusedCapacity(self.allocator, parser_diagnostics.len);
         for (parser_diagnostics) |diag| {
-            try self.diagnostics.append(self.allocator, .{
+            self.diagnostics.appendAssumeCapacity(.{
                 .loc = diag.loc,
                 .severity = .@"error",
                 .origin = .{ .error_code = diag.code },

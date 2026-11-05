@@ -40,7 +40,8 @@ fn format(source: []const u8, allocator: std.mem.Allocator) anyerror![]const u8 
 }
 
 test "allocation failures: format" {
-    try support.expectAllocationFailuresHandled(@as([]const u8, "def f(a, b)\n  [a,b].map { |x| x*2 }\nend\nr = {k: f(1, 2), \"s\" => 'q'}\n"), format);
+    // With comments, which the formatter keeps (document_test.zig fails the one keeping them)
+    try support.expectAllocationFailuresHandled(@as([]const u8, "# note\ndef f(a, b)\n  [a,b].map { |x| x*2 } # twice\nend\nr = {k: f(1, 2), \"s\" => 'q'}\n"), format);
 }
 
 test "allocation failures: build every format" {
@@ -73,8 +74,10 @@ fn check(source: []const u8, allocator: std.mem.Allocator) anyerror![]const u8 {
 }
 
 test "allocation failures: check" {
-    // Unused variables (with fixes), an unknown keyword, a negative size and dead code.
+    // Unused variables (with fixes), an unknown keyword, a negative size, dead code and a
+    // syntax error, whose message the linter copies (the copy leaked when keeping it failed).
     const source =
+        \\x = )
         \\unused = 5
         \\def f(a)
         \\  return a

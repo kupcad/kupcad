@@ -236,6 +236,43 @@ pub fn expectValue(expected: Expected, r: value.Value) !void {
     }
 }
 
+/// Fails the allocation numbered `index` and no other: std.testing.FailingAllocator fails
+/// every one after it too, so what a caller that swallowed the failure went on with never
+/// shows. It never grows a block in place, so an arena on it allocates for every new buffer.
+pub const FailOnce = struct {
+    backing: std.mem.Allocator,
+    index: usize,
+    count: usize = 0,
+    failed: bool = false,
+
+    pub fn allocator(self: *FailOnce) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *FailOnce = @ptrCast(@alignCast(ctx));
+        defer self.count += 1;
+        if (self.count == self.index) {
+            self.failed = true;
+            return null;
+        }
+        return self.backing.rawAlloc(len, alignment, ra);
+    }
+
+    fn resize(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) bool {
+        return false;
+    }
+
+    fn remap(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) ?[*]u8 {
+        return null;
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *FailOnce = @ptrCast(@alignCast(ctx));
+        self.backing.rawFree(memory, alignment, ra);
+    }
+};
+
 /// Runs `run(context, allocator)` once for every allocation it makes, failing that one
 /// allocation. Each run must free everything it allocated, and must either fail or give
 /// exactly what a run without failures gives (`run` returns its result as bytes it

@@ -89,6 +89,8 @@ pub const Parser = struct {
     b: ast.Builder,
     diagnostics: Diagnostics,
     comments: std.ArrayList(common_token.Comment) = .empty,
+    /// Set when a comment couldn't be kept for lack of memory (keepComment).
+    comments_dropped: bool = false,
     in_block_params: bool = false,
     /// Of the parameter list being parsed (enterParamList): a default's lambda has its own.
     rest_params: RestParams = .{},
@@ -141,6 +143,7 @@ pub const Parser = struct {
             .b = ast.Builder.init(allocator),
             .diagnostics = Diagnostics.init(allocator),
         };
+        errdefer parser.deinit();
 
         // Pre-allocation heuristic: ~1 AST node per 2 tokens
         const estimated_nodes = tokens.tags.len / 2;
@@ -422,28 +425,28 @@ pub const Parser = struct {
         }
     }
 
+    /// Keeps the comment at the current token, for the formatter. One lost to out-of-memory
+    /// sets `comments_dropped`, which fails the parse (Document): it was logged and dropped,
+    /// and the formatter then deleted it.
+    fn keepComment(self: *Parser) void {
+        self.comments.append(self.allocator, .{
+            .lexeme = self.lexeme(0),
+            .loc = self.getLoc(self.tok_idx),
+        }) catch {
+            self.comments_dropped = true;
+        };
+    }
+
     fn skipIgnored(self: *Parser) void {
         while (self.tag(0) == .newline or self.tag(0) == .comment or self.tag(0) == .semicolon) {
-            if (self.tag(0) == .comment) {
-                self.comments.append(self.allocator, .{
-                    .lexeme = self.lexeme(0),
-                    .loc = self.getLoc(self.tok_idx),
-                }) catch |err| {
-                    std.log.err("OOM while parsing comments: {}", .{err});
-                };
-            }
+            if (self.tag(0) == .comment) self.keepComment();
             self.advance();
         }
     }
 
     fn skipComments(self: *Parser) void {
         while (self.tag(0) == .comment) {
-            self.comments.append(self.allocator, .{
-                .lexeme = self.lexeme(0),
-                .loc = self.getLoc(self.tok_idx),
-            }) catch |err| {
-                std.log.err("OOM while parsing comments: {}", .{err});
-            };
+            self.keepComment();
             self.advance();
         }
     }
@@ -464,14 +467,7 @@ pub const Parser = struct {
 
         if (std.mem.findScalar(Tag, tags, self.tag(lookahead)) != null) {
             while (lookahead > 0) {
-                if (self.tag(0) == .comment) {
-                    self.comments.append(self.allocator, .{
-                        .lexeme = self.lexeme(0),
-                        .loc = self.getLoc(self.tok_idx),
-                    }) catch |err| {
-                        std.log.err("OOM while parsing comments: {}", .{err});
-                    };
-                }
+                if (self.tag(0) == .comment) self.keepComment();
                 self.advance();
                 lookahead -= 1;
             }
@@ -480,13 +476,12 @@ pub const Parser = struct {
         return false;
     }
 
+    /// `=`, or an operator that assigns its result (`+=`, `||=`, ...: tagToAssignmentOp).
     fn isAssignmentOp(t: Tag) bool {
-        return switch (t) {
-            .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => true,
-            else => false,
-        };
+        return t == .equal or tagToAssignmentOp(t) != null;
     }
 
+    /// The operation a compound assignment applies (`+=` adds); null for any other token.
     fn tagToAssignmentOp(t: Tag) ?ast.BinaryOp {
         return switch (t) {
             .plus_equal => .add,
@@ -1753,12 +1748,12 @@ pub const Parser = struct {
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
-            .invalid, .unterminated_string, .unterminated_heredoc, .runs_into_heredoc, .interpolation_too_deep => {
-                self.reportLexError(start_tok);
-                left = try self.b.invalidNode(start_tok);
-            },
             else => {
-                self.reportError(self.getLoc(start_tok), .@"invalid-expression", "Invalid expression starting with '{s}'", .{self.lexeme(0)});
+                if (isLexError(start_tag)) {
+                    self.reportLexError(start_tok);
+                } else {
+                    self.reportError(self.getLoc(start_tok), .@"invalid-expression", "Invalid expression starting with '{s}'", .{self.lexeme(0)});
+                }
                 left = try self.b.invalidNode(start_tok);
             },
         }
@@ -1779,18 +1774,21 @@ pub const Parser = struct {
             // Count every link so the resulting tree stays within MAX_AST_DEPTH.
             try self.enterNesting();
 
-            const op_tag = self.tag(0);
-            left = switch (op_tag) {
-                .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
-                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .less_equal_greater, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
-                .question => try self.parseTernary(left),
-                .dot => try self.parseMethodCall(left, false),
-                .ampersand_dot => try self.parseMethodCall(left, true),
-                .colon_colon => try self.parseScopeResolution(left),
-                .l_bracket => try self.parseIndexAccess(left),
-                .l_paren => try self.parseCallOnExpr(left),
-                .keyword_rescue => try self.parseRescueModifierExpr(left),
-                else => break,
+            // Every infix token has a precedence, and the precedence says how it parses
+            left = switch (self.getInfixPrecedence(self.tag(0))) {
+                .none, .unary => unreachable, // ended the loop above; no infix token is unary
+                .assignment => try self.parseAssignmentExpr(left),
+                .rescue_mod => try self.parseRescueModifierExpr(left),
+                .ternary => try self.parseTernary(left),
+                .call => switch (self.tag(0)) {
+                    .dot => try self.parseMethodCall(left, false),
+                    .ampersand_dot => try self.parseMethodCall(left, true),
+                    .colon_colon => try self.parseScopeResolution(left),
+                    .l_bracket => try self.parseIndexAccess(left),
+                    .l_paren => try self.parseCallOnExpr(left),
+                    else => unreachable, // getInfixPrecedence's `.call` tokens
+                },
+                else => try self.parseBinary(left), // an operator and the range, `..` and `...`
             };
         }
 
@@ -2228,12 +2226,12 @@ pub const Parser = struct {
         if (self.in_command_args and t == .keyword_rescue) return .none;
         if (tagToBinaryOp(t)) |op| return binaryPrecedence(op);
 
+        if (isAssignmentOp(t)) return .assignment;
         return switch (t) {
-            .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => .assignment,
             .keyword_rescue => .rescue_mod,
             .question => .ternary,
             .dot_dot, .dot_dot_dot => .range,
-            .dot, .ampersand_dot, .l_paren, .keyword_do, .l_bracket, .colon_colon => .call,
+            .dot, .ampersand_dot, .l_paren, .l_bracket, .colon_colon => .call,
             else => .none,
         };
     }
