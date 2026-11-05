@@ -1,13 +1,23 @@
 name: Tests
 
+# On main, on pull requests, and on a release's tag: the Release workflow runs them on the
+# tagged commit, and publishes nothing before they pass. A pull request's newer push cancels its
+# older run; on main and on a tag each run goes to the end, so each commit there has a result.
 on:
   push:
     branches:
       - main
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
+
+env:
+  # setup-zig's cache (the global Zig cache), but not on a tag: setup-zig saves one on every
+  # run, up to 2 GiB, and what a tag's run saves only that tag's runs could read (a run reads
+  # the caches of its own branch or tag, and main's)
+  ZIG_CACHE: ${{ github.ref_type != 'tag' }}
 
 jobs:
   # The front ends (packages/) and the repository's scripts (scripts/): oxlint, oxfmt and tsc over
@@ -19,7 +29,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: packages-${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +48,7 @@ jobs:
         uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
+          use-cache: ${{ env.ZIG_CACHE }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -90,7 +101,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: bindings-${{ matrix.os }}-${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -115,6 +126,7 @@ jobs:
         uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
+          use-cache: ${{ env.ZIG_CACHE }}
 
       # ReleaseSafe, as the release builds it: the examples the bindings build run at its speed
       - name: Build libkupcad
@@ -150,6 +162,77 @@ jobs:
           "$python" -m ruff format --check
           "$python" -m mypy
 
+  # The gem and the wheel as a user installs them, on the oldest Ruby and Python they take
+  # (kupcad.gemspec's required_ruby_version, pyproject.toml's requires-python): packed and
+  # built as the release packs them, on the Ruby and the Python the bindings are developed with
+  # (the gem's development tools need a newer Ruby), then installed on the oldest and their
+  # tests run against them, as the release runs them. Ruby 3.2's json is older than any the
+  # bundle holds, for one. The lint runs on the newest, above
+  bindings-oldest:
+    name: Bindings installed on Ruby 3.2 and Python 3.10 (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: bindings-oldest-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        with:
+          zig-version-file: .tool-versions
+          use-cache: ${{ env.ZIG_CACHE }}
+
+      # As the release builds it for Linux x86_64, with the notices beside it its gem and its
+      # wheel carry
+      - name: Build libkupcad
+        run: |
+          (cd core && zig build lib -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-gnu.2.28)
+          core/scripts/collect-licenses.sh core/zig-out/lib
+
+      - name: Install Ruby
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          working-directory: bindings/ruby
+          bundler-cache: true
+
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .tool-versions
+
+      - name: Pack the gem and build the wheel
+        uses: ./.github/actions/pack-bindings
+        with:
+          library: ${{ github.workspace }}/core/zig-out/lib/libkupcad.so
+          gem: x86_64-linux-gnu
+          wheel: manylinux_2_28_x86_64
+
+      - name: Install Ruby 3.2
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: '3.2'
+
+      - name: Install Python 3.10
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.10'
+
+      # pip installs a dependency group (--group) from 25.1 on, newer than 3.10's own
+      - name: Update its pip
+        run: python -m pip install --upgrade pip
+
+      - name: Test them installed
+        uses: ./.github/actions/test-bindings
+
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -160,7 +243,7 @@ jobs:
         shell: bash
     concurrency:
       group: test-${{ github.workflow }}-${{ github.ref }}-${{ matrix.name }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +289,7 @@ jobs:
         uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
         with:
           zig-version-file: .tool-versions
+          use-cache: ${{ env.ZIG_CACHE }}
 
       - name: Setup `wasmtime`
         if: matrix.wasm_task != ''

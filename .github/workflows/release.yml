@@ -11,7 +11,8 @@ name: Release
 # and the VS Code extension, its .vsix on the release too, to the Visual Studio Marketplace.
 # libkupcad, the core as a C library, is built beside the CLI on each runner, and the Ruby gem
 # and the Python wheel of each platform around it (bindings/), each tested on its platform, go
-# to RubyGems.org and PyPI.
+# to RubyGems.org and PyPI. Nothing is published before every test CI runs (tests.yml) passes
+# on the tagged commit.
 on:
   push:
     tags:
@@ -53,6 +54,14 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           node scripts/version.js check "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # Every test CI runs (tests.yml), on the tagged commit: they run on main and on pull requests,
+  # not on tags, so a tag on a commit they never passed, or failed, published anyway. The builds
+  # go on beside them; the release job, which every publishing job follows, needs them
+  tests:
+    name: Test the tagged commit
+    needs: version
+    uses: ./.github/workflows/tests.yml
 
   # The CLI, libkupcad beside it, and the Ruby gem and the Python wheel around libkupcad
   # (bindings/), on a runner of each system and architecture they ship for: each checked there
@@ -514,8 +523,9 @@ jobs:
 
   release:
     name: Publish the release
-    # The packages too: a release whose packages can't ship waits for a tag that fixes them
-    needs: [version, build, desktop, packages, vscode]
+    # The tests and the packages too: a release whose tests fail, or whose packages can't ship,
+    # waits for a tag that fixes them
+    needs: [version, tests, build, desktop, packages, vscode]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

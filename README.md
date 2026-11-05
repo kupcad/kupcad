@@ -112,7 +112,9 @@ To release, set the version with `pnpm bump patch` (or `minor` or `major`, count
 `build.zig.zon`, what `kupcad --version` prints, the npm packages', the VS Code extension's, the
 desktop app's, the Ruby gem's and its `Gemfile.lock`, and the Python package's). Commit, and push a
 tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
-The Release workflow checks the tag matches all of them (`node scripts/version.js check 0.2.0`), builds the CLI on a runner of each system and architecture it ships for
+The Release workflow checks the tag matches all of them (`node scripts/version.js check 0.2.0`),
+runs every test CI runs (`tests.yml`) on the tagged commit, publishing nothing until they pass,
+builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
 built), builds the desktop app around each (`kupcad-desktop_<version>_<os>_<arch>`: a `.dmg`
 on macOS, `.deb` and `.rpm` on Linux and an `.AppImage` for x86_64, a `_setup.exe` on Windows),
