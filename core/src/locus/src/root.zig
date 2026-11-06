@@ -48,6 +48,8 @@ pub const sketch = struct {
     pub const overlay = @import("sketch/overlay.zig");
     pub const boolean = @import("sketch/boolean.zig");
     pub const offset = @import("sketch/offset.zig");
+    pub const query = @import("sketch/query.zig");
+    pub const hull = @import("sketch/hull.zig");
 };
 /// Constructions: sewing, the primitives, the hull.
 pub const construct = struct {
@@ -104,6 +106,7 @@ test {
     _ = @import("sketch/overlay_test.zig");
     _ = @import("sketch/boolean_test.zig");
     _ = @import("sketch/offset_test.zig");
+    _ = @import("sketch/query_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }
