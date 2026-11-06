@@ -126,12 +126,13 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
 /// (square, circle, polygon, even-odd polygons), their extrusions (no twist or taper) and
-/// revolutions (of a sketch on one side of the axis), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
+/// revolutions (of a sketch on one side of the axis), their volume, area, genus and box
+/// (a sketch's area and box too), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
 /// export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure => true,
         .boolean,
         .loft,
         .sketch_boolean,
@@ -145,11 +146,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .slice,
         .project,
         .decompose,
-        .volume,
-        .surface_area,
-        .genus,
-        .bounding_box,
-        .sketch_measure,
         .sketch_contours,
         .contains_point,
         .ray_cast,
@@ -516,32 +512,40 @@ fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
     return null;
 }
 
+/// The genus over every shell, as the mesh engine counts it (1 − χ/2); a body the
+/// checker would refuse has none, and reports 0 as an empty mesh does.
 fn genusImpl(handle: geom.GeometryHandle) i32 {
-    _ = handle;
-    return 0;
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.measure.mass.genus(&solidOf(handle.ptr).body, &diag) catch 0;
 }
 
-/// The exact box of the part's edges and faces (supports(.bounding_box) stays false until
-/// the parity tests cover it).
+/// The exact box of the part's edges and faces.
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     const box = locus.measure.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
     if (box.isEmpty()) return null;
     return .{ .min = box.min, .max = box.max };
 }
 
+/// The mass properties of the body at `ptr`, exact to the quadrature's agreement; a
+/// failure (the interface has no error) measures as nothing, like an empty mesh.
+fn massOf(ptr: *anyopaque) locus.measure.mass.Mass {
+    const src = solidOf(ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.measure.mass.mass(&src.body, src.options(), &diag) catch .{ .volume = 0, .area = 0, .volume_error = 0, .area_error = 0 };
+}
+
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
-    _ = handle;
-    return 0;
+    return massOf(handle.ptr).volume;
 }
 
 fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
-    _ = handle;
-    return 0;
+    return massOf(handle.ptr).area;
 }
 
 fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
-    _ = handle;
-    return 0;
+    return massOf(handle.ptr).area;
 }
 
 fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {

@@ -420,7 +420,7 @@ test "Stdlib: geometry keeps the settings it was made under, wherever it is eval
     // Solid is evaluated lazily; it used to be built under the settings in force then,
     // so CAD.with_config was lost on anything measured or exported after the block.
     try expectScripts(&.{
-        .{ .src = "a = nil\nCAD.with_config(engine: :brep) do\n  a = cube(10)\nend\n" ++ comptime rescued("a.volume"), .expected = .{ .str = brepLacks(.volume) } },
+        .{ .src = "a = nil\nCAD.with_config(engine: :brep) do\n  a = cube(10)\nend\n" ++ comptime rescued("a.project.area"), .expected = .{ .str = brepLacks(.project) } },
         .{ .src = "s = nil\nCAD.with_config(max_vertices: 10) do\n  s = sphere(r: 10)\nend\n" ++ comptime rescued("s.volume"), .expected = .{ .str = "GeometryError: sphere produced 258 vertices, above the 10-vertex limit; lower the resolution (segments:) or simplify the model" } },
         // After the block, the outer settings again.
         .{ .src = "CAD.with_config(engine: :brep) do\n  cube(1)\nend\nr = cube(10).volume", .expected = .{ .num = 1000 } },
@@ -1243,7 +1243,7 @@ test "Stdlib: a solid's center of mass, its mass from its density, and whether t
         .{ .src = "p = cube(10).material(density: 2).named(\"plate\")\nr = assemble(name: \"k\", parts: [p, p.translate(20, 0, 0), cube(5).material(density: 8).named(\"weight\")]).mass", .expected = .{ .num = 5 } },
         .{ .src = comptime rescued("cube(10).mass"), .expected = .{ .str = "ValueError: mass: the Solid has no density; give it one with material(density:), in g/cm³" } },
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(10).named(\"plate\")]).mass"), .expected = .{ .str = "ValueError: mass: part 'plate' has no density; give it one with material(density:), in g/cm³" } },
-        .{ .src = comptime rescued("CAD.config(engine: :brep)\ncube(1).center_of_mass"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+        .{ .src = comptime rescued("CAD.config(engine: :brep)\ncube(1).center_of_mass"), .expected = .{ .str = brepLacks(.mesh) } },
     });
 }
 
@@ -1430,7 +1430,7 @@ test "Stdlib: a sketch's area, its holes left out" {
         // A diamond of half-diagonal 2 (a circle drawn with 4 segments) cut out
         .{ .src = "r = (square(10) - circle(r: 2, segments: 4).translate(5, 5)).area", .expected = .{ .num = 92 } },
         .{ .src = comptime rescued("cube(1).area"), .expected = .{ .str = "NoMethodError: undefined method 'area' for Solid" } },
-        .{ .src = comptime rescued("CAD.config(engine: :brep)\nsquare(2).area"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure sketches (bbox, align, center) yet; build this part with engine: :manifold" } },
+        .{ .src = "CAD.config(engine: :brep)\nr = square(2).area", .expected = .{ .num = 4 } },
     });
 }
 
@@ -1876,7 +1876,7 @@ test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found"
         \\  end
         \\end
         \\
-        ++ comptime rescued("b.volume"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+        ++ comptime rescued("b.project.area"), .expected = .{ .str = brepLacks(.project) } },
     });
 }
 
@@ -2367,13 +2367,13 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
         .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
-        .{ .src = comptime rescued("cube(10).volume"), .expected = brepLacks(.volume) }, // was 0
-        .{ .src = comptime rescued("square(10).empty?"), .expected = brepLacks(.sketch_measure) }, // was false
-        .{ .src = comptime rescued("cube(10).surface_area"), .expected = brepLacks(.surface_area) },
-        .{ .src = comptime rescued("cube(10).genus"), .expected = brepLacks(.genus) },
-        .{ .src = comptime rescued("cube(10).bbox"), .expected = brepLacks(.bounding_box) }, // was all zeros
-        .{ .src = comptime rescued("cube(10).center"), .expected = brepLacks(.bounding_box) },
-        .{ .src = comptime rescued("square(10).bbox"), .expected = brepLacks(.sketch_measure) },
+        .{ .src = comptime rescued("cube(10).volume"), .expected = "no error" }, // was 0; exact since M1
+        .{ .src = comptime rescued("square(10).empty?"), .expected = "no error" }, // was false
+        .{ .src = comptime rescued("cube(10).surface_area"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).genus"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).bbox"), .expected = "no error" }, // was all zeros
+        .{ .src = comptime rescued("cube(10).center"), .expected = "no error" },
+        .{ .src = comptime rescued("square(10).bbox"), .expected = "no error" },
         .{ .src = comptime rescued("cube(10).contains?([1, 1, 1])"), .expected = brepLacks(.contains_point) },
         .{ .src = comptime rescued("square(10).contains?([5, 5])"), .expected = brepLacks(.contains_point) },
         .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = brepLacks(.ray_cast) },

@@ -139,6 +139,30 @@ test "parity: a STEP export's vertices and circles bound what the kernel bounds,
     }
 }
 
+/// How far a mesh's volume may fall short of the exact one: nothing for a polyhedral
+/// shape, and for a curved one the chords' share. A circle of n segments loses
+/// 1 − (n/2π) sin(2π/n) of its area (0.16% at 64); a sphere's mesh is coarser than that.
+/// Null for a curved shape at the mesh engine's default resolution, which depends on the
+/// size and is no bound this test can state.
+fn volumeBound(source: []const u8) ?f64 {
+    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve" }) |word| {
+        if (std.mem.indexOf(u8, source, word) != null) break true;
+    } else false;
+    if (!curved) return 1e-9;
+    return if (std.mem.indexOf(u8, source, "segments: 64") != null) 1e-2 else null;
+}
+
+test "parity: each shape's volume agrees on both engines within the chordal bound" {
+    for (SHAPES) |source| {
+        const bound = volumeBound(source) orelse continue;
+        errdefer std.debug.print("script: {s}\n", .{source});
+        const mesh = try volumeOn(.manifold, source);
+        const exact = try volumeOn(.brep_native, source);
+        try testing.expect(mesh <= exact * (1 + 1e-9));
+        try testing.expectApproxEqRel(exact, mesh, bound);
+    }
+}
+
 test "parity: a non-uniform scale of a curved part is refused on the B-Rep engine and built on the mesh engine" {
     for (BREP_REFUSES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});
@@ -257,6 +281,19 @@ fn boxOn(engine: geom.EngineType, source: []const u8) !geom.BoundingBox {
     const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
     try testing.expectEqual(engine, handle.engine);
     return kernel.boundingBox(handle) orelse error.NoBounds;
+}
+
+/// The kernel's volume of what `source` builds on `engine`.
+fn volumeOn(engine: geom.EngineType, source: []const u8) !f64 {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var script: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer script.deinit();
+    try script.writer.print("{s}r = {s}", .{ if (engine == .brep_native) BREP_CONFIG else "", source });
+    try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+    const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+    try testing.expectEqual(engine, handle.engine);
+    return kernel.volume(handle);
 }
 
 /// The box of the B-Rep solid the script builds, read from its STEP export.

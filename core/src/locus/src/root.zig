@@ -54,6 +54,7 @@ pub const construct = struct {
 /// Measures: bounding boxes (volume, area and genus in M1).
 pub const measure = struct {
     pub const bbox = @import("measure/bbox.zig");
+    pub const mass = @import("measure/mass.zig");
 };
 /// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.
 pub const io = struct {
@@ -93,6 +94,7 @@ test {
     _ = @import("io/trace_test.zig");
     _ = @import("construct/transform_test.zig");
     _ = @import("construct/sweep_test.zig");
+    _ = @import("measure/mass_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }

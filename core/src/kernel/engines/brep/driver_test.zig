@@ -97,6 +97,22 @@ test "Driver: a revolution is exact; a sketch across the axis is refused with it
     try std.testing.expect(std.mem.indexOf(u8, why, "crossing the axis") != null);
 }
 
+test "Driver: volume, area, genus and a sketch's area are exact" {
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 2, 2, 5, false, 32) orelse return error.CylinderFailed;
+    defer driver.driver.destructFn(cyl);
+    try std.testing.expectApproxEqRel(std.math.pi * 4 * 5, driver.driver.volumeFn(cyl), 1e-9);
+    try std.testing.expectApproxEqRel(2 * std.math.pi * 2 * 5 + 2 * std.math.pi * 4, driver.driver.surfaceAreaFn(cyl), 1e-9);
+    try std.testing.expectEqual(@as(i32, 0), driver.driver.genusFn(cyl));
+    const ci = driver.driver.circleFn(&TEST_CONFIG, 3, 64) orelse return error.CircleFailed;
+    defer driver.driver.destructCrossSectionFn(ci);
+    try std.testing.expectApproxEqRel(std.math.pi * 9, driver.driver.crossSectionAreaFn(ci), 1e-9);
+    try std.testing.expect(driver.supports(.volume));
+    try std.testing.expect(driver.supports(.surface_area));
+    try std.testing.expect(driver.supports(.genus));
+    try std.testing.expect(driver.supports(.bounding_box));
+    try std.testing.expect(driver.supports(.sketch_measure));
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);
