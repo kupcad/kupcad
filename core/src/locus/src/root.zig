@@ -10,8 +10,15 @@ pub const math = struct {
     pub const solve = @import("math/solve.zig");
 };
 pub const tolerance = @import("tolerance.zig");
+pub const Tolerance = tolerance.Tolerance;
 pub const Resolution = tolerance.Resolution;
+pub const diagnostics = @import("diagnostics.zig");
+pub const Diagnostics = diagnostics.Diagnostics;
+pub const Error = diagnostics.Error;
+pub const Limits = diagnostics.Limits;
+pub const Options = diagnostics.Options;
 pub const parallel = @import("parallel.zig");
+pub const Parallel = parallel.Parallel;
 
 /// The first model (September 2026), which the driver still runs on: typed indices over two
 /// arenas, half-edges, Euler operators, a checker, primitive builders, transforms, a hull,
@@ -58,6 +65,8 @@ test {
     _ = @import("math/mat_test.zig");
     _ = @import("math/predicates_test.zig");
     _ = @import("math/solve_test.zig");
+    _ = @import("tolerance_test.zig");
+    _ = @import("diagnostics_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");

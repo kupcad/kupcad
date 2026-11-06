@@ -50,6 +50,12 @@ const NO_FMA = [_][]const u8{ "intersect/", "boolean/", "sketch/", "mesh/" };
 /// and process interface; printing is the host's decision, Locus returns diagnostics.
 const HOST_SERVICES = [_][]const u8{ "std.fs.", "std.Thread", "std.process", "std.posix", "std.Io.Dir", "std.Io.File", "std.debug.print", "std.log" };
 
+/// Where a tolerance may be written as a number: tolerance.zig and diagnostics.zig define
+/// them, math/ holds numerical constants of its own. Everywhere else a comparison goes
+/// through a body's `Tolerance` (README rule 3), and a named constant (`const X = 1e-6;`)
+/// is the only other literal allowed.
+const EPSILON_FREE_EXEMPT = [_][]const u8{ "math/", "tolerance.zig", "diagnostics.zig" };
+
 /// Test helpers that aren't named `*_test.zig`: like tests, they may import anything.
 const TEST_HELPERS = [_][]const u8{"legacy/testing/fixture.zig"};
 
@@ -197,6 +203,43 @@ fn checkHostServices(path: []const u8, source: []const u8) !void {
             violations += 1;
         }
     }
+}
+
+fn checkEpsilons(path: []const u8, source: []const u8) !void {
+    if (std.mem.startsWith(u8, path, "legacy/") or isTest(path) or std.mem.eql(u8, path, SELF)) return;
+    for (EPSILON_FREE_EXEMPT) |prefix| if (std.mem.startsWith(u8, path, prefix)) return;
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    var number: usize = 1;
+    while (lines.next()) |line| : (number += 1) {
+        const trimmed = std.mem.trimStart(u8, line, " ");
+        if (std.mem.startsWith(u8, trimmed, "const ") or std.mem.startsWith(u8, trimmed, "pub const ") or std.mem.startsWith(u8, trimmed, "//")) continue;
+        if (hasNegativeExponent(line)) {
+            std.debug.print("src/{s}:{d} writes a tolerance as a number: {s}\n", .{ path, number, trimmed });
+            violations += 1;
+        }
+    }
+}
+
+/// Whether `line` holds a literal like `1e-5` or `2.5e-7`.
+fn hasNegativeExponent(line: []const u8) bool {
+    var i: usize = 0;
+    while (std.mem.findScalarPos(u8, line, i, 'e')) |at| : (i = at + 1) {
+        if (at == 0 or at + 2 >= line.len) continue;
+        if (!std.ascii.isDigit(line[at - 1]) or line[at + 1] != '-' or !std.ascii.isDigit(line[at + 2])) continue;
+        return true;
+    }
+    return false;
+}
+
+test "Tolerances: no file but tolerance.zig, diagnostics.zig and math/ writes an epsilon as a number" {
+    if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    violations = 0;
+    try walkSources(checkEpsilons);
+    try testing.expectEqual(@as(usize, 0), violations);
+    try testing.expect(hasNegativeExponent("    if (d < 1e-5) return;"));
+    try testing.expect(hasNegativeExponent("x = 2.5e-7 * y"));
+    try testing.expect(!hasNegativeExponent("const e = base - x;"));
+    try testing.expect(!hasNegativeExponent("value * 1e5"));
 }
 
 test "Hosts: no file touches the file system, threads, the process or the console" {

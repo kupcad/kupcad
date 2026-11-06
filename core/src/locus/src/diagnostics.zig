@@ -1,0 +1,263 @@
+//! What every operation takes and reports (docs/architecture.md §4.1): the error set, the
+//! `Diagnostics` an operation fills with findings that name the entity and the measured
+//! value (Zig errors carry no payload), the `Limits` that bound every loop a bad input could
+//! lengthen, the `Options` every operation has in common (tolerance, limits, a cancel flag,
+//! a `Parallel`, a trace directory), and the input checks at the boundary.
+
+const std = @import("std");
+const Tolerance = @import("tolerance.zig").Tolerance;
+const Parallel = @import("parallel.zig").Parallel;
+
+/// How an operation fails. The class is the error; the entity and the numbers are in the
+/// `Diagnostics`.
+pub const Error = error{
+    /// An argument the operation can't take: not a number, not positive, an empty list, a
+    /// range the wrong way round, a tolerance that isn't one, a body that fails the
+    /// structural checker, a model too large for its tolerance.
+    InvalidInput,
+    /// The inputs are a degenerate configuration the operation can't resolve (a zero-length
+    /// edge to sweep, a face of no area).
+    Degenerate,
+    /// The result has no representation in Locus's geometry (a non-uniform scale of an
+    /// analytic surface).
+    NotRepresentable,
+    /// An edge too short to split (its shrunk range under `2·xsect`).
+    TooSmallEdge,
+    /// An intersection the tracer could not complete.
+    IntersectionFailed,
+    /// The result failed the checker: the findings say which rule and entity.
+    NotValid,
+    /// A scheduled capability not built yet (the milestone is in the finding).
+    NotImplemented,
+    /// A `Limits` bound was reached.
+    LimitExceeded,
+    /// The host's cancel flag was set; the inputs are untouched and nothing stays allocated.
+    Canceled,
+    OutOfMemory,
+};
+
+/// What a finding is about.
+pub const EntityKind = enum(u8) { none, vertex, edge, coedge, loop, face, shell, body, curve, surface, argument };
+
+pub const EntityRef = struct {
+    kind: EntityKind = .none,
+    index: u32 = 0,
+
+    pub const none: EntityRef = .{};
+
+    pub fn of(kind: EntityKind, index: anytype) EntityRef {
+        return .{ .kind = kind, .index = @intCast(index) };
+    }
+};
+
+pub const Severity = enum(u8) { warning, failure };
+
+/// The named rules and conditions a finding reports; `describe` is their text. The
+/// checker's rules join this list as they are written.
+pub const Code = enum(u16) {
+    not_finite,
+    not_positive,
+    empty_input,
+    range_reversed,
+    bad_tolerance,
+    too_large_for_tolerance,
+    limit_exceeded,
+    not_implemented,
+
+    pub fn describe(self: Code) []const u8 {
+        return switch (self) {
+            .not_finite => "is not a finite number",
+            .not_positive => "must be positive",
+            .empty_input => "is empty",
+            .range_reversed => "must start before it ends",
+            .bad_tolerance => "is not a valid tolerance (every field finite and positive, xsect at least zone)",
+            .too_large_for_tolerance => "is too large for the tolerance: zone must be at least the extent times 1e-12",
+            .limit_exceeded => "went past a limit",
+            .not_implemented => "is not implemented yet",
+        };
+    }
+};
+
+/// One thing an operation found: a rule or condition, the entity it concerns, and the
+/// measured value against the threshold it failed. `label` names an argument (a static
+/// string, never allocated).
+pub const Finding = struct {
+    code: Code,
+    severity: Severity = .failure,
+    entity: EntityRef = .none,
+    label: []const u8 = "",
+    measured: f64 = 0,
+    threshold: f64 = 0,
+
+    pub fn format(self: Finding, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.severity == .warning) try writer.writeAll("warning: ");
+        if (self.label.len > 0) {
+            try writer.print("{s} {s}", .{ self.label, self.code.describe() });
+        } else {
+            try writer.print("{s} {s}", .{ @tagName(self.entity.kind), self.code.describe() });
+        }
+        if (self.entity.kind != .none and self.entity.kind != .argument) try writer.print(" ({s} {d})", .{ @tagName(self.entity.kind), self.entity.index });
+        if (self.measured != 0 or self.threshold != 0) try writer.print(": {d} against {d}", .{ self.measured, self.threshold });
+    }
+};
+
+/// The findings of an operation, in the order they were made. `init` allocates nothing; a
+/// finding that can't be recorded is `error.OutOfMemory`.
+pub const Diagnostics = struct {
+    allocator: std.mem.Allocator,
+    findings: std.ArrayList(Finding) = .empty,
+
+    pub fn init(allocator: std.mem.Allocator) Diagnostics {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Diagnostics) void {
+        self.findings.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn clear(self: *Diagnostics) void {
+        self.findings.clearRetainingCapacity();
+    }
+
+    pub fn add(self: *Diagnostics, finding: Finding) Error!void {
+        self.findings.append(self.allocator, finding) catch return error.OutOfMemory;
+    }
+
+    /// Records `finding` as a failure and gives back `err` to return: `return diag.fail(err,
+    /// .{ ... })`.
+    pub fn fail(self: *Diagnostics, err: Error, finding: Finding) Error {
+        var f = finding;
+        f.severity = .failure;
+        self.add(f) catch |e| return e;
+        return err;
+    }
+
+    pub fn warn(self: *Diagnostics, finding: Finding) Error!void {
+        var f = finding;
+        f.severity = .warning;
+        try self.add(f);
+    }
+
+    pub fn failures(self: *const Diagnostics) usize {
+        return self.count(.failure);
+    }
+
+    pub fn warnings(self: *const Diagnostics) usize {
+        return self.count(.warning);
+    }
+
+    fn count(self: *const Diagnostics, severity: Severity) usize {
+        var n: usize = 0;
+        for (self.findings.items) |f| n += @intFromBool(f.severity == severity);
+        return n;
+    }
+
+    /// The first failure, which is what an error names.
+    pub fn first(self: *const Diagnostics) ?Finding {
+        for (self.findings.items) |f| if (f.severity == .failure) return f;
+        return null;
+    }
+
+    /// Every finding, one per line.
+    pub fn format(self: *const Diagnostics, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (self.findings.items) |f| {
+            try f.format(writer);
+            try writer.writeByte('\n');
+        }
+    }
+};
+
+/// The bounds on every iteration a bad input could lengthen. The loops are bounded by
+/// construction; these make the bounds explicit and the host's to set (KupCAD's
+/// `max_newton_trials` and `max_marching_steps` are two of them).
+pub const Limits = struct {
+    /// Newton steps for one projection or root.
+    newton_trials: u32 = 50,
+    /// Steps of one marched intersection curve.
+    marching_steps: u32 = 500,
+    /// Depth of recursive subdivision (curve–surface intersection, bounds).
+    subdivision_depth: u32 = 64,
+    /// Points a curve fit may use.
+    fit_points: u32 = 4096,
+    /// Faces one body may have.
+    faces_per_body: u32 = 1 << 20,
+    /// Entities of one kind one arena may hold.
+    entities_per_arena: u32 = 1 << 31,
+
+    pub fn isValid(self: Limits) bool {
+        return self.newton_trials > 0 and self.marching_steps > 0 and self.subdivision_depth > 0 and
+            self.fit_points > 0 and self.faces_per_body > 0 and self.entities_per_arena > 0;
+    }
+};
+
+/// What every operation takes besides its inputs. Each operation's own options struct
+/// holds one of these as `common`.
+pub const Options = struct {
+    /// The tolerance to work at; null: the bodies' own (merged for two).
+    tolerance: ?Tolerance = null,
+    limits: Limits = .{},
+    /// Set by the host to stop the operation: checked between phases and every few hundred
+    /// inner steps; the operation then returns `error.Canceled` with its inputs untouched
+    /// and nothing allocated.
+    cancel: ?*const std.atomic.Value(bool) = null,
+    /// How to split independent work over threads; null: serial.
+    parallel: ?Parallel = null,
+    /// A directory to write the body after each phase into (§12); null: no trace.
+    trace: ?[]const u8 = null,
+
+    /// `error.Canceled` when the host has set the flag.
+    pub fn checkCancel(self: *const Options) Error!void {
+        if (self.cancel) |flag| if (flag.load(.acquire)) return error.Canceled;
+    }
+
+    pub fn parallelOrSerial(self: *const Options) Parallel {
+        return self.parallel orelse Parallel.serial;
+    }
+};
+
+/// The checks at the boundary of every operation: a violation is `error.InvalidInput`
+/// with a finding naming the argument, never an assertion (README rule 9).
+pub const input = struct {
+    pub fn finite(diag: *Diagnostics, label: []const u8, value: f64) Error!void {
+        if (!(value - value == 0)) return diag.fail(error.InvalidInput, .{ .code = .not_finite, .entity = .{ .kind = .argument }, .label = label, .measured = value });
+    }
+
+    pub fn positive(diag: *Diagnostics, label: []const u8, value: f64) Error!void {
+        try finite(diag, label, value);
+        if (!(value > 0.0)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = label, .measured = value });
+    }
+
+    pub fn range(diag: *Diagnostics, label: []const u8, t0: f64, t1: f64) Error!void {
+        try finite(diag, label, t0);
+        try finite(diag, label, t1);
+        if (!(t0 < t1)) return diag.fail(error.InvalidInput, .{ .code = .range_reversed, .entity = .{ .kind = .argument }, .label = label, .measured = t0, .threshold = t1 });
+    }
+
+    pub fn nonEmpty(diag: *Diagnostics, label: []const u8, len: usize) Error!void {
+        if (len == 0) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .entity = .{ .kind = .argument }, .label = label });
+    }
+
+    pub fn tolerance(diag: *Diagnostics, tol: Tolerance) Error!void {
+        if (!tol.isValid()) return diag.fail(error.InvalidInput, .{ .code = .bad_tolerance, .entity = .{ .kind = .argument }, .label = "tolerance", .measured = tol.zone, .threshold = tol.xsect });
+    }
+
+    /// The scale guard (§12): `f64` carries about 16 digits, so a zone below the model's
+    /// extent times 1e-12 is under the spacing of its coordinates.
+    pub fn scale(diag: *Diagnostics, extent: f64, tol: Tolerance) Error!void {
+        if (!(tol.zone >= extent * SCALE_GUARD)) return diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .entity = .{ .kind = .body }, .label = "the model", .measured = extent, .threshold = tol.zone / SCALE_GUARD });
+    }
+};
+
+/// The least `zone / extent` an operation accepts: one digit of margin over `f64`'s.
+pub const SCALE_GUARD: f64 = 1e-12;
+
+/// `error.LimitExceeded` with a finding, for a loop that reached its bound.
+pub fn limitExceeded(diag: *Diagnostics, label: []const u8, reached: usize, limit: usize) Error {
+    return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = label, .measured = @floatFromInt(reached), .threshold = @floatFromInt(limit) });
+}
+
+/// `error.NotImplemented` with a finding naming the milestone that adds it.
+pub fn notImplemented(diag: *Diagnostics, label: []const u8, milestone: u8) Error {
+    return diag.fail(error.NotImplemented, .{ .code = .not_implemented, .label = label, .threshold = @floatFromInt(milestone) });
+}
