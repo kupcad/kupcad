@@ -19,6 +19,14 @@ pub const Limits = diagnostics.Limits;
 pub const Options = diagnostics.Options;
 pub const parallel = @import("parallel.zig");
 pub const Parallel = parallel.Parallel;
+/// The geometry: kinds and references, curves, pcurves, surfaces, NURBS.
+pub const geometry = struct {
+    pub const types = @import("geometry/types.zig");
+    pub const curves = @import("geometry/curves.zig");
+    pub const pcurves = @import("geometry/pcurves.zig");
+    pub const surfaces = @import("geometry/surfaces.zig");
+    pub const nurbs = @import("geometry/nurbs.zig");
+};
 
 /// The first model (September 2026), which the driver still runs on: typed indices over two
 /// arenas, half-edges, Euler operators, a checker, primitive builders, transforms, a hull,
@@ -67,6 +75,9 @@ test {
     _ = @import("math/solve_test.zig");
     _ = @import("tolerance_test.zig");
     _ = @import("diagnostics_test.zig");
+    _ = @import("geometry/curves_test.zig");
+    _ = @import("geometry/nurbs_test.zig");
+    _ = @import("geometry/surfaces_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");
