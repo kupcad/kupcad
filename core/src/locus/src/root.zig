@@ -46,6 +46,7 @@ pub const Body = topology.Body;
 /// The 2D kernel: the overlay engine (D9), what sketch booleans and offsets are made of.
 pub const sketch = struct {
     pub const overlay = @import("sketch/overlay.zig");
+    pub const boolean = @import("sketch/boolean.zig");
 };
 /// Constructions: sewing, the primitives, the hull.
 pub const construct = struct {
@@ -100,6 +101,7 @@ test {
     _ = @import("construct/sweep_test.zig");
     _ = @import("measure/mass_test.zig");
     _ = @import("sketch/overlay_test.zig");
+    _ = @import("sketch/boolean_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }

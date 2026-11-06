@@ -18,6 +18,7 @@ const body_mod = @import("../topology/body.zig");
 const check = @import("../topology/check.zig");
 const Interner = @import("../spatial/intern.zig").Interner;
 const sew = @import("sew.zig");
+const sketch_boolean = @import("../sketch/boolean.zig");
 const Body = body_mod.Body;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
@@ -457,11 +458,11 @@ pub fn circle(allocator: std.mem.Allocator, tol: Tolerance, r: f64, diag: *Diagn
     return b.finish(&specs, .sheet);
 }
 
-/// A sheet body of one planar face on `z = 0` filled by the even-odd rule: the first
-/// contour is the outline (turned counter-clockwise), the rest are holes in it (turned
-/// clockwise). Contours that cross, or holes outside the outline, are not resolved here:
-/// that is the overlay engine's (M2). A point repeating the one before it, or the first at
-/// the end, is that corner once; a contour of fewer than three distinct points is refused.
+/// A sheet body on `z = 0` of the region the polygons `contours` fill by the even-odd
+/// rule, whichever way each runs: an outline inside another is a hole, one inside the
+/// hole an island, outlines apart are faces of their own, and a self-crossing outline
+/// fills both its lobes (the overlay engine's fill). A contour of fewer than three points
+/// is refused; a point repeating the one before it is that corner once.
 pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: []const []const Vec2, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "contours", contours.len);
     for (contours) |c| {
@@ -471,56 +472,11 @@ pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: [
             try diagnostics.input.finite(diag, "a point", p[1]);
         }
     }
-    var b = try Builder.init(allocator, tol, .sheet, diag);
-    defer b.deinit();
-    errdefer b.body.deinit();
-    var edge_lists = std.ArrayList([]sew.EdgeSpec).empty;
-    defer {
-        for (edge_lists.items) |l| allocator.free(l);
-        edge_lists.deinit(allocator);
-    }
-    var loops = std.ArrayList(sew.LoopSpec).empty;
-    defer loops.deinit(allocator);
-    var uv = geometry.Box2.empty;
-    for (contours, 0..) |contour, ci| {
-        // Counter-clockwise for the outline, clockwise for a hole
-        const ccw = signedArea(contour) > 0;
-        const want_ccw = ci == 0;
-        // A point repeating the one before it (within the zone, as the interner welds), or
-        // the first at the end (a closed outline written closed), is the same corner once,
-        // as the mesh engine reads it: the corners first, as points, then their vertices
-        const corners = try allocator.alloc(geometry.PointIndex, contour.len);
-        defer allocator.free(corners);
-        var n: usize = 0;
-        for (0..contour.len) |i| {
-            const k = if (ccw == want_ccw) i else contour.len - 1 - i;
-            const point = try b.point(.{ contour[k][0], contour[k][1], 0 });
-            if (n > 0 and point == corners[n - 1]) continue;
-            corners[n] = point;
-            n += 1;
-        }
-        while (n > 1 and corners[n - 1] == corners[0]) n -= 1;
-        if (n < 3) return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "a contour's distinct points", .measured = @floatFromInt(n), .threshold = 3 });
-        const vertices = try allocator.alloc(types.VertexIndex, n);
-        defer allocator.free(vertices);
-        for (corners[0..n], vertices) |corner, *v| {
-            v.* = try b.vertexAt(corner);
-            const p = b.body.geometry.point(corner);
-            uv.grow(.{ p[0], p[1] });
-        }
-        const edges = try allocator.alloc(sew.EdgeSpec, n);
-        {
-            // Ours to free until `edge_lists` holds it
-            errdefer allocator.free(edges);
-            for (0..n) |i| edges[i] = try b.straight(vertices[i], vertices[(i + 1) % n]);
-            try loops.ensureUnusedCapacity(allocator, 1);
-            try edge_lists.append(allocator, edges);
-        }
-        loops.appendAssumeCapacity(.{ .edges = edges });
-    }
-    const plane = try b.plane(Frame.world);
-    const specs = [1]sew.FaceSpec{.{ .surface = plane, .loops = loops.items, .uv_box = uv }};
-    return b.finish(&specs, .sheet);
+    var sheet = try sketch_boolean.evenOdd(allocator, tol, contours, diag);
+    errdefer sheet.deinit();
+    // A region of no area is no polygon (a contour along a line, or outlines cancelling)
+    if (sheet.isEmpty()) return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the polygon's area" });
+    return sheet;
 }
 
 /// Twice the signed area of a polygon: positive when counter-clockwise (exact in sign for

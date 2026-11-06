@@ -344,12 +344,14 @@ test "global rules: a hole outside its outer loop; two faces on one plane are a 
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const primitives = @import("../construct/primitives.zig");
-    // The even-odd builder checks a sheet to level 2, so a hole outside its outer loop is
-    // refused when built; moved out afterwards (its points and its lines together, so
-    // every local rule still holds) it is what level 2 names
+    // The even-odd fill makes two faces of two outlines apart (no hole outside an outer
+    // loop can be built); a hole moved out afterwards (its points and its lines together,
+    // so every local rule still holds) is what level 2 names
     const outer = [_]vec.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
     const far = [_]vec.Vec2{ .{ 20, 20 }, .{ 20, 22 }, .{ 22, 22 }, .{ 22, 20 } };
-    try testing.expectError(error.NotValid, primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag));
+    var apart = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag);
+    defer apart.deinit();
+    try testing.expectEqual(@as(usize, 2), apart.counts().faces);
     const inner = [_]vec.Vec2{ .{ 2, 2 }, .{ 2, 4 }, .{ 4, 4 }, .{ 4, 2 } };
     var plate = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
     defer plate.deinit();

@@ -790,7 +790,7 @@ fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
 /// Whether the ray from `p` to +x crosses the arc an odd number of times: the arc cut at
 /// its topmost and bottommost points into y-monotone pieces, each counted on the half-open
 /// rule as a straight edge would be.
-fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
+pub fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
     const span = arcSpan(a, b, arc);
     var cuts: [4]f64 = undefined;
     var n: usize = 0;
