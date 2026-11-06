@@ -63,6 +63,9 @@ const SHAPES = [_][]const u8{
     "square(10).offset(2, join: :miter).extrude(1)",
     "square(10).offset(-2).extrude(1)",
     "(square(10) - circle(r: 2, segments: 64).translate(5, 5)).offset(1).extrude(1)",
+    // Sweeps along one segment (M2, through the profile's outline): a line extrudes, an arc revolves
+    "square(2).sweep(line([0, 0], [10, 0]))",
+    "square(2).sweep(arc(center: [10, 0], r: 10, start: 180, sweep: 90), segments: 64)",
     // The hull of sketches (M2), of polygons: one with arcs is refused (`curved_hull`)
     "square(10).hull(square(4).translate(15, 5)).extrude(1)",
     // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
@@ -135,10 +138,10 @@ test "parity: each shape both engines build has the same box on each" {
 
 /// Whether a STEP export's vertices and whole circles reach the solid's extent: not a
 /// sphere's (its extent is in no vertex and not in its one meridian circle), and not a
-/// partial revolution's or a sketch intersection's (their arcs are written as whole
-/// circles, which reach further).
+/// partial revolution's (a sweep along an arc is one), nor a sketch intersection's (their
+/// arcs are written as whole circles, which reach further).
 fn stepBoxReaches(source: []const u8) bool {
-    for ([_][]const u8{ "sphere", "deg:", "&" }) |word| if (std.mem.indexOf(u8, source, word) != null) return false;
+    for ([_][]const u8{ "sphere", "deg:", "arc(", "&" }) |word| if (std.mem.indexOf(u8, source, word) != null) return false;
     return true;
 }
 
@@ -161,7 +164,7 @@ test "parity: a STEP export's vertices and circles bound what the kernel bounds,
 /// Null for a curved shape at the mesh engine's default resolution, which depends on the
 /// size and is no bound this test can state.
 fn volumeBound(source: []const u8) ?f64 {
-    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve", "offset(" }) |word| {
+    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve", "offset(", "arc(" }) |word| {
         if (std.mem.indexOf(u8, source, word) != null) break true;
     } else false;
     if (!curved) return 1e-9;

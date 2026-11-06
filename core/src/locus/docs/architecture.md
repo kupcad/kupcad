@@ -571,7 +571,8 @@ later), so it reuses the topology, the overlay engine and the checker. Sketch bo
 the overlay with winding labels; offset displaces each edge (line → line, arc → arc),
 joins them with arcs, miters or squares, and resolves self-intersections by the same
 overlay; hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
-are left out of the hull's boundary; documented); contours output closed polylines at a
+are left out of the hull's boundary; documented, and the driver refuses a sketch with arcs
+as `curved_hull`, D24, until the hull keeps its arcs); contours output closed polylines at a
 `Resolution` for SVG/DXF; measures (area by Green's theorem on lines and arcs) are exact.
 
 ### 7.6 Measures and queries
@@ -866,6 +867,7 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D21 | `Checkpoint` is a copy of the body | A snapshot of the tables' lengths | Operators relink existing entities, which a length snapshot cannot undo (2026-11-06) |
 | D22 | The trace is a sink the host supplies (`Trace{context, write}`), fed body JSON per phase by `io/trace.zig`; an operation may import `io` for it | A directory path Locus writes into | Locus touches no file system (§4's targets); the host (`kupcad dev brep-trace`) names and writes the files (2026-11-06) |
 | D23 | KupCAD's driver keeps the first finding of a failed operation on the thread, and the script's error carries it (`polygon failed: an edge is shorter than …`) | The kernel interface's null alone | The driver interface answers a failure with null and the findings would be lost; the reason is what a readiness report is for (2026-11-06) |
+| D24 | A hull of a sketch with arcs is refused by the driver (`curved_hull`, as a curved solid's hull is) until the hull keeps arcs; Locus's `sketch/hull.zig` hulls the vertices and the arcs' extreme points, documented | Answering the polygon through the extreme points | A disc's hull of area 2r² is a stand-in for πr², the kind of answer the parity rules forbid; the arc hull (tangent lines between arcs) is a later item (2026-11-06) |
 
 ---
 
