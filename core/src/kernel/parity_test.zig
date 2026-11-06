@@ -36,6 +36,32 @@ const SHAPES = [_][]const u8{
     "cylinder(r: 1, segments: 64)",
     "cylinder(h: 2, segments: 64)",
     "cylinder(2, d: 3, h: 1, segments: 64)",
+    // Moves, turns, scales and mirrors (M0): the matrix is the images of the axes, then
+    // the translation; a cylinder turned a quarter keeps its extremes on the axes
+    "cube(2).translate(1, 2, 3)",
+    "cube(1, 2, 3).translate(x: -1)",
+    "cube(2).rotate(0, 0, 90)",
+    "cube(2).rotate(30, 40, 50)",
+    "cube(2).rotate(45)",
+    "cube(2).scale(2)",
+    "cube(1, 2, 3).scale(1, 2, 3)",
+    "cube(2).mirror(1, 0, 0)",
+    "cube(2).mirror([1, 1, 0])",
+    "cube(2).transform([0, 1, 0, -1, 0, 0, 0, 0, 1, 1, 2, 3])",
+    "cube(2).translate(1, 0, 0).rotate(z: 90).scale(2).mirror(0, 1, 0)",
+    "cylinder(r: 1, h: 3, segments: 64).translate(1, 2, 3)",
+    "cylinder(r: 1, h: 3, segments: 64).rotate(x: 90)",
+    "cylinder(r: 1, h: 3, segments: 64).scale(2)",
+    "cylinder(r: 1, h: 3, segments: 64).mirror(0, 0, 1)",
+    "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]).rotate(10, 20, 30).translate(-1, -2, -3)",
+};
+
+/// What the B-Rep engine refuses and the mesh engine builds: a non-uniform scale of a
+/// curved part has no exact surfaces (architecture D20), so it is refused rather than
+/// approximated; the mesh engine, which has no exact surfaces to keep, scales its mesh.
+const BREP_REFUSES = [_][]const u8{
+    "cylinder(r: 1, h: 3, segments: 64).scale(1, 2, 1)",
+    "cylinder(r: 1, h: 3, segments: 64).transform([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])",
 };
 
 /// Arguments both engines must refuse, with the same error.
@@ -63,6 +89,14 @@ test "parity: each shape both engines build has the same box on each" {
             try testing.expectApproxEqAbs(mesh_box.min[k], brep_box.min[k], STEP_TOLERANCE);
             try testing.expectApproxEqAbs(mesh_box.max[k], brep_box.max[k], STEP_TOLERANCE);
         }
+    }
+}
+
+test "parity: a non-uniform scale of a curved part is refused on the B-Rep engine and built on the mesh engine" {
+    for (BREP_REFUSES) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        _ = try manifoldBox(source);
+        try testing.expectError(error.RuntimeError, brepBox(source));
     }
 }
 
