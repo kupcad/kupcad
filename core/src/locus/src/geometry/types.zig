@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 
@@ -254,7 +255,7 @@ pub const Frame = struct {
 /// is wrapped; 0 on the axis.
 pub fn angleOf(x: f64, y: f64) f64 {
     if (x == 0.0 and y == 0.0) return 0.0;
-    const a = std.math.atan2(y, x);
+    const a = trig.atan2(y, x);
     return if (a < 0.0) a + TWO_PI else a;
 }
 

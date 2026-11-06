@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const diagnostics = @import("../diagnostics.zig");
@@ -271,8 +272,8 @@ fn rangeOf(o: *const Overlay, piece: Piece) [2]f64 {
     const arc = piece.arc.?;
     const pa = o.point(piece.a);
     const pb = o.point(piece.b);
-    const ta = std.math.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]);
-    const tb = std.math.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]);
+    const ta = trig.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]);
+    const tb = trig.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]);
     const from = if (arc.ccw) ta else tb;
     var to = if (arc.ccw) tb else ta;
     if (to <= from + ANGLE_SLACK) to += 2 * std.math.pi;

@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const surfaces = @import("../geometry/surfaces.zig");
@@ -309,7 +310,7 @@ pub fn cone(allocator: std.mem.Allocator, tol: Tolerance, r1: f64, r2: f64, heig
     const g = &b.body.geometry;
     // The surface: v is the distance along a generator from the bottom, where the radius
     // is r1; the half-angle is negative for a cone that narrows upward
-    const half_angle = std.math.atan2(r2 - r1, height);
+    const half_angle = trig.atan2(r2 - r1, height);
     const v_top = height / @cos(half_angle);
     const surface = b.interner.cone(allocator, g, .{ .frame = Frame.init(.{ 0, 0, z0 }, vec.X3, vec.Z3), .r = r1, .half_angle = half_angle }) catch |e| return b.fail(e);
     // The ends: a circle with two vertices, or an apex

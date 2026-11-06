@@ -8,6 +8,7 @@ pub const math = struct {
     pub const mat = @import("math/mat.zig");
     pub const predicates = @import("math/predicates.zig");
     pub const solve = @import("math/solve.zig");
+    pub const trig = @import("math/trig.zig");
 };
 pub const tolerance = @import("tolerance.zig");
 pub const Tolerance = tolerance.Tolerance;
@@ -88,6 +89,7 @@ test {
     _ = @import("math/mat_test.zig");
     _ = @import("math/predicates_test.zig");
     _ = @import("math/solve_test.zig");
+    _ = @import("math/trig_test.zig");
     _ = @import("tolerance_test.zig");
     _ = @import("diagnostics_test.zig");
     _ = @import("geometry/curves_test.zig");

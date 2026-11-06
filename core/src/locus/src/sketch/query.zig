@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const curves = @import("../geometry/curves.zig");
 const tolerance = @import("../tolerance.zig");
 const diagnostics = @import("../diagnostics.zig");
@@ -62,7 +63,7 @@ pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: to
                     const sweep = sweepOf(edge);
                     const per_turn = resolution.segmentsFor(arc.r);
                     const pieces: usize = @max(1, @as(usize, @intFromFloat(@ceil(sweep / (2 * std.math.pi) * @as(f64, @floatFromInt(per_turn)) - CEIL_SLACK))));
-                    const start = std.math.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
+                    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
                     const sign: f64 = if (arc.ccw) 1 else -1;
                     for (1..pieces) |k| {
                         const angle = start + sign * sweep * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(pieces));
@@ -145,8 +146,8 @@ fn flat(p: vec.Vec3) Vec2 {
 /// An arc edge's angle, the way it turns.
 fn sweepOf(edge: Edge) f64 {
     const arc = edge.arc.?;
-    const start = std.math.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
-    const end = std.math.atan2(edge.b[1] - arc.c[1], edge.b[0] - arc.c[0]);
+    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
+    const end = trig.atan2(edge.b[1] - arc.c[1], edge.b[0] - arc.c[0]);
     const sweep = @mod(if (arc.ccw) end - start else start - end, 2 * std.math.pi);
     return if (sweep < CEIL_SLACK) 2 * std.math.pi else sweep;
 }
@@ -155,8 +156,8 @@ fn sweepOf(edge: Edge) f64 {
 fn distanceTo(edge: Edge, p: Vec2) f64 {
     if (edge.arc) |arc| {
         // On the arc's circle at p's angle when that lies on the arc, else at the nearer end
-        const angle = std.math.atan2(p[1] - arc.c[1], p[0] - arc.c[0]);
-        const start = std.math.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
+        const angle = trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0]);
+        const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
         const along = @mod(if (arc.ccw) angle - start else start - angle, 2 * std.math.pi);
         if (along <= sweepOf(edge)) return @abs(vec.distance2(p, arc.c) - arc.r);
         return @min(vec.distance2(p, edge.a), vec.distance2(p, edge.b));
@@ -189,7 +190,7 @@ fn windingTerm(edge: Edge, p: Vec2) i32 {
 /// signed by whether the piece rises.
 fn arcWinding(edge: Edge, arc: overlay.Arc, p: Vec2) i32 {
     const sweep = sweepOf(edge);
-    const start = std.math.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
+    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
     const sign: f64 = if (arc.ccw) 1 else -1;
     var cuts: [4]f64 = .{ 0, sweep, sweep, sweep };
     var n: usize = 2;

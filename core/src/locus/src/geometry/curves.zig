@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const types = @import("types.zig");
 const nurbs = @import("nurbs.zig");
 const Vec3 = vec.Vec3;
@@ -101,7 +102,7 @@ pub const Circle = struct {
         box.grow(self.eval(t1));
         for (0..3) |axis| {
             // The axis's component r(cos t·x[k] + sin t·y[k]) is extreme at atan2(y[k], x[k]) + nπ
-            const base = std.math.atan2(self.y[axis], self.x[axis]);
+            const base = trig.atan2(self.y[axis], self.x[axis]);
             var candidate = base - TWO_PI * 2.0;
             while (candidate <= t1) : (candidate += std.math.pi) {
                 if (candidate >= t0) box.grow(self.eval(candidate));
@@ -153,7 +154,7 @@ pub const Ellipse = struct {
         box.grow(self.eval(t1));
         for (0..3) |axis| {
             // a cos t·x[k] + b sin t·y[k] is extreme at atan2(b·y[k], a·x[k]) + nπ
-            const base = std.math.atan2(self.b * self.y[axis], self.a * self.x[axis]);
+            const base = trig.atan2(self.b * self.y[axis], self.a * self.x[axis]);
             var candidate = base - TWO_PI * 2.0;
             while (candidate <= t1) : (candidate += std.math.pi) {
                 if (candidate >= t0) box.grow(self.eval(candidate));

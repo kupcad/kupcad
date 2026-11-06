@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const types = @import("types.zig");
 const curves = @import("curves.zig");
 const nurbs = @import("nurbs.zig");
@@ -230,7 +231,7 @@ pub const Sphere = struct {
     pub fn project(self: Sphere, p: Vec3) Vec2 {
         const l = self.frame.toLocal(p);
         const rho = @sqrt(l[0] * l[0] + l[1] * l[1]);
-        return .{ types.angleOf(l[0], l[1]), std.math.atan2(l[2], rho) };
+        return .{ types.angleOf(l[0], l[1]), trig.atan2(l[2], rho) };
     }
 
     /// The meridian at angle `u`: a circle through both poles, parameterized by `v`.
@@ -251,7 +252,7 @@ pub const Sphere = struct {
         for ([_]Vec3{ vec.X3, vec.Y3, vec.Z3 }) |axis| {
             for ([_]f64{ 1, -1 }) |sign| {
                 const d = self.frame.toLocalDir(vec.scale(axis, sign));
-                const uv = Vec2{ types.angleOf(d[0], d[1]), std.math.atan2(d[2], @sqrt(d[0] * d[0] + d[1] * d[1])) };
+                const uv = Vec2{ types.angleOf(d[0], d[1]), trig.atan2(d[2], @sqrt(d[0] * d[0] + d[1] * d[1])) };
                 if (box.contains(uv)) out.grow(self.eval(uv[0], uv[1]));
             }
         }

@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const surfaces = @import("../geometry/surfaces.zig");
@@ -500,7 +501,7 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
             // Oblique: a cone from the lower end, v the distance along the generator
             const low_is_a = r.place_a.axial < r.place_b.axial;
             const low_place = if (low_is_a) r.place_a else r.place_b;
-            const half_angle = std.math.atan2(if (low_is_a) d_radial else -d_radial, @abs(d_axial));
+            const half_angle = trig.atan2(if (low_is_a) d_radial else -d_radial, @abs(d_axial));
             surface = b.interner.cone(b.allocator, g, .{ .frame = Frame.init(frame.onAxis(low_place.axial), frame.r_dir, frame.z), .r = low_place.radius, .half_angle = half_angle }) catch |e| return b.fail(e);
             const length = @sqrt(d_axial * d_axial + d_radial * d_radial);
             v_a = if (low_is_a) 0 else length;
@@ -517,7 +518,7 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
             } else {
                 surface = b.interner.torus(b.allocator, g, .{ .frame = base, .major = centre.radius, .minor = c.r }) catch |e| return b.fail(e);
             }
-            v_a = std.math.atan2(r.place_a.axial - centre.axial, r.place_a.radius - centre.radius);
+            v_a = trig.atan2(r.place_a.axial - centre.axial, r.place_a.radius - centre.radius);
             const t_a = if (r.low.forward) r.low.t0 else r.low.t1;
             const along_v = vec.add(vec.scale(frame.r_dir, -@sin(v_a)), vec.scale(frame.z, @cos(v_a)));
             const turned = g.curve(r.low.curve);

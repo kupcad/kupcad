@@ -55,6 +55,11 @@ const HOST_SERVICES = [_][]const u8{ "std.fs.", "std.Thread", "std.process", "st
 /// is the only other literal allowed.
 const EPSILON_FREE_EXEMPT = [_][]const u8{ "math/", "tolerance.zig", "diagnostics.zig" };
 
+/// The standard library's inverse trigonometry goes through math/trig.zig, whose barrier
+/// keeps the wasm32 backend from a constant it cannot select (the file says how).
+const TRIG_THROUGH_BARRIER = [_][]const u8{ "std.math.atan2(", "std.math.atan(" };
+const TRIG_BARRIER = "math/trig.zig";
+
 /// Test helpers that aren't named `*_test.zig`: like tests, they may import anything.
 const TEST_HELPERS = [_][]const u8{};
 
@@ -189,6 +194,23 @@ test "Floats: no file loosens the strict float mode, and none that decides topol
     if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
     violations = 0;
     try walkSources(checkFloat);
+    try testing.expectEqual(@as(usize, 0), violations);
+}
+
+fn checkTrig(path: []const u8, source: []const u8) !void {
+    if (isTest(path) or std.mem.eql(u8, path, SELF) or std.mem.eql(u8, path, TRIG_BARRIER)) return;
+    for (TRIG_THROUGH_BARRIER) |call| {
+        if (std.mem.find(u8, source, call) != null) {
+            std.debug.print("src/{s} calls {s}: use math/trig.zig's, which the wasm32 backend compiles\n", .{ path, call });
+            violations += 1;
+        }
+    }
+}
+
+test "Trigonometry: no file but math/trig.zig calls the standard library's atan or atan2" {
+    if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    violations = 0;
+    try walkSources(checkTrig);
     try testing.expectEqual(@as(usize, 0), violations);
 }
 

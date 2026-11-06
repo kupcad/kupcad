@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const predicates = @import("../math/predicates.zig");
 const grid = @import("../spatial/grid.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
@@ -299,7 +300,7 @@ pub const Overlay = struct {
         if (g.arc) |arc| {
             const span = arcSpan(a, b, arc);
             for ([_]Vec2{ .{ 1, 0 }, .{ 0, 1 }, .{ -1, 0 }, .{ 0, -1 } }) |d| {
-                if (span.holds(std.math.atan2(d[1], d[0]))) {
+                if (span.holds(trig.atan2(d[1], d[0]))) {
                     const p = vec.addScaled2(arc.c, d, arc.r);
                     box.min = .{ @min(box.min[0], p[0]), @min(box.min[1], p[1]) };
                     box.max = .{ @max(box.max[0], p[0]), @max(box.max[1], p[1]) };
@@ -348,7 +349,7 @@ pub const Overlay = struct {
         if (g.arc) |arc| {
             if (@abs(vec.length2(vec.sub2(p, arc.c)) - arc.r) > self.tol.zone) return null;
             const span = arcSpan(a, b, arc);
-            const t = span.offsetOf(std.math.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse return null;
+            const t = span.offsetOf(trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse return null;
             if (t <= 0 or t >= span.sweep) return null;
             return t;
         }
@@ -394,7 +395,7 @@ pub const Overlay = struct {
         for ([_]f64{ (-qb - root) / (2 * qa), (-qb + root) / (2 * qa) }) |t| {
             if (t <= 0 or t >= 1) continue;
             const p = vec.addScaled2(a, d, t);
-            const s = span.offsetOf(std.math.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse continue;
+            const s = span.offsetOf(trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse continue;
             if (s <= 0 or s >= span.sweep) continue;
             if (n > 0 and vec.distance2(out[0], p) <= self.tol.zone) continue;
             out[n] = p;
@@ -423,8 +424,8 @@ pub const Overlay = struct {
         var n: usize = 0;
         for ([_]f64{ h, -h }) |side| {
             const p = vec.addScaled2(foot, across, side);
-            const ti = span_i.offsetOf(std.math.atan2(p[1] - ai.c[1], p[0] - ai.c[0])) orelse continue;
-            const tj = span_j.offsetOf(std.math.atan2(p[1] - aj.c[1], p[0] - aj.c[0])) orelse continue;
+            const ti = span_i.offsetOf(trig.atan2(p[1] - ai.c[1], p[0] - ai.c[0])) orelse continue;
+            const tj = span_j.offsetOf(trig.atan2(p[1] - aj.c[1], p[0] - aj.c[0])) orelse continue;
             if (ti <= 0 or ti >= span_i.sweep or tj <= 0 or tj >= span_j.sweep) continue;
             if (n > 0 and vec.distance2(out[0], p) <= self.tol.zone) continue;
             out[n] = p;
@@ -504,10 +505,10 @@ pub const Overlay = struct {
         if (self.arcOf(half)) |arc| {
             const radial = vec.sub2(a, arc.c);
             const tangent = if (arc.ccw) Vec2{ -radial[1], radial[0] } else Vec2{ radial[1], -radial[0] };
-            return .{ .angle = std.math.atan2(tangent[1], tangent[0]), .curvature = if (arc.ccw) 1.0 / arc.r else -1.0 / arc.r };
+            return .{ .angle = trig.atan2(tangent[1], tangent[0]), .curvature = if (arc.ccw) 1.0 / arc.r else -1.0 / arc.r };
         }
         const d = vec.sub2(self.point(self.target(half)), a);
-        return .{ .angle = std.math.atan2(d[1], d[0]), .curvature = 0 };
+        return .{ .angle = trig.atan2(d[1], d[0]), .curvature = 0 };
     }
 
     fn lessAbout(self: *const Overlay, x: u32, y: u32) bool {
@@ -779,8 +780,8 @@ const Span = struct {
 };
 
 fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
-    const start = std.math.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
-    const end = std.math.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
+    const start = trig.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
+    const end = trig.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
     var sweep = if (arc.ccw) end - start else start - end;
     sweep = @mod(sweep, 2 * std.math.pi);
     if (sweep < SPAN_SLACK) sweep = 2 * std.math.pi;
