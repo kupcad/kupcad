@@ -58,7 +58,7 @@ pub fn parse(
     if (top_dict.variation_store_offset) |offset| {
         var svs = try parser.Stream.new_at(data, offset);
         svs.skip(u16);
-        metadata.item_variation_store = try .parse(&s);
+        metadata.item_variation_store = try .parse(&svs);
     }
 
     const offset = top_dict.font_dict_index_offset orelse return metadata;
@@ -160,7 +160,7 @@ fn parse_font_dict(
             if (operands.len != 2) return error.ParseFail;
 
             const len = utils.f64_to_usize(operands[0]) orelse return error.ParseFail;
-            const start = utils.f64_to_usize(operands[0]) orelse return error.ParseFail;
+            const start = utils.f64_to_usize(operands[1]) orelse return error.ParseFail;
 
             return .{ start, len };
         }

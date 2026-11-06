@@ -60,6 +60,12 @@ tests couldn't run in KupCAD's target and mode.
   glyphs" and "a charset range of 65536 glyphs".
 - `src/tables/cff/cff2.zig`: a `blend` with nothing on the stack is an error; popping its count
   reached `unreachable`. `src/tests/cff2.zig` has "a blend of no operands".
+- `src/tables/cff/cff2.zig`: the item variation store is parsed from its own offset, past its
+  length, as ttf-parser does; it was parsed from where the Global Subroutines end, so a store
+  anywhere else failed the table. A Private DICT is read from its offset, the `Private`
+  operator's second operand; both its start and its length were taken from the first, so the
+  local subroutines were looked for at the length. `src/tests/cff2.zig` has "a variation store
+  read from its own offset" and "a private DICT read from its start, not its length".
 - `src/lib.zig`, `src/tables/os2.zig`: `Face.height` and `vertical_height`, `Rect.width` and
   `height`, and the OS/2 table's `windows_descender` saturate. They computed in the font's `i16`s
   (as ttf-parser does, which panics in a debug build too), and an ascender of 32767 over a
