@@ -101,6 +101,10 @@ pub const Code = enum(u16) {
     // Global (level 2)
     hole_outside_outer,
     redundant_topology,
+    // Triangulation (mesh/triangulate.zig)
+    ring_starts,
+    ring_too_small,
+    not_simple,
 
     pub fn describe(self: Code) []const u8 {
         return switch (self) {
@@ -145,6 +149,9 @@ pub const Code = enum(u16) {
             .vertices_too_close => "is within the zone of another vertex",
             .hole_outside_outer => "has a hole loop that is not inside its outer loop, or is inside another hole",
             .redundant_topology => "could be merged: its two faces lie on one surface the same way, or are one face",
+            .ring_starts => "do not begin at 0, rise, and end at the point count",
+            .ring_too_small => "has fewer than three points",
+            .not_simple => "is not simple: its rings cross or touch, or repeat a point",
         };
     }
 };
