@@ -2,6 +2,13 @@
 //! use, and the `test` block that pulls in every test file. The layout and what each part
 //! may import are in docs/architecture.md §4, and checked by source_test.zig.
 
+/// Vectors, matrices, the exact predicates and the solvers.
+pub const math = struct {
+    pub const vec = @import("math/vec.zig");
+    pub const mat = @import("math/mat.zig");
+    pub const predicates = @import("math/predicates.zig");
+    pub const solve = @import("math/solve.zig");
+};
 pub const tolerance = @import("tolerance.zig");
 pub const Resolution = tolerance.Resolution;
 pub const parallel = @import("parallel.zig");
@@ -48,6 +55,10 @@ pub const legacy = struct {
 test {
     _ = @import("source_test.zig");
     _ = @import("parallel_test.zig");
+    _ = @import("math/vec_test.zig");
+    _ = @import("math/mat_test.zig");
+    _ = @import("math/predicates_test.zig");
+    _ = @import("math/solve_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");
