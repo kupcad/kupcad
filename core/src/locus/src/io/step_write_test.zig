@@ -80,6 +80,28 @@ test "step: a cylinder writes its circles and cylindrical surface; two bodies; a
     try testing.expectError(error.NotSolid, step_write.write(testing.allocator, &.{}));
 }
 
+test "step: a cone narrowing along its axis is written widening along the axis reversed, its semi-angle positive" {
+    // OpenCascade reads a negative semi-angle as zero (a cylinder): the narrowing cone's
+    // surface is the same one described from the other end of the axis
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var narrowing = try primitives.cone(testing.allocator, tol, 2, 1, 3, false, &diag);
+    defer narrowing.deinit();
+    const text = try step_write.write(testing.allocator, &.{&narrowing});
+    defer testing.allocator.free(text);
+    try testing.expectEqual(@as(usize, 2), count(text, "=CONICAL_SURFACE("));
+    try testing.expectEqual(@as(usize, 2), count(text, ",2.,0.3217505543966422)"));
+    try testing.expectEqual(@as(usize, 0), count(text, ",-0.3217505543966422)"));
+    // The two cone faces' placements point down the axis; the caps' keep their own
+    try testing.expect(count(text, "=DIRECTION('',(-0.,-0.,-1.))") >= 2);
+
+    var widening = try primitives.cone(testing.allocator, tol, 1, 2, 3, false, &diag);
+    defer widening.deinit();
+    const up = try step_write.write(testing.allocator, &.{&widening});
+    defer testing.allocator.free(up);
+    try testing.expectEqual(@as(usize, 2), count(up, ",1.,0.3217505543966422)"));
+}
+
 /// A sheet on z = 0 over the square [0, 2] × [0, 3] whose right side is a free-form
 /// curve (a straight line as a degree-one B-spline): what a sketch with a spline edge is.
 fn splineSheet(diag: *Diagnostics) !Body {

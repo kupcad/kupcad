@@ -405,8 +405,13 @@ fn writeSurface(w: *Writer, s: surfaces.Surface) Error!WrittenSurface {
             return .{ .id = try w.emit("CYLINDRICAL_SURFACE('',#{d},{f})", .{ pl, real(c.r) }), .flipped = c.frame.sign() < 0 };
         },
         .cone => |c| {
-            const pl = try w.placement(c.frame.origin, c.frame.z, c.frame.x);
-            return .{ .id = try w.emit("CONICAL_SURFACE('',#{d},{f},{f})", .{ pl, real(c.r), real(c.half_angle) }), .flipped = c.frame.sign() < 0 };
+            // STEP's semi-angle is positive (OpenCascade reads a negative one as zero): a
+            // cone narrowing along its axis is the same surface widening along the axis
+            // reversed, the same radius where the frames' origins coincide; the placement's
+            // y follows its axis and x, so the handedness, and `flipped`, stay the frame's
+            const axis = if (c.half_angle < 0) vec.neg(c.frame.z) else c.frame.z;
+            const pl = try w.placement(c.frame.origin, axis, c.frame.x);
+            return .{ .id = try w.emit("CONICAL_SURFACE('',#{d},{f},{f})", .{ pl, real(c.r), real(@abs(c.half_angle)) }), .flipped = c.frame.sign() < 0 };
         },
         .sphere => |sp| {
             const pl = try w.placement(sp.frame.origin, sp.frame.z, sp.frame.x);
