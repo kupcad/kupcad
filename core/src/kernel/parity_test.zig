@@ -63,6 +63,8 @@ const SHAPES = [_][]const u8{
     "square(10).offset(2, join: :miter).extrude(1)",
     "square(10).offset(-2).extrude(1)",
     "(square(10) - circle(r: 2, segments: 64).translate(5, 5)).offset(1).extrude(1)",
+    // The hull of sketches (M2), of polygons: one with arcs is refused (`curved_hull`)
+    "square(10).hull(square(4).translate(15, 5)).extrude(1)",
     // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
     // every quarter turn, where the extremes are (segments a multiple of 4)
     "square(4).revolve(segments: 64)",

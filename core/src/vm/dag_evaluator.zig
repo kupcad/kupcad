@@ -843,6 +843,8 @@ fn executeSketchHull(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, coun
         try vm.requireSameEngine(sketches[0].engine, cs.engine);
     }
     try vm.requireFeature(sketches[0].engine, .sketch_hull);
+    // A hull of a sketch with arcs needs an engine that hulls arcs, not just vertices
+    for (sketches) |cs| if (kernel.hasCurvedEdges(cs)) try vm.requireFeature(cs.engine, .curved_hull);
     try pushSketch(vm, v_stack, tag, kernel.crossSectionHull(vm.allocator, sketches));
 }
 

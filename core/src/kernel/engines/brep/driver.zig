@@ -57,20 +57,31 @@ const Body = locus.Body;
 /// A trace sink, as `setTrace` takes it.
 pub const Trace = locus.diagnostics.Trace;
 
-/// A solid or a sketch of the B-Rep engine: a Locus body with the limits it was built under.
+/// What a part keeps of the settings it was built under: the bounds on Locus's iterations
+/// and the resolution its curves are cut at when a mesh or a drawing asks.
+pub const Settings = struct {
+    limits: locus.Limits,
+    resolution: locus.Resolution,
+
+    fn of(config: *const engine_config.EngineConfig) Settings {
+        return .{ .limits = limits(config), .resolution = config.resolution };
+    }
+};
+
+/// A solid or a sketch of the B-Rep engine: a Locus body with the settings it was built
+/// under.
 pub const BrepSolid = struct {
     body: Body,
-    /// The bounds on Locus's iterations, from the settings the part was built under.
-    limits: locus.Limits,
+    settings: Settings,
 
     /// Takes `body` into a new handle; on failure the body is freed.
-    pub fn create(body: Body, bounds: locus.Limits) !*BrepSolid {
+    pub fn create(body: Body, settings: Settings) !*BrepSolid {
         const self = backend_allocator.create(BrepSolid) catch |e| {
             var b = body;
             b.deinit();
             return e;
         };
-        self.* = .{ .body = body, .limits = bounds };
+        self.* = .{ .body = body, .settings = settings };
         return self;
     }
 
@@ -81,11 +92,11 @@ pub const BrepSolid = struct {
 
     /// An independent copy: the same body, index for index.
     pub fn clone(self: *const BrepSolid) !*BrepSolid {
-        return create(try self.body.clone(backend_allocator), self.limits);
+        return create(try self.body.clone(backend_allocator), self.settings);
     }
 
     fn options(self: *const BrepSolid) locus.Options {
-        return .{ .limits = self.limits, .parallel = parallel, .trace = trace_sink };
+        return .{ .limits = self.settings.limits, .parallel = parallel, .trace = trace_sink };
     }
 };
 
@@ -124,18 +135,28 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
     return false;
 }
 
+/// Whether any edge of the sketch is an arc. The hull is built from the sketch's vertices
+/// and its arcs' extreme points, which is the true hull only when every edge is straight.
+pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
+    const body = &solidOf(handle.ptr).body;
+    for (body.edges.items) |e| {
+        if (!e.flags.tombstone and e.curve.kind != .line) return true;
+    }
+    return false;
+}
+
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons), their booleans and offsets, their extrusions (no twist or taper) and
-/// revolutions (of a sketch on one side of the axis), their volume, area, genus and box
-/// (a sketch's area and box too), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
-/// export. Everything else is refused before the driver runs
+/// (square, circle, polygon, even-odd polygons), sketch booleans, offsets, hulls (of
+/// straight-edged sketches), outlines, containment and convexity, extrusions (no twist or
+/// taper) and revolutions (of a sketch on one side of the axis), their volume, area, genus
+/// and box (a sketch's area and box too), hulls of flat-faced solids, every rigid move,
+/// uniform scale and mirror, and STEP export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains => true,
         .boolean,
         .loft,
-        .sketch_hull,
         .curved_hull,
         .extrude_twist,
         .extrude_scale,
@@ -144,7 +165,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .slice,
         .project,
         .decompose,
-        .sketch_contours,
         .contains_point,
         .ray_cast,
         .min_gap,
@@ -228,7 +248,7 @@ fn build(comptime Handle: type, config: *const engine_config.EngineConfig, compt
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, limits(config)) catch return null;
+    const solid = BrepSolid.create(body, Settings.of(config)) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -242,7 +262,7 @@ fn transformed(comptime Handle: type, ptr: *anyopaque, affine: Affine) ?Handle {
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, src.limits) catch return null;
+    const solid = BrepSolid.create(body, src.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -348,7 +368,7 @@ fn hullOf(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, first.limits) catch return null;
+    const solid = BrepSolid.create(body, first.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -386,7 +406,7 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, src.limits) catch return null;
+    const solid = BrepSolid.create(body, src.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -409,7 +429,7 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, src.limits) catch return null;
+    const solid = BrepSolid.create(body, src.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -420,10 +440,21 @@ fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryH
     return null;
 }
 
+/// The hull of the sketches' vertices and their arcs' extreme points, as a polygon: the
+/// arcs themselves are not on it (the mesh engine's hull follows a circle's segments).
 fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    _ = allocator;
-    _ = sketches;
-    return null;
+    const bodies = allocator.alloc(*const Body, sketches.len) catch return null;
+    defer allocator.free(bodies);
+    for (sketches, bodies) |s, *body| body.* = &solidOf(s.ptr).body;
+    const first = solidOf(sketches[0].ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.sketch.hull.hull(backend_allocator, bodies, first.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, first.settings) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 /// The sketch grown or shrunk by `delta`, its corners joined as `join_type` says (the
@@ -444,7 +475,7 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: 
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, src.limits) catch return null;
+    const solid = BrepSolid.create(body, src.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -487,7 +518,7 @@ fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const 
         remember(&diag);
         return null;
     };
-    const solid = BrepSolid.create(body, first.limits) catch return null;
+    const solid = BrepSolid.create(body, first.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -577,22 +608,28 @@ fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
 
 /// Locus does not expose sketch contours yet; null tells the caller this engine can't
 /// answer, so the user gets a clear error instead of a wrong `false`.
+/// Whether `pt` is in the sketch, on its outline within `tol` included; exact.
 fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tol: f64) ?bool {
-    _ = handle;
-    _ = pt;
-    _ = tol;
-    return null;
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.sketch.query.contains(&solidOf(handle.ptr).body, pt, tol, &diag) catch null;
 }
 
+/// The sketch's outlines as polylines at the resolution it was built under, each arc cut
+/// as a circle of its radius would be; owned by `allocator`.
 fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
-    _ = handle;
-    _ = allocator;
-    return null;
+    const src = solidOf(handle.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const contours = locus.sketch.query.contours(allocator, &src.body, src.settings.resolution, &diag) catch return null;
+    return .{ .points = contours.points, .starts = contours.starts };
 }
 
+/// Whether the sketch is one convex outline, its arcs bulging out.
 fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
-    _ = handle;
-    return null;
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.sketch.query.isConvex(&solidOf(handle.ptr).body, &diag) catch null;
 }
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {

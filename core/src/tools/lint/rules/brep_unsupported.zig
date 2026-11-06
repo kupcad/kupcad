@@ -132,6 +132,8 @@ pub const BrepUnsupportedRule = struct {
         // A solid's offset (and shell) is a Minkowski sum with a sphere; a sketch's is the
         // kernel's offset.
         if (shape == .solid and (std.mem.eql(u8, name, "offset") or std.mem.eql(u8, name, "shell"))) return .{ .feature = .minkowski, .what = name };
+        // A sketch's contains? is a point-in-region test, a solid's a point-in-body one.
+        if (shape == .sketch and std.mem.eql(u8, name, "contains?")) return .{ .feature = .sketch_contains, .what = name };
         const on_shape = call.receiver == .none or shape != null;
         if (on_shape) {
             inline for (comptime std.enums.values(kernel.Feature)) |feature| {

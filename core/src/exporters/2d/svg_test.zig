@@ -245,7 +245,6 @@ test "SVG: what can't be drawn is refused with a message" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "[]", .message = "GeometryError: the model holds no shape: nothing to draw as svg" },
         .{ .source = "circle(r: 1) - circle(r: 2)", .message = "GeometryError: the model's shapes have no outline (empty sketches): nothing to draw as svg" },
-        .{ .source = "CAD.config(engine: :brep)\nsquare(1)", .message = "NotImplementedError: the brep engine can't read a sketch's outlines (SVG and DXF export) yet; build this part with engine: :manifold" },
     };
     for (cases) |case| {
         errdefer std.debug.print("source: {s}\n", .{case.source});
@@ -254,6 +253,21 @@ test "SVG: what can't be drawn is refused with a message" {
         try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.source, .{ .format = .svg, .diagnostic = &diag }));
         try testing.expectEqualStrings(case.message, diag.message.?);
     }
+}
+
+test "SVG: a B-Rep sketch is drawn as the same path as a mesh one, its circle's arcs exact" {
+    // The B-Rep engine reads its outlines exactly (Locus), its arcs at the resolution the
+    // sketch was built under, each chord's ends on the circle: the drawing turns them back
+    // into arcs
+    const source = "[square(10, 5), circle(r: 5).translate(x: 20)]";
+    const mesh = try exportSvg(source);
+    defer testing.allocator.free(mesh);
+    const brep = try exportSvg("CAD.config(engine: :brep)\n" ++ source);
+    defer testing.allocator.free(brep);
+    errdefer std.debug.print("brep svg:\n{s}\n", .{brep});
+    try testing.expectEqualStrings(pathData(mesh, 0).?, pathData(brep, 0).?);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, pathData(brep, 1).?, " A 5 5 0 0 0 "));
+    try testing.expect(std.mem.find(u8, brep, "viewBox=\"-0.05 -5.05 25.1 10.1\"") != null);
 }
 
 test "SVG: a drawing written and read back has its outlines where they were, arcs as arcs" {

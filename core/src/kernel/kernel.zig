@@ -70,6 +70,8 @@ pub const Feature = enum {
     sketch_measure,
     /// A sketch's outlines as polylines (crossSectionContours), what a drawing is made of.
     sketch_contours,
+    /// Whether a point is in a sketch (Sketch#contains?), exact.
+    sketch_contains,
     contains_point,
     ray_cast,
     min_gap,
@@ -91,7 +93,7 @@ pub const Feature = enum {
             .loft => "loft sketches",
             .sketch_boolean => "combine sketches (union, difference, intersection)",
             .sketch_hull => "take the hull of sketches",
-            .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's)",
+            .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's) or of a sketch with arcs",
             .sphere => "make exact spheres",
             .cone => "make cones (a cylinder with r1 different from r2)",
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
@@ -108,7 +110,8 @@ pub const Feature = enum {
             .bounding_box => "measure bounding boxes (bbox, align, center, resize)",
             .sketch_measure => "measure sketches (bbox, align, center)",
             .sketch_contours => "read a sketch's outlines (SVG and DXF export)",
-            .contains_point => "test whether a point is inside (contains?)",
+            .sketch_contains => "test whether a point is inside a sketch (contains?)",
+            .contains_point => "test whether a point is inside a solid (contains?)",
             .ray_cast => "cast rays",
             .min_gap => "measure gaps (min_gap)",
             .faces => "select faces (on_face)",
@@ -139,13 +142,13 @@ pub const Feature = enum {
             .surface_area => &.{"surface_area"},
             .genus => &.{"genus"},
             .bounding_box => &.{"bbox"},
-            .contains_point => &.{"contains?"},
+            .contains_point => &.{"contains?"}, // a sketch's (`sketch_contains`) is told apart by the lint
             .ray_cast => &.{"ray_cast"},
             .min_gap => &.{"min_gap"},
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
             .sketch_contours => &.{ "export_svg", "export_dxf" },
-            .sketch_boolean, .sketch_hull, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
+            .sketch_boolean, .sketch_hull, .sketch_contains, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };
@@ -156,6 +159,15 @@ pub inline fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
     return switch (handle.engine) {
         .manifold => false,
         .brep_native => brep_driver.hasCurvedFaces(handle),
+    };
+}
+
+/// Whether the sketch has edges that aren't straight. A mesh sketch has none; a B-Rep
+/// circle does, which matters where the engine hulls only vertices (`curved_hull`).
+pub inline fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
+    return switch (handle.engine) {
+        .manifold => false,
+        .brep_native => brep_driver.hasCurvedEdges(handle),
     };
 }
 

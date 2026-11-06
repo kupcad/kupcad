@@ -215,7 +215,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (@abs(pt[2]) > tolerance) return value.Value.initBool(false);
 
     const handle = try vm.ensureConcreteCrossSection(receiver);
-    try vm.requireFeature(handle.engine, .contains_point);
+    try vm.requireFeature(handle.engine, .sketch_contains);
     const inside = kernel.crossSectionContainsPoint(handle, .{ pt[0], pt[1] }, tolerance) orelse {
         return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"contains?"});
     };

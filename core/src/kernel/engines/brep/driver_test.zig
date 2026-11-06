@@ -144,6 +144,34 @@ test "Driver: a sketch's offset is exact, its round joins arcs" {
     try std.testing.expect(driver.supports(.offset));
 }
 
+test "Driver: a sketch's hull, contours, containment and convexity" {
+    const sq = driver.driver.squareFn(&TEST_CONFIG, 2, 2, false) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const far = driver.driver.crossSectionTransformFn(sq, .{ 1, 0, 0, 1, 5, 1 }) orelse return error.TransformFailed;
+    defer driver.driver.destructCrossSectionFn(far);
+    const both = driver.driver.crossSectionHullFn(std.testing.allocator, &.{ sq, far }) orelse return error.HullFailed;
+    defer driver.driver.destructCrossSectionFn(both);
+    try std.testing.expectApproxEqRel(@as(f64, 16), driver.driver.crossSectionAreaFn(both), 1e-9);
+    try std.testing.expectEqual(true, driver.driver.crossSectionIsConvexFn(both));
+    try std.testing.expectEqual(true, driver.driver.crossSectionContainsPointFn(both, .{ 3, 1.5 }, 1e-9));
+    try std.testing.expectEqual(false, driver.driver.crossSectionContainsPointFn(both, .{ 3, 2.9 }, 1e-9));
+
+    const disc = driver.driver.circleFn(&TEST_CONFIG, 2, 0) orelse return error.CircleFailed;
+    defer driver.driver.destructCrossSectionFn(disc);
+    const contours = driver.driver.crossSectionContoursFn(disc, std.testing.allocator) orelse return error.ContoursFailed;
+    defer std.testing.allocator.free(contours.points);
+    defer std.testing.allocator.free(contours.starts);
+    try std.testing.expectEqual(@as(usize, 1), contours.count());
+    // Each of the circle's two halves gets its share of the segments a full circle has at
+    // the test settings' resolution, rounded up (an odd count can't be halved), every
+    // point on the circle
+    const per_turn = TEST_CONFIG.segmentsFor(2);
+    try std.testing.expectEqual(@as(usize, 2 * ((per_turn + 1) / 2)), contours.points.len);
+    for (contours.points) |p| try std.testing.expectApproxEqAbs(@as(f64, 2), @sqrt(p[0] * p[0] + p[1] * p[1]), 1e-12);
+    try std.testing.expect(driver.supports(.sketch_hull));
+    try std.testing.expect(driver.supports(.sketch_contours));
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);
@@ -310,7 +338,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructCrossSectionFn(sq);
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);
-    try std.testing.expect(driver.driver.crossSectionContoursFn(sq, std.testing.allocator) == null);
     try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
     try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
     try std.testing.expect(driver.driver.sliceFn(cube, 5) == null);
@@ -319,7 +346,7 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     try std.testing.expect(driver.driver.containsPointFn(std.testing.allocator, cube, &TEST_CONFIG, .{ 1, 1, 1 }) == null);
     try std.testing.expect(driver.driver.rayCastFn(std.testing.allocator, cube, .{ 5, 5, -5 }, .{ 5, 5, 15 }) == null);
     try std.testing.expect(driver.driver.queryFacesFn(std.testing.allocator, cube, .{ 0, 0, 1 }, 0.01) == null);
-    try std.testing.expect(!driver.supports(.sketch_contours));
+    try std.testing.expect(!driver.supports(.boolean));
     try std.testing.expect(driver.driver.problemFn(cube) == null);
     // The mesh of a B-Rep part is empty until tessellation lands: a viewer draws nothing
     const mesh = driver.driver.getMeshFn(std.testing.allocator, cube) orelse return error.KernelFailed;
@@ -341,7 +368,7 @@ test "BRep Driver: solids keep the tolerance they were built under, and pass it 
         const solid: *driver.BrepSolid = @ptrCast(@alignCast(h.ptr));
         try std.testing.expectEqual(@as(f64, 1e-3), solid.body.tol.zone);
         try std.testing.expectEqual(@as(f64, 2e-3), solid.body.tol.xsect);
-        try std.testing.expectEqual(@as(u32, 7), solid.limits.newton_trials);
+        try std.testing.expectEqual(@as(u32, 7), solid.settings.limits.newton_trials);
     }
 }
 
