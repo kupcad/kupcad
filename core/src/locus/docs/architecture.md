@@ -853,6 +853,10 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D15 | A checker that returns findings, run after every operation in tests | Boolean `isValid`, repair | The test oracle must say what and where |
 | D16 | Interferences resolved in dimension order (V–V … E–F) before face–face curves | Face–face first, then repair | Coincidences are found where they are cheap and exact; OCCT's order, 20 years of fixes behind it |
 | D17 | Two-body Mäntylä selection first; General Fuse cell algebra later for N-ary batches | General Fuse from the start | The two-body pipeline is debuggable on planes in M4; cells generalise it without changing phases 0–3 |
+| D18 | A mirror leaves a surface's frame left-handed; normals carry the frame's sign | Reparameterizing mirrored faces (`u → −u`, loops and pcurves remapped) | Every parameter, pcurve and edge range stays as it was; STEP and OCCT allow indirect placements (2026-11-06) |
+| D19 | NURBS knots stored as the full vector; multiplicities derived on export | Distinct knots plus multiplicities | The book's algorithms index the full vector; repeated knots are exact copies made by insertion (2026-11-06) |
+| D20 | A non-uniform scale keeps planes, lines and NURBS; the other curved kinds are `NotRepresentable` and the driver refuses them as a feature | Converting them to NURBS | A circle's NURBS form has another parameterization: the stored pcurves would not fit it (2026-11-06) |
+| D21 | `Checkpoint` is a copy of the body | A snapshot of the tables' lengths | Operators relink existing entities, which a length snapshot cannot undo (2026-11-06) |
 
 ---
 
