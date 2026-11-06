@@ -43,6 +43,14 @@ const SHAPES = [_][]const u8{
     "cylinder(r1: 1, r2: 2, h: 3, center: true, segments: 64)",
     "sphere(r: 2).translate(1, 2, 3).scale(2)",
     "cylinder(r1: 2, r2: 1, h: 3, segments: 64).rotate(x: 90)",
+    // Extrusions (M1): planes and cylinders from the sketches
+    "square(10).extrude(5)",
+    "square(10, 4, center: true).extrude(3)",
+    "circle(r: 2, segments: 64).extrude(3)",
+    "polygon([[0, 0], [4, 0], [4, 3], [1, 5]]).extrude(2)",
+    "square(10).translate(5, 0).extrude(1)",
+    "square(10).extrude(5).translate(1, 2, 3).rotate(z: 90)",
+    "regular_polygon(6, r: 5).extrude(2)",
     // Moves, turns, scales and mirrors (M0): the matrix is the images of the axes, then
     // the translation; a cylinder turned a quarter keeps its extremes on the axes
     "cube(2).translate(1, 2, 3)",

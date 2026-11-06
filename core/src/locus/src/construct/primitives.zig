@@ -28,20 +28,21 @@ const TWO_PI = geometry.TWO_PI;
 const PI = std.math.pi;
 
 /// A generator line as an edge from one point to another: see `Builder.generator`.
-const Generator = struct { curve: geometry.CurveRef, t0: f64, t1: f64, forward: bool, pcurve: geometry.PCurveRef };
+pub const Generator = struct { curve: geometry.CurveRef, t0: f64, t1: f64, forward: bool, pcurve: geometry.PCurveRef };
 
 const HALF_PI = std.math.pi / 2.0;
-const DEGENERATE: types.EdgeFlags = .{ .degenerate = true };
-const SEAM: types.EdgeFlags = .{ .seam = true };
+pub const DEGENERATE: types.EdgeFlags = .{ .degenerate = true };
+pub const SEAM: types.EdgeFlags = .{ .seam = true };
 
-/// Where a body is built: the body, its interner, and the diagnostics.
-const Builder = struct {
+/// Where a body is built (the sweeps build with it too): the body, its interner, and the
+/// diagnostics.
+pub const Builder = struct {
     allocator: std.mem.Allocator,
     body: Body,
     interner: Interner,
     diag: *Diagnostics,
 
-    fn init(allocator: std.mem.Allocator, tol: Tolerance, kind: body_mod.Kind, diag: *Diagnostics) Error!Builder {
+    pub fn init(allocator: std.mem.Allocator, tol: Tolerance, kind: body_mod.Kind, diag: *Diagnostics) Error!Builder {
         try diagnostics.input.tolerance(diag, tol);
         var body = Body.init(allocator, tol);
         body.kind = kind;
@@ -50,12 +51,12 @@ const Builder = struct {
 
     /// Frees the interner alone: the body is the result, or freed by the caller's errdefer
     /// (after which `body.allocator` is gone, so the builder keeps its own).
-    fn deinit(self: *Builder) void {
+    pub fn deinit(self: *Builder) void {
         self.interner.deinit(self.allocator);
     }
 
     /// The arena's, the interner's and the sewer's errors as the operation's.
-    fn fail(self: *Builder, err: anyerror) Error {
+    pub fn fail(self: *Builder, err: anyerror) Error {
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
             error.TooMany => self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "entities" }),
@@ -65,32 +66,32 @@ const Builder = struct {
         };
     }
 
-    fn vertex(self: *Builder, p: Vec3) Error!types.VertexIndex {
+    pub fn vertex(self: *Builder, p: Vec3) Error!types.VertexIndex {
         return self.vertexAt(try self.point(p));
     }
 
     /// The interned point at `p`: one record for every point within the zone of it.
-    fn point(self: *Builder, p: Vec3) Error!geometry.PointIndex {
+    pub fn point(self: *Builder, p: Vec3) Error!geometry.PointIndex {
         return self.interner.point(self.body.allocator, &self.body.geometry, p) catch |e| return self.fail(e);
     }
 
-    fn vertexAt(self: *Builder, at: geometry.PointIndex) Error!types.VertexIndex {
+    pub fn vertexAt(self: *Builder, at: geometry.PointIndex) Error!types.VertexIndex {
         return self.body.addVertex(.{ .point = at }) catch |e| return self.fail(e);
     }
 
-    fn line(self: *Builder, a: Vec3, b: Vec3) Error!geometry.CurveRef {
+    pub fn line(self: *Builder, a: Vec3, b: Vec3) Error!geometry.CurveRef {
         const l = curves.Line.through(a, b) orelse return self.diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "an edge" });
         return self.interner.line(self.body.allocator, &self.body.geometry, l) catch |e| return self.fail(e);
     }
 
-    fn plane(self: *Builder, frame: Frame) Error!geometry.SurfaceRef {
+    pub fn plane(self: *Builder, frame: Frame) Error!geometry.SurfaceRef {
         return self.interner.plane(self.body.allocator, &self.body.geometry, .{ .frame = frame }) catch |e| return self.fail(e);
     }
 
     /// The straight edge from vertex `a` to `b`, in a loop's direction. The line is
     /// interned, so it may run the other way: the edge's own range follows the line, and
     /// `forward` says which way the loop runs it.
-    fn straight(self: *Builder, a: types.VertexIndex, b: types.VertexIndex) Error!sew.EdgeSpec {
+    pub fn straight(self: *Builder, a: types.VertexIndex, b: types.VertexIndex) Error!sew.EdgeSpec {
         const pa = self.body.point(a);
         const pb = self.body.point(b);
         const ref = try self.line(pa, pb);
@@ -103,7 +104,7 @@ const Builder = struct {
     /// The line from `a` to `b` interned, as the curve, range and direction of an edge from
     /// `a` to `b`, with its pcurve `(u, v)` on a surface whose `v` is the distance along the
     /// line from `a` (a cone's or an extrusion's generator).
-    fn generator(self: *Builder, a: Vec3, b: Vec3, u: f64) Error!Generator {
+    pub fn generator(self: *Builder, a: Vec3, b: Vec3, u: f64) Error!Generator {
         const ref = try self.line(a, b);
         const l = self.body.geometry.curve(ref).line;
         const ta = l.project(a);
@@ -116,16 +117,16 @@ const Builder = struct {
 
     /// A zero-radius circle at `p`: the curve of a degenerate edge (a pole, an apex), whose
     /// parameter is the `u` of its pcurve.
-    fn point_curve(self: *Builder, p: Vec3) Error!geometry.CurveRef {
+    pub fn pointCurve(self: *Builder, p: Vec3) Error!geometry.CurveRef {
         return self.interner.circle(self.allocator, &self.body.geometry, .{ .c = p, .x = vec.X3, .y = vec.Y3, .r = 0 }) catch |e| return self.fail(e);
     }
 
-    fn pcurveLine(self: *Builder, o: Vec2, d: Vec2) Error!geometry.PCurveRef {
+    pub fn pcurveLine(self: *Builder, o: Vec2, d: Vec2) Error!geometry.PCurveRef {
         return self.body.geometry.addLine2(self.allocator, .{ .o = o, .d = d }) catch |e| return self.fail(e);
     }
 
     /// The body, checked (level 1), or the checker's first finding as `error.NotValid`.
-    fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
+    pub fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
         _ = sew.sew(&self.body, faces, kind) catch |e| return self.fail(e);
         var report = check.run(self.body.allocator, &self.body, .geometric) catch return error.OutOfMemory;
         defer report.deinit(self.body.allocator);
@@ -253,8 +254,8 @@ pub fn sphere(allocator: std.mem.Allocator, tol: Tolerance, r: f64, diag: *Diagn
     // The meridian in the xz-plane, parameter θ: θ = v on the half at u = 0 (south to
     // north through (r, 0, 0)), θ = π − v on the half at u = π (north to south)
     const meridian = b.interner.circle(allocator, g, .{ .c = vec.ZERO3, .x = vec.X3, .y = vec.Z3, .r = r }) catch |e| return b.fail(e);
-    const pole_s = try b.point_curve(.{ 0, 0, -r });
-    const pole_n = try b.point_curve(.{ 0, 0, r });
+    const pole_s = try b.pointCurve(.{ 0, 0, -r });
+    const pole_n = try b.pointCurve(.{ 0, 0, r });
     const pc_south = try b.pcurveLine(.{ 0, -HALF_PI }, .{ 1, 0 });
     const pc_north = try b.pcurveLine(.{ 0, HALF_PI }, .{ 1, 0 });
     const pc_m0 = try b.pcurveLine(.{ 0, 0 }, .{ 0, 1 });
@@ -311,8 +312,8 @@ pub fn cone(allocator: std.mem.Allocator, tol: Tolerance, r1: f64, r2: f64, heig
     const bottom_pi = if (r1 > 0) try b.vertex(.{ -r1, 0, z0 }) else bottom_0;
     const top_0 = try b.vertex(.{ r2, 0, z1 });
     const top_pi = if (r2 > 0) try b.vertex(.{ -r2, 0, z1 }) else top_0;
-    const bottom_curve = if (r1 > 0) b.interner.circle(allocator, g, .{ .c = .{ 0, 0, z0 }, .x = vec.X3, .y = vec.Y3, .r = r1 }) catch |e| return b.fail(e) else try b.point_curve(.{ 0, 0, z0 });
-    const top_curve = if (r2 > 0) b.interner.circle(allocator, g, .{ .c = .{ 0, 0, z1 }, .x = vec.X3, .y = vec.Y3, .r = r2 }) catch |e| return b.fail(e) else try b.point_curve(.{ 0, 0, z1 });
+    const bottom_curve = if (r1 > 0) b.interner.circle(allocator, g, .{ .c = .{ 0, 0, z0 }, .x = vec.X3, .y = vec.Y3, .r = r1 }) catch |e| return b.fail(e) else try b.pointCurve(.{ 0, 0, z0 });
+    const top_curve = if (r2 > 0) b.interner.circle(allocator, g, .{ .c = .{ 0, 0, z1 }, .x = vec.X3, .y = vec.Y3, .r = r2 }) catch |e| return b.fail(e) else try b.pointCurve(.{ 0, 0, z1 });
     const bottom_flags: types.EdgeFlags = if (r1 > 0) .{} else DEGENERATE;
     const top_flags: types.EdgeFlags = if (r2 > 0) .{} else DEGENERATE;
     const pc_bottom = try b.pcurveLine(.{ 0, 0 }, .{ 1, 0 });

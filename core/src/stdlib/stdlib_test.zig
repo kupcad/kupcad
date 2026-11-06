@@ -2338,19 +2338,19 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
     // Locus is unfinished: each of these used to answer 0, a fixed 10 mm cube, an untouched
     // or surface-less copy, or a generic failure.
     const cases = [_]struct { src: []const u8, expected: []const u8 }{
-        .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = "no error" }, // exact since M1
         .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = brepLacks(.boolean) }, // kept both solids
         .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = brepLacks(.boolean) },
         .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = brepLacks(.sketch_boolean) }, // was a 3D cube
-        .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = brepLacks(.extrude) }, // was a 10 mm cube
-        .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude) },
-        .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" }, // was a 10 mm cube; exact since M1
+        .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) },
+        .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = "no error" }, // a rounded square is a polygon of chords on both engines, extruded
         .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = brepLacks(.revolve) }, // was a 10 mm cube
         .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.revolve) }, // before measuring the profile for its segments
-        .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude_twist) },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = "no error" }, // was a plain cylinder; exact since M1
-        .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = brepLacks(.extrude) }, // a prism is an extrusion
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = "no error" }, // a prism is an extrusion, exact since M1
         .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = "no error" }, // was 16-sided whatever the resolution; exact since M1
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
@@ -2360,7 +2360,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).round_edges(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
-        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.revolve) }, // a sweep bends by revolving
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },

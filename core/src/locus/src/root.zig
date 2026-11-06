@@ -49,6 +49,7 @@ pub const construct = struct {
     pub const primitives = @import("construct/primitives.zig");
     pub const hull = @import("construct/hull.zig");
     pub const transform = @import("construct/transform.zig");
+    pub const sweep = @import("construct/sweep.zig");
 };
 /// Measures: bounding boxes (volume, area and genus in M1).
 pub const measure = struct {
@@ -91,6 +92,7 @@ test {
     _ = @import("io/fixtures_test.zig");
     _ = @import("io/trace_test.zig");
     _ = @import("construct/transform_test.zig");
+    _ = @import("construct/sweep_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }

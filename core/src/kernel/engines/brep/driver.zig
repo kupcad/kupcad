@@ -125,14 +125,14 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
 }
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons), hulls of flat-faced solids, every rigid
-/// move, uniform scale and mirror, and STEP export. Everything else is refused before the driver runs
+/// (square, circle, polygon, even-odd polygons) and their extrusions (no twist or taper),
+/// hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
+/// export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone => true,
+        .transform, .sphere, .cone, .extrude => true,
         .boolean,
-        .extrude,
         .revolve,
         .loft,
         .sketch_boolean,
@@ -381,14 +381,20 @@ fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSection
     return null;
 }
 
+/// The sketch swept up by `height`: exact, so `slices` is the mesh engine's; a twist or a
+/// taper is refused before the driver (supports(.extrude_twist, .extrude_scale) are false).
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
-    _ = cs;
-    _ = height;
     _ = slices;
-    _ = twist_degrees;
-    _ = scale_x;
-    _ = scale_y;
-    return null;
+    if (twist_degrees != 0 or scale_x != 1 or scale_y != 1) return null;
+    const src = solidOf(cs.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.construct.sweep.extrude(backend_allocator, &src.body, .{ 0, 0, height }, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, src.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {

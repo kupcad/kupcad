@@ -9,6 +9,7 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const Diagnostics = @import("../diagnostics.zig").Diagnostics;
 const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
+const sweep = @import("../construct/sweep.zig");
 const body_json = @import("body_json.zig");
 
 const tol = Tolerance.fromZone(1e-5);
@@ -21,6 +22,7 @@ const FIXTURES = [_]Fixture{
     .{ .name = "sphere", .expected = @embedFile("../fixtures/sphere.json") },
     .{ .name = "cone", .expected = @embedFile("../fixtures/cone.json") },
     .{ .name = "torus", .expected = @embedFile("../fixtures/torus.json") },
+    .{ .name = "extruded", .expected = @embedFile("../fixtures/extruded.json") },
     .{ .name = "square", .expected = @embedFile("../fixtures/square.json") },
     .{ .name = "circle", .expected = @embedFile("../fixtures/circle.json") },
     .{ .name = "polygon", .expected = @embedFile("../fixtures/polygon.json") },
@@ -37,6 +39,12 @@ pub fn build(allocator: std.mem.Allocator, name: []const u8) !Body {
     if (std.mem.eql(u8, name, "sphere")) return primitives.sphere(allocator, tol, 4, &diag);
     if (std.mem.eql(u8, name, "cone")) return primitives.cone(allocator, tol, 5, 0, 8, false, &diag);
     if (std.mem.eql(u8, name, "torus")) return primitives.torus(allocator, tol, 6, 1.5, &diag);
+    if (std.mem.eql(u8, name, "extruded")) {
+        // A plate with a round hole's worth of corners, swept up
+        var plate = try primitives.polygonsEvenOdd(allocator, tol, &.{ &.{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } }, &.{ .{ -3, -3 }, .{ -3, 3 }, .{ 3, 3 }, .{ 3, -3 } } }, &diag);
+        defer plate.deinit();
+        return sweep.extrude(allocator, &plate, .{ 0, 0, 4 }, .{}, &diag);
+    }
     if (std.mem.eql(u8, name, "square")) return primitives.square(allocator, tol, 4, 3, true, &diag);
     if (std.mem.eql(u8, name, "circle")) return primitives.circle(allocator, tol, 2.5, &diag);
     if (std.mem.eql(u8, name, "polygon")) return primitives.polygon(allocator, tol, &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 1 }, .{ 1, 3 } }, &diag);

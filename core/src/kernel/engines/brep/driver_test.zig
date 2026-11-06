@@ -56,6 +56,25 @@ test "Driver: the exact sphere and cone, their boxes, and the mesh engine's segm
     try std.testing.expect(driver.hasCurvedFaces(sphere));
 }
 
+test "Driver: an extrusion is exact and refuses a twist or a taper" {
+    const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 20, false) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const box = driver.driver.extrudeFn(sq, 5, 7, 0, 1, 1) orelse return error.ExtrudeFailed;
+    defer driver.driver.destructFn(box);
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(box));
+    try std.testing.expectEqual([3]f64{ 10, 20, 5 }, (try boxOf(box)).max);
+    try std.testing.expect(driver.driver.extrudeFn(sq, 5, 0, 30, 1, 1) == null);
+    try std.testing.expect(driver.driver.extrudeFn(sq, 5, 0, 0, 2, 1) == null);
+    try std.testing.expect(driver.supports(.extrude));
+    try std.testing.expect(!driver.supports(.extrude_twist));
+    const ci = driver.driver.circleFn(&TEST_CONFIG, 3, 64) orelse return error.CircleFailed;
+    defer driver.driver.destructCrossSectionFn(ci);
+    const cyl = driver.driver.extrudeFn(ci, 2, 0, 0, 1, 1) orelse return error.ExtrudeFailed;
+    defer driver.driver.destructFn(cyl);
+    try std.testing.expect(driver.hasCurvedFaces(cyl));
+    try std.testing.expectEqual([3]f64{ -3, -3, 0 }, (try boxOf(cyl)).min);
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);
@@ -224,7 +243,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructFn(cube);
     try std.testing.expect(driver.driver.offsetFn(sq, 1, 0, 8, 2) == null);
     try std.testing.expect(driver.driver.crossSectionContoursFn(sq, std.testing.allocator) == null);
-    try std.testing.expect(driver.driver.extrudeFn(sq, 10, 0, 0, 1, 1) == null);
     try std.testing.expect(driver.driver.revolveFn(sq, 36, 360) == null);
     try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
     try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
