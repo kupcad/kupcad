@@ -1,6 +1,9 @@
-//! `kupcad dev`: tools for working on the compiler and VM. `ast-dump`, `disasm` and
-//! `lex-dump` write a script's AST, bytecode or token stream to a file next to it; `bench`
-//! times its phases (tools/bench.zig). `execute` dispatches on the subcommand.
+//! `kupcad dev`: tools for working on the compiler, the VM and the B-Rep kernel. `ast-dump`,
+//! `disasm` and `lex-dump` write a script's AST, bytecode or token stream to a file next to
+//! it; `bench` times its phases (tools/bench.zig); `brep-readiness` builds scripts on the
+//! B-Rep engine and lists what each still lacks (tools/dev/brep_readiness.zig);
+//! `brep-trace` writes the body after each phase of a script's operations
+//! (tools/dev/brep_trace.zig). `execute` dispatches on the subcommand.
 
 const std = @import("std");
 const api = @import("../api.zig");
@@ -19,6 +22,11 @@ const log_helpers = @import("../log.zig");
 const ScriptSession = @import("../session/session.zig").ScriptSession;
 const diagnostic_report = @import("diagnostic_report.zig");
 const Reporter = @import("reporter.zig").Reporter;
+const ScriptRoot = @import("script_root.zig").ScriptRoot;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const limits = @import("../core/limits.zig");
+const brep_readiness = @import("../tools/dev/brep_readiness.zig");
+const brep_trace = @import("../tools/dev/brep_trace.zig");
 
 const log = std.log.scoped(.dev);
 
@@ -38,10 +46,18 @@ pub const USAGE =
     \\                   --repeat N runs, 5 by default; --no-profile, --no-eval, --json)
     \\  crash panic|abort  End the process with a panic or an abort, to check that
     \\                   KUPCAD_CRASH_DIR captures crash reports
+    \\  brep-readiness [path...]  Build each script (or the .kup files of each folder;
+    \\                   examples/ by default) on the B-Rep engine and list what each
+    \\                   still lacks there
+    \\  brep-trace <file>  Run the script on the B-Rep engine writing the body after each
+    \\                   phase of each operation into <file>.trace/
     \\
 ;
 
-const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench, crash };
+const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench, crash, @"brep-readiness", @"brep-trace" };
+
+/// Where `brep-readiness` looks without a path.
+const EXAMPLES_DIR = "examples";
 
 /// A dump subcommand: its name, the extension of the file it writes beside the script, what
 /// it dumps (for the log), and how it renders the script into `out`, false once a failure
@@ -69,7 +85,127 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         .@"lex-dump" => runDump(init, allocator, args_iter, LEX_DUMP),
         .bench => executeBench(init, allocator, args_iter),
         .crash => executeCrash(init, args_iter),
+        .@"brep-readiness" => executeReadiness(init, allocator, args_iter),
+        .@"brep-trace" => executeTrace(init, allocator, args_iter),
     };
+}
+
+/// `kupcad dev brep-readiness [path...]`: each script (a folder: its .kup files, in name
+/// order) built on the B-Rep engine, a line per script and the count on stdout. The report
+/// succeeds whatever the scripts lack; a path that can't be read fails it.
+fn executeReadiness(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
+    const reporter: Reporter = .forProcess(init);
+    var scripts = std.ArrayList([]u8).empty;
+    defer {
+        for (scripts.items) |s| allocator.free(s);
+        scripts.deinit(allocator);
+    }
+    var any = false;
+    while (args_iter.next()) |path| {
+        any = true;
+        if (!try collectScripts(init.io, allocator, path, &scripts, reporter)) return .failure;
+    }
+    if (!any and !try collectScripts(init.io, allocator, EXAMPLES_DIR, &scripts, reporter)) return .failure;
+
+    var results = std.ArrayList(brep_readiness.Result).empty;
+    defer {
+        for (results.items) |*r| r.outcome.deinit(allocator);
+        results.deinit(allocator);
+    }
+    for (scripts.items) |path| {
+        const outcome = try checkScript(init.io, allocator, path, reporter) orelse return .failure;
+        try results.append(allocator, .{ .path = path, .outcome = outcome });
+    }
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try brep_readiness.writeReport(&out.writer, results.items);
+    reporter.out("{s}", .{out.written()});
+    return .success;
+}
+
+/// Adds `path` to `scripts`: the file, or the `.kup` files of the folder in name order.
+/// False, reported, when it can't be read.
+fn collectScripts(io: std.Io, allocator: std.mem.Allocator, path: []const u8, scripts: *std.ArrayList([]u8), reporter: Reporter) !bool {
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| {
+        reporter.err("Error: Could not read '{s}': {s}\n", .{ path, @errorName(err) });
+        return false;
+    };
+    if (stat.kind != .directory) {
+        try scripts.append(allocator, try allocator.dupe(u8, path));
+        return true;
+    }
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| {
+        reporter.err("Error: Could not read '{s}': {s}\n", .{ path, @errorName(err) });
+        return false;
+    };
+    defer dir.close(io);
+    const first = scripts.items.len;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".kup")) continue;
+        try scripts.append(allocator, try std.fs.path.join(allocator, &.{ path, entry.name }));
+    }
+    std.mem.sort([]u8, scripts.items[first..], {}, lessThanBytes);
+    return true;
+}
+
+fn lessThanBytes(_: void, a: []u8, b: []u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// The script at `path`, read from its root, run on the B-Rep engine; null, reported, when
+/// it can't be read.
+fn checkScript(io: std.Io, allocator: std.mem.Allocator, path: []const u8, reporter: Reporter) !?brep_readiness.Outcome {
+    var root = try ScriptRoot.open(io, allocator, path, reporter) orelse return null;
+    defer root.deinit(io, allocator);
+    const source = root.dir.readFileAlloc(io, root.path, allocator, .limited(limits.MAX_READ_BYTES)) catch |err| {
+        reporter.err("Error: Could not read '{s}': {s}\n", .{ path, @errorName(err) });
+        return null;
+    };
+    defer allocator.free(source);
+    var disk = NativeVfs.init(io, root.dir);
+    return try brep_readiness.check(allocator, io, source, disk.vfs());
+}
+
+/// `kupcad dev brep-trace <file.kup>`: the script run on the B-Rep engine, each phase of
+/// each operation written into `<file>.trace/`; how many on stdout. The script's failure,
+/// if any, is reported after the phases it left, and fails the command.
+fn executeTrace(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
+    const reporter: Reporter = .forProcess(init);
+    const io = init.io;
+    const path = args.onlyFile(args_iter, reporter, "Usage: kupcad dev brep-trace <file.kup>\n") orelse return .failure;
+    var root = try ScriptRoot.open(io, allocator, path, reporter) orelse return .failure;
+    defer root.deinit(io, allocator);
+    const source = root.dir.readFileAlloc(io, root.path, allocator, .limited(limits.MAX_READ_BYTES)) catch |err| {
+        reporter.err("Error: Could not read '{s}': {s}\n", .{ path, @errorName(err) });
+        return .failure;
+    };
+    defer allocator.free(source);
+    var disk = NativeVfs.init(io, root.dir);
+
+    const out_path = try allocator.print("{s}.trace", .{path});
+    defer allocator.free(out_path);
+    var out_dir = std.Io.Dir.cwd().createDirPathOpen(io, out_path, .{}) catch |err| {
+        reporter.err("Error: Could not create '{s}': {s}\n", .{ out_path, @errorName(err) });
+        return .failure;
+    };
+    defer out_dir.close(io);
+
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(allocator);
+    const phases = brep_trace.run(allocator, io, source, disk.vfs(), out_dir, &diag) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            reporter.err("Error: Could not write the trace into '{s}': {s}\n", .{ out_path, @errorName(err) });
+            return .failure;
+        },
+    };
+    reporter.out("{d} phase{s} written to {s}/\n", .{ phases, if (phases == 1) "" else "s", out_path });
+    if (diag.message) |message| {
+        reporter.err("{s}\n", .{message});
+        return .failure;
+    }
+    return .success;
 }
 
 /// Ends the process the two ways a crash does: a Zig panic, or an abort (what the C++

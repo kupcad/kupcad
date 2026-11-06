@@ -76,6 +76,10 @@ test "Driver: transforms keep the topology and move the box; the matrix is colum
     defer driver.driver.destructFn(cyl);
     try std.testing.expect(driver.driver.scaleFn(cyl, 2, 1, 1) == null);
     try std.testing.expect(driver.supports(.transform));
+    // The refusal's reason is kept for the script's error, once
+    const why = driver.driver.takeFailureFn() orelse return error.NoReason;
+    try std.testing.expect(std.mem.indexOf(u8, why, "non-uniform scale") != null);
+    try std.testing.expect(driver.driver.takeFailureFn() == null);
 
     // A sketch moved in the plane
     const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.SquareFailed;
@@ -85,6 +89,28 @@ test "Driver: transforms keep the topology and move the box; the matrix is colum
     const sq_box = driver.driver.crossSectionBoundsFn(moved_sq) orelse return error.NoBounds;
     try std.testing.expectEqual([2]f64{ 5, 5 }, sq_box.min);
     try std.testing.expectEqual([2]f64{ 15, 15 }, sq_box.max);
+}
+
+test "Driver: a trace sink set on the thread receives each operation's phases, until unset" {
+    const Count = struct {
+        var phases: usize = 0;
+        fn write(_: ?*anyopaque, operation: []const u8, phase: []const u8, body_json: []const u8) void {
+            std.debug.assert(std.mem.eql(u8, operation, "transform"));
+            std.debug.assert(std.mem.eql(u8, phase, "mapped") or std.mem.eql(u8, phase, "checked"));
+            std.debug.assert(std.mem.startsWith(u8, body_json, "{"));
+            phases += 1;
+        }
+    };
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(cube);
+    driver.setTrace(.{ .write = Count.write });
+    const moved = driver.driver.translateFn(cube, 1, 0, 0) orelse return error.TranslateFailed;
+    defer driver.driver.destructFn(moved);
+    driver.setTrace(null);
+    try std.testing.expectEqual(@as(usize, 2), Count.phases);
+    const again = driver.driver.translateFn(cube, 1, 0, 0) orelse return error.TranslateFailed;
+    defer driver.driver.destructFn(again);
+    try std.testing.expectEqual(@as(usize, 2), Count.phases);
 }
 
 test "Driver: a polyhedron from triangles, and polygons by the even-odd rule" {

@@ -749,6 +749,11 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
 
 /// Why Manifold flagged `a` as invalid (non-manifold input, non-finite vertices, ...),
 /// or null if it is a valid solid.
+/// Manifold keeps no reason for a null result (its status is the result's, `problemImpl`).
+fn takeFailureImpl() ?[]const u8 {
+    return null;
+}
+
 fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
     return switch (manifold.status(@ptrCast(@alignCast(a.ptr)))) {
         .no_error => null,
@@ -770,6 +775,7 @@ pub fn supports(feature: kernel.Feature) bool {
 
 pub const driver = struct {
     pub const problemFn = problemImpl;
+    pub const takeFailureFn = takeFailureImpl;
     pub const cubeFn = cubeImpl;
     pub const emptyFn = emptyImpl;
     pub const emptySketchFn = emptySketchImpl;

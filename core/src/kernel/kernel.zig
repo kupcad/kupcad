@@ -343,6 +343,16 @@ pub inline fn problem(handle: geom.GeometryHandle) ?[]const u8 {
     return dispatch("problemFn", handle, .{});
 }
 
+/// Why the last operation on this thread returned null, from the engine that kept a reason
+/// (the B-Rep engine's first finding; the mesh engine keeps none), once; null when none did.
+/// Read right after the null, before another operation.
+pub fn takeFailure() ?[]const u8 {
+    inline for (comptime std.enums.values(geom.EngineType)) |engine| {
+        if (dispatchOn("takeFailureFn", engine, .{})) |why| return why;
+    }
+    return null;
+}
+
 pub inline fn crossSectionContainsPoint(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
     return dispatch("crossSectionContainsPointFn", handle, .{ pt, tolerance });
 }

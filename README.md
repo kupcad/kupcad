@@ -81,6 +81,7 @@ kupcad pkg install                                 # resolve, verify kupcad.lock
 kupcad pkg doctor                                  # check the local package store
 kupcad lsp                                         # language server over stdio (used by the extension)
 kupcad dev ast-dump|disasm|lex-dump|bench part.kup # compiler/VM tooling
+kupcad dev brep-readiness|brep-trace                # B-Rep engine readiness and trace
 ```
 
 Every command exits 0 on success and 1 on any failure (bad arguments, unreadable files, syntax or

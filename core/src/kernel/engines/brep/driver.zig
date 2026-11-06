@@ -17,8 +17,45 @@ pub const parallel = parallel_binding.parallel;
 /// is libc's general-purpose allocator.
 const backend_allocator = std.heap.c_allocator;
 
+/// Where every operation on this thread sends the body after each of its phases, as JSON
+/// (Locus's trace, architecture §12): set by `kupcad dev brep-trace` around one script's
+/// run (tools/dev/brep_trace.zig), null otherwise. The driver interface carries no options
+/// of the host's, so the sink is the thread's.
+threadlocal var trace_sink: ?locus.diagnostics.Trace = null;
+
+/// Sets the trace sink of every operation on this thread, until set to null again.
+pub fn setTrace(sink: ?locus.diagnostics.Trace) void {
+    trace_sink = sink;
+}
+
+/// Why the last operation on this thread returned null, as Locus's first finding, until
+/// `takeFailureImpl` reads it: the driver interface answers a failure with null, and this
+/// carries the reason into the script's error (dag_evaluator's kernelFailed). Empty after a
+/// failure with no finding (memory).
+threadlocal var last_failure: [FAILURE_BYTES]u8 = undefined;
+threadlocal var last_failure_len: usize = 0;
+const FAILURE_BYTES = 256;
+
+fn remember(diag: *const locus.Diagnostics) void {
+    last_failure_len = 0;
+    const finding = diag.first() orelse return;
+    var w: std.Io.Writer = .fixed(&last_failure);
+    // Cut at the buffer's end: what fits is the message
+    finding.format(&w) catch {};
+    last_failure_len = w.buffered().len;
+}
+
+/// The reason the last operation failed, once; valid until the next operation.
+fn takeFailureImpl() ?[]const u8 {
+    if (last_failure_len == 0) return null;
+    defer last_failure_len = 0;
+    return last_failure[0..last_failure_len];
+}
+
 const Affine = locus.math.mat.Affine;
 const Body = locus.Body;
+/// A trace sink, as `setTrace` takes it.
+pub const Trace = locus.diagnostics.Trace;
 
 /// A solid or a sketch of the B-Rep engine: a Locus body with the limits it was built under.
 pub const BrepSolid = struct {
@@ -48,7 +85,7 @@ pub const BrepSolid = struct {
     }
 
     fn options(self: *const BrepSolid) locus.Options {
-        return .{ .limits = self.limits, .parallel = parallel };
+        return .{ .limits = self.limits, .parallel = parallel, .trace = trace_sink };
     }
 };
 
@@ -130,6 +167,7 @@ pub fn supports(feature: kernel.Feature) bool {
 
 pub const driver = struct {
     pub const problemFn = problemImpl;
+    pub const takeFailureFn = takeFailureImpl;
     pub const emptyFn = emptyImpl;
     pub const emptySketchFn = emptySketchImpl;
     pub const cubeFn = cubeImpl;
@@ -195,7 +233,10 @@ pub const driver = struct {
 fn build(comptime Handle: type, config: *const engine_config.EngineConfig, comptime make: anytype, args: anytype) ?Handle {
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
-    const body = @call(.auto, make, .{ backend_allocator, tolerance(config) } ++ args ++ .{&diag}) catch return null;
+    const body = @call(.auto, make, .{ backend_allocator, tolerance(config) } ++ args ++ .{&diag}) catch {
+        remember(&diag);
+        return null;
+    };
     const solid = BrepSolid.create(body, limits(config)) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
@@ -206,7 +247,10 @@ fn transformed(comptime Handle: type, ptr: *anyopaque, affine: Affine) ?Handle {
     const src = solidOf(ptr);
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
-    const body = locus.construct.transform.transform(backend_allocator, &src.body, &affine, src.options(), &diag) catch return null;
+    const body = locus.construct.transform.transform(backend_allocator, &src.body, &affine, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
     const solid = BrepSolid.create(body, src.limits) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
@@ -311,7 +355,10 @@ fn hullOf(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
     const first = solidOf(handles[0].ptr);
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
-    const body = locus.construct.hull.hull(backend_allocator, first.body.tol, pts.items, &diag) catch return null;
+    const body = locus.construct.hull.hull(backend_allocator, first.body.tol, pts.items, &diag) catch {
+        remember(&diag);
+        return null;
+    };
     const solid = BrepSolid.create(body, first.limits) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
