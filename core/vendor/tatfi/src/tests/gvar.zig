@@ -41,3 +41,58 @@ test "a tuple whose shared tuple isn't there" {
 
     try t.expectEqual(null, try phantom_points(data, 0));
 }
+
+test "an intermediate region from -32768 to 0" {
+    // [KupCAD] The region's end minus its peak, 0 - -32768, overflowed the i16s.
+    const data = try convert(&.{
+        .{ .unt16 = 1 }, // tuple variation count
+        .{ .unt16 = 10 }, // offset to the serialized data
+        .{ .unt16 = 0 }, // tuple 0's serialized data size
+        .{ .unt16 = 0xC000 }, // tuple 0's index: an embedded peak and an intermediate region
+        .{ .int16 = -32768 }, // peak
+        .{ .int16 = -32768 }, // start
+        .{ .int16 = 0 }, // end
+    });
+    defer t.allocator.free(data);
+
+    // The tuple's scalar is 0, so it's skipped, and the phantom points don't move
+    try t.expectEqual(std.mem.zeroes(ttf.PhantomPoints), try phantom_points(data, 0));
+}
+
+test "a composite glyph of 65536 components" {
+    // [KupCAD] Counting the components overflowed their u16 count; it wraps, as
+    // ttf-parser's `as u16` does.
+    var glyph: std.ArrayList(u8) = .fromOwnedSlice(try convert(&.{
+        .{ .int16 = -1 }, // number of contours: a composite glyph
+        .{ .raw = &@as([8]u8, @splat(0)) }, // bounding box
+    }));
+    defer glyph.deinit(t.allocator);
+    // Each of glyph 1, no arguments; all but the last say more follow
+    for (0..0x10000) |i| try glyph.appendSlice(t.allocator, &.{ 0, if (i < 0xFFFF) 0x20 else 0, 0, 1 });
+
+    var loca_data: [8]u8 = undefined;
+    std.mem.writeInt(u32, loca_data[0..4], 0, .big);
+    std.mem.writeInt(u32, loca_data[4..8], @intCast(glyph.items.len), .big);
+    const loca_table = try ttf.tables.loca.Table.parse(1, .long, &loca_data);
+    const glyf_table = ttf.tables.glyf.parse(loca_table, glyph.items);
+
+    // A gvar table of one axis whose glyph 0 has no variation data
+    const data = try convert(&.{
+        .{ .unt32 = 0x00010000 }, // version
+        .{ .unt16 = 1 }, // axis count
+        .{ .unt16 = 0 }, // shared tuple count
+        .{ .unt32 = 28 }, // offset to shared tuples
+        .{ .unt16 = 1 }, // glyph count
+        .{ .unt16 = 1 }, // flags: long offsets
+        .{ .unt32 = 28 }, // offset to glyph variation data
+        .{ .unt32 = 0 }, // glyph 0's offset
+        .{ .unt32 = 0 }, // its end
+    });
+    defer t.allocator.free(data);
+    const table = try gvar.parse(data);
+
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    const builder = @import("cff1.zig").init_outline_builder(&writer.writer);
+    try t.expectEqual(null, table.outline(t.allocator, &glyf_table, &.{.{ .inner = 0 }}, .{0}, builder));
+}

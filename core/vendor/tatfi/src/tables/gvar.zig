@@ -514,16 +514,18 @@ fn parse_tuple_variation_header(
 
             if (v < start or v > end) return header;
 
+            // [KupCAD] in i32: the i16s from the font overflowed (ttf-parser's i16
+            // arithmetic panics in a debug build too)
             if (v < peak) {
                 if (peak != start) {
-                    const top: f32 = @floatFromInt(v - start);
-                    const bot: f32 = @floatFromInt(peak - start);
+                    const top: f32 = @floatFromInt(@as(i32, v) - start);
+                    const bot: f32 = @floatFromInt(@as(i32, peak) - start);
                     scalar *= top / bot;
                 }
             } else {
                 if (peak != end) {
-                    const top: f32 = @floatFromInt(end - v);
-                    const bot: f32 = @floatFromInt(end - peak);
+                    const top: f32 = @floatFromInt(@as(i32, end) - v);
+                    const bot: f32 = @floatFromInt(@as(i32, end) - peak);
                     scalar *= top / bot;
                 }
             }
@@ -961,15 +963,19 @@ const PackedDeltasIter = struct {
                 return self.next(data, scalar);
             } else {
                 var s = parser.Stream.new_at(data, self.data_offset) catch return null;
+                // [KupCAD] the offset moves past a delta once it's read: moved first, it
+                // overflowed its u16 past the last of 65535 bytes (in ttf-parser too)
                 const delta: f32 = switch (self.state) {
                     .zero_delta => 0.0,
                     .long_delta => l: {
+                        const d = s.read(i16) catch return null;
                         self.data_offset += 2;
-                        break :l @as(f32, @floatFromInt(s.read(i16) catch return null)) * scalar;
+                        break :l @as(f32, @floatFromInt(d)) * scalar;
                     },
                     .short_delta => s: {
+                        const d = s.read(i8) catch return null;
                         self.data_offset += 1;
-                        break :s @as(f32, @floatFromInt(s.read(i8) catch return null)) * scalar;
+                        break :s @as(f32, @floatFromInt(d)) * scalar;
                     },
                     else => unreachable,
                 };
@@ -1406,6 +1412,20 @@ const PackedDeltasIter = struct {
         // As long as it doesn't panic - we are fine.
         try t.expectEqual(.{ 0.0, 0.0 }, iter.next().?);
     }
+
+    test "a delta past the last of 65535 bytes" {
+        // [KupCAD] The offset moved past a word delta before reading it: past the last
+        // byte, 65535, it overflowed its u16.
+        var data: [0xFFFF]u8 = @splat(0);
+        // 508 runs of 64 word deltas, 65532 bytes, then a run of two with one there
+        for (0..508) |i| data[i * 129] = 0x40 | 63; // words, 64
+        data[508 * 129] = 0x40 | 1; // words, 2
+
+        var run: RunState = .{};
+        var count: usize = 0;
+        while (run.next(&data, 1.0)) |_| count += 1;
+        try t.expectEqual(508 * 64 + 1, count);
+    }
 };
 
 const PointAndDelta = struct {
@@ -1475,7 +1495,8 @@ fn outline_var_impl(
         const components_count = cc: {
             var components_iter = components;
             var count: u16 = 0;
-            while (components_iter.next()) |_| count += 1;
+            // [KupCAD] wrapping, as ttf-parser's `count() as u16`: 65536 components overflowed
+            while (components_iter.next()) |_| count +%= 1;
             break :cc count;
         };
 

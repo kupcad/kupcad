@@ -60,7 +60,8 @@ fn outline_points_impl(
         // Composite glyph.
         var components = CompositeGlyphIter.new(try s.tail());
         var count: u16 = 0;
-        while (components.next()) |_| count += 1;
+        // [KupCAD] wrapping, as ttf-parser's `count() as u16`: 65536 components overflowed
+        while (components.next()) |_| count +%= 1;
 
         return count;
     } else {

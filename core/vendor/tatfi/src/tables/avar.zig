@@ -100,18 +100,21 @@ fn map_value(
     value: i16,
 ) ?i16 {
     // This code is based on harfbuzz implementation.
+    //
+    // [KupCAD] computed in i32 and i64, a value past an i16 null: the i16 and i32
+    // arithmetic overflowed on the font's coordinates (in ttf-parser too)
 
     if (map.len() == 0)
         return value;
 
     if (map.len() == 1) {
         const record = map.get(0) orelse unreachable;
-        return value - record.from_coordinate + record.to_coordinate;
+        return std.math.cast(i16, @as(i32, value) - record.from_coordinate + record.to_coordinate);
     }
 
     const record_0 = map.get(0) orelse unreachable;
     if (value <= record_0.from_coordinate)
-        return value - record_0.from_coordinate + record_0.to_coordinate;
+        return std.math.cast(i16, @as(i32, value) - record_0.from_coordinate + record_0.to_coordinate);
 
     var i: u16 = 1;
     while (i < map.len() and value > map.get(i).?.from_coordinate) i += 1;
@@ -122,7 +125,7 @@ fn map_value(
     const curr_from = record_curr.from_coordinate;
     const curr_to = record_curr.to_coordinate;
     if (value >= curr_from)
-        return value - curr_from + curr_to;
+        return std.math.cast(i16, @as(i32, value) - curr_from + curr_to);
 
     const record_prev = map.get(i - 1) orelse unreachable; // map of size 2 or longet
     const prev_from = record_prev.from_coordinate;
@@ -130,10 +133,10 @@ fn map_value(
     if (prev_from == curr_from)
         return prev_to;
 
-    const denom = @as(i32, curr_from) - @as(i32, prev_from);
-    const k = (@as(i32, curr_to) - @as(i32, prev_to)) *
-        (@as(i32, value) - @as(i32, prev_from)) +
+    const denom = @as(i64, curr_from) - @as(i64, prev_from);
+    const k = (@as(i64, curr_to) - @as(i64, prev_to)) *
+        (@as(i64, value) - @as(i64, prev_from)) +
         @divFloor(denom, 2);
 
-    return std.math.cast(i16, @as(i32, prev_to) + @divFloor(k, denom));
+    return std.math.cast(i16, @as(i64, prev_to) + @divFloor(k, denom));
 }

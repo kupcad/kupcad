@@ -6,6 +6,7 @@ const t = std.testing;
 
 test {
     _ = @import("aat.zig");
+    _ = @import("avar.zig");
     _ = @import("ankr.zig");
     _ = @import("cblc.zig");
     _ = @import("cff1.zig");
@@ -23,6 +24,7 @@ test {
     _ = @import("os2.zig");
     _ = @import("sbix.zig");
     _ = @import("trak.zig");
+    _ = @import("var_store.zig");
 
     _ = @import("bitmap.zig");
 }
@@ -163,6 +165,92 @@ test "metrics past an i16" {
     try t.expectEqual(32767, face.vertical_height());
     try t.expectEqual(32767, face.global_bounding_box().width());
     try t.expectEqual(32767, face.global_bounding_box().height());
+}
+
+/// An HVAR or VVAR table of `maps` mappings, each but the first (advances, directly by glyph
+/// ID) mapping glyph 0 to an item whose delta is +1 in every region.
+fn metrics_variations(maps: u8) ![]u8 {
+    const ivs_offset: u32 = 8 + 4 * @as(u32, maps);
+    const map_offset = ivs_offset + 32;
+    var units: std.ArrayList(Unit) = .empty;
+    defer units.deinit(t.allocator);
+    try units.appendSlice(t.allocator, &.{
+        .{ .unt32 = 0x00010000 }, // version
+        .{ .unt32 = ivs_offset }, // item variation store offset
+        .{ .unt32 = 0 }, // advance mapping: none
+    });
+    for (1..maps) |_| try units.append(t.allocator, .{ .unt32 = map_offset });
+    try units.appendSlice(t.allocator, &.{
+        // Item variation store
+        .{ .unt16 = 1 }, // format
+        .{ .unt32 = 12 }, // offset to the region list
+        .{ .unt16 = 1 }, // number of item variation data
+        .{ .unt32 = 22 }, // offset to item variation data 0
+        // Region list: one axis, one region from 0 to 0, which every coordinate is in
+        .{ .unt16 = 1 },
+        .{ .unt16 = 1 },
+        .{ .int16 = 0 },
+        .{ .int16 = 0 },
+        .{ .int16 = 0 },
+        // Item variation data 0: one item of one word delta
+        .{ .unt16 = 1 }, // item count
+        .{ .unt16 = 1 }, // word delta count
+        .{ .unt16 = 1 }, // region index count
+        .{ .unt16 = 0 }, // region index 0
+        .{ .int16 = 1 }, // item 0's delta
+        // Delta set index map: glyph 0 to item 0
+        .{ .unt8 = 0 }, // format
+        .{ .unt8 = 0 }, // entry format
+        .{ .unt16 = 1 }, // map count
+        .{ .unt8 = 0 }, // entry 0
+    });
+    return convert(units.items);
+}
+
+test "variable metrics past their type" {
+    // [KupCAD] A metric from the font plus its variation's offset overflowed the u16 or i16
+    // they were added in; they add in f32, as ttf-parser does, and past the type are null.
+    const head = try head_table(.{ .x_min = 0, .y_min = 0, .x_max = 0, .y_max = 0 });
+    defer t.allocator.free(head);
+    const hhea = try hhea_table(800, -200);
+    defer t.allocator.free(hhea);
+    const hvar = try metrics_variations(3);
+    defer t.allocator.free(hvar);
+    const vvar = try metrics_variations(4);
+    defer t.allocator.free(vvar);
+    const fvar = try convert(&.{
+        .{ .unt32 = 0x00010000 }, // version
+        .{ .unt16 = 16 }, // offset to the axes
+        .{ .unt16 = 2 }, // reserved
+        .{ .unt16 = 1 }, // axis count
+        .{ .unt16 = 20 }, // axis size
+        .{ .unt16 = 0 }, // instance count
+        .{ .unt16 = 8 }, // instance size
+        .{ .raw = "wght" }, // axis 0
+        .{ .fixed = 0 }, // min
+        .{ .fixed = 0 }, // default
+        .{ .fixed = 1 }, // max
+        .{ .unt16 = 0 }, // flags
+        .{ .unt16 = 0 }, // name ID
+    });
+    defer t.allocator.free(fvar);
+    const metrics = [_]u8{ 0xFF, 0xFF, 0x7F, 0xFF }; // advance 65535, bearing 32767
+    const vorg = [_]u8{ 0, 1, 0, 0, 0x7F, 0xFF, 0, 0 }; // default origin 32767
+    const data = try font_of(&.{
+        .{ "HVAR", hvar },     .{ "VORG", &vorg },       .{ "VVAR", vvar },
+        .{ "fvar", fvar },     .{ "head", head },        .{ "hhea", hhea },
+        .{ "hmtx", &metrics }, .{ "maxp", &maxp_table }, .{ "vhea", hhea },
+        .{ "vmtx", &metrics },
+    });
+    defer t.allocator.free(data);
+
+    const face = try ttf.Face.parse(data, 0);
+    try t.expect(face.is_variable());
+    try t.expectEqual(null, face.glyph_hor_advance(t.allocator, .{0}));
+    try t.expectEqual(null, face.glyph_ver_advance(t.allocator, .{0}));
+    try t.expectEqual(null, face.glyph_hor_side_bearing(.{0}));
+    try t.expectEqual(null, face.glyph_ver_side_bearing(.{0}));
+    try t.expectEqual(null, face.glyph_y_origin(.{0}));
 }
 
 test "empty font" {

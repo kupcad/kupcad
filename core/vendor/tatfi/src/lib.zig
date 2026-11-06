@@ -973,25 +973,20 @@ pub const Face = struct {
         const t = self.tables.hmtx orelse return null;
         const advance_maybe = t.advance(glyph_id);
 
+        // [KupCAD] here and below, a metric and its variation's offset add in f32 and round
+        // once, as ttf-parser does: added in the metric's u16 or i16, they overflowed
         if (cfg.variable_fonts) if (self.is_variable()) {
-            var advance = advance_maybe orelse return null;
+            var advance: f32 = @floatFromInt(advance_maybe orelse return null);
 
             // Ignore variation offset when `hvar` is not set.
             if (self.tables.variable_fonts.hvar) |hvar| {
-                if (hvar.advance_offset(glyph_id, self.coords())) |offset| {
-                    // [ARS] bit of a hack re the TDOO in ttf_parser
-                    const offset_rounded = utils.f32_to_u16(@round(offset)) orelse
-                        return null;
-                    advance += offset_rounded;
-                }
+                if (hvar.advance_offset(glyph_id, self.coords())) |offset|
+                    advance += offset;
             } else if (self.glyph_phantom_points(gpa, glyph_id)) |points| {
-                // [ARS] bit of a hack re the TDOO in ttf_parser
-                const points_rounded = utils.f32_to_u16(@round(points.right.x)) orelse
-                    return null;
-                advance += points_rounded;
+                advance += points.right.x;
             }
 
-            return advance;
+            return utils.f32_to_u16(@round(advance));
         };
 
         return advance_maybe;
@@ -1008,22 +1003,18 @@ pub const Face = struct {
         glyph_id: GlyphId,
     ) ?u16 {
         const t = self.tables.vmtx orelse return null;
-        var advance = t.advance(glyph_id) orelse return null;
+        const advance = t.advance(glyph_id) orelse return null;
 
         if (cfg.variable_fonts) if (self.is_variable()) {
+            var advance_f: f32 = @floatFromInt(advance);
             // Ignore variation offset when `vvar` is not set.
             if (self.tables.variable_fonts.vvar) |vvar| {
-                if (vvar.advance_offset(glyph_id, self.coords())) |offset| {
-                    // [ARS] bit of a hack re the TDOO in ttf_parser
-                    const offset_rounded = utils.f32_to_u16(@round(offset)) orelse return null;
-                    advance += offset_rounded;
-                }
+                if (vvar.advance_offset(glyph_id, self.coords())) |offset|
+                    advance_f += offset;
             } else if (self.glyph_phantom_points(gpa, glyph_id)) |points| {
-                // [ARS] bit of a hack re the TDOO in ttf_parser
-                const points_rounded = utils.f32_to_u16(@round(points.bottom.x)) orelse
-                    return null;
-                advance += points_rounded;
+                advance_f += points.bottom.x;
             }
+            return utils.f32_to_u16(@round(advance_f));
         };
 
         return advance;
@@ -1037,16 +1028,12 @@ pub const Face = struct {
         glyph_id: GlyphId,
     ) ?i16 {
         const t = self.tables.hmtx orelse return null;
-        var bearing = t.side_bearing(glyph_id) orelse return null;
+        const bearing = t.side_bearing(glyph_id) orelse return null;
 
         if (cfg.variable_fonts) if (self.is_variable()) {
             if (self.tables.variable_fonts.hvar) |hvar| if (hvar
                 .left_side_bearing_offset(glyph_id, self.coords())) |offset|
-            {
-                // [ARS] bit of a hack re the TDOO in ttf_parser
-                const offset_rounded = utils.f32_to_i16(@round(offset)) orelse return null;
-                bearing += offset_rounded;
-            };
+                return utils.f32_to_i16(@round(@as(f32, @floatFromInt(bearing)) + offset));
         };
 
         return bearing;
@@ -1060,16 +1047,12 @@ pub const Face = struct {
         glyph_id: GlyphId,
     ) ?i16 {
         const t = self.tables.vmtx orelse return null;
-        var bearing = t.side_bearing(glyph_id) orelse return null;
+        const bearing = t.side_bearing(glyph_id) orelse return null;
 
         if (cfg.variable_fonts) if (self.is_variable()) {
             if (self.tables.variable_fonts.vvar) |vvar| if (vvar
                 .top_side_bearing_offset(glyph_id, self.coords())) |offset|
-            {
-                // [ARS] bit of a hack re the TDOO in ttf_parser
-                const offset_rounded = utils.f32_to_i16(@round(offset)) orelse return null;
-                bearing += offset_rounded;
-            };
+                return utils.f32_to_i16(@round(@as(f32, @floatFromInt(bearing)) + offset));
         };
 
         return bearing;
@@ -1084,16 +1067,12 @@ pub const Face = struct {
         glyph_id: GlyphId,
     ) ?i16 {
         const t = self.tables.vorg orelse return null;
-        var origin = t.glyph_y_origin(glyph_id);
+        const origin = t.glyph_y_origin(glyph_id);
 
         if (cfg.variable_fonts) if (self.is_variable()) {
             if (self.tables.variable_fonts.vvar) |vvar| if (vvar
                 .vertical_origin_offset(glyph_id, self.coords())) |offset|
-            {
-                // [ARS] bit of a hack re the TDOO in ttf_parser
-                const offset_rounded = utils.f32_to_i16(@round(offset)) orelse return null;
-                origin += offset_rounded;
-            };
+                return utils.f32_to_i16(@round(@as(f32, @floatFromInt(origin)) + offset));
         };
 
         return origin;

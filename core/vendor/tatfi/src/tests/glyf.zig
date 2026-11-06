@@ -46,3 +46,20 @@ test "a flag repeated 255 times" {
     while (points.next()) |_| count += 1;
     try t.expectEqual(300, count);
 }
+
+test "the points of a composite glyph of 65536 components" {
+    // [KupCAD] Counting the components overflowed their u16 count; it wraps, as
+    // ttf-parser's `as u16` does.
+    var glyph: std.ArrayList(u8) = .empty;
+    defer glyph.deinit(t.allocator);
+    try glyph.appendSlice(t.allocator, &[_]u8{ 0xFF, 0xFF } ++ @as([8]u8, @splat(0))); // composite, bbox
+    // Each of glyph 1, no arguments; all but the last say more follow
+    for (0..0x10000) |i| try glyph.appendSlice(t.allocator, &.{ 0, if (i < 0xFFFF) 0x20 else 0, 0, 1 });
+
+    var loca_data: [8]u8 = undefined;
+    std.mem.writeInt(u32, loca_data[0..4], 0, .big);
+    std.mem.writeInt(u32, loca_data[4..8], @intCast(glyph.items.len), .big);
+    const loca_table = try ttf.tables.loca.Table.parse(1, .long, &loca_data);
+    const glyf_table = ttf.tables.glyf.parse(loca_table, glyph.items);
+    try t.expectEqual(0, glyf_table.outline_points(.{0}));
+}

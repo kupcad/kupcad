@@ -93,6 +93,29 @@ tests couldn't run in KupCAD's target and mode.
 - `src/delta_set.zig`: a DeltaSetIndexMap entry's offset is computed in `usize`, as ttf-parser
   does; the `u32` index times the entry size overflowed. `src/tests/colr.zig` has "a var index
   map entry past a u32".
+- `src/tables/gvar.zig`, `src/var_store.zig`: a region's scalar subtracts its start, peak and
+  end in `i32`; in the font's `i16`s a region from -32768 to 0 overflowed (in ttf-parser too).
+  `src/tests/gvar.zig` has "an intermediate region from -32768 to 0", `src/tests/var_store.zig`
+  "a region from -32768 to 0".
+- `src/tables/gvar.zig`: packed deltas move their `u16` offset past a delta once it's read;
+  moved first, it overflowed past the last of 65535 bytes (in ttf-parser too). The in-file
+  test "a delta past the last of 65535 bytes" checks it.
+- `src/tables/gvar.zig`, `src/tables/glyf.zig`: a composite glyph's count of components wraps,
+  as ttf-parser's `count() as u16` does; 65536 components overflowed it. `src/tests/gvar.zig`
+  has "a composite glyph of 65536 components", `src/tests/glyf.zig` "the points of a
+  composite glyph of 65536 components".
+- `src/var_store.zig`: a delta set's length is computed in `usize` and a region's record index
+  in `u32` (an index past a `u16` has no region); in `u16`s they overflowed (in ttf-parser
+  too). `src/tests/var_store.zig` has "a delta set past a u16" and "a region index past a
+  u16".
+- `src/tables/avar.zig`: an axis value is mapped in `i32`, and interpolated in `i64`, a value
+  past an `i16` being a map error as an interpolated one was; the `i16` and `i32` arithmetic
+  overflowed (in ttf-parser too). `src/tests/avar.zig` has "an axis map past an i16" and "an
+  axis map interpolated past an i32".
+- `src/lib.zig`: a glyph's advance, side bearing or vertical origin and its variation's offset
+  add in `f32`, rounded once and null past the metric's type, as ttf-parser does; they were
+  added in the metric's `u16` or `i16`, which overflowed (and a negative offset gave null).
+  `src/tests/main.zig` has "variable metrics past their type".
 
 ## Updating
 

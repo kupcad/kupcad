@@ -70,7 +70,8 @@ pub fn parse_delta(
     // From the spec: The length of the data for each row, in bytes, is
     // regionIndexCount + (wordDeltaCount & WORD_DELTA_COUNT_MASK)
     // if the LONG_WORDS flag is not set, or 2 x that amount if the flag is set.
-    var delta_set_len = word_delta_count + region_index_count;
+    // [KupCAD] in usize: the u16s from the font overflowed (in ttf-parser too)
+    var delta_set_len: usize = @as(usize, word_delta_count) + region_index_count;
     if (has_long_words) delta_set_len *= 2;
 
     const advnacement = try std.math.mul(usize, inner_index, delta_set_len);
@@ -116,7 +117,9 @@ pub const VariationRegionList = struct {
         var v: f32 = 1.0;
 
         for (coordinates, 0..) |coord, i| {
-            const true_index: u16 = index * self.axis_count + @as(u16, @truncate(i));
+            // [KupCAD] in u32: the u16s from the font overflowed (in ttf-parser too); an
+            // index past a u16 has no region
+            const true_index = std.math.cast(u16, @as(u32, index) * self.axis_count + i) orelse return 0.0;
             const region = self.regions.get(true_index) orelse return 0.0;
 
             const factor = region.evaluate_axis(coord.inner);
@@ -154,13 +157,14 @@ const RegionAxisCoordinatesRecord = struct {
         if (coord <= start or end <= coord)
             return 0.0;
 
+        // [KupCAD] in i32: the i16s from the font overflowed (in ttf-parser too)
         if (coord < peak) {
-            const top: f32 = @floatFromInt(coord - start);
-            const bot: f32 = @floatFromInt(peak - start);
+            const top: f32 = @floatFromInt(@as(i32, coord) - start);
+            const bot: f32 = @floatFromInt(@as(i32, peak) - start);
             return top / bot;
         } else {
-            const top: f32 = @floatFromInt(end - coord);
-            const bot: f32 = @floatFromInt(end - peak);
+            const top: f32 = @floatFromInt(@as(i32, end) - coord);
+            const bot: f32 = @floatFromInt(@as(i32, end) - peak);
             return top / bot;
         }
     }
