@@ -125,21 +125,20 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
 }
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons) and their booleans, their extrusions (no twist or taper) and
+/// (square, circle, polygon, even-odd polygons), their booleans and offsets, their extrusions (no twist or taper) and
 /// revolutions (of a sketch on one side of the axis), their volume, area, genus and box
 /// (a sketch's area and box too), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
 /// export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset => true,
         .boolean,
         .loft,
         .sketch_hull,
         .curved_hull,
         .extrude_twist,
         .extrude_scale,
-        .offset,
         .minkowski,
         .trim_by_plane,
         .slice,
@@ -427,13 +426,26 @@ fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.Cro
     return null;
 }
 
+/// The sketch grown or shrunk by `delta`, its corners joined as `join_type` says (the
+/// kernel's codes: 0 square, 1 round, 2 miter, 3 bevel); round joins are exact arcs, so
+/// `segments` is the mesh engine's.
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
-    _ = cs;
-    _ = delta;
-    _ = join_type;
     _ = segments;
-    _ = miter_limit;
-    return null;
+    const src = solidOf(cs.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const join: locus.sketch.offset.Join = switch (join_type) {
+        0 => .square,
+        2 => .miter,
+        3 => .bevel,
+        else => .round,
+    };
+    const body = locus.sketch.offset.offset(backend_allocator, &src.body, delta, join, miter_limit, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, src.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {

@@ -58,6 +58,11 @@ const SHAPES = [_][]const u8{
     "(square(4, center: true) & circle(r: 3, segments: 64)).extrude(1)",
     "(square(10) - square(2, 20).translate(4, -5)).extrude(1)",
     "(square(10) - circle(r: 2, segments: 64).translate(5, 5)).extrude(3)",
+    // Offsets (M2), extruded: grown round (arcs at the corners), grown mitered, shrunk
+    "square(10).offset(2).extrude(1)",
+    "square(10).offset(2, join: :miter).extrude(1)",
+    "square(10).offset(-2).extrude(1)",
+    "(square(10) - circle(r: 2, segments: 64).translate(5, 5)).offset(1).extrude(1)",
     // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
     // every quarter turn, where the extremes are (segments a multiple of 4)
     "square(4).revolve(segments: 64)",
@@ -154,10 +159,12 @@ test "parity: a STEP export's vertices and circles bound what the kernel bounds,
 /// Null for a curved shape at the mesh engine's default resolution, which depends on the
 /// size and is no bound this test can state.
 fn volumeBound(source: []const u8) ?f64 {
-    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve" }) |word| {
+    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve", "offset(" }) |word| {
         if (std.mem.indexOf(u8, source, word) != null) break true;
     } else false;
     if (!curved) return 1e-9;
+    // A round offset's arcs have the mesh engine's default segments, few at this size
+    if (std.mem.indexOf(u8, source, "offset(") != null) return if (std.mem.indexOf(u8, source, "circle") != null) null else 2e-2;
     return if (std.mem.indexOf(u8, source, "segments: 64") != null) 1e-2 else null;
 }
 

@@ -2354,12 +2354,12 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = "no error" }, // was 16-sided whatever the resolution; exact since M1
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
-        .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = "no error" }, // exact since M2
         .{ .src = comptime rescued("square(10).hull.extrude(1).simplify"), .expected = brepLacks(.sketch_hull) },
         .{ .src = comptime rescued("cube(10).offset(-1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).round_edges(1).simplify"), .expected = brepLacks(.minkowski) },
-        .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = "no error" }, // an offset and a difference, exact since M2
         .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.sketch_contours) }, // a sweep reads the profile's outline to place it
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere

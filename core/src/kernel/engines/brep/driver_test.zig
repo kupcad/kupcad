@@ -129,6 +129,21 @@ test "Driver: sketch booleans are exact, two at a time and in a batch" {
     try std.testing.expect(driver.supports(.sketch_boolean));
 }
 
+test "Driver: a sketch's offset is exact, its round joins arcs" {
+    const sq = driver.driver.squareFn(&TEST_CONFIG, 4, 4, false) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const round = driver.driver.offsetFn(sq, 1, 1, 8, 2) orelse return error.OffsetFailed;
+    defer driver.driver.destructCrossSectionFn(round);
+    try std.testing.expectApproxEqRel(16 + 16 + std.math.pi, driver.driver.crossSectionAreaFn(round), 1e-9);
+    const miter = driver.driver.offsetFn(sq, 1, 2, 8, 2) orelse return error.OffsetFailed;
+    defer driver.driver.destructCrossSectionFn(miter);
+    try std.testing.expectApproxEqRel(@as(f64, 36), driver.driver.crossSectionAreaFn(miter), 1e-9);
+    const shrunk = driver.driver.offsetFn(sq, -1, 1, 8, 2) orelse return error.OffsetFailed;
+    defer driver.driver.destructCrossSectionFn(shrunk);
+    try std.testing.expectApproxEqRel(@as(f64, 4), driver.driver.crossSectionAreaFn(shrunk), 1e-9);
+    try std.testing.expect(driver.supports(.offset));
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);
@@ -295,7 +310,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructCrossSectionFn(sq);
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);
-    try std.testing.expect(driver.driver.offsetFn(sq, 1, 0, 8, 2) == null);
     try std.testing.expect(driver.driver.crossSectionContoursFn(sq, std.testing.allocator) == null);
     try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
     try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
