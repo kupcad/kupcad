@@ -31,6 +31,17 @@ pub const geometry = struct {
     pub const arena = @import("geometry/arena.zig");
     pub const Geometry = arena.Geometry;
 };
+/// The topology: the entities, the body, its traversals, the Euler operators, the
+/// checker and the tags.
+pub const topology = struct {
+    pub const types = @import("topology/types.zig");
+    pub const body = @import("topology/body.zig");
+    pub const Body = body.Body;
+    pub const traverse = @import("topology/traverse.zig");
+    pub const tags = @import("topology/tags.zig");
+    pub const euler = @import("topology/euler.zig");
+    pub const check = @import("topology/check.zig");
+};
 /// Spatial structures: the welding grid, interning over an arena, the BVH.
 pub const spatial = struct {
     pub const grid = @import("spatial/grid.zig");
@@ -89,6 +100,9 @@ test {
     _ = @import("geometry/surfaces_test.zig");
     _ = @import("spatial/intern_test.zig");
     _ = @import("geometry/transform_test.zig");
+    _ = @import("topology/body_test.zig");
+    _ = @import("topology/euler_test.zig");
+    _ = @import("topology/check_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");

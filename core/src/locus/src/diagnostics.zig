@@ -39,6 +39,7 @@ pub const Error = error{
 /// What a finding is about.
 pub const EntityKind = enum(u8) { none, vertex, edge, coedge, loop, face, shell, body, curve, surface, argument };
 
+/// The checker's structural failures are `error.NotValid` with the finding.
 pub const EntityRef = struct {
     kind: EntityKind = .none,
     index: u32 = 0,
@@ -63,6 +64,37 @@ pub const Code = enum(u16) {
     too_large_for_tolerance,
     limit_exceeded,
     not_implemented,
+    // The checker's structural rules (topology/check.zig, §9.1)
+    index_out_of_range,
+    next_prev_not_reciprocal,
+    partner_not_reciprocal,
+    partner_same_sense,
+    loop_not_connected,
+    loop_not_closed,
+    loop_empty,
+    coedge_loop_disagrees,
+    edge_coedge_count,
+    degenerate_edge_vertices,
+    edge_range_reversed,
+    vertex_coedge_not_leaving,
+    shell_list_not_closed,
+    face_shell_disagrees,
+    loop_face_disagrees,
+    face_without_loop,
+    face_shell_count,
+    euler_poincare,
+    // Orientation
+    open_edge_in_closed_shell,
+    // Geometric
+    vertex_off_curve,
+    degenerate_edge_not_point,
+    edge_too_short,
+    gap_order,
+    gap_too_large,
+    edge_off_surface,
+    pcurve_off_edge,
+    uv_box_outside_domain,
+    uv_box_wraps,
 
     pub fn describe(self: Code) []const u8 {
         return switch (self) {
@@ -74,6 +106,34 @@ pub const Code = enum(u16) {
             .too_large_for_tolerance => "is too large for the tolerance: zone must be at least the extent times 1e-12",
             .limit_exceeded => "went past a limit",
             .not_implemented => "is not implemented yet",
+            .index_out_of_range => "refers to an entity that is not there",
+            .next_prev_not_reciprocal => "has a next whose prev is another",
+            .partner_not_reciprocal => "has a partner that is not its own, or on another edge",
+            .partner_same_sense => "runs the same way as its partner",
+            .loop_not_connected => "ends where the next coedge does not start",
+            .loop_not_closed => "does not close",
+            .loop_empty => "has neither coedges nor a vertex",
+            .coedge_loop_disagrees => "names a loop it is not in",
+            .edge_coedge_count => "has not one or two coedges",
+            .degenerate_edge_vertices => "is degenerate without start == end, or the reverse",
+            .edge_range_reversed => "has its range the wrong way round",
+            .vertex_coedge_not_leaving => "names a coedge that does not leave it",
+            .shell_list_not_closed => "has a list of shells or faces that does not end",
+            .face_shell_disagrees => "names a shell it is not in",
+            .loop_face_disagrees => "names a face it is not in",
+            .face_without_loop => "has no loop",
+            .face_shell_count => "is in another number of shells than one",
+            .euler_poincare => "fails Euler–Poincaré: V − E + F − (L − F) is not 2(1 − G) for a whole G ≥ 0",
+            .open_edge_in_closed_shell => "has one coedge in a closed shell",
+            .vertex_off_curve => "has a vertex off its curve's end",
+            .degenerate_edge_not_point => "is degenerate but not a point",
+            .edge_too_short => "is shorter than the minimum feature size",
+            .gap_order => "has a gap larger than its vertex's",
+            .gap_too_large => "has a gap past the zone",
+            .edge_off_surface => "does not lie on a face's surface",
+            .pcurve_off_edge => "has a pcurve that does not lift onto its edge",
+            .uv_box_outside_domain => "has a UV box outside its surface's domain",
+            .uv_box_wraps => "has a UV box wider than its surface's period",
         };
     }
 };
