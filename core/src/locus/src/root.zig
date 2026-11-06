@@ -26,6 +26,14 @@ pub const geometry = struct {
     pub const pcurves = @import("geometry/pcurves.zig");
     pub const surfaces = @import("geometry/surfaces.zig");
     pub const nurbs = @import("geometry/nurbs.zig");
+    pub const canonical = @import("geometry/canonical.zig");
+    pub const arena = @import("geometry/arena.zig");
+    pub const Geometry = arena.Geometry;
+};
+/// Spatial structures: the welding grid, interning over an arena, the BVH.
+pub const spatial = struct {
+    pub const grid = @import("spatial/grid.zig");
+    pub const intern = @import("spatial/intern.zig");
 };
 
 /// The first model (September 2026), which the driver still runs on: typed indices over two
@@ -78,6 +86,7 @@ test {
     _ = @import("geometry/curves_test.zig");
     _ = @import("geometry/nurbs_test.zig");
     _ = @import("geometry/surfaces_test.zig");
+    _ = @import("spatial/intern_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");

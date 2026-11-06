@@ -7,6 +7,8 @@ const std = @import("std");
 const locus = @import("locus");
 
 comptime {
+    // The walk over every declaration is long for the compiler's default budget
+    @setEvalBranchQuota(1_000_000);
     for (std.meta.declarations(locus)) |name| {
         if (!std.mem.eql(u8, name, "legacy")) refAll(@field(locus, name));
     }
