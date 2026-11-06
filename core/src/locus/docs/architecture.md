@@ -155,7 +155,7 @@ Each principle is a rule the code is held to, not a slogan.
 
 ## 4. Package layout and dependencies
 
-Locus becomes a Zig package with its own `build.zig` and `build.zig.zon`, kept as
+Locus is a Zig package with its own `build.zig` and `build.zig.zon`, kept as
 `core/src/locus/` inside the KupCAD monorepo for now (one checkout, one CI, one place to
 keep the adapter in sync) and consumed by `core/build.zig` as a path dependency
 (`b.dependency("locus", .{})`). Extraction to its own repository is planned for later and
@@ -169,6 +169,15 @@ symmetric 3×3 is ~60 lines); the exact predicates are a Zig port of Shewchuk's 
 `orient2d`/`incircle`/`orient3d`; `parallelFor` becomes a `Parallel` interface the host
 implements (KupCAD's with oneTBB, the default serial). Removing Eigen and TBB from Locus
 is what makes it buildable alone and for WebAssembly without flags.
+
+C or C++ is not banned (Leo, 2026-11-06): a library may be linked when all three hold —
+it gives the codebase more than writing the piece in Zig would, it costs nothing in
+portability (KupCAD runs as a CLI, as a library and as WebAssembly, and Locus with it), and
+it closes no door for the kernel's future. None of M0's pieces meets the first test: the
+numerics are a few hundred lines, the exact predicates exist in no library we could link,
+and threads are the host's to supply. A library that does meet all three is added as a
+decision in §11 with the reasons, and stays behind the host (as oneTBB does, through
+`Parallel`) wherever it is not pure in wasm.
 
 **Targets**: native (Linux, macOS, Windows) and `wasm32` (KupCAD's browser and desktop
 builds carry the B-Rep engine, STEP export included). On wasm there is no threading and

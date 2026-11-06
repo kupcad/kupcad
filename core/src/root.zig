@@ -7,7 +7,7 @@ pub const version = @import("version.zig");
 pub const vm = @import("vm/vm.zig");
 pub const chunk = @import("vm/chunk.zig");
 pub const value = @import("core/value.zig");
-pub const locus = @import("locus/src/root.zig");
+pub const locus = @import("locus");
 pub const manifest = @import("stdlib/manifest.zig");
 /// For the WebAssembly tests (wasm_test.zig), which run scripts through this module.
 pub const test_support = @import("test_support.zig");
@@ -226,7 +226,4 @@ test {
     _ = @import("vm/vm_strings_test.zig");
     _ = @import("vm/vm_collections_test.zig");
     _ = @import("vm/vm_syntax_test.zig");
-
-    // locus
-    _ = @import("locus/src/root.zig");
 }

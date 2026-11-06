@@ -1,6 +1,7 @@
 //! Every `*_test.zig` under src/ runs: each must be imported by root.zig (the module's test
 //! block) or main.zig (the executable's, for tests that need its dependencies), Locus's by
-//! its own root (which root.zig imports), or be a test root of its own. Two files sat
+//! its own root (the `locus` package's, whose tests the build runs on their own), or be a
+//! test root of its own. Two files sat
 //! unregistered for months (the formatter's stability check and the visitor's tests),
 //! passing by never running.
 
@@ -11,7 +12,7 @@ const CORE_DIR = @import("test_paths").core_dir;
 
 /// Test roots the build runs on their own.
 const OWN_ROOTS = [_][]const u8{ "main_test.zig", "wasm_test.zig", "cli_process_test.zig", "capi_test.zig" };
-/// Locus's tree, whose test files its root imports by paths from there.
+/// Locus's tree (the `locus` package), whose test files its root imports by paths from there.
 const LOCUS_TREE = "locus/src/";
 
 /// The sources of `registries` (paths from the build root), one after another.

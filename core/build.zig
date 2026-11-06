@@ -211,8 +211,6 @@ const draco_sources = &[_][]const u8{
 const kupcad_bindings = &[_][]const u8{
     "src/bindings/manifold_c.cpp",
     "src/bindings/draco_c.cpp",
-    "src/locus/src/bindings/eigen_c.cpp",
-    "src/locus/src/bindings/parallel_c.cpp",
 };
 
 /// The tables tatfi reads besides the required ones, its build options (vendor/tatfi/build.zig).
@@ -301,8 +299,13 @@ pub fn build(b: *std.Build) void {
     const harfbuzz_mod = b.createModule(.{ .root_source_file = b.path("src/bindings/harfbuzz.zig"), .target = active_target, .optimize = optimize });
     const sheenbidi_mod = b.createModule(.{ .root_source_file = b.path("src/bindings/sheenbidi.zig"), .target = active_target, .optimize = optimize });
 
+    // Locus, the B-Rep kernel: a package of its own (src/locus/build.zig), pure Zig, built in
+    // this build's target and mode; its tests run in the `test` step below.
+    const locus = b.dependency("locus", .{ .target = active_target, .optimize = optimize });
+
     // --- list all deps ---
     const module_imports: []const std.Build.Module.Import = &.{
+        .{ .name = "locus", .module = locus.module("locus") },
         .{ .name = "tatfi", .module = tatfi_mod },
         .{ .name = "harfbuzz", .module = harfbuzz_mod },
         .{ .name = "sheenbidi", .module = sheenbidi_mod },
@@ -375,7 +378,6 @@ pub fn build(b: *std.Build) void {
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
     native_mod.addIncludePath(b.path("vendor/draco/src"));
-    native_mod.addIncludePath(b.path("vendor/eigen"));
     native_mod.addIncludePath(b.path("vendor/sqlite"));
     native_mod.addIncludePath(b.path("src/bindings"));
     native_mod.addIncludePath(b.path("src"));
@@ -453,10 +455,9 @@ pub fn build(b: *std.Build) void {
         .flags = vendoredFlags(b, optimize, &.{"-DSB_CONFIG_UNITY"}),
     });
 
-    // oneTBB is built in: KUPCAD_TBB lets kupcad_set_max_threads cap its threads, and
-    // LOCUS_TBB runs Locus's parallel_for on them.
+    // oneTBB is built in: KUPCAD_TBB lets kupcad_set_max_threads cap its threads.
     const kupcad_flags: []const []const u8 = vendoredFlags(b, optimize, if (enable_parallel and !is_wasm)
-        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1", "-DLOCUS_TBB=1" }
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1" }
     else
         &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 
@@ -684,6 +685,13 @@ pub fn build(b: *std.Build) void {
         });
         const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
 
+        // Locus's own tests: a dependency's tests aren't among its importer's.
+        const locus_tests = b.addTest(.{
+            .root_module = locus.module("locus"),
+            .filters = test_filters,
+        });
+        const run_locus_tests = b.addRunArtifact(locus_tests);
+
         // The C API's tests call it through include/kupcad.h, translated: a header that says
         // other than the exports do fails to compile, or fails them
         const capi_header = b.addTranslateC(.{
@@ -708,7 +716,7 @@ pub fn build(b: *std.Build) void {
         const run_capi_tests = b.addRunArtifact(capi_tests);
 
         const test_step = b.step("test", "Run tests");
-        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests, run_capi_tests }) |run| {
+        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests, run_locus_tests, run_capi_tests }) |run| {
             test_step.dependOn(&run.step);
         }
 

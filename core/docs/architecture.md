@@ -29,11 +29,11 @@ Each directory of `src/` is a layer, and imports only the layers below it. `src/
 
 | Directory | What it holds | May import, besides itself |
 |---|---|---|
-| `core/` | What every layer shares, and the passes over it that need nothing else: values (`value.zig`), the AST, tokens and what reads as a name (`identifier.zig`), the resolver and the parent map, the geometry handles, engine settings, limits, errors, materials, paths and curves (Béziers, B-splines), placements and the vector math. | Locus's math types |
+| `core/` | What every layer shares, and the passes over it that need nothing else: values (`value.zig`), the AST, tokens and what reads as a name (`identifier.zig`), the resolver and the parent map, the geometry handles, engine settings, limits, errors, materials, paths and curves (Béziers, B-splines), placements and the vector math. | the `locus` module's `Resolution` |
 | `frontend/` | Source to a parsed `Document`: the lexer, the parser, `Document`, and `Workspace` (a session's modules). | `core/` |
 | `vfs/` | The file systems a VM and the package manager read and write through: the disk, memory, the language server's read-only layers, and `Vfs.none`. | `core/` |
 | `bindings/` | The C interfaces of Manifold, Draco, HarfBuzz and SheenBidi. | `core/` |
-| `kernel/` | The geometry engines behind one interface (`kernel.zig`): the Manifold driver and the B-Rep driver over Locus. | `core/`, `bindings/`, `locus/` |
+| `kernel/` | The geometry engines behind one interface (`kernel.zig`): the Manifold driver and the B-Rep driver over Locus. | `core/`, `bindings/`, the `locus` module |
 | `vm/` | Running bytecode: the VM, the GC, chunks and their verifier, the geometry graph (`dag.zig`) with its evaluator and verifier, the profiler. | `core/`, `kernel/`, `vfs/` |
 | `compiler/` | A Document to bytecode. | `core/`, `frontend/`, `vm/`, `stdlib/manifest.zig` (the intrinsics) |
 | `stdlib/` | The built-ins: the manifest, the classes, the methods, the primitives, parameters, JSON, and files read and written. | `core/`, `vm/`, `kernel/`, `compiler/`, `exporters/` |
@@ -44,7 +44,7 @@ Each directory of `src/` is a layer, and imports only the layers below it. `src/
 | `session/` | Incremental evaluation (`ScriptSession`), the watcher and the exports fingerprint. | `core/`, `frontend/`, `compiler/`, `vm/`, `kernel/`, `stdlib/`, `vfs/`, `api.zig` |
 | `cli/` | The `kupcad` commands, the language server with its viewport's WebSocket server, and the terminal debugger. | anything |
 | `api.zig`, `wasm.zig`, `main.zig` | The embedding API, the browser's exports, the executable. | anything |
-| `locus/` | The B-Rep kernel, a library of its own. | — |
+| `locus/` | The B-Rep kernel: a Zig package of its own (`build.zig`, `build.zig.zon`), which the build consumes as the `locus` module; pure Zig. | — |
 
 ---
 
@@ -535,7 +535,7 @@ A drawing is read back line by line: an SVG's paths' points and ids, a DXF's gro
 
 ## 18. Determinism
 
-`src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus's `parallel_for` (`locus/src/bindings/parallel_c.cpp`) runs serially in every build: it parallelizes only under `MANIFOLD_PAR == 1`, which the bindings aren't compiled with.
+`src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus runs on the calling thread alone: its `parallelFor` is serial until its `Parallel` interface lands (`locus/docs/architecture.md` §4), which this driver will implement over oneTBB.
 
 ## 19. Geometry Invariants
 

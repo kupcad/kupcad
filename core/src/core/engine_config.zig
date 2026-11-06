@@ -19,7 +19,7 @@ pub const ANGULAR_TOLERANCE: f64 = 1e-4;
 
 /// How finely curves are cut into straight edges. Defined in Locus, which can't import
 /// KupCAD, so that its tessellator and the mesh engine follow one rule.
-pub const Resolution = @import("../locus/src/math_env.zig").Resolution;
+pub const Resolution = @import("locus").math_env.Resolution;
 
 /// Settings only the mesh engine (Manifold) has.
 pub const ManifoldConfig = struct {

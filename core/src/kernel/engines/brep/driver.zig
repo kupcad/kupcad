@@ -8,28 +8,29 @@ const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
 const path = @import("../../../core/path.zig");
 
-// --- DoD Locus Native B-Rep Library Imports ---
-const locus_math = @import("../../../locus/src/math.zig");
-const locus_env = @import("../../../locus/src/math_env.zig");
-const locus_topo_types = @import("../../../locus/src/topology/types.zig");
-const locus_topo_arena = @import("../../../locus/src/topology/arena.zig");
-const locus_geom_arena = @import("../../../locus/src/geometry/arena.zig");
+// --- Locus, the B-Rep kernel (the `locus` package, src/locus) ---
+const locus = @import("locus");
+const locus_math = locus.math;
+const locus_env = locus.math_env;
+const locus_topo_types = locus.topology.types;
+const locus_topo_arena = locus.topology.arena;
+const locus_geom_arena = locus.geometry.arena;
 
 // --- Locus Operations ---
-const locus_gen = @import("../../../locus/src/operations/generators.zig");
-const locus_sweeps = @import("../../../locus/src/operations/sweeps.zig");
-const locus_trans = @import("../../../locus/src/operations/transforms.zig");
-const locus_tess = @import("../../../locus/src/operations/tessellate.zig");
-const locus_mink = @import("../../../locus/src/operations/minkowski.zig");
-const locus_bool = @import("../../../locus/src/operations/booleans.zig");
-const locus_bool2d = @import("../../../locus/src/operations/booleans_2d.zig");
-const locus_slicing = @import("../../../locus/src/operations/slicing.zig");
-const locus_qh = @import("../../../locus/src/operations/quickhull.zig");
-const locus_prop = @import("../../../locus/src/operations/properties.zig");
-const locus_insp = @import("../../../locus/src/operations/inspection.zig");
-const locus_proj = @import("../../../locus/src/operations/projections.zig");
-const locus_query = @import("../../../locus/src/operations/queries.zig");
-const locus_step = @import("../../../locus/src/operations/step_export.zig");
+const locus_gen = locus.operations.generators;
+const locus_sweeps = locus.operations.sweeps;
+const locus_trans = locus.operations.transforms;
+const locus_tess = locus.operations.tessellate;
+const locus_mink = locus.operations.minkowski;
+const locus_bool = locus.operations.booleans;
+const locus_bool2d = locus.operations.booleans_2d;
+const locus_slicing = locus.operations.slicing;
+const locus_qh = locus.operations.quickhull;
+const locus_prop = locus.operations.properties;
+const locus_insp = locus.operations.inspection;
+const locus_proj = locus.operations.projections;
+const locus_query = locus.operations.queries;
+const locus_step = locus.operations.step_export;
 
 /// What Locus allocates its working data and solids with. The driver interface carries no
 /// allocator (Locus is unfinished), so this is libc's general-purpose allocator: it was

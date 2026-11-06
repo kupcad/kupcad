@@ -237,7 +237,7 @@ test "BRep Driver: solids keep the tolerance they were built under, and pass it 
 test "BRep Driver: a mesh copy leaves nothing allocated when an allocation fails" {
     // getMesh leaked the vertices when allocating the triangles failed. (Locus tessellates
     // its solids to empty meshes for now, so the copy is tested on a mesh built here.)
-    const locus_tess = @import("../../../locus/src/operations/tessellate.zig");
+    const locus_tess = @import("locus").operations.tessellate;
     var mesh = locus_tess.Mesh{};
     defer mesh.deinit(std.testing.allocator);
     try mesh.vertices.appendSlice(std.testing.allocator, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } });
@@ -270,11 +270,4 @@ test "BRep Driver: a clone is the same solid, curved surfaces included" {
     const copy_step = try driver.exportStep(std.testing.allocator, &.{copy});
     defer std.testing.allocator.free(copy_step);
     try std.testing.expectEqualStrings(original_step, copy_step);
-}
-
-test "Driver: Locus's parallel loop runs on oneTBB whenever the build has it" {
-    // parallel_for tested a flag only Manifold's sources were compiled with, so Locus ran
-    // every parallel loop on one thread although oneTBB was linked in.
-    const locus = @import("../../../locus/src/root.zig");
-    try std.testing.expectEqual(@import("build_info").tbb, locus.parallel.spreadsOverThreads());
 }

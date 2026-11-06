@@ -1,0 +1,15 @@
+.{
+    .name = .locus,
+    .version = "0.0.1",
+    // Changing this has security and trust implications.
+    .fingerprint = 0x28705248ee8398db,
+    .minimum_zig_version = "0.17.0",
+    // Pure Zig: `std` alone (docs/architecture.md §4, D4).
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "docs",
+    },
+}

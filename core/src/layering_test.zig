@@ -13,11 +13,11 @@ const testing = std.testing;
 const Rule = struct { path: []const u8, may_import: []const []const u8 };
 
 const RULES = [_]Rule{
-    .{ .path = "core/", .may_import = &.{ "core/", "locus/" } },
+    .{ .path = "core/", .may_import = &.{"core/"} },
     .{ .path = "frontend/", .may_import = &.{ "frontend/", "core/" } },
     .{ .path = "vfs/", .may_import = &.{ "vfs/", "core/" } },
     .{ .path = "bindings/", .may_import = &.{ "bindings/", "core/" } },
-    .{ .path = "kernel/", .may_import = &.{ "kernel/", "core/", "bindings/", "locus/" } },
+    .{ .path = "kernel/", .may_import = &.{ "kernel/", "core/", "bindings/" } },
     .{ .path = "vm/", .may_import = &.{ "vm/", "core/", "kernel/", "vfs/" } },
     .{ .path = "compiler/", .may_import = &.{ "compiler/", "core/", "frontend/", "vm/", "stdlib/manifest.zig" } },
     .{ .path = "stdlib/", .may_import = &.{ "stdlib/", "core/", "vm/", "kernel/", "compiler/", "exporters/" } },
