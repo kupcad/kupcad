@@ -33,3 +33,15 @@ test "vec: homogeneous points weigh and project back" {
     try testing.expectEqual(Vec4{ 2, 4, 6, 2 }, vec.weighted(p, 2));
     try testing.expectEqual(p, vec.project4(vec.weighted(p, 2)));
 }
+
+test "vec: the plane's arithmetic matches space's" {
+    const a = vec.Vec2{ 1, 2 };
+    const b = vec.Vec2{ 4, 6 };
+    try testing.expectEqual(vec.Vec2{ 5, 8 }, vec.add2(a, b));
+    try testing.expectEqual(vec.Vec2{ -3, -4 }, vec.sub2(a, b));
+    try testing.expectEqual(vec.Vec2{ 2, 4 }, vec.scale2(a, 2));
+    try testing.expectEqual(vec.Vec2{ 9, 14 }, vec.addScaled2(a, b, 2));
+    try testing.expectEqual(@as(f64, 16), vec.dot2(a, b));
+    try testing.expectEqual(@as(f64, -2), vec.cross2(a, b));
+    try testing.expectEqual(@as(f64, 5), vec.distance2(a, b));
+}

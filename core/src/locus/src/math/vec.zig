@@ -149,6 +149,11 @@ pub inline fn distance2(a: Vec2, b: Vec2) f64 {
     return @sqrt(distanceSq2(a, b));
 }
 
+/// `a + b·s`
+pub inline fn addScaled2(a: Vec2, b: Vec2, s: f64) Vec2 {
+    return .{ a[0] + b[0] * s, a[1] + b[1] * s };
+}
+
 pub fn normalized2(a: Vec2) ?Vec2 {
     const len = length2(a);
     if (!(len > 0.0)) return null;
