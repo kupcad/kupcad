@@ -4,14 +4,17 @@
 //! which is Locus's own, and every number at full `f64` precision (the shortest text that
 //! reads back to the same double, never rounded). The file's uncertainty is the first
 //! body's `zone`. A left-handed frame (a mirrored body's) has no STEP form: its surface is
-//! written right-handed and the face's sense turned, which is the same face. NURBS, swept
-//! surfaces and sheet bodies are M1's.
+//! written right-handed and the face's sense turned, which is the same face. A B-spline
+//! curve or surface is written with its knots run into values and multiplicities, rational
+//! ones as the complex entity with their weights; a swept surface names its generator. A
+//! sheet body has no solid to write and is refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const surfaces = @import("../geometry/surfaces.zig");
+const nurbs = @import("../geometry/nurbs.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
@@ -214,8 +217,163 @@ fn writeCurve(w: *Writer, c: curves.Curve) Error!u32 {
             const p = try w.placement(e.c, e.normal(), e.x);
             return w.emit("ELLIPSE('',#{d},{f},{f})", .{ p, real(e.a), real(e.b) });
         },
-        .nurbs => return error.NotImplemented,
+        .nurbs => |n| return writeBSplineCurve(w, n),
     }
+}
+
+/// `B_SPLINE_CURVE_WITH_KNOTS`, or the rational complex entity when a weight is not 1:
+/// the control points as Cartesian points, the knots run into distinct values with their
+/// multiplicities (Part 42 wants the end multiplicities `p + 1`, which the records keep).
+fn writeBSplineCurve(w: *Writer, n: nurbs.Curve) Error!u32 {
+    const allocator = w.allocator;
+    const point_ids = try allocator.alloc(u32, n.points.len);
+    defer allocator.free(point_ids);
+    for (n.points, point_ids) |q, *id| id.* = try w.point(vec.project4(q));
+    var runs = try knotRuns(allocator, n.knots);
+    defer runs.deinit(allocator);
+    w.next += 1;
+    const id = w.next;
+    const out = &w.out.writer;
+    if (isRational(n.points)) {
+        out.print("#{d}=(BOUNDED_CURVE() B_SPLINE_CURVE({d},", .{ id, n.degree }) catch return error.OutOfMemory;
+        try writeIds(out, point_ids);
+        out.writeAll(",.UNSPECIFIED.,.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(") catch return error.OutOfMemory;
+        try runs.write(out);
+        out.writeAll(",.UNSPECIFIED.) CURVE() GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_CURVE(") catch return error.OutOfMemory;
+        try writeWeights(out, n.points);
+        out.writeAll(") REPRESENTATION_ITEM(''));\n") catch return error.OutOfMemory;
+    } else {
+        out.print("#{d}=B_SPLINE_CURVE_WITH_KNOTS('',{d},", .{ id, n.degree }) catch return error.OutOfMemory;
+        try writeIds(out, point_ids);
+        out.writeAll(",.UNSPECIFIED.,.F.,.F.,") catch return error.OutOfMemory;
+        try runs.write(out);
+        out.writeAll(",.UNSPECIFIED.);\n") catch return error.OutOfMemory;
+    }
+    return id;
+}
+
+/// `B_SPLINE_SURFACE_WITH_KNOTS`, or the rational complex entity: the control points as a
+/// list of lists, the outer along u (a row per `i`, varying `j`), as the records store
+/// them with `u` fastest.
+fn writeBSplineSurface(w: *Writer, n: nurbs.Surface) Error!u32 {
+    const allocator = w.allocator;
+    const point_ids = try allocator.alloc(u32, n.points.len);
+    defer allocator.free(point_ids);
+    for (n.points, point_ids) |q, *id| id.* = try w.point(vec.project4(q));
+    var runs_u = try knotRuns(allocator, n.knots_u);
+    defer runs_u.deinit(allocator);
+    var runs_v = try knotRuns(allocator, n.knots_v);
+    defer runs_v.deinit(allocator);
+    w.next += 1;
+    const id = w.next;
+    const out = &w.out.writer;
+    const rational = isRational(n.points);
+    if (rational) {
+        out.print("#{d}=(BOUNDED_SURFACE() B_SPLINE_SURFACE({d},{d},", .{ id, n.degree_u, n.degree_v }) catch return error.OutOfMemory;
+    } else {
+        out.print("#{d}=B_SPLINE_SURFACE_WITH_KNOTS('',{d},{d},", .{ id, n.degree_u, n.degree_v }) catch return error.OutOfMemory;
+    }
+    out.writeAll("(") catch return error.OutOfMemory;
+    for (0..n.count_u) |i| {
+        if (i > 0) out.writeAll(",") catch return error.OutOfMemory;
+        out.writeAll("(") catch return error.OutOfMemory;
+        for (0..n.count_v) |j| out.print("{s}#{d}", .{ if (j > 0) "," else "", point_ids[i + j * n.count_u] }) catch return error.OutOfMemory;
+        out.writeAll(")") catch return error.OutOfMemory;
+    }
+    out.writeAll(")") catch return error.OutOfMemory;
+    if (rational) {
+        out.writeAll(",.UNSPECIFIED.,.F.,.F.,.F.) B_SPLINE_SURFACE_WITH_KNOTS(") catch return error.OutOfMemory;
+        try runs_u.writeMultiplicities(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_v.writeMultiplicities(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_u.writeKnots(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_v.writeKnots(out);
+        out.writeAll(",.UNSPECIFIED.) GEOMETRIC_REPRESENTATION_ITEM() RATIONAL_B_SPLINE_SURFACE((") catch return error.OutOfMemory;
+        for (0..n.count_u) |i| {
+            if (i > 0) out.writeAll(",") catch return error.OutOfMemory;
+            out.writeAll("(") catch return error.OutOfMemory;
+            for (0..n.count_v) |j| out.print("{s}{f}", .{ if (j > 0) "," else "", real(n.points[i + j * n.count_u][3]) }) catch return error.OutOfMemory;
+            out.writeAll(")") catch return error.OutOfMemory;
+        }
+        out.writeAll(")) REPRESENTATION_ITEM('') SURFACE());\n") catch return error.OutOfMemory;
+    } else {
+        out.writeAll(",.UNSPECIFIED.,.F.,.F.,.F.,") catch return error.OutOfMemory;
+        try runs_u.writeMultiplicities(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_v.writeMultiplicities(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_u.writeKnots(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try runs_v.writeKnots(out);
+        out.writeAll(",.UNSPECIFIED.);\n") catch return error.OutOfMemory;
+    }
+    return id;
+}
+
+/// Whether any control point's weight is not 1: then the curve or surface is written as
+/// the rational complex entity, with the weights.
+fn isRational(points: []const vec.Vec4) bool {
+    for (points) |q| if (q[3] != 1.0) return true;
+    return false;
+}
+
+fn writeIds(out: *std.Io.Writer, ids: []const u32) Error!void {
+    out.writeAll("(") catch return error.OutOfMemory;
+    for (ids, 0..) |id, k| out.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
+    out.writeAll(")") catch return error.OutOfMemory;
+}
+
+fn writeWeights(out: *std.Io.Writer, points: []const vec.Vec4) Error!void {
+    out.writeAll("(") catch return error.OutOfMemory;
+    for (points, 0..) |q, k| out.print("{s}{f}", .{ if (k > 0) "," else "", real(q[3]) }) catch return error.OutOfMemory;
+    out.writeAll(")") catch return error.OutOfMemory;
+}
+
+/// A knot vector run into its distinct values and their multiplicities, as Part 42
+/// writes it.
+const KnotRuns = struct {
+    knots: std.ArrayList(f64) = .empty,
+    multiplicities: std.ArrayList(u32) = .empty,
+
+    fn deinit(self: *KnotRuns, allocator: std.mem.Allocator) void {
+        self.knots.deinit(allocator);
+        self.multiplicities.deinit(allocator);
+    }
+
+    /// `(multiplicities),(knots)`.
+    fn write(self: *const KnotRuns, out: *std.Io.Writer) Error!void {
+        try self.writeMultiplicities(out);
+        out.writeAll(",") catch return error.OutOfMemory;
+        try self.writeKnots(out);
+    }
+
+    fn writeMultiplicities(self: *const KnotRuns, out: *std.Io.Writer) Error!void {
+        out.writeAll("(") catch return error.OutOfMemory;
+        for (self.multiplicities.items, 0..) |m, k| out.print("{s}{d}", .{ if (k > 0) "," else "", m }) catch return error.OutOfMemory;
+        out.writeAll(")") catch return error.OutOfMemory;
+    }
+
+    fn writeKnots(self: *const KnotRuns, out: *std.Io.Writer) Error!void {
+        out.writeAll("(") catch return error.OutOfMemory;
+        for (self.knots.items, 0..) |u, k| out.print("{s}{f}", .{ if (k > 0) "," else "", real(u) }) catch return error.OutOfMemory;
+        out.writeAll(")") catch return error.OutOfMemory;
+    }
+};
+
+fn knotRuns(allocator: std.mem.Allocator, knots: []const f64) Error!KnotRuns {
+    var runs = KnotRuns{};
+    errdefer runs.deinit(allocator);
+    for (knots) |u| {
+        if (runs.knots.items.len > 0 and runs.knots.items[runs.knots.items.len - 1] == u) {
+            runs.multiplicities.items[runs.multiplicities.items.len - 1] += 1;
+        } else {
+            try runs.knots.append(allocator, u);
+            try runs.multiplicities.append(allocator, 1);
+        }
+    }
+    return runs;
 }
 
 const WrittenSurface = struct { id: u32, flipped: bool };
@@ -242,6 +400,20 @@ fn writeSurface(w: *Writer, s: surfaces.Surface) Error!WrittenSurface {
             const pl = try w.placement(t.frame.origin, t.frame.z, t.frame.x);
             return .{ .id = try w.emit("TOROIDAL_SURFACE('',#{d},{f},{f})", .{ pl, real(t.major), real(t.minor) }), .flipped = t.frame.sign() < 0 };
         },
-        .extrusion, .revolution, .nurbs => return error.NotImplemented,
+        .extrusion => |e| {
+            // The generator curve swept along a unit vector
+            const curve_id = try writeCurve(w, e.curve);
+            const d = try w.direction(e.d);
+            const v = try w.emit("VECTOR('',#{d},1.)", .{d});
+            return .{ .id = try w.emit("SURFACE_OF_LINEAR_EXTRUSION('',#{d},#{d})", .{ curve_id, v }), .flipped = false };
+        },
+        .revolution => |r| {
+            const curve_id = try writeCurve(w, r.curve);
+            const o = try w.point(r.frame.origin);
+            const z = try w.direction(r.frame.z);
+            const axis = try w.emit("AXIS1_PLACEMENT('',#{d},#{d})", .{ o, z });
+            return .{ .id = try w.emit("SURFACE_OF_REVOLUTION('',#{d},#{d})", .{ curve_id, axis }), .flipped = false };
+        },
+        .nurbs => |n| return .{ .id = try writeBSplineSurface(w, n), .flipped = false },
     }
 }

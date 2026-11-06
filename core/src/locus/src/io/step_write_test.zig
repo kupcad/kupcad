@@ -4,6 +4,9 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const Diagnostics = @import("../diagnostics.zig").Diagnostics;
 const primitives = @import("../construct/primitives.zig");
 const step_write = @import("step_write.zig");
+const vec = @import("../math/vec.zig");
+const types = @import("../topology/types.zig");
+const Body = @import("../topology/body.zig").Body;
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -76,3 +79,148 @@ test "step: a cylinder writes its circles and cylindrical surface; two bodies; a
     try testing.expectError(error.NotSolid, step_write.write(testing.allocator, &.{&sq}));
     try testing.expectError(error.NotSolid, step_write.write(testing.allocator, &.{}));
 }
+
+/// A sheet on z = 0 over the square [0, 2] × [0, 3] whose right side is a free-form
+/// curve (a straight line as a degree-one B-spline): what a sketch with a spline edge is.
+fn splineSheet(diag: *Diagnostics) !Body {
+    const sew = @import("../construct/sew.zig");
+    const geometry = @import("../geometry/types.zig");
+    const nurbs = @import("../geometry/nurbs.zig");
+    var b = try primitives.Builder.init(testing.allocator, tol, .sheet, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const corners = [4]vec.Vec3{ .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 2, 3, 0 }, .{ 0, 3, 0 } };
+    var v: [4]types.VertexIndex = undefined;
+    for (corners, 0..) |p, i| v[i] = try b.vertex(p);
+    var spline = try nurbs.lineSegment(testing.allocator, corners[1], corners[2], 0, 1);
+    defer spline.deinit(testing.allocator);
+    const right = try b.body.geometry.addNurbsCurve(testing.allocator, .{ .degree = spline.degree, .knots = spline.knots, .points = spline.points });
+    const edges = [4]sew.EdgeSpec{
+        try b.straight(v[0], v[1]),
+        .{ .start = v[1], .end = v[2], .curve = right, .t0 = 0, .t1 = 1 },
+        try b.straight(v[2], v[3]),
+        try b.straight(v[3], v[0]),
+    };
+    const plane = try b.plane(geometry.Frame.world);
+    return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2, 3 } } }}, .sheet);
+}
+
+test "step: a free-form edge is a B-spline curve; swept, a surface of linear extrusion or of revolution" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const sweep = @import("../construct/sweep.zig");
+    const transform = @import("../construct/transform.zig");
+    const mat = @import("../math/mat.zig");
+    const check = @import("../topology/check.zig");
+    var sheet = try splineSheet(&diag);
+    defer sheet.deinit();
+
+    var block = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 4 }, .{}, &diag);
+    defer block.deinit();
+    var report = try check.run(testing.allocator, &block, .geometric);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    const text = try step_write.write(testing.allocator, &.{&block});
+    defer testing.allocator.free(text);
+    // The bottom and top edges, and the surface's own generator
+    try testing.expectEqual(@as(usize, 3), count(text, "=B_SPLINE_CURVE_WITH_KNOTS("));
+    try testing.expectEqual(@as(usize, 1), count(text, "=SURFACE_OF_LINEAR_EXTRUSION("));
+    try testing.expectEqual(@as(usize, 5), count(text, "=PLANE("));
+    try testing.expect(count(text, ",(2,2),(0.,1.),") == 3);
+
+    var shifted = try transform.transform(testing.allocator, &sheet, &mat.Affine.translate(.{ 1, 0, 0 }), .{}, &diag);
+    defer shifted.deinit();
+    var profile = try transform.transform(testing.allocator, &shifted, &mat.Affine.rotate(vec.X3, std.math.pi / 2.0), .{}, &diag);
+    defer profile.deinit();
+    var ring = try sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 2 * std.math.pi, .{}, &diag);
+    defer ring.deinit();
+    var ring_report = try check.run(testing.allocator, &ring, .geometric);
+    defer ring_report.deinit(testing.allocator);
+    try testing.expect(ring_report.ok());
+    const ring_text = try step_write.write(testing.allocator, &.{&ring});
+    defer testing.allocator.free(ring_text);
+    try testing.expectEqual(@as(usize, 2), count(ring_text, "=SURFACE_OF_REVOLUTION("));
+    try testing.expectEqual(@as(usize, 2), count(ring_text, "=AXIS1_PLACEMENT("));
+}
+
+/// A box of 2 × 3 × 4 whose top is the bilinear patch over its four corners.
+fn patchTopBox(diag: *Diagnostics) !Body {
+    const sew = @import("../construct/sew.zig");
+    const geometry = @import("../geometry/types.zig");
+    const nurbs = @import("../geometry/nurbs.zig");
+    var b = try primitives.Builder.init(testing.allocator, tol, .solid, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const c = [8]vec.Vec3{ .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 2, 3, 0 }, .{ 0, 3, 0 }, .{ 0, 0, 4 }, .{ 2, 0, 4 }, .{ 2, 3, 4 }, .{ 0, 3, 4 } };
+    var v: [8]types.VertexIndex = undefined;
+    for (c, 0..) |p, i| v[i] = try b.vertex(p);
+    var patch = try nurbs.bilinear(testing.allocator, c[4], c[5], c[7], c[6], .{ 0, 1 }, .{ 0, 1 });
+    defer patch.deinit(testing.allocator);
+    const top = try b.body.geometry.addNurbsSurface(testing.allocator, .{ .degree_u = patch.degree_u, .degree_v = patch.degree_v, .knots_u = patch.knots_u, .knots_v = patch.knots_v, .count_u = patch.count_u, .count_v = patch.count_v, .points = patch.points });
+    // Each face's corners counter-clockwise seen from outside
+    const quads = [6][4]usize{ .{ 0, 3, 2, 1 }, .{ 0, 1, 5, 4 }, .{ 1, 2, 6, 5 }, .{ 2, 3, 7, 6 }, .{ 3, 0, 4, 7 }, .{ 4, 5, 6, 7 } };
+    const normals = [5]vec.Vec3{ vec.neg(vec.Z3), vec.neg(vec.Y3), vec.X3, vec.Y3, vec.neg(vec.X3) };
+    var edges: [6][4]sew.EdgeSpec = undefined;
+    var loops: [6][1]sew.LoopSpec = undefined;
+    var specs: [6]sew.FaceSpec = undefined;
+    for (quads, 0..) |q, f| {
+        for (0..4) |k| edges[f][k] = try b.straight(v[q[k]], v[q[(k + 1) % 4]]);
+        loops[f] = .{.{ .edges = &edges[f] }};
+        if (f < 5) {
+            const frame = geometry.Frame.init(c[q[0]], vec.normalized(vec.sub(c[q[1]], c[q[0]])).?, normals[f]);
+            specs[f] = .{ .surface = try b.plane(frame), .loops = &loops[f], .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 4, 4 } } };
+        } else {
+            specs[f] = .{ .surface = top, .loops = &loops[f], .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 1, 1 } } };
+        }
+    }
+    return b.finish(&specs, .outer);
+}
+
+/// A quarter disc of radius 2 on z = 0 whose arc is a rational B-spline.
+fn quarterDisc(diag: *Diagnostics) !Body {
+    const sew = @import("../construct/sew.zig");
+    const geometry = @import("../geometry/types.zig");
+    const nurbs = @import("../geometry/nurbs.zig");
+    var arc = try nurbs.circleArc(testing.allocator, vec.ZERO3, vec.X3, vec.Y3, 2, 0, std.math.pi / 2.0);
+    defer arc.deinit(testing.allocator);
+    var b = try primitives.Builder.init(testing.allocator, tol, .sheet, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const ends = [3]vec.Vec3{ .{ 2, 0, 0 }, .{ 0, 2, 0 }, .{ 0, 0, 0 } };
+    var v: [3]types.VertexIndex = undefined;
+    for (ends, 0..) |p, i| v[i] = try b.vertex(p);
+    const curve = try b.body.geometry.addNurbsCurve(testing.allocator, .{ .degree = arc.degree, .knots = arc.knots, .points = arc.points });
+    const sector = [3]sew.EdgeSpec{
+        .{ .start = v[0], .end = v[1], .curve = curve, .t0 = arc.knots[0], .t1 = arc.knots[arc.knots.len - 1] },
+        try b.straight(v[1], v[2]),
+        try b.straight(v[2], v[0]),
+    };
+    return b.finish(&.{.{ .surface = try b.plane(geometry.Frame.world), .loops = &.{.{ .edges = &sector }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2, 2 } } }}, .sheet);
+}
+
+test "step: a face on a B-spline surface, and a rational curve's weights" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const check = @import("../topology/check.zig");
+    var body = try patchTopBox(&diag);
+    defer body.deinit();
+    var report = try check.run(testing.allocator, &body, .geometric);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    const text = try step_write.write(testing.allocator, &.{&body});
+    defer testing.allocator.free(text);
+    try testing.expectEqual(@as(usize, 1), count(text, "=B_SPLINE_SURFACE_WITH_KNOTS("));
+    try testing.expect(count(text, ",1,1,((#") == 1);
+
+    // The arc, its copy at the top, and the extrusion's generator: three rational curves
+    var disc = try quarterDisc(&diag);
+    defer disc.deinit();
+    const sweep = @import("../construct/sweep.zig");
+    var wedge = try sweep.extrude(testing.allocator, &disc, .{ 0, 0, 1 }, .{}, &diag);
+    defer wedge.deinit();
+    const wedge_text = try step_write.write(testing.allocator, &.{&wedge});
+    defer testing.allocator.free(wedge_text);
+    try testing.expectEqual(@as(usize, 3), count(wedge_text, "RATIONAL_B_SPLINE_CURVE("));
+    try testing.expectEqual(@as(usize, 0), count(wedge_text, "=B_SPLINE_CURVE_WITH_KNOTS("));
+}
+

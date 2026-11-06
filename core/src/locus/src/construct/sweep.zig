@@ -187,7 +187,7 @@ pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, a
             verts[i] = try b.vertex(frame.onAxis(places[i].axial));
             for (1..turn.splits) |k| verts[k * n_vertices + i] = verts[i];
         } else {
-            for (0..turn.splits) |k| verts[k * n_vertices + i] = try b.vertex(Affine.rotateAbout(origin, z, turn.at(k)).point(p));
+            for (0..turn.splits) |k| verts[k * n_vertices + i] = try b.vertex(Affine.rotateAbout(origin, z, turn.placeOf(k)).point(p));
         }
     }
 
@@ -243,7 +243,7 @@ pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, a
                     // The generator at each split angle: the curve turned there, between
                     // the vertices there; an edge on the axis is itself at every angle
                     for (0..turn.splits) |k| {
-                        const at: f64 = if (on_axis) 0 else turn.at(k);
+                        const at: f64 = if (on_axis) 0 else turn.placeOf(k);
                         const qa = b.body.point(verts[k * n_vertices + ia]);
                         const qb = b.body.point(verts[k * n_vertices + ib]);
                         gens[k * counts.coedges + ci] = try copyCurve(&b, curve, &Affine.rotateAbout(origin, z, at), qa, qb, coedge.same_sense);
@@ -272,6 +272,7 @@ pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, a
                             .seam = turn.isSeam(k),
                             .low = gens[k * counts.coedges + ci],
                             .high = gens[k_end * counts.coedges + ci],
+                            .base = gens[turn.zeroSplit() * counts.coedges + ci],
                             .ends = .{ .bottom_a = verts[k * n_vertices + ia], .bottom_b = verts[k * n_vertices + ib], .top_a = verts[k_end * n_vertices + ia], .top_b = verts[k_end * n_vertices + ib] },
                             .place_a = places[ia],
                             .place_b = places[ib],
@@ -336,6 +337,18 @@ const Turn = struct {
             1 => self.middle orelse self.end,
             else => self.end,
         };
+    }
+
+    /// The split at the profile's own place, angle 0: the first, or for a turn the other
+    /// way the last (at 2π).
+    fn zeroSplit(self: Turn) usize {
+        return if (self.start == 0) 0 else self.splits - 1;
+    }
+
+    /// The angle the generators and vertices of split `k` are turned by: exactly 0 at the
+    /// profile's own place, where a turn by 2π would land a rounding away.
+    fn placeOf(self: Turn, k: usize) f64 {
+        return if (k == self.zeroSplit()) 0 else self.at(k);
     }
 
     /// The split that ends span `k`: a full turn's last span ends at its first split.
@@ -434,9 +447,11 @@ const RevolvedEdge = struct {
     u0: f64,
     u1: f64,
     seam: bool,
-    /// The generator at `u0` and at `u1`.
+    /// The generator at `u0`, at `u1`, and at the profile's own place (angle 0), which a
+    /// surface of revolution measures its angle from.
     low: Copied,
     high: Copied,
+    base: Copied,
     ends: Ends,
     place_a: Place,
     place_b: Place,
@@ -511,9 +526,10 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
             v_b = v_a + direction * (if (r.low.forward) extent else -extent);
         },
         else => {
-            surface = g.addRevolution(b.allocator, r.low.curve, frame.origin, frame.z) catch |e| return b.fail(e);
-            v_a = if (r.low.forward) r.low.t0 else r.low.t1;
-            v_b = if (r.low.forward) r.low.t1 else r.low.t0;
+            // From the generator at angle 0, so the surface's u is the absolute angle
+            surface = g.addRevolution(b.allocator, r.base.curve, frame.origin, frame.z) catch |e| return b.fail(e);
+            v_a = if (r.base.forward) r.base.t0 else r.base.t1;
+            v_b = if (r.base.forward) r.base.t1 else r.base.t0;
         },
     }
     edges[0].pcurve = try generatorPcurve(b, r.low, r.u0, v_a, v_b);
@@ -606,7 +622,8 @@ const Ends = struct { bottom_a: types.VertexIndex, bottom_b: types.VertexIndex, 
 
 /// A curve of the sheet in the new body under `map` (a move, a turn), as the edge from
 /// `pa` to `pb` (already mapped) runs it: `t0 < t1` its range, `forward` whether the edge
-/// runs from `t0` to `t1` (`pa` at `t0`).
+/// runs from `t0` to `t1` (`pa` at `t0`). A line is the one through the mapped ends; a
+/// circle, an ellipse and a free-form curve are the records mapped.
 const Copied = struct { curve: geometry.CurveRef, t0: f64, t1: f64, forward: bool };
 
 fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb: Vec3, same_sense: bool) Error!Copied {
@@ -627,7 +644,17 @@ fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb:
             const ref = g.addEllipse(b.allocator, .{ .c = map.point(e.c), .x = map.vector(e.x), .y = map.vector(e.y), .a = e.a, .b = e.b }) catch |err| return b.fail(err);
             return arcOn(ref, g.curve(ref), pa, pb, same_sense, b.body.tol);
         },
-        .nurbs => return b.diag.fail(error.NotRepresentable, .{ .code = .not_implemented, .label = "a free-form profile edge" }),
+        .nurbs => |n| {
+            // The control points under the map, the knots as they are
+            const points = try b.allocator.alloc(vec.Vec4, n.points.len);
+            defer b.allocator.free(points);
+            for (n.points, points) |q, *mapped| mapped.* = vec.weighted(map.point(vec.project4(q)), q[3]);
+            const ref = g.addNurbsCurve(b.allocator, .{ .degree = n.degree, .knots = n.knots, .points = points }) catch |e| return b.fail(e);
+            const copy = g.curve(ref);
+            const ta = copy.project(pa, b.body.tol.approx, 50);
+            const tb = copy.project(pb, b.body.tol.approx, 50);
+            return .{ .curve = ref, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb };
+        },
     }
 }
 
