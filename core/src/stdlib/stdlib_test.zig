@@ -2345,8 +2345,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" }, // was a 10 mm cube; exact since M1
         .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) },
         .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = "no error" }, // a rounded square is a polygon of chords on both engines, extruded
-        .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = brepLacks(.revolve) }, // was a 10 mm cube
-        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.revolve) }, // before measuring the profile for its segments
+        .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = "no error" }, // was a 10 mm cube; exact since M1
+        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.sketch_contours) }, // its segments come from measuring the profile's outline first
         .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude_twist) },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = "no error" }, // was a plain cylinder; exact since M1
@@ -2360,7 +2360,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).round_edges(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
-        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.revolve) }, // a sweep bends by revolving
+        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.sketch_contours) }, // a sweep reads the profile's outline to place it
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },

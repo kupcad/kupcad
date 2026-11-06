@@ -168,6 +168,12 @@ pub const Affine = struct {
         };
     }
 
+    /// The rotation about the axis through `origin` along unit `axis` by `angle`.
+    pub fn rotateAbout(origin: Vec3, axis: Vec3, angle: f64) Affine {
+        const r = rotate(axis, angle);
+        return .{ .linear = r.linear, .translation = vec.sub(origin, r.vector(origin)) };
+    }
+
     /// Rotations about x, then y, then z, in degrees (Manifold's `Rotate`).
     pub fn rotateXyzDegrees(x: f64, y: f64, z: f64) Affine {
         const rx = rotate(vec.X3, std.math.degreesToRadians(x));

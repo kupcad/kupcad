@@ -125,15 +125,14 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
 }
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons) and their extrusions (no twist or taper),
-/// hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
+/// (square, circle, polygon, even-odd polygons), their extrusions (no twist or taper) and
+/// revolutions (of a sketch on one side of the axis), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
 /// export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude => true,
+        .transform, .sphere, .cone, .extrude, .revolve => true,
         .boolean,
-        .revolve,
         .loft,
         .sketch_boolean,
         .sketch_hull,
@@ -397,11 +396,27 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
+/// The sketch stood up (its x the radius, its y the height) and turned about z by
+/// `revolve_degrees`, as the mesh engine's Revolve places it; exact, so `segments` is the
+/// mesh engine's. A sketch crossing the axis is refused (the mesh engine clips it there),
+/// until the 2D kernel can cut it.
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    _ = cs;
     _ = segments;
-    _ = revolve_degrees;
-    return null;
+    const src = solidOf(cs.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const stand_up = Affine.rotate(locus.math.vec.X3, std.math.pi / 2.0);
+    var profile = locus.construct.transform.transform(backend_allocator, &src.body, &stand_up, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    defer profile.deinit();
+    const body = locus.construct.sweep.revolve(backend_allocator, &profile, locus.math.vec.ZERO3, locus.math.vec.Z3, std.math.degreesToRadians(revolve_degrees), src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, src.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {

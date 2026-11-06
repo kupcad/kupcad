@@ -75,6 +75,28 @@ test "Driver: an extrusion is exact and refuses a twist or a taper" {
     try std.testing.expectEqual([3]f64{ -3, -3, 0 }, (try boxOf(cyl)).min);
 }
 
+test "Driver: a revolution is exact; a sketch across the axis is refused with its reason" {
+    const sq = driver.driver.squareFn(&TEST_CONFIG, 4, 3, false) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const drum = driver.driver.revolveFn(sq, 16, 360) orelse return error.RevolveFailed;
+    defer driver.driver.destructFn(drum);
+    try std.testing.expectEqual([3]f64{ -4, -4, 0 }, (try boxOf(drum)).min);
+    try std.testing.expectEqual([3]f64{ 4, 4, 3 }, (try boxOf(drum)).max);
+    try std.testing.expect(driver.hasCurvedFaces(drum));
+    const quarter = driver.driver.revolveFn(sq, 16, 90) orelse return error.RevolveFailed;
+    defer driver.driver.destructFn(quarter);
+    const qbox = try boxOf(quarter);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), qbox.min[0], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 4), qbox.max[1], 1e-12);
+    try std.testing.expect(driver.supports(.revolve));
+
+    const centred = driver.driver.squareFn(&TEST_CONFIG, 4, 3, true) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(centred);
+    try std.testing.expect(driver.driver.revolveFn(centred, 16, 360) == null);
+    const why = driver.driver.takeFailureFn() orelse return error.NoReason;
+    try std.testing.expect(std.mem.indexOf(u8, why, "crossing the axis") != null);
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);
@@ -243,7 +265,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructFn(cube);
     try std.testing.expect(driver.driver.offsetFn(sq, 1, 0, 8, 2) == null);
     try std.testing.expect(driver.driver.crossSectionContoursFn(sq, std.testing.allocator) == null);
-    try std.testing.expect(driver.driver.revolveFn(sq, 36, 360) == null);
     try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
     try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
     try std.testing.expect(driver.driver.sliceFn(cube, 5) == null);

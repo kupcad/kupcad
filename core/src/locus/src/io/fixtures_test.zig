@@ -10,6 +10,9 @@ const Diagnostics = @import("../diagnostics.zig").Diagnostics;
 const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
+const transform = @import("../construct/transform.zig");
+const mat = @import("../math/mat.zig");
+const vec = @import("../math/vec.zig");
 const body_json = @import("body_json.zig");
 
 const tol = Tolerance.fromZone(1e-5);
@@ -23,6 +26,7 @@ const FIXTURES = [_]Fixture{
     .{ .name = "cone", .expected = @embedFile("../fixtures/cone.json") },
     .{ .name = "torus", .expected = @embedFile("../fixtures/torus.json") },
     .{ .name = "extruded", .expected = @embedFile("../fixtures/extruded.json") },
+    .{ .name = "revolved", .expected = @embedFile("../fixtures/revolved.json") },
     .{ .name = "square", .expected = @embedFile("../fixtures/square.json") },
     .{ .name = "circle", .expected = @embedFile("../fixtures/circle.json") },
     .{ .name = "polygon", .expected = @embedFile("../fixtures/polygon.json") },
@@ -44,6 +48,16 @@ pub fn build(allocator: std.mem.Allocator, name: []const u8) !Body {
         var plate = try primitives.polygonsEvenOdd(allocator, tol, &.{ &.{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } }, &.{ .{ -3, -3 }, .{ -3, 3 }, .{ 3, 3 }, .{ 3, -3 } } }, &diag);
         defer plate.deinit();
         return sweep.extrude(allocator, &plate, .{ 0, 0, 4 }, .{}, &diag);
+    }
+    if (std.mem.eql(u8, name, "revolved")) {
+        // A profile with every generator kind but the free-form one, turned three quarters:
+        // an edge on the axis, a horizontal, a vertical and an oblique line, an apex
+        var sketch = try primitives.polygon(allocator, tol, &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 2 }, .{ 1, 5 }, .{ 0, 5 } }, &diag);
+        defer sketch.deinit();
+        const up = mat.Affine.rotate(vec.X3, std.math.pi / 2.0);
+        var profile = try transform.transform(allocator, &sketch, &up, .{}, &diag);
+        defer profile.deinit();
+        return sweep.revolve(allocator, &profile, vec.ZERO3, vec.Z3, 1.5 * std.math.pi, .{}, &diag);
     }
     if (std.mem.eql(u8, name, "square")) return primitives.square(allocator, tol, 4, 3, true, &diag);
     if (std.mem.eql(u8, name, "circle")) return primitives.circle(allocator, tol, 2.5, &diag);

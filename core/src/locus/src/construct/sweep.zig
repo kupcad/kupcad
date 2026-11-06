@@ -1,12 +1,18 @@
 //! Sweeps (docs/architecture.md §7.1): a planar sheet (a sketch) swept along a vector
-//! (`extrude`) into a solid, by the generator × director table: a generator vertex along
-//! the director makes an edge, a generator edge a face, the generator face the two caps.
-//! The surface of each swept edge follows its kind: a line gives a plane, an arc swept
-//! along its own normal a cylinder, any other curve (or an arc swept askew) a
-//! linear-extrusion surface. The faces are sewn, as the primitives are, with every loop
-//! counter-clockwise about its face's outward normal; a hole of the sheet is a hole
-//! through the solid. Every record is addressed by index; the arrays the face
-//! specifications point into are sized first and never grow.
+//! (`extrude`) or about an axis in its plane (`revolve`) into a solid, by the generator ×
+//! director table: a generator vertex along the director makes an edge, a generator edge
+//! a face, the generator face the caps. The surface of each swept edge follows its kind:
+//! along a vector, a line gives a plane, an arc swept along its own normal a cylinder, any
+//! other curve (or an arc swept askew) a linear-extrusion surface; about an axis, a line
+//! along it a cylinder, across it a plane, oblique a cone, an arc centred on the axis a
+//! sphere, off it a torus, any other curve a surface of revolution; a vertex on the axis
+//! sweeps a degenerate edge and an edge on the axis no face. The faces are sewn, as the
+//! primitives are, with every loop counter-clockwise about its face's outward normal,
+//! which is the traversal's tangent turned about the sheet's normal; a hole of the sheet
+//! is a hole through the solid. A full turn is split at 0 and π (D7), a turn past π at
+//! its middle; a partial turn gets the sheet as its two end caps. Every record is
+//! addressed by index; the arrays the face specifications point into are sized first and
+//! never grow.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -14,6 +20,7 @@ const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
+const Affine = @import("../math/mat.zig").Affine;
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
@@ -108,8 +115,8 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                     const pa = sheet.geometry.point(sheet.vertex(va).point);
                     const pb = sheet.geometry.point(sheet.vertex(vb).point);
                     const curve = sheet.geometry.curve(edge.curve);
-                    const low = try copyCurve(&b, curve, vec.ZERO3, pa, pb, coedge.same_sense);
-                    const high = try copyCurve(&b, curve, direction, vec.add(pa, direction), vec.add(pb, direction), coedge.same_sense);
+                    const low = try copyCurve(&b, curve, &Affine.identity, pa, pb, coedge.same_sense);
+                    const high = try copyCurve(&b, curve, &Affine.translate(direction), vec.add(pa, direction), vec.add(pb, direction), coedge.same_sense);
                     const ends = Ends{ .bottom_a = bottom[@backingInt(va)], .bottom_b = bottom[@backingInt(vb)], .top_a = top[@backingInt(va)], .top_b = top[@backingInt(vb)] };
                     cap_edges[ci] = .{ .start = ends.bottom_a, .end = ends.bottom_b, .curve = low.curve, .t0 = low.t0, .t1 = low.t1, .forward = low.forward };
                     cap_edges[counts.coedges + ci] = .{ .start = ends.top_a, .end = ends.top_b, .curve = high.curve, .t0 = high.t0, .t1 = high.t1, .forward = high.forward };
@@ -137,6 +144,436 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
         }
     }
     return b.finish(specs, .outer);
+}
+
+/// The sheet turned about the axis through `origin` along `axis`, which must lie in the
+/// sheet's plane, by `angle` radians (counter-clockwise seen from the axis's tip; negative
+/// the other way; a full turn at ±2π): a solid. The sheet must lie on one side of the
+/// axis; a point on it is allowed (an apex, a pole), an edge along it too (it sweeps
+/// nothing). The input is untouched.
+pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, axis: Vec3, angle: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
+    for (origin) |c| try diagnostics.input.finite(diag, "the axis origin", c);
+    for (axis) |c| try diagnostics.input.finite(diag, "the axis", c);
+    try diagnostics.input.finite(diag, "the angle", angle);
+    try options.checkCancel();
+    if (sheet.kind != .sheet or sheet.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
+    const tol = options.tolerance orelse sheet.tol;
+    const z = vec.normalized(axis) orelse return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's length" });
+    if (!(@abs(angle) > tol.param)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the angle", .measured = @abs(angle) });
+    const turn = Turn.of(angle, tol);
+
+    const counts = try countSheet(sheet, diag);
+    const sides = counts.coedges * turn.spans();
+    if (sides > options.limits.faces_per_body) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the profile's edges", .measured = @floatFromInt(sides), .threshold = @floatFromInt(options.limits.faces_per_body) });
+    const frame = try profileFrame(sheet, origin, z, tol, diag);
+
+    var b = try Builder.init(allocator, tol, .solid, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const g = &b.body.geometry;
+
+    // The sheet's vertices at each split angle, with their place about the axis; a
+    // vertex on the axis is one record at every angle
+    const n_vertices = sheet.vertices.items.len;
+    const verts = try allocator.alloc(types.VertexIndex, turn.splits * n_vertices);
+    defer allocator.free(verts);
+    const places = try allocator.alloc(Place, n_vertices);
+    defer allocator.free(places);
+    for (sheet.vertices.items, 0..) |v, i| {
+        if (v.tombstone) continue;
+        const p = sheet.geometry.point(v.point);
+        places[i] = frame.place(p);
+        if (places[i].radius <= tol.zone) {
+            verts[i] = try b.vertex(frame.onAxis(places[i].axial));
+            for (1..turn.splits) |k| verts[k * n_vertices + i] = verts[i];
+        } else {
+            for (0..turn.splits) |k| verts[k * n_vertices + i] = try b.vertex(Affine.rotateAbout(origin, z, turn.at(k)).point(p));
+        }
+    }
+
+    // What the face specifications point into: the generator copies at each split angle
+    // per coedge, each side's edges (four, or three on a plane) and loop, the caps' edges
+    // (start, then end, in coedge order) and loops (start, then end, in loop order)
+    const gens = try allocator.alloc(Copied, turn.splits * counts.coedges);
+    defer allocator.free(gens);
+    const side_edges = try allocator.alloc(sew.EdgeSpec, SIDE_EDGES * sides);
+    defer allocator.free(side_edges);
+    const side_loops = try allocator.alloc([1]sew.LoopSpec, sides);
+    defer allocator.free(side_loops);
+    const cap_edges = try allocator.alloc(sew.EdgeSpec, 2 * counts.coedges);
+    defer allocator.free(cap_edges);
+    const cap_loops = try allocator.alloc(sew.LoopSpec, 2 * counts.loops);
+    defer allocator.free(cap_loops);
+    const specs = try allocator.alloc(sew.FaceSpec, sides + 2 * counts.faces);
+    defer allocator.free(specs);
+
+    var ci: usize = 0;
+    var li: usize = 0;
+    var fi: usize = 0;
+    var si: usize = 0;
+    var shells = traverse.Shells.init(sheet);
+    while (shells.next() catch return corrupt(diag)) |s| {
+        var faces = traverse.Faces.init(sheet, s);
+        while (faces.next() catch return corrupt(diag)) |f| {
+            try options.checkCancel();
+            const face = sheet.face(f);
+            const first_loop = li;
+            // The caps of a partial turn: the sheet's own plane turned to the start, facing
+            // against the turn, and to the end, facing with it
+            var caps: ?Caps = null;
+            if (!turn.full) {
+                const start = Affine.rotate(z, turn.start);
+                const end = Affine.rotate(z, turn.end);
+                caps = .{
+                    .start = try b.plane(Frame.init(origin, start.vector(frame.r_dir), start.vector(frame.normal))),
+                    .end = try b.plane(Frame.init(origin, end.vector(frame.r_dir), vec.neg(end.vector(frame.normal)))),
+                };
+            }
+            var face_loops = traverse.Loops.init(sheet, f);
+            while (face_loops.next() catch return corrupt(diag)) |l| : (li += 1) {
+                const first = ci;
+                var it = traverse.Coedges.init(sheet, l);
+                while (it.next() catch return corrupt(diag)) |c| : (ci += 1) {
+                    const coedge = sheet.coedge(c);
+                    const edge = sheet.edge(coedge.edge);
+                    const ia = @backingInt(sheet.coedgeStart(c));
+                    const ib = @backingInt(sheet.coedgeEnd(c));
+                    const curve = sheet.geometry.curve(edge.curve);
+                    const on_axis = places[ia].radius <= tol.zone and places[ib].radius <= tol.zone;
+                    // The generator at each split angle: the curve turned there, between
+                    // the vertices there; an edge on the axis is itself at every angle
+                    for (0..turn.splits) |k| {
+                        const at: f64 = if (on_axis) 0 else turn.at(k);
+                        const qa = b.body.point(verts[k * n_vertices + ia]);
+                        const qb = b.body.point(verts[k * n_vertices + ib]);
+                        gens[k * counts.coedges + ci] = try copyCurve(&b, curve, &Affine.rotateAbout(origin, z, at), qa, qb, coedge.same_sense);
+                    }
+                    if (caps) |*cap| {
+                        const last = turn.splits - 1;
+                        const g_start = gens[ci];
+                        const g_end = gens[last * counts.coedges + ci];
+                        cap_edges[ci] = specOf(g_start, verts[ia], verts[ib]);
+                        cap_edges[counts.coedges + ci] = specOf(g_end, verts[last * n_vertices + ia], verts[last * n_vertices + ib]);
+                        growByCurve(&cap.start_box, g.surface(cap.start).plane, g.curve(g_start.curve), g_start.t0, g_start.t1);
+                        growByCurve(&cap.end_box, g.surface(cap.end).plane, g.curve(g_end.curve), g_end.t0, g_end.t1);
+                    }
+                    if (on_axis) continue;
+                    // A side per span: the outward normal is the traversal's tangent turned
+                    // about the sheet's normal, as for an extrusion
+                    const t_mid = (edge.t0 + edge.t1) / 2.0;
+                    const tangent = vec.scale(curve.d1(t_mid), if (coedge.same_sense) @as(f64, 1) else -1);
+                    const outward = vec.normalized(vec.cross(tangent, frame.normal)) orelse return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(coedge.edge)) });
+                    for (0..turn.spans()) |k| {
+                        const k_end = turn.endSplit(k);
+                        const side = try revolvedFace(&b, curve, .{
+                            .frame = frame,
+                            .u0 = turn.at(k),
+                            .u1 = turn.spanEnd(k),
+                            .seam = turn.isSeam(k),
+                            .low = gens[k * counts.coedges + ci],
+                            .high = gens[k_end * counts.coedges + ci],
+                            .ends = .{ .bottom_a = verts[k * n_vertices + ia], .bottom_b = verts[k * n_vertices + ib], .top_a = verts[k_end * n_vertices + ia], .top_b = verts[k_end * n_vertices + ib] },
+                            .place_a = places[ia],
+                            .place_b = places[ib],
+                        }, outward, side_edges[SIDE_EDGES * si ..][0..SIDE_EDGES]);
+                        side_loops[si] = .{.{ .edges = side_edges[SIDE_EDGES * si ..][0..side.edge_count] }};
+                        specs[fi] = side.spec;
+                        specs[fi].loops = &side_loops[si];
+                        si += 1;
+                        fi += 1;
+                    }
+                }
+                if (caps != null) {
+                    const start_edges = cap_edges[first..ci];
+                    const end_edges = cap_edges[counts.coedges + first .. counts.coedges + ci];
+                    reverseLoop(end_edges);
+                    cap_loops[li] = .{ .edges = start_edges };
+                    cap_loops[counts.loops + li] = .{ .edges = end_edges };
+                }
+            }
+            if (caps) |cap| {
+                specs[fi] = .{ .surface = cap.start, .loops = cap_loops[first_loop..li], .uv_box = cap.start_box, .tag = face.tag };
+                specs[fi + 1] = .{ .surface = cap.end, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = cap.end_box, .tag = face.tag };
+                fi += 2;
+            }
+        }
+    }
+    return b.finish(specs[0..fi], .outer);
+}
+
+/// Edges per side face at most (three on a plane whose inner arc is a point).
+const SIDE_EDGES = 4;
+
+/// The angular spans of a turn: a full turn is [0, π] and [π, 2π]; a partial one from 0
+/// to the angle, or the other way from 2π + angle to 2π (the same places, inside the
+/// periodic domain), split at its middle past a half turn. The split angles are where the
+/// generators are copied.
+const Turn = struct {
+    start: f64,
+    end: f64,
+    full: bool,
+    /// The split angles: 2 or 3; a full turn's third, 2π, is its first again.
+    splits: usize,
+    middle: ?f64,
+
+    fn of(angle: f64, tol: Tolerance) Turn {
+        const full = @abs(angle) >= geometry.TWO_PI - tol.param;
+        if (full) return .{ .start = 0, .end = geometry.TWO_PI, .full = true, .splits = 2, .middle = std.math.pi };
+        const start: f64 = if (angle > 0) 0 else geometry.TWO_PI + angle;
+        const end: f64 = if (angle > 0) angle else geometry.TWO_PI;
+        const halved = end - start > std.math.pi + tol.param;
+        return .{ .start = start, .end = end, .full = false, .splits = if (halved) 3 else 2, .middle = if (halved) start + std.math.pi else null };
+    }
+
+    fn spans(self: Turn) usize {
+        return if (self.full) 2 else self.splits - 1;
+    }
+
+    /// The angle of split `k`.
+    fn at(self: Turn, k: usize) f64 {
+        return switch (k) {
+            0 => self.start,
+            1 => self.middle orelse self.end,
+            else => self.end,
+        };
+    }
+
+    /// The split that ends span `k`: a full turn's last span ends at its first split.
+    fn endSplit(self: Turn, k: usize) usize {
+        return if (self.full and k == 1) 0 else k + 1;
+    }
+
+    fn spanEnd(self: Turn, k: usize) f64 {
+        return if (self.full and k == 1) geometry.TWO_PI else self.at(k + 1);
+    }
+
+    /// Whether span `k`'s generators are seams: the splits of a periodic surface, never a
+    /// cap's edge (each span's edges are flagged where they are not an end of the turn).
+    fn isSeam(self: Turn, k: usize) bool {
+        _ = k;
+        return self.full or self.middle != null;
+    }
+};
+
+/// Where a point of the profile is about the axis: its distance from it along the radial
+/// direction and its coordinate along the axis.
+const Place = struct { radius: f64, axial: f64 };
+
+/// The profile's plane about the axis: the axis's direction, the radial direction in the
+/// plane (the side the profile lies on) and the plane's outward normal.
+const ProfileFrame = struct {
+    origin: Vec3,
+    z: Vec3,
+    r_dir: Vec3,
+    normal: Vec3,
+
+    fn place(self: ProfileFrame, p: Vec3) Place {
+        const d = vec.sub(p, self.origin);
+        return .{ .radius = vec.dot(d, self.r_dir), .axial = vec.dot(d, self.z) };
+    }
+
+    fn onAxis(self: ProfileFrame, axial: f64) Vec3 {
+        return vec.addScaled(self.origin, self.z, axial);
+    }
+};
+
+/// The profile's frame, every face checked on one plane through the axis, and every edge
+/// checked on the radial side of it.
+fn profileFrame(sheet: *const Body, origin: Vec3, z: Vec3, tol: Tolerance, diag: *Diagnostics) Error!ProfileFrame {
+    var frame: ?ProfileFrame = null;
+    for (sheet.faces.items, 0..) |face, fi| {
+        if (face.flags.tombstone) continue;
+        const n = outwardNormal(sheet, types.FaceIndex.of(fi));
+        if (frame) |fr| {
+            if (vec.dot(n, fr.normal) < 1.0 - tol.angle) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .of(.face, fi), .label = "a profile face's agreement with the first's plane" });
+            continue;
+        }
+        if (@abs(vec.dot(n, z)) > tol.angle) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's lie in the profile's plane", .measured = vec.dot(n, z) });
+        const plane = sheet.geometry.planes.items[face.surface.index];
+        const off = vec.dot(vec.sub(origin, plane.frame.origin), plane.frame.z);
+        if (@abs(off) > tol.zone) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's distance from the profile's plane", .measured = off });
+        frame = .{ .origin = origin, .z = z, .r_dir = vec.normalized(vec.cross(z, n)).?, .normal = n };
+    }
+    const fr = frame orelse return corrupt(diag);
+    for (sheet.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone) continue;
+        const box = sheet.geometry.curve(e.curve).bounds(e.t0, e.t1);
+        var lowest = std.math.inf(f64);
+        for ([_]f64{ box.min[0], box.max[0] }) |x| for ([_]f64{ box.min[1], box.max[1] }) |y| for ([_]f64{ box.min[2], box.max[2] }) |zc| {
+            lowest = @min(lowest, fr.place(.{ x, y, zc }).radius);
+        };
+        if (lowest < -tol.zone) return diag.fail(error.NotRepresentable, .{ .code = .not_implemented, .entity = .of(.edge, i), .label = "a profile crossing the axis", .measured = lowest });
+    }
+    return fr;
+}
+
+/// A face's outward normal: its plane's normal by its sense (the sheet's loops run
+/// counter-clockwise about it).
+fn outwardNormal(sheet: *const Body, f: types.FaceIndex) Vec3 {
+    const face = sheet.face(f);
+    const plane = sheet.geometry.planes.items[face.surface.index];
+    return vec.scale(plane.frame.z, plane.frame.sign() * (if (face.same_sense) @as(f64, 1) else -1));
+}
+
+/// The two caps of a partial turn with their UV boxes, grown as the loops are laid.
+const Caps = struct {
+    start: geometry.SurfaceRef,
+    end: geometry.SurfaceRef,
+    start_box: geometry.Box2 = geometry.Box2.empty,
+    end_box: geometry.Box2 = geometry.Box2.empty,
+};
+
+/// The edge specification of a copied generator between two vertices.
+fn specOf(copied: Copied, start: types.VertexIndex, end: types.VertexIndex) sew.EdgeSpec {
+    return .{ .start = start, .end = end, .curve = copied.curve, .t0 = copied.t0, .t1 = copied.t1, .forward = copied.forward };
+}
+
+/// One swept edge over one angular span: what `revolvedFace` needs.
+const RevolvedEdge = struct {
+    frame: ProfileFrame,
+    u0: f64,
+    u1: f64,
+    seam: bool,
+    /// The generator at `u0` and at `u1`.
+    low: Copied,
+    high: Copied,
+    ends: Ends,
+    place_a: Place,
+    place_b: Place,
+};
+
+const SideFace = struct { spec: sew.FaceSpec, edge_count: usize };
+
+/// The face swept by one edge over one angular span: a cylinder, plane, cone, sphere,
+/// torus or surface of revolution by the edge's kind and place, its loop counter-clockwise
+/// about `outward`. The edges go to `edges` in the natural order (the generator at `u0`,
+/// the director arc at `b`, the generator at `u1` back, the director arc at `a` back),
+/// reversed when the surface's own orientation asks; a director arc of a point on the
+/// axis is a degenerate edge, left out on a plane (which has no singularity there).
+fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3, edges: []sew.EdgeSpec) Error!SideFace {
+    const g = &b.body.geometry;
+    const tol = b.body.tol;
+    const frame = r.frame;
+    const seam_flags: types.EdgeFlags = if (r.seam) primitives.SEAM else .{};
+    const seam_regularity: types.Regularity = if (r.seam) .g1 else .c0;
+    edges[0] = specOf(r.low, r.ends.bottom_a, r.ends.bottom_b);
+    edges[1] = .{ .start = r.ends.bottom_b, .end = r.ends.top_b, .curve = try directorArc(b, frame, r.place_b), .t0 = r.u0, .t1 = r.u1, .flags = if (r.place_b.radius <= tol.zone) primitives.DEGENERATE else .{} };
+    edges[2] = specOf(r.high, r.ends.top_b, r.ends.top_a);
+    edges[2].forward = !r.high.forward;
+    edges[3] = .{ .start = r.ends.top_a, .end = r.ends.bottom_a, .curve = try directorArc(b, frame, r.place_a), .t0 = r.u0, .t1 = r.u1, .forward = false, .flags = if (r.place_a.radius <= tol.zone) primitives.DEGENERATE else .{} };
+    edges[0].flags = seam_flags;
+    edges[2].flags = seam_flags;
+    edges[0].regularity = seam_regularity;
+    edges[2].regularity = seam_regularity;
+
+    const d_axial = r.place_b.axial - r.place_a.axial;
+    const d_radial = r.place_b.radius - r.place_a.radius;
+    if (curve == .line and @abs(d_axial) <= tol.zone) return planeSector(b, r, outward, edges);
+
+    // The parametric surfaces: u the angle, v along the generator as each kind has it,
+    // read at both ends, and the generator's parameter mapped to v linearly
+    var surface: geometry.SurfaceRef = undefined;
+    var v_a: f64 = undefined;
+    var v_b: f64 = undefined;
+    switch (curve) {
+        .line => if (@abs(d_radial) <= tol.zone) {
+            // Along the axis: a cylinder, v the axial coordinate
+            surface = b.interner.cylinder(b.allocator, g, .{ .frame = Frame.init(frame.origin, frame.r_dir, frame.z), .r = r.place_a.radius }) catch |e| return b.fail(e);
+            v_a = r.place_a.axial;
+            v_b = r.place_b.axial;
+        } else {
+            // Oblique: a cone from the lower end, v the distance along the generator
+            const low_is_a = r.place_a.axial < r.place_b.axial;
+            const low_place = if (low_is_a) r.place_a else r.place_b;
+            const half_angle = std.math.atan2(if (low_is_a) d_radial else -d_radial, @abs(d_axial));
+            surface = b.interner.cone(b.allocator, g, .{ .frame = Frame.init(frame.onAxis(low_place.axial), frame.r_dir, frame.z), .r = low_place.radius, .half_angle = half_angle }) catch |e| return b.fail(e);
+            const length = @sqrt(d_axial * d_axial + d_radial * d_radial);
+            v_a = if (low_is_a) 0 else length;
+            v_b = if (low_is_a) length else 0;
+        },
+        .circle => |c| {
+            // Centred on the axis a sphere, off it a torus; v is the angle about the
+            // circle's centre from the radial direction toward the axis, at `a` by its
+            // place, at `b` by the arc's extent the way the edge runs it
+            const centre = frame.place(c.c);
+            const base = Frame.init(frame.onAxis(centre.axial), frame.r_dir, frame.z);
+            if (centre.radius <= tol.zone) {
+                surface = b.interner.sphere(b.allocator, g, .{ .frame = base, .r = c.r }) catch |e| return b.fail(e);
+            } else {
+                surface = b.interner.torus(b.allocator, g, .{ .frame = base, .major = centre.radius, .minor = c.r }) catch |e| return b.fail(e);
+            }
+            v_a = std.math.atan2(r.place_a.axial - centre.axial, r.place_a.radius - centre.radius);
+            const t_a = if (r.low.forward) r.low.t0 else r.low.t1;
+            const along_v = vec.add(vec.scale(frame.r_dir, -@sin(v_a)), vec.scale(frame.z, @cos(v_a)));
+            const turned = g.curve(r.low.curve);
+            const direction: f64 = if (vec.dot(turned.d1(t_a), along_v) > 0) 1 else -1;
+            const extent = r.low.t1 - r.low.t0;
+            v_b = v_a + direction * (if (r.low.forward) extent else -extent);
+        },
+        else => {
+            surface = g.addRevolution(b.allocator, r.low.curve, frame.origin, frame.z) catch |e| return b.fail(e);
+            v_a = if (r.low.forward) r.low.t0 else r.low.t1;
+            v_b = if (r.low.forward) r.low.t1 else r.low.t0;
+        },
+    }
+    edges[0].pcurve = try generatorPcurve(b, r.low, r.u0, v_a, v_b);
+    edges[2].pcurve = try generatorPcurve(b, r.high, r.u1, v_a, v_b);
+    edges[1].pcurve = try b.pcurveLine(.{ 0, v_b }, .{ 1, 0 });
+    edges[3].pcurve = try b.pcurveLine(.{ 0, v_a }, .{ 1, 0 });
+    const box = geometry.Box2{ .min = .{ r.u0, @min(v_a, v_b) }, .max = .{ r.u1, @max(v_a, v_b) } };
+    // The surface's normal against the outward one at the middle of the span; the natural
+    // order climbs v first at u0, so it is counter-clockwise in UV when v falls from a to b
+    const u_mid = (r.u0 + r.u1) / 2.0;
+    const same_sense = vec.dot(g.surface(surface).normal(u_mid, (v_a + v_b) / 2.0), Affine.rotate(frame.z, u_mid).vector(outward)) > 0;
+    if ((v_b < v_a) != same_sense) reverseLoop(edges[0..SIDE_EDGES]);
+    return .{ .spec = .{ .surface = surface, .same_sense = same_sense, .loops = &.{}, .uv_box = box }, .edge_count = SIDE_EDGES };
+}
+
+/// The pcurve of a generator at angle `u` whose parameter maps to v linearly: v_a at its
+/// start and v_b at its end, the way the edge runs it.
+fn generatorPcurve(b: *Builder, gen: Copied, u: f64, v_a: f64, v_b: f64) Error!geometry.PCurveRef {
+    const t_a = if (gen.forward) gen.t0 else gen.t1;
+    const t_b = if (gen.forward) gen.t1 else gen.t0;
+    const k = (v_b - v_a) / (t_b - t_a);
+    return b.pcurveLine(.{ u, v_a - k * t_a }, .{ 0, k });
+}
+
+/// A line across the axis sweeps an annulus sector (a disc sector when one end is on the
+/// axis): a planar face facing `outward`, no pcurves, its loop laid by its winding in the
+/// plane, a degenerate inner arc left out.
+fn planeSector(b: *Builder, r: RevolvedEdge, outward: Vec3, edges: []sew.EdgeSpec) Error!SideFace {
+    const g = &b.body.geometry;
+    const frame = r.frame;
+    const normal = if (vec.dot(outward, frame.z) > 0) frame.z else vec.neg(frame.z);
+    const surface = try b.plane(Frame.init(frame.onAxis(r.place_a.axial), frame.r_dir, normal));
+    const plane = g.surface(surface).plane;
+    var kept: usize = 0;
+    for (0..SIDE_EDGES) |i| {
+        if (edges[i].flags.degenerate) continue;
+        edges[kept] = edges[i];
+        kept += 1;
+    }
+    const loop = edges[0..kept];
+    var box = geometry.Box2.empty;
+    var winding: f64 = 0;
+    for (loop) |e| {
+        const c = g.curve(e.curve);
+        const start = plane.project(b.body.point(e.start));
+        const mid = plane.project(c.eval((e.t0 + e.t1) / 2.0));
+        const end = plane.project(b.body.point(e.end));
+        winding += start[0] * mid[1] - mid[0] * start[1] + mid[0] * end[1] - end[0] * mid[1];
+        growByCurve(&box, plane, c, e.t0, e.t1);
+    }
+    if (winding < 0) reverseLoop(loop);
+    return .{ .spec = .{ .surface = surface, .loops = &.{}, .uv_box = box }, .edge_count = kept };
+}
+
+/// The circle a point of the profile sweeps about the axis, the angle its parameter; a
+/// point of the axis sweeps a zero-radius circle, a degenerate edge's curve.
+fn directorArc(b: *Builder, frame: ProfileFrame, place: Place) Error!geometry.CurveRef {
+    const centre = frame.onAxis(place.axial);
+    if (place.radius <= b.body.tol.zone) return b.pointCurve(centre);
+    return b.interner.circle(b.allocator, &b.body.geometry, .{ .c = centre, .x = frame.r_dir, .y = vec.cross(frame.z, frame.r_dir), .r = place.radius }) catch |e| return b.fail(e);
 }
 
 const Counts = struct { faces: usize, loops: usize, coedges: usize };
@@ -167,12 +604,12 @@ fn countSheet(sheet: *const Body, diag: *Diagnostics) Error!Counts {
 /// The vertices of one swept edge: its ends at the bottom and at the top.
 const Ends = struct { bottom_a: types.VertexIndex, bottom_b: types.VertexIndex, top_a: types.VertexIndex, top_b: types.VertexIndex };
 
-/// A curve of the sheet in the new body, moved by `offset`, as the edge from `pa` to
-/// `pb` runs it: `t0 < t1` its range, `forward` whether the edge runs from `t0` to `t1`
-/// (`pa` at `t0`).
+/// A curve of the sheet in the new body under `map` (a move, a turn), as the edge from
+/// `pa` to `pb` (already mapped) runs it: `t0 < t1` its range, `forward` whether the edge
+/// runs from `t0` to `t1` (`pa` at `t0`).
 const Copied = struct { curve: geometry.CurveRef, t0: f64, t1: f64, forward: bool };
 
-fn copyCurve(b: *Builder, curve: curves.Curve, offset: Vec3, pa: Vec3, pb: Vec3, same_sense: bool) Error!Copied {
+fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb: Vec3, same_sense: bool) Error!Copied {
     const g = &b.body.geometry;
     switch (curve) {
         .line => {
@@ -183,11 +620,11 @@ fn copyCurve(b: *Builder, curve: curves.Curve, offset: Vec3, pa: Vec3, pb: Vec3,
             return .{ .curve = ref, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb };
         },
         .circle => |c| {
-            const ref = b.interner.circle(b.allocator, g, .{ .c = vec.add(c.c, offset), .x = c.x, .y = c.y, .r = c.r }) catch |e| return b.fail(e);
+            const ref = b.interner.circle(b.allocator, g, .{ .c = map.point(c.c), .x = map.vector(c.x), .y = map.vector(c.y), .r = c.r }) catch |e| return b.fail(e);
             return arcOn(ref, g.curve(ref), pa, pb, same_sense, b.body.tol);
         },
         .ellipse => |e| {
-            const ref = g.addEllipse(b.allocator, .{ .c = vec.add(e.c, offset), .x = e.x, .y = e.y, .a = e.a, .b = e.b }) catch |err| return b.fail(err);
+            const ref = g.addEllipse(b.allocator, .{ .c = map.point(e.c), .x = map.vector(e.x), .y = map.vector(e.y), .a = e.a, .b = e.b }) catch |err| return b.fail(err);
             return arcOn(ref, g.curve(ref), pa, pb, same_sense, b.body.tol);
         },
         .nurbs => return b.diag.fail(error.NotRepresentable, .{ .code = .not_implemented, .label = "a free-form profile edge" }),

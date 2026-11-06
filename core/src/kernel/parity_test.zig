@@ -51,6 +51,15 @@ const SHAPES = [_][]const u8{
     "square(10).translate(5, 0).extrude(1)",
     "square(10).extrude(5).translate(1, 2, 3).rotate(z: 90)",
     "regular_polygon(6, r: 5).extrude(2)",
+    // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
+    // every quarter turn, where the extremes are (segments a multiple of 4)
+    "square(4).revolve(segments: 64)",
+    "square(2).translate(1, 0).revolve(deg: 90, segments: 64)",
+    "square(2).translate(1, 0).revolve(deg: 270, segments: 64)",
+    "square(2).translate(1, 0).revolve(deg: -90, segments: 64)",
+    "polygon([[0, 0], [2, 0], [0, 3]]).revolve(segments: 64)",
+    "circle(r: 1, segments: 64).translate(3, 0).revolve(segments: 64)",
+    "square(2).translate(1, 0).revolve(segments: 64).translate(1, 2, 3).rotate(x: 90)",
     // Moves, turns, scales and mirrors (M0): the matrix is the images of the axes, then
     // the translation; a cylinder turned a quarter keeps its extremes on the axes
     "cube(2).translate(1, 2, 3)",
@@ -77,6 +86,9 @@ const SHAPES = [_][]const u8{
 const BREP_REFUSES = [_][]const u8{
     "cylinder(r: 1, h: 3, segments: 64).scale(1, 2, 1)",
     "cylinder(r: 1, h: 3, segments: 64).transform([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])",
+    // A profile across the axis: the mesh engine clips it there, the exact one refuses it
+    // until the 2D kernel (M2) can cut it
+    "square(4, center: true).revolve(segments: 64)",
 };
 
 /// Arguments both engines must refuse, with the same error.
@@ -107,11 +119,16 @@ test "parity: each shape both engines build has the same box on each" {
     }
 }
 
+/// Whether a STEP export's vertices and whole circles reach the solid's extent: not a
+/// sphere's (its extent is in no vertex and not in its one meridian circle), and not a
+/// partial revolution's (its arcs are written as whole circles, which reach further).
+fn stepBoxReaches(source: []const u8) bool {
+    return std.mem.indexOf(u8, source, "sphere") == null and std.mem.indexOf(u8, source, "deg:") == null;
+}
+
 test "parity: a STEP export's vertices and circles bound what the kernel bounds, for the shapes they reach" {
-    // A sphere's extent is not in its vertices (the poles) or its one meridian circle, so
-    // the STEP box is checked for the others
     for (SHAPES) |source| {
-        if (std.mem.indexOf(u8, source, "sphere") != null) continue;
+        if (!stepBoxReaches(source)) continue;
         errdefer std.debug.print("script: {s}\n", .{source});
         const brep_box = try boxOn(.brep_native, source);
         const step_box = try stepBoxOf(source);

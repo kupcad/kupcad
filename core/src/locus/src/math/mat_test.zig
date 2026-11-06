@@ -58,3 +58,15 @@ test "mat: affine maps compose, invert, and move normals by the inverse transpos
     try testing.expectEqual(Vec3{ 1, 1, 1 }, rows.columnLengths());
     try testing.expectEqual(vec.ZERO3, rows.columnDots());
 }
+
+test "mat: rotateAbout turns about a point, which stays put" {
+    const r = mat.Affine.rotateAbout(.{ 1, 2, 3 }, vec.Z3, std.math.pi / 2.0);
+    const fixed = r.point(.{ 1, 2, 3 });
+    const turned = r.point(.{ 2, 2, 3 });
+    const expected_fixed = [3]f64{ 1, 2, 3 };
+    const expected_turned = [3]f64{ 1, 3, 3 };
+    for (0..3) |k| {
+        try testing.expectApproxEqAbs(expected_fixed[k], fixed[k], 1e-12);
+        try testing.expectApproxEqAbs(expected_turned[k], turned[k], 1e-12);
+    }
+}
