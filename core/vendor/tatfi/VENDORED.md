@@ -127,6 +127,12 @@ tests couldn't run in KupCAD's target and mode.
   `src/tests/var_store.zig`'s "a region list past a 32-bit usize", `src/tests/cblc.zig`'s "a
   bitmap past a 32-bit usize" and `src/tests/aat.zig`'s "extended state table entry past a
   32-bit usize", with the COLR, CBLC and delta set tests above.
+- `src/tables/cff/charstring.zig`, `cff1.zig`, `cff2.zig`: the count of stems a charstring
+  declares saturates, and so does its hint mask's length (`add_stems`, `hint_mask_len`).
+  ttf-parser's `u32` add overflows (a debug panic, a wrong mask length in release) once
+  subroutines declare more than a `u32` counts, some 2^33 operators; saturated, the mask
+  reaches past the data and the charstring fails. `src/tests/cff1.zig` has "stems past a
+  u32", which tests the two at their limit.
 
 ## Updating
 

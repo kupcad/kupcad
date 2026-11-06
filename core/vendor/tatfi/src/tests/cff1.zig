@@ -1384,6 +1384,15 @@ test "a charset range of 65536 glyphs" {
     try t.expectError(error.Overflow, Table.parse(data));
 }
 
+test "stems past a u32" {
+    // [KupCAD] Counting the stems a charstring declares overflowed their u32 (reaching it
+    // takes some 2^33 operators, so the count's update is tested at its limit).
+    const CharStringParser = @import("../tables/cff/charstring.zig");
+    const max = std.math.maxInt(u32);
+    try t.expectEqual(max, CharStringParser.add_stems(max - 1, 48));
+    try t.expectEqual(max / 8, CharStringParser.hint_mask_len(max));
+}
+
 fn rect(x_min: i16, y_min: i16, x_max: i16, y_max: i16) ttf.Rect {
     return .{ .x_min = x_min, .y_min = y_min, .x_max = x_max, .y_max = y_max };
 }

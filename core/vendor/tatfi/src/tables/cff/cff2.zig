@@ -332,7 +332,7 @@ fn parse_char_string_recursive(
                 // y dy {dya dyb}* hstemhm
                 // x dx {dxa dxb}* vstemhm
 
-                ctx.stems_len += @as(u32, @truncate(p.stack.items.len)) >> 1;
+                ctx.stems_len = CharStringParser.add_stems(ctx.stems_len, p.stack.items.len);
 
                 // We are ignoring the hint operators.
                 p.stack.clearRetainingCapacity();
@@ -408,8 +408,8 @@ fn parse_char_string_recursive(
                 }
             },
             .hint_mask, .counter_mask => {
-                ctx.stems_len += @as(u32, @truncate(p.stack.items.len)) >> 1;
-                s.advance((ctx.stems_len + 7) >> 3);
+                ctx.stems_len = CharStringParser.add_stems(ctx.stems_len, p.stack.items.len);
+                s.advance(CharStringParser.hint_mask_len(ctx.stems_len));
 
                 // We are ignoring the hint operators.
                 p.stack.clearRetainingCapacity();

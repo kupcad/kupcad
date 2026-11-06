@@ -12,6 +12,18 @@ has_move_to: bool,
 is_first_move_to: bool,
 width_only: bool, // Exit right after the glyph width is parsed.
 
+/// [KupCAD] `stems_len` with the stems of `operands` hint operands, two each. Saturating, as
+/// ttf-parser's `u32` add is not: a charstring's subroutines can declare more than a `u32`
+/// counts, and a hint mask of so many stems is past any data.
+pub fn add_stems(stems_len: u32, operands: usize) u32 {
+    return stems_len +| (@as(u32, @truncate(operands)) >> 1);
+}
+
+/// [KupCAD] The bytes of a hint mask for `stems_len` stems, one bit each.
+pub fn hint_mask_len(stems_len: u32) usize {
+    return (stems_len +| 7) >> 3;
+}
+
 pub fn parse_move_to(
     self: *Self,
     offset: usize,

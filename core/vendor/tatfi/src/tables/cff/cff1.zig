@@ -650,7 +650,7 @@ fn parse_char_string_recursive(
                     break :l p.stack.items.len - 1;
                 } else p.stack.items.len;
 
-                ctx.stems_len += @as(u32, @truncate(len)) >> 1;
+                ctx.stems_len = CharStringParser.add_stems(ctx.stems_len, len);
 
                 // We are ignoring the hint operators.
                 p.stack.clearRetainingCapacity();
@@ -782,8 +782,8 @@ fn parse_char_string_recursive(
 
                 // We are ignoring the hint operators.
                 p.stack.clearRetainingCapacity();
-                ctx.stems_len += @as(u32, @truncate(len)) >> 1;
-                s.advance((ctx.stems_len + 7) >> 3);
+                ctx.stems_len = CharStringParser.add_stems(ctx.stems_len, len);
+                s.advance(CharStringParser.hint_mask_len(ctx.stems_len));
             },
             .move_to => {
                 const i: usize = if (p.stack.items.len == 3) i: {
