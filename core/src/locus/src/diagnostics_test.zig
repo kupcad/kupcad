@@ -50,7 +50,7 @@ test "Options: the cancel flag is honoured only when set; the parallel defaults 
     try none.checkCancel();
     try testing.expectEqual(@as(usize, 1), none.parallelOrSerial().threads());
     try testing.expectEqual(@as(?Tolerance, null), none.tolerance);
-    try testing.expectEqual(@as(?[]const u8, null), none.trace);
+    try testing.expect(none.trace == null);
 }
 
 test "Limits: the defaults of the plan, and zero is not a limit" {

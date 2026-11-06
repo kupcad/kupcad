@@ -252,6 +252,15 @@ pub const Limits = struct {
 };
 
 /// What every operation takes besides its inputs. Each operation's own options struct
+/// A trace sink (§12): the host receives the body after each phase of an operation as its
+/// JSON, with the operation's and the phase's names (`transform`, `mapped`), and keeps what
+/// it wants (a file per phase, `kupcad dev brep-trace`); Locus writes no files itself. The
+/// text is the sink's to read during the call only.
+pub const Trace = struct {
+    context: ?*anyopaque = null,
+    write: *const fn (context: ?*anyopaque, operation: []const u8, phase: []const u8, body_json: []const u8) void,
+};
+
 /// holds one of these as `common`.
 pub const Options = struct {
     /// The tolerance to work at; null: the bodies' own (merged for two).
@@ -263,8 +272,8 @@ pub const Options = struct {
     cancel: ?*const std.atomic.Value(bool) = null,
     /// How to split independent work over threads; null: serial.
     parallel: ?Parallel = null,
-    /// A directory to write the body after each phase into (§12); null: no trace.
-    trace: ?[]const u8 = null,
+    /// Where the body after each phase goes (§12), as JSON; null: no trace.
+    trace: ?Trace = null,
 
     /// `error.Canceled` when the host has set the flag.
     pub fn checkCancel(self: *const Options) Error!void {

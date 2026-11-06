@@ -17,6 +17,7 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const check = @import("../topology/check.zig");
+const trace = @import("../io/trace.zig");
 const Body = body_mod.Body;
 const Affine = mat.Affine;
 const Diagnostics = diagnostics.Diagnostics;
@@ -169,10 +170,12 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const
     // A mirror: outward normals flip with the handedness, so the senses do, and the loops
     // run the other way to keep the face on the left
     if (affine.determinant() < 0) try mirrorTopology(&out);
+    try trace.phase(allocator, &options, &out, "transform", "mapped");
 
     var report = check.run(allocator, &out, .geometric) catch return error.OutOfMemory;
     defer report.deinit(allocator);
     if (report.first()) |f| return diag.fail(error.NotValid, f);
+    try trace.phase(allocator, &options, &out, "transform", "checked");
     return out;
 }
 

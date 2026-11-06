@@ -58,6 +58,7 @@ pub const measure = struct {
 pub const io = struct {
     pub const body_json = @import("io/body_json.zig");
     pub const step_write = @import("io/step_write.zig");
+    pub const trace = @import("io/trace.zig");
 };
 /// Spatial structures: the welding grid, interning over an arena, the BVH.
 pub const spatial = struct {
@@ -88,6 +89,7 @@ test {
     _ = @import("spatial/bvh_test.zig");
     _ = @import("io/step_write_test.zig");
     _ = @import("io/fixtures_test.zig");
+    _ = @import("io/trace_test.zig");
     _ = @import("construct/transform_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");

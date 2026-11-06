@@ -226,7 +226,7 @@ registered in `root.zig`; `zig build test` in `locus/` runs them alone.
 Allowed import direction, enforced by a layering test as KupCAD's `layering_test.zig`:
 `math, tolerance` ← `geometry` ← `topology, spatial` ← `sketch, construct, intersect,
 measure, query, mesh, io` ← `boolean, local` ← `root`. Nothing imports upward; `io` and
-`check` import no operation.
+`check` import no operation (an operation may import `io` for its trace, §12).
 
 ### 4.1 The shape of every public function
 
@@ -240,7 +240,7 @@ reads them gets the entity (KupCAD's error line can then name the face).
 
 `Options` is per operation and always has `tolerance: ?Tolerance` (null: the bodies'),
 `limits: Limits`, `cancel: ?*const std.atomic.Value(bool)`, `parallel: ?Parallel` and
-`trace: ?[]const u8` (§12).
+`trace: ?Trace` (§12).
 `Limits` bounds every iteration a bad input could lengthen: Newton trials, marching
 steps, subdivision depth, curve-fit points, faces per body, entities per arena (KupCAD's
 `max_newton_trials` and `max_marching_steps` come from here; the loops are bounded by
@@ -864,6 +864,8 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D19 | NURBS knots stored as the full vector; multiplicities derived on export | Distinct knots plus multiplicities | The book's algorithms index the full vector; repeated knots are exact copies made by insertion (2026-11-06) |
 | D20 | A non-uniform scale keeps planes, lines and NURBS; the other curved kinds are `NotRepresentable` and the driver refuses them as a feature | Converting them to NURBS | A circle's NURBS form has another parameterization: the stored pcurves would not fit it (2026-11-06) |
 | D21 | `Checkpoint` is a copy of the body | A snapshot of the tables' lengths | Operators relink existing entities, which a length snapshot cannot undo (2026-11-06) |
+| D22 | The trace is a sink the host supplies (`Trace{context, write}`), fed body JSON per phase by `io/trace.zig`; an operation may import `io` for it | A directory path Locus writes into | Locus touches no file system (§4's targets); the host (`kupcad dev brep-trace`) names and writes the files (2026-11-06) |
+| D23 | KupCAD's driver keeps the first finding of a failed operation on the thread, and the script's error carries it (`polygon failed: an edge is shorter than …`) | The kernel interface's null alone | The driver interface answers a failure with null and the findings would be lost; the reason is what a readiness report is for (2026-11-06) |
 
 ---
 
@@ -888,11 +890,14 @@ of tier 2 degrades. An operation checks `zone ≥ extent · 1e-12` (one digit of
 otherwise returns `error.InvalidInput` naming the model size; the fix is the host's
 (scale the model or raise the tolerance), as SMLib's decade table implies.
 
-**Trace.** Every operation can be run with `options.trace = dir`, writing the body JSON
-after each phase (`01-paved.json`, `02-imprinted.json`, …) plus the diagnostics, so a
-failing boolean is inspected as a sequence of valid bodies rather than a stack trace
-(Stroud: "print or draw any entity", S p.605). KupCAD's `kupcad dev` exposes it as `dev
-brep-trace <script>`; the playground can later load a trace file and show each phase.
+**Trace.** Every operation can be run with `options.trace` set to a sink (`Trace`: a
+context and a `write(context, operation, phase, body_json)` function), which receives the
+body as JSON after each phase (`io/trace.zig`; `transform` reports `mapped` and `checked`,
+a boolean will report `paved`, `imprinted`, …), so a failing boolean is inspected as a
+sequence of valid bodies rather than a stack trace (Stroud: "print or draw any entity",
+S p.605). Locus writes no files (§4's targets); the host does: KupCAD's `kupcad dev
+brep-trace <script>` writes `001-transform-mapped.json`, `002-transform-checked.json`, …
+beside the script; the playground can later load a trace and show each phase.
 
 **Fixtures.** Body JSON fixtures carry a format `version`; they are regenerated only by
 `zig build test -Dupdate-snapshots` and the diff is reviewed like code, as KupCAD does
