@@ -47,6 +47,7 @@ pub const Body = topology.Body;
 pub const sketch = struct {
     pub const overlay = @import("sketch/overlay.zig");
     pub const boolean = @import("sketch/boolean.zig");
+    pub const offset = @import("sketch/offset.zig");
 };
 /// Constructions: sewing, the primitives, the hull.
 pub const construct = struct {
@@ -102,6 +103,7 @@ test {
     _ = @import("measure/mass_test.zig");
     _ = @import("sketch/overlay_test.zig");
     _ = @import("sketch/boolean_test.zig");
+    _ = @import("sketch/offset_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }

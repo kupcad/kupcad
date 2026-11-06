@@ -90,7 +90,7 @@ pub fn evenOdd(allocator: std.mem.Allocator, tol: Tolerance, outlines: []const [
 
 /// The sheet's loops as the overlay's current input: each coedge an edge from its start to
 /// its end, a circle's as an arc running the way the coedge does.
-fn addSheet(o: *Overlay, sheet: *const Body, diag: *Diagnostics) Error!void {
+pub fn addSheet(o: *Overlay, sheet: *const Body, diag: *Diagnostics) Error!void {
     var shells = traverse.Shells.init(sheet);
     while (shells.next() catch return corrupt(diag)) |s| {
         var faces = traverse.Faces.init(sheet, s);
@@ -119,9 +119,12 @@ fn flat(p: Vec3) Vec2 {
     return .{ p[0], p[1] };
 }
 
-/// The kept region as a sheet: its boundary cycles, outer loops and holes told by their
-/// signed areas, each hole in the innermost outer containing it, each outer a face.
-fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: []const bool, diag: *Diagnostics) Error!Body {
+/// The kept region of an overlay as a sheet: its boundary cycles, outer loops and holes
+/// told by their signed areas, each hole in the innermost outer containing it, each outer
+/// a face; consecutive pieces of one line or one circle (what a cut at a crossing left,
+/// or a miter's meeting point) are one edge. What the booleans, the even-odd fill and the
+/// offset end with.
+pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: []const bool, diag: *Diagnostics) Error!Body {
     var halves = std.ArrayList(u32).empty;
     defer halves.deinit(allocator);
     var starts = std.ArrayList(u32).empty;
@@ -133,23 +136,32 @@ fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: 
     defer b.deinit();
     errdefer b.body.deinit();
     if (n_cycles == 0) return b.body;
-    // The vertices once, the edges per cycle, the cycles' areas
+    // Each cycle's pieces merged along one curve, then its vertices (once) and edges, and
+    // its area
+    const pieces = try allocator.alloc(Piece, halves.items.len);
+    defer allocator.free(pieces);
+    const piece_starts = try allocator.alloc(u32, n_cycles + 1);
+    defer allocator.free(piece_starts);
+    var n_pieces: u32 = 0;
+    for (0..n_cycles) |ci| {
+        piece_starts[ci] = n_pieces;
+        n_pieces += mergePieces(o, halves.items[starts.items[ci]..starts.items[ci + 1]], pieces[n_pieces..], tol);
+    }
+    piece_starts[n_cycles] = n_pieces;
     const vertex_of = try allocator.alloc(types.VertexIndex, o.points.items.len);
     defer allocator.free(vertex_of);
     @memset(vertex_of, .none);
-    const specs = try allocator.alloc(sew.EdgeSpec, halves.items.len);
+    const specs = try allocator.alloc(sew.EdgeSpec, n_pieces);
     defer allocator.free(specs);
     const areas = try allocator.alloc(f64, n_cycles);
     defer allocator.free(areas);
     for (0..n_cycles) |ci| {
         var area: f64 = 0;
-        for (halves.items[starts.items[ci]..starts.items[ci + 1]], starts.items[ci]..) |h, k| {
-            const va = o.origin(h);
-            const vb = o.target(h);
-            if (vertex_of[va] == .none) vertex_of[va] = try b.vertex(o.points.items[va]);
-            if (vertex_of[vb] == .none) vertex_of[vb] = try b.vertex(o.points.items[vb]);
-            specs[k] = try edgeSpec(&b, o, h, vertex_of[va], vertex_of[vb]);
-            area += areaTerm(o, h);
+        for (pieces[piece_starts[ci]..piece_starts[ci + 1]], piece_starts[ci]..) |piece, k| {
+            if (vertex_of[piece.a] == .none) vertex_of[piece.a] = try b.vertex(o.points.items[piece.a]);
+            if (vertex_of[piece.b] == .none) vertex_of[piece.b] = try b.vertex(o.points.items[piece.b]);
+            specs[k] = try edgeSpec(&b, o, piece, vertex_of[piece.a], vertex_of[piece.b]);
+            area += areaTerm(o, piece);
         }
         areas[ci] = area / 2.0;
     }
@@ -163,11 +175,11 @@ fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: 
             n_faces += 1;
             continue;
         }
-        const probe = insidePoint(o, halves.items[starts.items[ci]]);
+        const probe = insidePoint(o, pieces[piece_starts[ci]]);
         var best = std.math.inf(f64);
         for (0..n_cycles) |oi| {
             if (areas[oi] <= 0 or areas[oi] >= best) continue;
-            if (containsPoint(o, halves.items[starts.items[oi]..starts.items[oi + 1]], probe)) {
+            if (containsPoint(o, pieces[piece_starts[oi]..piece_starts[oi + 1]], probe)) {
                 best = areas[oi];
                 owner[ci] = @intCast(oi);
             }
@@ -185,13 +197,13 @@ fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: 
     for (0..n_cycles) |oi| {
         if (areas[oi] <= 0) continue;
         const first = li;
-        loops[li] = .{ .edges = specs[starts.items[oi]..starts.items[oi + 1]] };
+        loops[li] = .{ .edges = specs[piece_starts[oi]..piece_starts[oi + 1]] };
         li += 1;
         var box = geometry.Box2.empty;
-        growBox(&box, o, halves.items[starts.items[oi]..starts.items[oi + 1]]);
+        growBox(&box, o, pieces[piece_starts[oi]..piece_starts[oi + 1]]);
         for (0..n_cycles) |hi| {
             if (owner[hi] != oi) continue;
-            loops[li] = .{ .edges = specs[starts.items[hi]..starts.items[hi + 1]] };
+            loops[li] = .{ .edges = specs[piece_starts[hi]..piece_starts[hi + 1]] };
             li += 1;
         }
         face_specs[fi] = .{ .surface = plane, .loops = loops[first..li], .uv_box = box };
@@ -200,23 +212,65 @@ fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, keep: 
     return b.finish(face_specs, .sheet);
 }
 
-/// An overlay half-edge as an edge specification of the new sheet: a line through its
-/// ends, or its circle interned with the angles of its ends as the range, run the way the
-/// half-edge does.
-fn edgeSpec(b: *Builder, o: *const Overlay, half: u32, start: types.VertexIndex, end: types.VertexIndex) Error!sew.EdgeSpec {
-    const arc = o.arcOf(half) orelse return b.straight(start, end);
+/// A piece of a cycle's boundary: from vertex `a` to `b` of the overlay, straight or an
+/// arc the way the cycle runs it; what consecutive half-edges on one curve merge into.
+const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc };
+
+/// The cycle's half-edges as pieces, consecutive ones on one line (collinear, the same
+/// way) or on one circle (the same centre, radius and sense) merged, the merge wrapping
+/// round the cycle's start. Returns how many pieces `out` got.
+fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, tol: Tolerance) u32 {
+    var n: u32 = 0;
+    for (halves) |h| {
+        const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h) };
+        if (n > 0 and continues(o, out[n - 1], piece, tol)) {
+            out[n - 1].b = piece.b;
+        } else {
+            out[n] = piece;
+            n += 1;
+        }
+    }
+    // The last and the first
+    while (n > 1 and continues(o, out[n - 1], out[0], tol)) {
+        out[0].a = out[n - 1].a;
+        n -= 1;
+    }
+    return n;
+}
+
+/// Whether `next` carries on `prev`'s curve: the same line the same way, or the same
+/// circle the same way round, short of closing it (a full circle stays two arcs, D7).
+fn continues(o: *const Overlay, prev: Piece, next: Piece, tol: Tolerance) bool {
+    if (prev.arc) |pa| {
+        const na = next.arc orelse return false;
+        if (prev.a == next.b) return false;
+        return pa.ccw == na.ccw and @abs(pa.r - na.r) <= tol.zone and vec.distance2(pa.c, na.c) <= tol.zone;
+    }
+    if (next.arc != null) return false;
+    const a = o.point(prev.a);
+    const b = o.point(prev.b);
+    const c = o.point(next.b);
+    const d1 = vec.normalized2(vec.sub2(b, a)) orelse return false;
+    const d2 = vec.normalized2(vec.sub2(c, b)) orelse return false;
+    return @abs(vec.cross2(d1, d2)) <= tol.angle and vec.dot2(d1, d2) > 0;
+}
+
+/// A piece as an edge specification of the new sheet: a line through its ends, or its
+/// circle interned with the angles of its ends as the range, run the way the piece does.
+fn edgeSpec(b: *Builder, o: *const Overlay, piece: Piece, start: types.VertexIndex, end: types.VertexIndex) Error!sew.EdgeSpec {
+    const arc = piece.arc orelse return b.straight(start, end);
     const circle = curves.Circle{ .c = .{ arc.c[0], arc.c[1], 0 }, .x = vec.X3, .y = vec.Y3, .r = arc.r };
     const ref = b.interner.circle(b.allocator, &b.body.geometry, circle) catch |e| return b.fail(e);
-    const range = rangeOf(o, half);
+    const range = rangeOf(o, piece);
     return .{ .start = start, .end = end, .curve = ref, .t0 = range[0], .t1 = range[1], .forward = arc.ccw };
 }
 
-/// The circle's parameter range an arc half-edge covers, counter-clockwise from the end
-/// the arc starts from that way round.
-fn rangeOf(o: *const Overlay, half: u32) [2]f64 {
-    const arc = o.arcOf(half).?;
-    const pa = o.point(o.origin(half));
-    const pb = o.point(o.target(half));
+/// The circle's parameter range an arc piece covers, counter-clockwise from the end the
+/// arc starts from that way round.
+fn rangeOf(o: *const Overlay, piece: Piece) [2]f64 {
+    const arc = piece.arc.?;
+    const pa = o.point(piece.a);
+    const pb = o.point(piece.b);
     const ta = std.math.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]);
     const tb = std.math.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]);
     const from = if (arc.ccw) ta else tb;
@@ -225,13 +279,13 @@ fn rangeOf(o: *const Overlay, half: u32) [2]f64 {
     return .{ from, to };
 }
 
-/// Twice a half-edge's share of its cycle's area, as the overlay reckons it.
-fn areaTerm(o: *const Overlay, half: u32) f64 {
-    const a = o.point(o.origin(half));
-    const b = o.point(o.target(half));
+/// Twice a piece's share of its cycle's area, as the overlay reckons it.
+fn areaTerm(o: *const Overlay, piece: Piece) f64 {
+    const a = o.point(piece.a);
+    const b = o.point(piece.b);
     var twice = a[0] * b[1] - b[0] * a[1];
-    if (o.arcOf(half)) |arc| {
-        const range = rangeOf(o, half);
+    if (piece.arc) |arc| {
+        const range = rangeOf(o, piece);
         const theta = range[1] - range[0];
         const segment = arc.r * arc.r * (theta - @sin(theta));
         twice += if (arc.ccw) segment else -segment;
@@ -239,15 +293,15 @@ fn areaTerm(o: *const Overlay, half: u32) f64 {
     return twice;
 }
 
-/// A point just to the left of a half-edge's middle: a few zones in, for a hole into the
-/// face about it.
-fn insidePoint(o: *const Overlay, half: u32) Vec2 {
-    const a = o.point(o.origin(half));
-    const b = o.point(o.target(half));
+/// A point just to the left of a piece's middle: a few zones in, for a hole into the face
+/// about it.
+fn insidePoint(o: *const Overlay, piece: Piece) Vec2 {
+    const a = o.point(piece.a);
+    const b = o.point(piece.b);
     var middle = vec.scale2(vec.add2(a, b), 0.5);
     var tangent = vec.normalized2(vec.sub2(b, a)) orelse Vec2{ 1, 0 };
-    if (o.arcOf(half)) |arc| {
-        const range = rangeOf(o, half);
+    if (piece.arc) |arc| {
+        const range = rangeOf(o, piece);
         const angle = (range[0] + range[1]) / 2.0;
         middle = vec.addScaled2(arc.c, .{ @cos(angle), @sin(angle) }, arc.r);
         const radial = vec.sub2(middle, arc.c);
@@ -256,13 +310,13 @@ fn insidePoint(o: *const Overlay, half: u32) Vec2 {
     return vec.addScaled2(middle, .{ -tangent[1], tangent[0] }, PROBE_ZONES * o.tol.zone);
 }
 
-/// Whether `p` is inside the cycle of `halves`, by the ray to +x.
-fn containsPoint(o: *const Overlay, halves: []const u32, p: Vec2) bool {
+/// Whether `p` is inside the cycle of `pieces`, by the ray to +x.
+fn containsPoint(o: *const Overlay, pieces: []const Piece, p: Vec2) bool {
     var inside = false;
-    for (halves) |h| {
-        const a = o.point(o.origin(h));
-        const b = o.point(o.target(h));
-        if (o.arcOf(h)) |arc| {
+    for (pieces) |piece| {
+        const a = o.point(piece.a);
+        const b = o.point(piece.b);
+        if (piece.arc) |arc| {
             inside = inside != overlay_mod.arcCrossings(a, b, arc, p);
         } else if ((a[1] > p[1]) != (b[1] > p[1])) {
             const x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
@@ -273,12 +327,12 @@ fn containsPoint(o: *const Overlay, halves: []const u32, p: Vec2) bool {
 }
 
 /// The UV box of a cycle on the world plane: its ends and its arcs' extreme points.
-fn growBox(box: *geometry.Box2, o: *const Overlay, halves: []const u32) void {
-    for (halves) |h| {
-        box.grow(o.point(o.origin(h)));
-        if (o.arcOf(h)) |arc| {
+fn growBox(box: *geometry.Box2, o: *const Overlay, pieces: []const Piece) void {
+    for (pieces) |piece| {
+        box.grow(o.point(piece.a));
+        if (piece.arc) |arc| {
             const circle = curves.Circle{ .c = .{ arc.c[0], arc.c[1], 0 }, .x = vec.X3, .y = vec.Y3, .r = arc.r };
-            const range = rangeOf(o, h);
+            const range = rangeOf(o, piece);
             const b3 = circle.bounds(range[0], range[1]);
             box.grow(.{ b3.min[0], b3.min[1] });
             box.grow(.{ b3.max[0], b3.max[1] });
@@ -286,7 +340,7 @@ fn growBox(box: *geometry.Box2, o: *const Overlay, halves: []const u32) void {
     }
 }
 
-fn mapError(diag: *Diagnostics, err: anyerror) Error {
+pub fn mapError(diag: *Diagnostics, err: anyerror) Error {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.TooMany => diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the sketch's edges" }),
