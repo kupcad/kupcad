@@ -27,7 +27,10 @@ pub const Device = union(enum) {
             1...3 => {
                 const start_size = first;
                 const end_size = second;
-                const count = (1 + (end_size - start_size)) >> (4 - @as(u4, @truncate(format)));
+                // [KupCAD] a range that ends before it starts is an error, and the count is
+                // computed in a u32: the u16s from the font underflowed or overflowed it
+                if (end_size < start_size) return error.ParseFail;
+                const count: u16 = @intCast((@as(u32, end_size - start_size) + 1) >> (4 - @as(u5, @truncate(format))));
                 const delta_values = try s.read_array(u16, count);
                 return .{ .hinting = .{
                     .start_size = start_size,
@@ -136,7 +139,7 @@ pub const PositioningSubtable = union(enum) {
             6 => .{ .mark_to_mark = try .parse(data) },
             7 => .{ .context = try .parse(data) },
             8 => .{ .chain_context = try .parse(data) },
-            9 => ggg.parse_extension_lookup(PositioningSubtable, data),
+            9 => ggg.parse_extension_lookup(PositioningSubtable, data, 9),
             else => return error.ParseFail,
         };
     }
@@ -321,7 +324,8 @@ const ValueFormatFlags = packed struct(u8) {
     ) usize {
         // The high 8 bits are not used, so make sure we ignore them using 0xFF.
         const backing: u8 = @bitCast(self);
-        return @sizeOf(u16) * @popCount(backing);
+        // [KupCAD] in usize, as ttf-parser has it: @popCount's u4 overflowed on all eight flags
+        return @sizeOf(u16) * @as(usize, @popCount(backing));
     }
 
     const Self = @This();

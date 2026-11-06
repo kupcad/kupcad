@@ -32,7 +32,7 @@ pub const SubstitutionSubtable = union(enum) {
             4 => .{ .ligature = try .parse(data) },
             5 => .{ .context = try .parse(data) },
             6 => .{ .chain_context = try .parse(data) },
-            7 => try ggg.parse_extension_lookup(SubstitutionSubtable, data),
+            7 => try ggg.parse_extension_lookup(SubstitutionSubtable, data, 7),
             8 => .{ .reverse_chain_single = try .parse(data) },
             else => error.ParseFail,
         };

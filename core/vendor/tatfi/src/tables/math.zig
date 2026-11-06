@@ -1,5 +1,6 @@
 //! A [Math Table](https://docs.microsoft.com/en-us/typography/opentype/spec/math) implementation.
 
+const std = @import("std");
 const lib = @import("../lib.zig");
 const parser = @import("../parser.zig");
 const utils = @import("../utils.zig");
@@ -652,6 +653,8 @@ const MathValueRecord = struct {
     fn parse(
         data: []const u8,
     ) parser.Error!Self {
+        // [KupCAD] a record past the data is an error, as ttf-parser's Stream has it
+        if (data.len < FromData.SIZE) return error.ParseFail;
         return FromData.parse(data[0..FromData.SIZE]);
     }
 
@@ -799,7 +802,8 @@ pub const Kern = struct {
         var s = parser.Stream.new(data);
         const c = try s.read(u16);
         const heights = try s.read_array(MathValueRecord, c);
-        const kerns = try s.read_array(MathValueRecord, c + 1);
+        // [KupCAD] checked: a count of 65535 overflowed
+        const kerns = try s.read_array(MathValueRecord, try std.math.add(u16, c, 1));
         return .{
             .data = data,
             .heights = heights,

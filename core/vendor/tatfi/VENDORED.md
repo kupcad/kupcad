@@ -66,6 +66,23 @@ tests couldn't run in KupCAD's target and mode.
   descender of -1, or a Windows descent of 0x8000, overflowed. `src/tests/main.zig` has
   "metrics past an i16" (with `font_of`, a font of given tables), `src/tests/os2.zig` "a
   windows descent of 32768".
+- `src/tables/gpos.zig`: a value format's record size is computed in `usize`, as ttf-parser
+  does; `@popCount`'s `u4` overflowed on all eight flags, which a valid font can have. A Device
+  table that ends before it starts is an error, and its count of deltas is computed in a `u32`
+  (ttf-parser's `u16` arithmetic panics in a debug build too). `src/tests/gpos.zig` has "a
+  single adjustment of every value", "a device table that ends before it starts" and "a
+  device table of every size".
+- `src/ggg/lookup.zig`: `parse_extension_lookup` takes the extension's lookup type and fails on
+  a subtable of that type; an extension pointing to itself recursed until the stack
+  overflowed, in ttf-parser too. `src/tests/gpos.zig` has "an extension of an extension".
+- `src/aat.zig`: a format 1 state table's entry offset is computed in `usize`, as
+  ttf-parser does; the `u8` entry index times the entry size overflowed from 64 up. `new_state`
+  of a table of no classes is 0; it divided by zero, in ttf-parser too. `src/tests/aat.zig` has
+  "state table entry 64" and "state table of no classes".
+- `src/tables/math.zig`: a value record past the end of the data is an error, as ttf-parser's
+  `Stream` read has it; it sliced past the data. A math kern's number of kerns, one more than
+  its 65535 heights, is a checked add. `src/tests/math.zig` has "a constant past the end of the
+  constants" and "a math kern of 65535 heights".
 
 ## Updating
 

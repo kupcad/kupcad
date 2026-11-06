@@ -85,3 +85,49 @@ test "pair set: a device offset is from the start of the pair set" {
     try t.expectEqual(1, device.outer_index);
     try t.expectEqual(2, device.inner_index);
 }
+
+test "a device table that ends before it starts" {
+    // [KupCAD] Its count of deltas underflowed: end size minus start size, in u16.
+    try t.expectError(error.ParseFail, gpos.Device.parse(&.{ 0, 5, 0, 1, 0, 1 }));
+}
+
+test "a device table of every size" {
+    // [KupCAD] Its count of deltas overflowed: 0xFFFF minus 0 plus one, in u16.
+    // Format 1: eight two-bit deltas a word, 65536 sizes in 8192 words
+    const data: [6 + 0x4000]u8 = .{ 0, 0, 0xFF, 0xFF, 0, 1 } ++ @as([0x4000]u8, @splat(0));
+    const device = try gpos.Device.parse(&data);
+    try t.expectEqual(0x2000, device.hinting.delta_values.len());
+}
+
+test "a single adjustment of every value" {
+    // [KupCAD] A value format of all eight flags overflowed the size of its record, the u4
+    // @popCount gives times two.
+    const data = try convert(&.{
+        .{ .unt16 = 2 }, // format
+        .{ .unt16 = 24 }, // coverage offset
+        .{ .unt16 = 0x00FF }, // value format: all eight values
+        .{ .unt16 = 1 }, // value count
+        .{ .raw = &@as([16]u8, @splat(0)) }, // value 0: zeros, no devices
+        // Coverage: format 1, glyph 5
+        .{ .unt16 = 1 },
+        .{ .unt16 = 1 },
+        .{ .unt16 = 5 },
+    });
+    defer t.allocator.free(data);
+
+    const subtable = try gpos.PositioningSubtable.parse(data, 1);
+    try t.expectEqual(0, subtable.single.format2.values.get(0).?.x_advance);
+}
+
+test "an extension of an extension" {
+    // [KupCAD] An extension subtable pointing to itself recursed until the stack
+    // overflowed.
+    const data = try convert(&.{
+        .{ .unt16 = 1 }, // format
+        .{ .unt16 = 9 }, // extension lookup type: an extension
+        .{ .unt32 = 0 }, // extension offset: this subtable
+    });
+    defer t.allocator.free(data);
+
+    try t.expectError(error.ParseFail, gpos.PositioningSubtable.parse(data, 9));
+}

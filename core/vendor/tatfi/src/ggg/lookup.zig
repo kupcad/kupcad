@@ -125,14 +125,19 @@ pub fn LookupSubtables(kind: LookupSubtable) type {
     };
 }
 
+/// [KupCAD] `extension_kind` is the lookup type of an extension, which the subtable it
+/// points to can't have: one pointing to itself recursed until the stack overflowed (as
+/// ttf-parser's does).
 pub fn parse_extension_lookup(
     T: type,
     data: []const u8,
+    extension_kind: u16,
 ) parser.Error!T {
     var s = parser.Stream.new(data);
     if (try s.read(u16) != 1) return error.ParseFail;
 
     const kind = try s.read(u16);
+    if (kind == extension_kind) return error.ParseFail;
     const offset = try s.read(parser.Offset32);
     return T.parse(try utils.slice(data, offset[0]), kind);
 }

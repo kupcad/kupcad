@@ -381,7 +381,8 @@ pub const StateTable = struct {
             break :i self.state_array[idx];
         };
 
-        var s = parser.Stream.new_at(self.entry_table, entry_idx * @sizeOf(StateEntry)) catch return null;
+        // [KupCAD] in usize, as ttf-parser has it: the u8 index overflowed from 64 up
+        var s = parser.Stream.new_at(self.entry_table, @as(usize, entry_idx) * @sizeOf(StateEntry)) catch return null;
         return s.read(StateEntry) catch null;
     }
 
@@ -399,6 +400,8 @@ pub const StateTable = struct {
         self: StateTable,
         state: u16,
     ) u16 {
+        // [KupCAD] no classes is no new state; ttf-parser divides by zero
+        if (self.number_of_classes == 0) return 0;
         const n = @divFloor(
             (@as(i32, state) - @as(i32, self.state_array_offset)),
             @as(i32, self.number_of_classes),

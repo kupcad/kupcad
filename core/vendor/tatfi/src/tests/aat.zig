@@ -346,3 +346,40 @@ test "format10 u32_value_size" {
     const table: Lookup = try .parse(1, data);
     try t.expectEqual(9, table.value(.{0}));
 }
+
+/// A format 1 state table of four classes whose state 0 goes to entry `entry` for every
+/// glyph of class 1, glyph 0.
+fn state_table(number_of_classes: u16, entry: u8) ![]u8 {
+    return convert(&.{
+        .{ .unt16 = number_of_classes }, // number of classes
+        .{ .unt16 = 8 }, // class table offset
+        .{ .unt16 = 13 }, // state array offset
+        .{ .unt16 = 14 }, // entry table offset
+        // Class table
+        .{ .unt16 = 0 }, // first glyph
+        .{ .unt16 = 1 }, // number of glyphs
+        .{ .unt8 = 1 }, // glyph 0's class
+        // State array
+        .{ .unt8 = entry }, // state 0, class 0
+        // Entry table
+        .{ .unt32 = 0 }, // entry 0
+    });
+}
+
+test "state table entry 64" {
+    // [KupCAD] The entry's offset overflowed the u8 index times the entry's size.
+    const data = try state_table(4, 64);
+    defer t.allocator.free(data);
+
+    const table = try ttf.apple_layout.StateTable.parse(data);
+    try t.expectEqual(null, table.entry(0, 0));
+}
+
+test "state table of no classes" {
+    // [KupCAD] A new state divided by the number of classes, zero.
+    const data = try state_table(0, 0);
+    defer t.allocator.free(data);
+
+    const table = try ttf.apple_layout.StateTable.parse(data);
+    try t.expectEqual(0, table.new_state(20));
+}
