@@ -222,7 +222,8 @@ fn select_index_subtable(
         if (glyph_id[0] >= start_glyph_id[0] and glyph_id[0] <= end_glyph_id[0])
             return .{
                 .start_glyph_id = start_glyph_id,
-                .offset = size_table.subtable_array_offset[0] + offset[0],
+                // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
+                .offset = @as(usize, size_table.subtable_array_offset[0]) + offset[0],
             };
     }
 

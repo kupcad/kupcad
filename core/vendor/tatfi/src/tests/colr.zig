@@ -2,6 +2,7 @@ const std = @import("std");
 const ttf = @import("../lib.zig");
 const t = std.testing;
 const convert = @import("main.zig").convert;
+const Unit = @import("main.zig").Unit;
 const colr = ttf.tables.colr;
 const cpal = ttf.tables.cpal;
 
@@ -727,6 +728,135 @@ test "a base glyph with more layers than the table has" {
         error.PaintError,
         colr_table.paint(.{5}, 0, init_painter(&commands), &.{}, .new(0, 0, 0, 255)),
     );
+}
+
+/// A COLRv1 table whose base glyph list's one record, for glyph 1, has `paint_offset`, then
+/// `rest` from offset 44, with a layer list at `layer_list_offset` and a clip list at
+/// `clip_list_offset`, a var index map at `var_index_map_offset` and an item variation store
+/// at `item_variation_store_offset` (0 for none).
+fn colr_v1(paint_offset: u32, offsets: [4]u32, rest: []const Unit) ![]u8 {
+    var units: std.ArrayList(Unit) = .empty;
+    defer units.deinit(t.allocator);
+    try units.appendSlice(t.allocator, &.{
+        .{ .unt16 = 1 }, // version
+        .{ .unt16 = 0 }, // number of base glyphs
+        .{ .unt32 = 0 }, // offset to base glyphs
+        .{ .unt32 = 0 }, // offset to layers
+        .{ .unt16 = 0 }, // number of layers
+        .{ .unt32 = 34 }, // offset to the base glyph list
+        .{ .unt32 = offsets[0] }, // offset to the layer list
+        .{ .unt32 = offsets[1] }, // offset to the clip list
+        .{ .unt32 = offsets[2] }, // offset to the var index map
+        .{ .unt32 = offsets[3] }, // offset to the item variation store
+        // Base glyph list, at 34
+        .{ .unt32 = 1 }, // count
+        .{ .unt16 = 1 }, // record 0: glyph
+        .{ .unt32 = paint_offset }, // its paint's offset
+    });
+    try units.appendSlice(t.allocator, rest);
+    return convert(units.items);
+}
+
+/// A CPAL table of one palette of one color.
+const one_color_cpal = [_]u8{
+    0, 0, // version
+    0, 1, // number of palette entries
+    0, 1, // number of palettes
+    0, 1, // number of colors
+    0, 0, 0, 14, // offset to colors
+    0, 0, // index of palette 0's first color
+    0, 0, 0, 0, // color 0
+};
+
+/// The commands painting glyph 1 of `colr_data` gives.
+fn paint_glyph_1(colr_data: []const u8) ![]Command {
+    const table = try colr.parse(try cpal.parse(&one_color_cpal), colr_data);
+
+    var commands: std.ArrayList(Command) = .empty;
+    errdefer commands.deinit(t.allocator);
+    try table.paint(.{1}, 0, init_painter(&commands), &.{}, .new(0, 0, 0, 255));
+    return commands.toOwnedSlice(t.allocator);
+}
+
+test "a base glyph paint past a u32" {
+    // [KupCAD] The base glyph list's offset plus its record's paint offset overflowed the
+    // u32s they were added in.
+    const data = try colr_v1(0xFFFFFFF0, .{ 0, 0, 0, 0 }, &.{});
+    defer t.allocator.free(data);
+
+    const commands = try paint_glyph_1(data);
+    defer t.allocator.free(commands);
+    try t.expectEqual(0, commands.len);
+}
+
+test "a layer paint past a u32" {
+    // [KupCAD] The layer list's offset plus a layer's paint offset overflowed the u32s they
+    // were added in.
+    const data = try colr_v1(10, .{ 50, 0, 0, 0 }, &.{
+        // Paint, at 44: PaintColrLayers of one layer, the first
+        .{ .unt8 = 1 }, // format
+        .{ .unt8 = 1 }, // number of layers
+        .{ .unt32 = 0 }, // first layer index
+        // Layer list, at 50
+        .{ .unt32 = 1 }, // count
+        .{ .unt32 = 0xFFFFFFFF }, // layer 0's paint offset
+    });
+    defer t.allocator.free(data);
+
+    const commands = try paint_glyph_1(data);
+    defer t.allocator.free(commands);
+    try t.expectEqual(0, commands.len);
+}
+
+/// A COLRv1 table whose glyph 1 has a variable clip box of `var_index_base`, with a var
+/// index map of `entry_format` and 0xFFFFFFFF entries (none in the data), and an empty item
+/// variation store.
+fn colr_with_variable_clip_box(var_index_base: u32, entry_format: u8) ![]u8 {
+    return colr_v1(0, .{ 0, 44, 69, 75 }, &.{
+        // Clip list, at 44
+        .{ .unt8 = 1 }, // format
+        .{ .unt32 = 1 }, // count
+        .{ .unt16 = 1 }, // record 0: first glyph
+        .{ .unt16 = 1 }, // last glyph
+        .{ .raw = &.{ 0, 0, 12 } }, // clip box offset (Offset24)
+        // Clip box, at 56
+        .{ .unt8 = 2 }, // format: variable
+        .{ .int16 = 0 }, // x min
+        .{ .int16 = 0 }, // y min
+        .{ .int16 = 10 }, // x max
+        .{ .int16 = 10 }, // y max
+        .{ .unt32 = var_index_base },
+        // Var index map, at 69
+        .{ .unt8 = 1 }, // format
+        .{ .unt8 = entry_format },
+        .{ .unt32 = 0xFFFFFFFF }, // map count
+        // Item variation store, at 75
+        .{ .unt16 = 1 }, // format
+        .{ .unt32 = 8 }, // offset to the region list
+        .{ .unt16 = 0 }, // number of item variation data
+        .{ .unt16 = 0 }, // region list: axis count
+        .{ .unt16 = 0 }, // region count
+    });
+}
+
+test "a clip box's variation indices past a u32" {
+    // [KupCAD] Its four deltas' indices, from 0xFFFFFFFE, overflowed the u32 at the third.
+    const data = try colr_with_variable_clip_box(0xFFFFFFFE, 0x00);
+    defer t.allocator.free(data);
+
+    const table = try colr.parse(try cpal.parse(&one_color_cpal), data);
+    const coords: []const ttf.NormalizedCoordinate = &.{.{ .inner = 0 }};
+    try t.expectEqual(colr.ClipBox{ .x_min = 0, .y_min = 0, .x_max = 10, .y_max = 10 }, table.clip_box(.{1}, coords));
+}
+
+test "a var index map entry past a u32" {
+    // [KupCAD] The map's entry offset, index 0x80000000 times two bytes, overflowed the u32.
+    const data = try colr_with_variable_clip_box(0x80000000, 0x10);
+    defer t.allocator.free(data);
+
+    const table = try colr.parse(try cpal.parse(&one_color_cpal), data);
+    const coords: []const ttf.NormalizedCoordinate = &.{.{ .inner = 0 }};
+    try t.expectEqual(colr.ClipBox{ .x_min = 0, .y_min = 0, .x_max = 10, .y_max = 10 }, table.clip_box(.{1}, coords));
 }
 
 // Helpers

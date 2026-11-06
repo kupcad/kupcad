@@ -83,6 +83,16 @@ tests couldn't run in KupCAD's target and mode.
   `Stream` read has it; it sliced past the data. A math kern's number of kerns, one more than
   its 65535 heights, is a checked add. `src/tests/math.zig` has "a constant past the end of the
   constants" and "a math kern of 65535 heights".
+- `src/tables/colr.zig`, `src/tables/cblc.zig`: an offset that is a sum of two offsets from
+  the font (a COLRv1 base glyph paint, a layer paint, a CBLC index subtable) is added in
+  `usize`, as ttf-parser does; added in their `u32`s, they overflowed. A COLR variable value's
+  delta index, its base plus its place, is a checked add (no deltas past the last index); from
+  0xFFFFFFFE it overflowed. `src/tests/colr.zig` has "a base glyph paint past a u32", "a layer
+  paint past a u32" and "a clip box's variation indices past a u32", `src/tests/cblc.zig` "an
+  index subtable past a u32".
+- `src/delta_set.zig`: a DeltaSetIndexMap entry's offset is computed in `usize`, as ttf-parser
+  does; the `u32` index times the entry size overflowed. `src/tests/colr.zig` has "a var index
+  map entry past a u32".
 
 ## Updating
 

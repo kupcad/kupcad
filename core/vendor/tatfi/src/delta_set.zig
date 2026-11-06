@@ -37,7 +37,8 @@ fn map_inner(
     const entry_size = ((entry_format >> 4) & 3) + 1;
     const inner_index_bit_count: u5 = @truncate((entry_format & 0xF) + 1);
 
-    s.advance(entry_size * idx);
+    // [KupCAD] in usize, as ttf-parser has it: the u32 index times the entry size overflowed
+    s.advance(@as(usize, entry_size) * idx);
 
     var n: u32 = 0;
     for (try s.read_bytes(entry_size)) |b| n = (n << 8) + b;

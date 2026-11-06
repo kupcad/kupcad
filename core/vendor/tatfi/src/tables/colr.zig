@@ -295,7 +295,8 @@ fn paint_v1(
     defer if (clip_box_maybe != null) painter.pop_clip();
 
     self.parse_paint(
-        self.base_glyph_paints_offset[0] + base.paint_table_offset[0],
+        // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
+        @as(usize, self.base_glyph_paints_offset[0]) + base.paint_table_offset[0],
         palette,
         painter,
         recursion_stack,
@@ -357,7 +358,8 @@ fn parse_paint_impl(
                 const paint_offset = self.layer_paint_offsets.get(index) orelse
                     return error.ParseFail;
 
-                const new_offset = self.layer_paint_offsets_offset[0] + paint_offset[0];
+                // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
+                const new_offset = @as(usize, self.layer_paint_offsets_offset[0]) + paint_offset[0];
                 try self.parse_paint(
                     new_offset,
                     palette,
@@ -1542,8 +1544,10 @@ const VariationData = struct {
 
         for (&deltas, 0..) |*delta, i| {
             const delta_map = self.delta_map orelse continue;
-            const douter, const dinner =
-                delta_map.map(var_index_base + @as(u32, @truncate(i))) orelse continue;
+            // [KupCAD] a checked add: past the last index there are no deltas, where the
+            // u32 overflowed (ttf-parser's add panics in a debug build too)
+            const index = std.math.add(u32, var_index_base, @truncate(i)) catch continue;
+            const douter, const dinner = delta_map.map(index) orelse continue;
             delta.* = vs.parse_delta(douter, dinner, coordinates) catch continue;
         }
 
