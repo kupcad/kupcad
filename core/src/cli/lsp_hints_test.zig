@@ -39,6 +39,10 @@ test "LSP hints: methods of solids and sketches, from their Signatures" {
     try testing.expectEqualStrings(":Sketch@1 r@11 deg@24", try hintsOf(a, "p = circle(2)\np.revolve(90)"));
     try testing.expectEqualStrings("size@7 h@18", try hintsOf(a, "square(4).extrude(10)"));
     try testing.expectEqualStrings("size@5 x@18 y@21 z@24", try hintsOf(a, "cube(1).translate(1, 2, 3)"));
+    // A variable assigned its own method's result: `s` is still the sketch while its value
+    // is read, so extrude's `h` is hinted (it was typed as the Solid it becomes, which has none)
+    try testing.expectEqualStrings(":Sketch@1 r@11 :Solid@15 h@28", try hintsOf(a, "s = circle(1)\ns = s.extrude(2)"));
+    try testing.expectEqualStrings(":Sketch@1 size@11 :Solid@15 delta@27 deg@38", try hintsOf(a, "t = square(1)\nt = t.offset(1).revolve(90)"));
     // A method of the script's own class is its own.
     try testing.expectEqualStrings("", try hintsOf(a, "class G\n  def translate(a) = a\nend\nG.new.translate(1)"));
 }

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const value = @import("../../core/value.zig");
+const identifier = @import("../../core/identifier.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const Text = @import("../../vm/text.zig").Text;
 const kernel = @import("../../kernel/kernel.zig");
@@ -29,10 +30,7 @@ fn objectRespondTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value
         if (vm.findMethodWithPrivacy(c, query_val, null).method != null) return value.Value.initBool(true);
     }
     if (receiver.isInstance()) {
-        const field_name = if (query_name.len > 0 and query_name[0] == '@' and (query_name.len == 1 or query_name[1] != '@'))
-            query_name[1..]
-        else
-            query_name;
+        const field_name = if (identifier.kindOf(query_name) == .instance_var) query_name[1..] else query_name;
         const field_val = try vm.allocateString(field_name);
         return value.Value.initBool(receiver.asInstance().class.instance_layout.contains(field_val));
     }

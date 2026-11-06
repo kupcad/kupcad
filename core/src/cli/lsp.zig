@@ -18,6 +18,7 @@ const lsp_definition = @import("lsp_definition.zig");
 const import_path = @import("../core/import_path.zig");
 const under = @import("../core/subpath.zig").under;
 const ast = @import("../core/ast.zig");
+const identifier = @import("../core/identifier.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const value = @import("../core/value.zig");
 const Outcome = @import("outcome.zig").Outcome;
@@ -1081,7 +1082,7 @@ pub const Handler = struct {
             // CONTEXT: Standard Scope
             // Suggest Classes, Global Functions, and Primitives
             for (manifest.lsp_completions) |name| {
-                const is_class = name.len > 0 and std.ascii.isUpper(name[0]);
+                const is_class = identifier.kindOf(name) == .constant;
                 try items.append(arena, .{
                     .label = name,
                     .kind = if (is_class) .Class else .Function, // "Function" icon fits globals better

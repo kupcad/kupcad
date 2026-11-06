@@ -16,6 +16,7 @@ const limits = @import("../core/limits.zig");
 const InstructionHooks = @import("instruction_hooks.zig").InstructionHooks;
 const value = @import("../core/value.zig");
 const ast = @import("../core/ast.zig");
+const identifier = @import("../core/identifier.zig");
 const parameters = @import("../core/parameters.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../core/geometry_handle.zig");
@@ -1464,10 +1465,11 @@ pub const VM = struct {
         const name_str = name_val.asString().chars;
         var is_def = false;
 
-        if (std.mem.startsWith(u8, name_str, "@@")) {
+        const kind = identifier.kindOf(name_str);
+        if (kind == .class_var) {
             // Grab `self` and walk the class hierarchy
             if (classContext(self.getLocal(frame, 0))) |class| is_def = classVarOwner(class, name_val) != null;
-        } else if (std.mem.startsWith(u8, name_str, "@")) {
+        } else if (kind == .instance_var) {
             // An instance variable this instance has been given. The class layout
             // alone said yes once any instance of the class had set it, and a
             // block's frame slot 0 (the block) stood in for self.
