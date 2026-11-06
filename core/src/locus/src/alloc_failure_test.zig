@@ -20,6 +20,27 @@ const bvh = @import("spatial/bvh.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
+/// The test allocator with every in-place resize refused, so a growing list always
+/// allocates afresh: the sweep counts allocations, and whether a resize succeeds in place
+/// depends on the heap's page layout (it did on Linux and Windows and not on macOS),
+/// which made the count differ between runs (`NondeterministicMemoryUsage`).
+const NoResize = struct {
+    fn alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        return testing.allocator.rawAlloc(len, alignment, ret_addr);
+    }
+    fn resize(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) bool {
+        return false;
+    }
+    fn remap(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) ?[*]u8 {
+        return null;
+    }
+    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        testing.allocator.rawFree(memory, alignment, ret_addr);
+    }
+    const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = resize, .remap = remap, .free = free };
+    const allocator: std.mem.Allocator = .{ .ptr = undefined, .vtable = &vtable };
+};
+
 fn buildBox(allocator: std.mem.Allocator) !void {
     var diag = Diagnostics.init(allocator);
     defer diag.deinit();
@@ -134,22 +155,22 @@ fn opBvh(allocator: std.mem.Allocator, body: *const Body) !void {
 }
 
 test "allocation failure: every primitive leaves nothing allocated whichever allocation fails" {
-    try testing.checkAllAllocationFailures(testing.allocator, buildBox, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, buildCylinder, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, buildCircle, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, buildEvenOdd, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, buildPolyhedron, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, buildHull, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildBox, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildCylinder, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildCircle, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildEvenOdd, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildPolyhedron, .{});
+    try testing.checkAllAllocationFailures(NoResize.allocator, buildHull, .{});
 }
 
 test "allocation failure: every operation on a body leaves nothing allocated and the input untouched" {
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opTransform});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opDumpLoad});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opStep});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opCheck});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opClone});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opCompact});
-    try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opBvh});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opTransform});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opDumpLoad});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opStep});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opCheck});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opClone});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opCompact});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opBvh});
 }
 
 test "cancel: a flag set before the call is error.Canceled, with nothing allocated and the input untouched" {
