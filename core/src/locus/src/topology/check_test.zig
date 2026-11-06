@@ -12,6 +12,7 @@ const types = @import("types.zig");
 const Body = @import("body.zig").Body;
 const euler = @import("euler.zig");
 const check = @import("check.zig");
+const traverse_mod = @import("traverse.zig");
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -343,12 +344,12 @@ test "global rules: a hole outside its outer loop; two faces on one plane are a 
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const primitives = @import("../construct/primitives.zig");
-    // The even-odd builder does not place holes; the checker's level 2 does
+    // The even-odd builder checks a sheet to level 2, so a hole outside its outer loop is
+    // refused when built; moved out afterwards (its points and its lines together, so
+    // every local rule still holds) it is what level 2 names
     const outer = [_]vec.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
     const far = [_]vec.Vec2{ .{ 20, 20 }, .{ 20, 22 }, .{ 22, 22 }, .{ 22, 20 } };
-    var astray = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag);
-    defer astray.deinit();
-    try expectRule(&astray, .global, .hole_outside_outer);
+    try testing.expectError(error.NotValid, primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag));
     const inner = [_]vec.Vec2{ .{ 2, 2 }, .{ 2, 4 }, .{ 4, 4 }, .{ 4, 2 } };
     var plate = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
     defer plate.deinit();
@@ -356,6 +357,18 @@ test "global rules: a hole outside its outer loop; two faces on one plane are a 
     defer report.deinit(testing.allocator);
     try testing.expect(report.ok());
     try testing.expectEqual(@as(usize, 0), report.warnings());
+    var astray = try plate.clone(testing.allocator);
+    defer astray.deinit();
+    const hole = astray.loop(astray.face(types.FaceIndex.of(0)).first_loop).next_in_face;
+    const away = Vec3{ 20, 20, 0 };
+    var it = traverse_mod.Coedges.init(&astray, hole);
+    while (try it.next()) |c| {
+        const start = astray.coedgeStart(c);
+        astray.geometry.points.items[@backingInt(astray.vertex(start).point)] = vec.add(astray.point(start), away);
+        const line = &astray.geometry.lines.items[astray.edge(astray.coedge(c).edge).curve.index];
+        line.o = vec.add(line.o, away);
+    }
+    try expectRule(&astray, .global, .hole_outside_outer);
 
     // A pyramid whose base is two coplanar triangles on one plane record
     const pts = [_]Vec3{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 10, 10, 0 }, .{ 0, 10, 0 }, .{ 5, 5, 10 } };

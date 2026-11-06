@@ -163,6 +163,24 @@ test "parity: each shape's volume agrees on both engines within the chordal boun
     }
 }
 
+/// A solid on the B-Rep engine and what its volume must be under a change of it.
+const BREP_INVARIANTS = [_]struct { base: []const u8, changed: []const u8, factor: f64 }{
+    .{ .base = "cylinder(r: 2, h: 5, segments: 64)", .changed = "cylinder(r: 2, h: 5, segments: 64).translate(3, -2, 9).rotate(37, 11, 5)", .factor = 1 },
+    .{ .base = "sphere(r: 2)", .changed = "sphere(r: 2).mirror([1, 1, 0])", .factor = 1 },
+    .{ .base = "square(2, 3).translate(1, 0).revolve(segments: 64)", .changed = "square(2, 3).translate(1, 0).revolve(segments: 64).scale(2)", .factor = 8 },
+    .{ .base = "circle(r: 2, segments: 64).extrude(3)", .changed = "circle(r: 2, segments: 64).extrude(3).rotate(x: 90).translate(z: 4)", .factor = 1 },
+    .{ .base = "cylinder(r1: 2, r2: 1, h: 3, segments: 64)", .changed = "cylinder(r1: 2, r2: 1, h: 3, segments: 64).mirror(0, 0, 1)", .factor = 1 },
+};
+
+test "invariants on the B-Rep engine: a move or a mirror keeps the volume exactly, a scale cubes it" {
+    for (BREP_INVARIANTS) |case| {
+        errdefer std.debug.print("scripts: {s} | {s}\n", .{ case.base, case.changed });
+        const base = try volumeOn(.brep_native, case.base);
+        const changed = try volumeOn(.brep_native, case.changed);
+        try testing.expectApproxEqRel(base * case.factor, changed, 1e-9);
+    }
+}
+
 test "parity: a non-uniform scale of a curved part is refused on the B-Rep engine and built on the mesh engine" {
     for (BREP_REFUSES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});

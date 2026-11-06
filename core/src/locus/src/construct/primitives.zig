@@ -125,10 +125,14 @@ pub const Builder = struct {
         return self.body.geometry.addLine2(self.allocator, .{ .o = o, .d = d }) catch |e| return self.fail(e);
     }
 
-    /// The body, checked (level 1), or the checker's first finding as `error.NotValid`.
+    /// The body, checked, or the checker's first finding as `error.NotValid`: a solid to
+    /// level 1; a sheet to level 2 as well, whose hole rule is what tells a sketch of
+    /// several outlines (a word's letters) from one with holes, which the even-odd builder
+    /// cannot until the 2D kernel nests them.
     pub fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
         _ = sew.sew(&self.body, faces, kind) catch |e| return self.fail(e);
-        var report = check.run(self.body.allocator, &self.body, .geometric) catch return error.OutOfMemory;
+        const level: check.Level = if (kind == .sheet) .global else .geometric;
+        var report = check.run(self.body.allocator, &self.body, level) catch return error.OutOfMemory;
         defer report.deinit(self.body.allocator);
         if (report.first()) |f| return self.diag.fail(error.NotValid, f);
         return self.body;

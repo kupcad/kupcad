@@ -565,7 +565,8 @@ const Checker = struct {
                     if (insidePolygon(poly, uv.items[0]) or insidePolygon(uv.items, point)) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
                 }
                 try hole_points.append(self.allocator, uv.items[0]);
-                try hole_polygons.append(self.allocator, try self.allocator.dupe(Vec2, uv.items));
+                try hole_polygons.ensureUnusedCapacity(self.allocator, 1);
+                hole_polygons.appendAssumeCapacity(try self.allocator.dupe(Vec2, uv.items));
             }
         }
         for (b.edges.items, 0..) |e, i| {
