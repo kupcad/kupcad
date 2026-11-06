@@ -58,8 +58,16 @@ const Builder = struct {
     }
 
     fn vertex(self: *Builder, p: Vec3) Error!types.VertexIndex {
-        const point = self.interner.point(self.body.allocator, &self.body.geometry, p) catch |e| return self.fail(e);
-        return self.body.addVertex(.{ .point = point }) catch |e| return self.fail(e);
+        return self.vertexAt(try self.point(p));
+    }
+
+    /// The interned point at `p`: one record for every point within the zone of it.
+    fn point(self: *Builder, p: Vec3) Error!geometry.PointIndex {
+        return self.interner.point(self.body.allocator, &self.body.geometry, p) catch |e| return self.fail(e);
+    }
+
+    fn vertexAt(self: *Builder, at: geometry.PointIndex) Error!types.VertexIndex {
+        return self.body.addVertex(.{ .point = at }) catch |e| return self.fail(e);
     }
 
     fn line(self: *Builder, a: Vec3, b: Vec3) Error!geometry.CurveRef {
@@ -237,8 +245,8 @@ pub fn circle(allocator: std.mem.Allocator, tol: Tolerance, r: f64, diag: *Diagn
 /// A sheet body of one planar face on `z = 0` filled by the even-odd rule: the first
 /// contour is the outline (turned counter-clockwise), the rest are holes in it (turned
 /// clockwise). Contours that cross, or holes outside the outline, are not resolved here:
-/// that is the overlay engine's (M2). A contour of fewer than three points, or with a
-/// repeated point, is refused.
+/// that is the overlay engine's (M2). A point repeating the one before it, or the first at
+/// the end, is that corner once; a contour of fewer than three distinct points is refused.
 pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: []const []const Vec2, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "contours", contours.len);
     for (contours) |c| {
@@ -263,21 +271,33 @@ pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: [
         // Counter-clockwise for the outline, clockwise for a hole
         const ccw = signedArea(contour) > 0;
         const want_ccw = ci == 0;
-        var vertices = try allocator.alloc(types.VertexIndex, contour.len);
-        defer allocator.free(vertices);
+        // A point repeating the one before it (within the zone, as the interner welds), or
+        // the first at the end (a closed outline written closed), is the same corner once,
+        // as the mesh engine reads it: the corners first, as points, then their vertices
+        const corners = try allocator.alloc(geometry.PointIndex, contour.len);
+        defer allocator.free(corners);
+        var n: usize = 0;
         for (0..contour.len) |i| {
             const k = if (ccw == want_ccw) i else contour.len - 1 - i;
-            vertices[i] = try b.vertex(.{ contour[k][0], contour[k][1], 0 });
-            uv.grow(contour[k]);
+            const point = try b.point(.{ contour[k][0], contour[k][1], 0 });
+            if (n > 0 and point == corners[n - 1]) continue;
+            corners[n] = point;
+            n += 1;
         }
-        const edges = try allocator.alloc(sew.EdgeSpec, contour.len);
+        while (n > 1 and corners[n - 1] == corners[0]) n -= 1;
+        if (n < 3) return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "a contour's distinct points", .measured = @floatFromInt(n), .threshold = 3 });
+        const vertices = try allocator.alloc(types.VertexIndex, n);
+        defer allocator.free(vertices);
+        for (corners[0..n], vertices) |corner, *v| {
+            v.* = try b.vertexAt(corner);
+            const p = b.body.geometry.point(corner);
+            uv.grow(.{ p[0], p[1] });
+        }
+        const edges = try allocator.alloc(sew.EdgeSpec, n);
         {
             // Ours to free until `edge_lists` holds it
             errdefer allocator.free(edges);
-            for (0..contour.len) |i| {
-                if (vertices[i] == vertices[(i + 1) % contour.len]) return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "a contour's edge", .entity = .of(.vertex, @backingInt(vertices[i])) });
-                edges[i] = try b.straight(vertices[i], vertices[(i + 1) % contour.len]);
-            }
+            for (0..n) |i| edges[i] = try b.straight(vertices[i], vertices[(i + 1) % n]);
             try loops.ensureUnusedCapacity(allocator, 1);
             try edge_lists.append(allocator, edges);
         }

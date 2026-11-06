@@ -11,6 +11,7 @@ const check = @import("../topology/check.zig");
 const primitives = @import("primitives.zig");
 const hull = @import("hull.zig");
 const bbox = @import("../measure/bbox.zig");
+const body_json = @import("../io/body_json.zig");
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -161,9 +162,18 @@ test "sketches: a square, an exact circle, a polygon turned around, polygons wit
     const second = holed.loop(first).next_in_face;
     try testing.expect(try loopAreaUv(&holed, first) > 0);
     try testing.expect(try loopAreaUv(&holed, second) < 0);
+    // A point repeated, and the first again at the end, are one corner each: the same
+    // body as the clean outline
+    const clean = [_]vec.Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 3 } };
+    const written_closed = [_]vec.Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 0 + 1e-7 }, .{ 4, 3 }, .{ 0, 0 } };
+    var a = try primitives.polygon(testing.allocator, tol, &clean, &diag);
+    defer a.deinit();
+    var b = try primitives.polygon(testing.allocator, tol, &written_closed, &diag);
+    defer b.deinit();
+    try testing.expectEqual(try body_json.hash(testing.allocator, &a), try body_json.hash(testing.allocator, &b));
     // Refusals
     try testing.expectError(error.InvalidInput, primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 1, 0 } }, &diag));
-    try testing.expectError(error.Degenerate, primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 0 }, .{ 0, 1 } }, &diag));
+    try testing.expectError(error.Degenerate, primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 0 }, .{ 0, 0 } }, &diag));
     try testing.expectError(error.InvalidInput, primitives.circle(testing.allocator, tol, -1, &diag));
 }
 
