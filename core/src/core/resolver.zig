@@ -190,14 +190,18 @@ pub const Resolver = struct {
     const Found = struct { kind: ScopeKind, declared_by: ast.NodeIndex };
 
     /// The local `name` names here, innermost first: one of a scope past a closure's body is
-    /// an upvalue.
+    /// an upvalue, except the script's own (scope 0), whose variables are globals when it
+    /// runs: hover showed no facts for a script variable read inside a def.
     fn findLocal(self: *const Resolver, name: ast.StringId) ?Found {
         var crossed_closure = false;
         var i = self.scopes.items.len;
         while (i > 0) {
             i -= 1;
             const scope = &self.scopes.items[i];
-            if (scope.declared_by.get(name)) |by| return .{ .kind = if (crossed_closure) .upvalue else .local, .declared_by = by };
+            if (scope.declared_by.get(name)) |by| {
+                const kind: ScopeKind = if (!crossed_closure) .local else if (i == 0) .global else .upvalue;
+                return .{ .kind = kind, .declared_by = by };
+            }
             if (scope.is_closure) crossed_closure = true;
         }
         return null;

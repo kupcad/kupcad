@@ -219,6 +219,24 @@ test "Resolver: a lambda allows next but not break" {
     try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
 }
 
+test "Resolver: a script variable read inside a def or a block is a global, as when it runs" {
+    const source =
+        \\width = 4
+        \\def f
+        \\  width
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const root_idx = try pt.parser.parseProgram();
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
+    defer res.deinit();
+    try res.resolve(root_idx);
+    try expectResolved(&res, &pt.parser.b.tree, "width", .global);
+}
+
 test "Resolver: a name of a closure two levels out is an upvalue" {
     const source =
         \\def outer(x)
