@@ -47,6 +47,7 @@ pub const construct = struct {
     pub const sew = @import("construct/sew.zig");
     pub const primitives = @import("construct/primitives.zig");
     pub const hull = @import("construct/hull.zig");
+    pub const transform = @import("construct/transform.zig");
 };
 /// Measures: bounding boxes (volume, area and genus in M1).
 pub const measure = struct {
@@ -55,6 +56,7 @@ pub const measure = struct {
 /// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.
 pub const io = struct {
     pub const body_json = @import("io/body_json.zig");
+    pub const step_write = @import("io/step_write.zig");
 };
 /// Spatial structures: the welding grid, interning over an arena, the BVH.
 pub const spatial = struct {
@@ -121,6 +123,8 @@ test {
     _ = @import("io/body_json_test.zig");
     _ = @import("construct/primitives_test.zig");
     _ = @import("spatial/bvh_test.zig");
+    _ = @import("io/step_write_test.zig");
+    _ = @import("construct/transform_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");

@@ -85,8 +85,25 @@ pub const Schema = struct {
 pub fn dump(allocator: std.mem.Allocator, body: *const Body) Error![]u8 {
     var a = std.heap.ArenaAllocator.init(allocator);
     defer a.deinit();
-    const schema = try toSchema(a.allocator(), body);
+    var schema = try toSchema(a.allocator(), body);
+    canonicalize(Schema, &schema);
     return std.json.Stringify.valueAlloc(allocator, schema, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+}
+
+/// Every number of the schema as its canonical self: a negative zero (what negating or
+/// mirroring an axis leaves) becomes zero, so the same body gives the same bytes however
+/// it was made. The schema's slices are the dump's own, so they are written in place.
+fn canonicalize(comptime T: type, value: *T) void {
+    switch (@typeInfo(T)) {
+        .float => value.* = value.* + 0.0,
+        .array => |info| for (value) |*item| canonicalize(info.child, item),
+        .optional => |info| if (value.*) |*inner| canonicalize(info.child, inner),
+        .@"struct" => |info| inline for (info.field_names) |name| canonicalize(@FieldType(T, name), &@field(value, name)),
+        .pointer => |info| if (info.size == .slice and info.child != u8) {
+            for (@constCast(value.*)) |*item| canonicalize(info.child, item);
+        },
+        else => {},
+    }
 }
 
 /// A 64-bit hash of the canonical serialization: the same for the same body wherever it
