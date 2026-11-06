@@ -402,7 +402,7 @@
       "same_sense": true,
       "first_loop": 0,
       "shell": 0,
-      "next_in_shell": null,
+      "next_in_shell": 1,
       "uv_box": [
         0,
         0,
@@ -420,7 +420,7 @@
       "same_sense": true,
       "first_loop": 1,
       "shell": 0,
-      "next_in_shell": 0,
+      "next_in_shell": 2,
       "uv_box": [
         0,
         3.141592653589793,
@@ -438,7 +438,7 @@
       "same_sense": true,
       "first_loop": 2,
       "shell": 0,
-      "next_in_shell": 1,
+      "next_in_shell": 3,
       "uv_box": [
         3.141592653589793,
         0,
@@ -456,7 +456,7 @@
       "same_sense": true,
       "first_loop": 3,
       "shell": 0,
-      "next_in_shell": 2,
+      "next_in_shell": null,
       "uv_box": [
         3.141592653589793,
         3.141592653589793,
@@ -469,7 +469,7 @@
   ],
   "shells": [
     {
-      "first_face": 3,
+      "first_face": 0,
       "next_in_body": null,
       "kind": "outer"
     }

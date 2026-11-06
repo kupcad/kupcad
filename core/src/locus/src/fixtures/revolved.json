@@ -865,7 +865,7 @@
       "same_sense": true,
       "first_loop": 0,
       "shell": 0,
-      "next_in_shell": null,
+      "next_in_shell": 1,
       "uv_box": [
         -4,
         -4,
@@ -883,7 +883,7 @@
       "same_sense": true,
       "first_loop": 1,
       "shell": 0,
-      "next_in_shell": 0,
+      "next_in_shell": 2,
       "uv_box": [
         -4,
         -0.0000000000000004898587196589413,
@@ -901,7 +901,7 @@
       "same_sense": true,
       "first_loop": 2,
       "shell": 0,
-      "next_in_shell": 1,
+      "next_in_shell": 3,
       "uv_box": [
         0,
         0,
@@ -919,7 +919,7 @@
       "same_sense": true,
       "first_loop": 3,
       "shell": 0,
-      "next_in_shell": 2,
+      "next_in_shell": 4,
       "uv_box": [
         3.141592653589793,
         0,
@@ -937,7 +937,7 @@
       "same_sense": true,
       "first_loop": 4,
       "shell": 0,
-      "next_in_shell": 3,
+      "next_in_shell": 5,
       "uv_box": [
         0,
         0,
@@ -955,7 +955,7 @@
       "same_sense": true,
       "first_loop": 5,
       "shell": 0,
-      "next_in_shell": 4,
+      "next_in_shell": 6,
       "uv_box": [
         3.141592653589793,
         0,
@@ -973,7 +973,7 @@
       "same_sense": true,
       "first_loop": 6,
       "shell": 0,
-      "next_in_shell": 5,
+      "next_in_shell": 7,
       "uv_box": [
         -1,
         -0.0000000000000003061616997868383,
@@ -991,7 +991,7 @@
       "same_sense": true,
       "first_loop": 7,
       "shell": 0,
-      "next_in_shell": 6,
+      "next_in_shell": 8,
       "uv_box": [
         -1,
         -1,
@@ -1009,7 +1009,7 @@
       "same_sense": true,
       "first_loop": 8,
       "shell": 0,
-      "next_in_shell": 7,
+      "next_in_shell": 9,
       "uv_box": [
         0,
         0,
@@ -1027,7 +1027,7 @@
       "same_sense": true,
       "first_loop": 9,
       "shell": 0,
-      "next_in_shell": 8,
+      "next_in_shell": null,
       "uv_box": [
         -0.000000000000000000000000000000022496396739927867,
         -5,
@@ -1040,7 +1040,7 @@
   ],
   "shells": [
     {
-      "first_face": 9,
+      "first_face": 0,
       "next_in_body": null,
       "kind": "outer"
     }

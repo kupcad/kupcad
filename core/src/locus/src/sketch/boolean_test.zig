@@ -64,6 +64,26 @@ test "sketch booleans: two squares overlapping at a corner" {
     var two = try boolean.boolean(testing.allocator, &.{ &a, &far }, .@"union", .{}, &diag);
     defer two.deinit();
     try expectCounts(&two, 8, 8, 2, 2);
+    try testing.expectEqual(@as(usize, 2), two.counts().shells);
+    // A difference that cuts a plate in two: two shells, and extruded, two solids
+    var plate = try primitives.square(testing.allocator, tol, 10, 10, false, &diag);
+    defer plate.deinit();
+    var bar = try primitives.square(testing.allocator, tol, 2, 20, false, &diag);
+    defer bar.deinit();
+    var bar_across = try moved(&bar, 4, -5, &diag);
+    defer bar_across.deinit();
+    var halves = try boolean.boolean(testing.allocator, &.{ &plate, &bar_across }, .difference, .{}, &diag);
+    defer halves.deinit();
+    try testing.expectEqual(@as(usize, 2), halves.counts().shells);
+    const sweep = @import("../construct/sweep.zig");
+    var blocks = try sweep.extrude(testing.allocator, &halves, .{ 0, 0, 1 }, .{}, &diag);
+    defer blocks.deinit();
+    try testing.expectEqual(@as(usize, 2), blocks.counts().shells);
+    const step_write = @import("../io/step_write.zig");
+    const text = try step_write.write(testing.allocator, &.{&blocks});
+    defer testing.allocator.free(text);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, text, "=MANIFOLD_SOLID_BREP("));
+    try testing.expectApproxEqRel(@as(f64, 80), (try mass.mass(&blocks, .{}, &diag)).volume, 1e-12);
     var none = try boolean.boolean(testing.allocator, &.{ &a, &far }, .intersection, .{}, &diag);
     defer none.deinit();
     try testing.expect(none.isEmpty());

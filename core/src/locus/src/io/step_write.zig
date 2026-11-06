@@ -1,5 +1,5 @@
 //! The STEP writer (AP214, docs/architecture.md §7.9): one `MANIFOLD_SOLID_BREP` per
-//! solid body, its vertices and edges written once, every curve and surface as its own
+//! outer shell of each solid body (a body of two pieces is two solids), its vertices and edges written once, every curve and surface as its own
 //! STEP entity (a plane as `PLANE`, a circle as `CIRCLE`, …) in Part 42's parameterization,
 //! which is Locus's own, and every number at full `f64` precision (the shortest text that
 //! reads back to the same double, never rounded). The file's uncertainty is the first
@@ -89,9 +89,12 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
     for (bodies) |b| if (b.kind != .solid or b.isEmpty()) return error.NotSolid;
     var w = Writer.init(allocator);
     errdefer w.out.deinit();
-    // Every body's solid id comes first, so the representation can list them
+    // Every solid's id comes first, so the representation can list them: one per outer
+    // shell of each body
+    var n_solids: u32 = 0;
+    for (bodies) |b| n_solids += @intCast(outerShells(b));
     const first_solid = w.next + 1;
-    w.next += @intCast(bodies.len);
+    w.next += n_solids;
     w.out.writer.print(
         \\ISO-10303-21;
         \\HEADER;
@@ -111,7 +114,7 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
         \\#9=PRODUCT_DEFINITION_CONTEXT('part definition',#2,'design');
         \\#10=ADVANCED_BREP_SHAPE_REPRESENTATION('',(
     , .{}) catch return error.OutOfMemory;
-    for (0..bodies.len) |i| {
+    for (0..n_solids) |i| {
         w.out.writer.print("{s}#{d}", .{ if (i > 0) "," else "", first_solid + @as(u32, @intCast(i)) }) catch return error.OutOfMemory;
     }
     w.out.writer.print(
@@ -123,12 +126,24 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
         \\#16=(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT());
         \\
     , .{real(bodies[0].tol.zone)}) catch return error.OutOfMemory;
-    for (bodies, 0..) |b, i| try writeBody(&w, b, first_solid + @as(u32, @intCast(i)));
+    var solid_id = first_solid;
+    for (bodies) |b| {
+        try writeBody(&w, b, solid_id);
+        solid_id += @intCast(outerShells(b));
+    }
     w.out.writer.writeAll("ENDSEC;\nEND-ISO-10303-21;\n") catch return error.OutOfMemory;
     return w.out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-fn writeBody(w: *Writer, body: *const Body, solid_id: u32) Error!void {
+/// The outer shells of a body, each written as a solid.
+fn outerShells(body: *const Body) usize {
+    var n: usize = 0;
+    for (body.shells.items) |s| n += @intFromBool(!s.tombstone and s.kind == .outer);
+    return n;
+}
+
+/// Writes the body's shells; its outer ones as the solids `first_solid_id` onward.
+fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
     const allocator = w.allocator;
     // Vertices once
     const vertex_ids = try allocator.alloc(u32, body.vertices.items.len);
@@ -152,7 +167,7 @@ fn writeBody(w: *Writer, body: *const Body, solid_id: u32) Error!void {
     var face_ids = std.ArrayList(u32).empty;
     defer face_ids.deinit(allocator);
     var shells = traverse.Shells.init(body);
-    var outer_shell_id: ?u32 = null;
+    var solid_id = first_solid_id;
     while (try shells.next()) |s| {
         face_ids.clearRetainingCapacity();
         var faces = traverse.Faces.init(body, s);
@@ -195,10 +210,11 @@ fn writeBody(w: *Writer, body: *const Body, solid_id: u32) Error!void {
         w.out.writer.print("#{d}=CLOSED_SHELL('',(", .{shell_id}) catch return error.OutOfMemory;
         for (face_ids.items, 0..) |id, k| w.out.writer.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
         w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
-        if (body.shell(s).kind == .outer and outer_shell_id == null) outer_shell_id = shell_id;
+        if (body.shell(s).kind != .outer) continue;
+        w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_id }) catch return error.OutOfMemory;
+        solid_id += 1;
     }
-    const outer = outer_shell_id orelse return error.NotSolid;
-    w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, outer }) catch return error.OutOfMemory;
+    if (solid_id == first_solid_id) return error.NotSolid;
 }
 
 fn writeCurve(w: *Writer, c: curves.Curve) Error!u32 {

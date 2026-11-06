@@ -248,7 +248,7 @@
       "same_sense": true,
       "first_loop": 0,
       "shell": 0,
-      "next_in_shell": null,
+      "next_in_shell": 1,
       "uv_box": [
         0,
         -1.5707963267948966,
@@ -266,7 +266,7 @@
       "same_sense": true,
       "first_loop": 1,
       "shell": 0,
-      "next_in_shell": 0,
+      "next_in_shell": null,
       "uv_box": [
         3.141592653589793,
         -1.5707963267948966,
@@ -279,7 +279,7 @@
   ],
   "shells": [
     {
-      "first_face": 1,
+      "first_face": 0,
       "next_in_body": null,
       "kind": "outer"
     }

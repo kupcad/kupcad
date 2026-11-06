@@ -530,7 +530,7 @@
       "same_sense": true,
       "first_loop": 0,
       "shell": 0,
-      "next_in_shell": null,
+      "next_in_shell": 1,
       "uv_box": [
         0,
         0,
@@ -548,7 +548,7 @@
       "same_sense": true,
       "first_loop": 1,
       "shell": 0,
-      "next_in_shell": 0,
+      "next_in_shell": 2,
       "uv_box": [
         0,
         0,
@@ -566,7 +566,7 @@
       "same_sense": true,
       "first_loop": 2,
       "shell": 0,
-      "next_in_shell": 1,
+      "next_in_shell": 3,
       "uv_box": [
         0,
         0,
@@ -584,7 +584,7 @@
       "same_sense": true,
       "first_loop": 3,
       "shell": 0,
-      "next_in_shell": 2,
+      "next_in_shell": 4,
       "uv_box": [
         0,
         0,
@@ -602,7 +602,7 @@
       "same_sense": true,
       "first_loop": 4,
       "shell": 0,
-      "next_in_shell": 3,
+      "next_in_shell": 5,
       "uv_box": [
         0,
         0,
@@ -620,7 +620,7 @@
       "same_sense": true,
       "first_loop": 5,
       "shell": 0,
-      "next_in_shell": 4,
+      "next_in_shell": null,
       "uv_box": [
         0,
         0,
@@ -633,7 +633,7 @@
   ],
   "shells": [
     {
-      "first_face": 5,
+      "first_face": 0,
       "next_in_body": null,
       "kind": "outer"
     }
