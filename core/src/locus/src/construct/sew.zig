@@ -124,11 +124,13 @@ pub fn sew(body: *Body, faces: []const FaceSpec, kind: types.ShellKind) Error!ty
         }
     }
     if (kind != .sheet) {
-        // Every edge of a closed shell has both coedges
+        // Every edge of a closed shell has both coedges, but a degenerate one (a pole, an
+        // apex), which belongs to one face
         var it = edges.valueIterator();
         while (it.next()) |edge| {
-            const c = body.edge(edge.*).coedge;
-            if (c == .none or body.coedge(c).partner == .none) return error.NotManifold;
+            const rec = body.edge(edge.*);
+            if (rec.coedge == .none) return error.NotManifold;
+            if (body.coedge(rec.coedge).partner == .none and !rec.flags.degenerate) return error.NotManifold;
         }
     }
     return shell;

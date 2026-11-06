@@ -139,7 +139,9 @@ fn writeBody(w: *Writer, body: *const Body, solid_id: u32) Error!void {
     const edge_ids = try allocator.alloc(u32, body.edges.items.len);
     defer allocator.free(edge_ids);
     for (body.edges.items, 0..) |e, i| {
-        if (e.flags.tombstone) continue;
+        // A degenerate edge (a pole, an apex) is a point: STEP has no entity for it and
+        // readers close the loop over it (what OCCT writes)
+        if (e.flags.tombstone or e.flags.degenerate) continue;
         const curve_id = try writeCurve(w, body.geometry.curve(e.curve));
         edge_ids[i] = try w.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ vertex_ids[@backingInt(e.start)], vertex_ids[@backingInt(e.end)], curve_id });
     }
@@ -163,6 +165,7 @@ fn writeBody(w: *Writer, body: *const Body, solid_id: u32) Error!void {
                 var coedges = traverse.Coedges.init(body, l);
                 while (try coedges.next()) |c| {
                     const ce = body.coedge(c);
+                    if (body.edge(ce.edge).flags.degenerate) continue;
                     try oriented.append(allocator, try w.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ edge_ids[@backingInt(ce.edge)], if (ce.same_sense) "T" else "F" }));
                 }
                 w.next += 1;

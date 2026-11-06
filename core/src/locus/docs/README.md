@@ -10,7 +10,7 @@ wasm32-freestanding), pure Zig over `std`. What works: the math layer (exact pre
 solvers), the geometry of `architecture.md` §5.1 with the full parametric contract and
 the NURBS core, interning, the topology of §5.2 with every Euler operator, the checker
 (structural, orientation and geometric rules), tags, the body as JSON, the primitives
-(box, cylinder as two half-faces, the sketch faces, polyhedra), the hull, the BVH,
+(box, cylinder as two half-faces, sphere, cone, torus, the sketch faces, polyhedra), the hull, the BVH,
 bounding boxes, every rigid move, uniform scale and mirror, and the STEP writer at full
 precision. KupCAD's driver runs on this model; booleans, sweeps, tessellation and the
 measures are M1–M5 and are refused until then (`kernel.Feature`, `supports`). The first

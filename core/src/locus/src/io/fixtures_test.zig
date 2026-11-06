@@ -18,6 +18,9 @@ const Fixture = struct { name: []const u8, expected: []const u8 };
 const FIXTURES = [_]Fixture{
     .{ .name = "box", .expected = @embedFile("../fixtures/box.json") },
     .{ .name = "cylinder", .expected = @embedFile("../fixtures/cylinder.json") },
+    .{ .name = "sphere", .expected = @embedFile("../fixtures/sphere.json") },
+    .{ .name = "cone", .expected = @embedFile("../fixtures/cone.json") },
+    .{ .name = "torus", .expected = @embedFile("../fixtures/torus.json") },
     .{ .name = "square", .expected = @embedFile("../fixtures/square.json") },
     .{ .name = "circle", .expected = @embedFile("../fixtures/circle.json") },
     .{ .name = "polygon", .expected = @embedFile("../fixtures/polygon.json") },
@@ -31,6 +34,9 @@ pub fn build(allocator: std.mem.Allocator, name: []const u8) !Body {
     defer diag.deinit();
     if (std.mem.eql(u8, name, "box")) return primitives.box(allocator, tol, 10, 20, 30, false, &diag);
     if (std.mem.eql(u8, name, "cylinder")) return primitives.cylinder(allocator, tol, 5, 12, true, &diag);
+    if (std.mem.eql(u8, name, "sphere")) return primitives.sphere(allocator, tol, 4, &diag);
+    if (std.mem.eql(u8, name, "cone")) return primitives.cone(allocator, tol, 5, 0, 8, false, &diag);
+    if (std.mem.eql(u8, name, "torus")) return primitives.torus(allocator, tol, 6, 1.5, &diag);
     if (std.mem.eql(u8, name, "square")) return primitives.square(allocator, tol, 4, 3, true, &diag);
     if (std.mem.eql(u8, name, "circle")) return primitives.circle(allocator, tol, 2.5, &diag);
     if (std.mem.eql(u8, name, "polygon")) return primitives.polygon(allocator, tol, &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 1 }, .{ 1, 3 } }, &diag);

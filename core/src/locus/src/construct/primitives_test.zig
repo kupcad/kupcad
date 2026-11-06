@@ -122,6 +122,101 @@ test "cylinder: two half-faces with seams and pcurves, two caps, the checker and
     }
 }
 
+test "sphere: two hemispheres, one meridian circle in two halves, a degenerate edge per pole per face" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.sphere(testing.allocator, tol, 3, &diag);
+    defer b.deinit();
+    try expectCounts(&b, 2, 6, 2, 2);
+    try expectValid(&b);
+    try testing.expectEqual(@as(usize, 1), b.geometry.spheres.items.len);
+    try testing.expectEqual(@as(usize, 3), b.geometry.circles.items.len);
+    const box = try bbox.bodyBounds(&b);
+    try expectVec(.{ -3, -3, -3 }, box.min, 1e-12);
+    try expectVec(.{ 3, 3, 3 }, box.max, 1e-12);
+    var degenerate: usize = 0;
+    var seams: usize = 0;
+    for (b.edges.items) |e| {
+        degenerate += @intFromBool(e.flags.degenerate);
+        seams += @intFromBool(e.flags.seam);
+        if (e.flags.degenerate) try testing.expectEqual(e.start, e.end);
+    }
+    try testing.expectEqual(@as(usize, 4), degenerate);
+    try testing.expectEqual(@as(usize, 2), seams);
+    for (b.loops.items, 0..) |_, i| try testing.expect(try loopAreaUv(&b, types.LoopIndex.of(i)) > 0);
+    for (b.coedges.items) |c| try testing.expect(!c.pcurve.isNone());
+    try testing.expectError(error.InvalidInput, primitives.sphere(testing.allocator, tol, 0, &diag));
+}
+
+test "cone: two half-faces and caps; an apex is a degenerate edge per face; equal radii are the cylinder" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var frustum = try primitives.cone(testing.allocator, tol, 2, 1, 3, false, &diag);
+    defer frustum.deinit();
+    try expectCounts(&frustum, 4, 6, 4, 4);
+    try expectValid(&frustum);
+    try testing.expectEqual(@as(usize, 1), frustum.geometry.cones.items.len);
+    try testing.expectEqual(@as(usize, 2), frustum.geometry.circles.items.len);
+    const fbox = try bbox.bodyBounds(&frustum);
+    try expectVec(.{ -2, -2, 0 }, fbox.min, 1e-12);
+    try expectVec(.{ 2, 2, 3 }, fbox.max, 1e-12);
+    for (frustum.loops.items, 0..) |_, i| try testing.expect(try loopAreaUv(&frustum, types.LoopIndex.of(i)) > 0);
+    // The side's outward normal leans up and out for a cone narrowing upward
+    const n = frustum.geometry.surface(frustum.faces.items[0].surface).normal(0, 0);
+    try testing.expect(n[0] > 0 and n[2] > 0);
+
+    var apex_up = try primitives.cone(testing.allocator, tol, 2, 0, 3, true, &diag);
+    defer apex_up.deinit();
+    try expectCounts(&apex_up, 3, 6, 3, 3);
+    try expectValid(&apex_up);
+    const abox = try bbox.bodyBounds(&apex_up);
+    try expectVec(.{ -2, -2, -1.5 }, abox.min, 1e-12);
+    try expectVec(.{ 2, 2, 1.5 }, abox.max, 1e-12);
+    var degenerate: usize = 0;
+    for (apex_up.edges.items) |e| degenerate += @intFromBool(e.flags.degenerate);
+    try testing.expectEqual(@as(usize, 2), degenerate);
+    for (apex_up.loops.items, 0..) |_, i| try testing.expect(try loopAreaUv(&apex_up, types.LoopIndex.of(i)) > 0);
+
+    var apex_down = try primitives.cone(testing.allocator, tol, 0, 2, 3, false, &diag);
+    defer apex_down.deinit();
+    try expectCounts(&apex_down, 3, 6, 3, 3);
+    try expectValid(&apex_down);
+    const dbox = try bbox.bodyBounds(&apex_down);
+    try expectVec(.{ -2, -2, 0 }, dbox.min, 1e-12);
+    try expectVec(.{ 2, 2, 3 }, dbox.max, 1e-12);
+
+    var same = try primitives.cone(testing.allocator, tol, 2, 2, 3, false, &diag);
+    defer same.deinit();
+    try testing.expectEqual(@as(usize, 1), same.geometry.cylinders.items.len);
+    try testing.expectError(error.InvalidInput, primitives.cone(testing.allocator, tol, 0, 0, 3, false, &diag));
+    try testing.expectError(error.InvalidInput, primitives.cone(testing.allocator, tol, -1, 2, 3, false, &diag));
+    try testing.expectError(error.InvalidInput, primitives.cone(testing.allocator, tol, 1, 2, 0, false, &diag));
+}
+
+test "torus: four faces over the two periods, eight arcs, the checker, the bounds" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.torus(testing.allocator, tol, 5, 2, &diag);
+    defer b.deinit();
+    try expectCounts(&b, 4, 8, 4, 4);
+    try expectValid(&b);
+    try testing.expectEqual(@as(usize, 1), b.geometry.tori.items.len);
+    try testing.expectEqual(@as(usize, 4), b.geometry.circles.items.len);
+    const box = try bbox.bodyBounds(&b);
+    try expectVec(.{ -7, -7, -2 }, box.min, 1e-12);
+    try expectVec(.{ 7, 7, 2 }, box.max, 1e-12);
+    for (b.loops.items, 0..) |_, i| try testing.expect(try loopAreaUv(&b, types.LoopIndex.of(i)) > 0);
+    for (b.coedges.items) |c| try testing.expect(!c.pcurve.isNone());
+    // Every edge has its two coedges, opposite
+    for (b.edges.items) |e| {
+        const partner = b.coedge(e.coedge).partner;
+        try testing.expect(partner != .none);
+        try testing.expect(b.coedge(partner).same_sense != b.coedge(e.coedge).same_sense);
+    }
+    try testing.expectError(error.InvalidInput, primitives.torus(testing.allocator, tol, 2, 2, &diag));
+    try testing.expectError(error.InvalidInput, primitives.torus(testing.allocator, tol, 2, -1, &diag));
+}
+
 test "sketches: a square, an exact circle, a polygon turned around, polygons with a hole" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();

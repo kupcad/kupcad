@@ -1,7 +1,9 @@
 //! Bounding boxes (docs/architecture.md §7.6): a face's from its edges' curve bounds over
-//! their ranges and its surface's bounds over its UV box, a body's from its faces'. Exact
-//! for the analytic kinds (circle and ellipse extremes, a sphere's and torus's interior
-//! extremes), conservative (control points) for NURBS.
+//! their ranges and, when the surface is curved, its surface's bounds over its UV box (a
+//! plane's UV box is a rectangle about a face of any outline, so a flat face is bounded by
+//! its edges alone); a body's from its faces'. Exact for the analytic kinds (circle and
+//! ellipse extremes, a sphere's and torus's interior extremes), conservative (control
+//! points) for NURBS.
 
 const std = @import("std");
 const geometry = @import("../geometry/types.zig");
@@ -25,8 +27,10 @@ pub fn faceBounds(body: *const Body, f: types.FaceIndex) Error!Box3 {
         }
         if (body.loop(l).vertex != .none) box.grow(body.point(body.loop(l).vertex));
     }
+    // A flat face reaches no further than its edges; a curved one has interior extremes
+    // (a sphere's equator, a cylinder's side), found over its UV box
     const face = body.face(f);
-    if (!face.uv_box.isEmpty()) box = Box3.merge(box, body.geometry.surface(face.surface).bounds(face.uv_box));
+    if (face.surface.kind != .plane and !face.uv_box.isEmpty()) box = Box3.merge(box, body.geometry.surface(face.surface).bounds(face.uv_box));
     return box;
 }
 

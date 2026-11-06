@@ -167,8 +167,10 @@ const Checker = struct {
             const uses = coedge_uses.items[i];
             if (uses == 0 or uses > 2) try self.add(.edge_coedge_count, .of(.edge, i), @floatFromInt(uses), 2);
             if (b.coedge(e.coedge).edge != EdgeIndex.of(i)) try self.add(.edge_coedge_count, .of(.edge, i), 0, 0);
-            // Degenerate edges have start == end, no other edge does
+            // Degenerate edges have start == end, no other edge does; and a degenerate edge
+            // (a pole, an apex) belongs to one face
             if (e.flags.degenerate != (e.start == e.end)) try self.add(.degenerate_edge_vertices, .of(.edge, i), 0, 0);
+            if (e.flags.degenerate and uses == 2) try self.add(.edge_coedge_count, .of(.edge, i), 2, 1);
             if (!(e.t0 < e.t1)) try self.add(.edge_range_reversed, .of(.edge, i), e.t0, e.t1);
         }
         // A vertex's coedge leaves it
@@ -237,7 +239,9 @@ const Checker = struct {
                     if (b.loop(l).vertex != .none) vertex_seen[@backingInt(b.loop(l).vertex)] = true;
                     var it = traverse.Coedges.init(b, l);
                     while (it.next() catch return) |c| {
-                        edge_seen[@backingInt(b.coedge(c).edge)] = true;
+                        // A degenerate edge is a point of the surface, not an edge of the
+                        // graph the formula counts
+                        if (!b.edge(b.coedge(c).edge).flags.degenerate) edge_seen[@backingInt(b.coedge(c).edge)] = true;
                         vertex_seen[@backingInt(b.coedgeStart(c))] = true;
                     }
                 }
@@ -310,7 +314,7 @@ const Checker = struct {
                 while (loops.next() catch return) |l| {
                     var it = traverse.Coedges.init(b, l);
                     while (it.next() catch return) |c| {
-                        if (b.coedge(c).partner == .none) try self.add(.open_edge_in_closed_shell, .of(.edge, @backingInt(b.coedge(c).edge)), 0, 0);
+                        if (b.coedge(c).partner == .none and !b.edge(b.coedge(c).edge).flags.degenerate) try self.add(.open_edge_in_closed_shell, .of(.edge, @backingInt(b.coedge(c).edge)), 0, 0);
                     }
                 }
             }
