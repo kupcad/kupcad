@@ -11,7 +11,6 @@ file in a release archive, a gem or a wheel, at the path given (in the repositor
 | [Manifold](https://github.com/elalish/manifold) | the mesh geometry kernel | Apache-2.0 | The Manifold Authors | `licenses/manifold/LICENSE` |
 | [oneTBB](https://github.com/oneapi-src/oneTBB) | parallel geometry (not in the WebAssembly build) | Apache-2.0; its third-party parts as listed | Intel Corporation | `licenses/onetbb/LICENSE.txt`, `licenses/onetbb/third-party-programs.txt` |
 | [Draco](https://github.com/google/draco) | glTF mesh compression | Apache-2.0 | The Draco Authors | `licenses/draco/LICENSE` |
-| [Eigen](https://gitlab.com/libeigen/eigen) | linear algebra in the B-Rep engine | MPL-2.0 (a few files under the licenses listed) | Eigen's authors | `licenses/eigen/LICENSE`, `licenses/eigen/LICENSES/` |
 | [SQLite](https://sqlite.org) | the package cache | public domain | none | none needed |
 | [tatfi](https://git.sr.ht/~asibahi/tatfi) | reading the fonts | MPL-2.0 | tatfi's authors | `licenses/tatfi/LICENSE` |
 | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | shaping text: kerning, ligatures, joining forms and marks | MIT ("Old MIT"); its Universal Shaping Engine tables from Microsoft's data, MIT | HarfBuzz's authors; Microsoft Corporation | `licenses/harfbuzz/COPYING`, `licenses/harfbuzz/ms-use/COPYING` |

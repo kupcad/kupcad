@@ -11,6 +11,10 @@ const path = @import("../../../core/path.zig");
 // --- Locus, the B-Rep kernel (the `locus` package, src/locus): its first model, which M0
 // replaces (locus.legacy) ---
 const locus = @import("locus").legacy;
+const parallel_binding = @import("../../../bindings/parallel.zig");
+
+/// The threads Locus's operations may split work over: oneTBB's (src/bindings/parallel.zig).
+pub const parallel = parallel_binding.parallel;
 const locus_math = locus.math;
 const locus_env = locus.math_env;
 const locus_topo_types = locus.topology.types;

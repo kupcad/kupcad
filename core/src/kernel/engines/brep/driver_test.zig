@@ -256,6 +256,37 @@ test "BRep Driver: a mesh copy leaves nothing allocated when an allocation fails
     }
 }
 
+test "Driver: Locus's parallel loop runs on oneTBB whenever the build has it" {
+    // parallel_for tested a flag only Manifold's sources were compiled with, so Locus ran
+    // every parallel loop on one thread although oneTBB was linked in.
+    const parallel_binding = @import("../../../bindings/parallel.zig");
+    try std.testing.expectEqual(@import("build_info").tbb, parallel_binding.spreadsOverThreads());
+    try std.testing.expectEqual(@import("build_info").tbb, driver.parallel.threads() > 1);
+    if (!parallel_binding.spreadsOverThreads() or (std.Thread.getCpuCount() catch 1) < 2) return error.SkipZigTest;
+    // Each index waits until a second thread has run one: on oneTBB's threads the waiting one
+    // holds its worker, and another takes the rest of the range, however busy the machine
+    const Meeting = struct {
+        /// How many times an index waits (yielding) for another thread to run one: long
+        /// past any scheduler's delay, and bounded, so a loop on one thread fails rather
+        /// than hangs.
+        const MAX_WAITS = 10_000_000;
+        first: std.atomic.Value(std.Thread.Id) = .init(0),
+        met: std.atomic.Value(bool) = .init(false),
+
+        fn visit(_: usize, self: *@This()) void {
+            const id = std.Thread.getCurrentId();
+            if (self.first.cmpxchgStrong(0, id, .acq_rel, .acquire)) |first| {
+                if (first != id) self.met.store(true, .release);
+            }
+            var waits: usize = 0;
+            while (!self.met.load(.acquire) and waits < MAX_WAITS) : (waits += 1) std.Thread.yield() catch {};
+        }
+    };
+    var meeting: Meeting = .{};
+    driver.parallel.forRange(0, 1024, Meeting, &meeting, Meeting.visit);
+    try std.testing.expect(meeting.met.load(.acquire));
+}
+
 test "BRep Driver: a clone is the same solid, curved surfaces included" {
     // Clones went through an identity transform, which copies only points, lines and
     // planes: a cylinder's copy lost its curved face and failed STEP export.

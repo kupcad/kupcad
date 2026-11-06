@@ -15,7 +15,6 @@ licenses=(
   "core/vendor/oneTBB/LICENSE.txt:onetbb"
   "core/vendor/oneTBB/third-party-programs.txt:onetbb"
   "core/vendor/draco/LICENSE:draco"
-  "core/vendor/eigen/LICENSE:eigen"
   "core/vendor/tatfi/LICENSE:tatfi"
   "core/vendor/harfbuzz/COPYING:harfbuzz"
   "core/vendor/harfbuzz/src/ms-use/COPYING:harfbuzz/ms-use"
@@ -29,5 +28,3 @@ for entry in "${licenses[@]}"; do
   mkdir -p "$dest/licenses/${entry#*:}"
   cp "${entry%%:*}" "$dest/licenses/${entry#*:}/"
 done
-mkdir -p "$dest/licenses/eigen/LICENSES"
-cp core/vendor/eigen/LICENSES/* "$dest/licenses/eigen/LICENSES/"

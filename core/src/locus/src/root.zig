@@ -21,7 +21,6 @@ pub const parallel = @import("parallel.zig");
 pub const legacy = struct {
     pub const math = @import("legacy/math.zig");
     pub const math_env = @import("legacy/math_env.zig");
-    pub const eigen = @import("legacy/eigen.zig");
     pub const geometry = struct {
         pub const arena = @import("legacy/geometry/arena.zig");
         pub const curves = @import("legacy/geometry/curves.zig");

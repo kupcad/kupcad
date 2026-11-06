@@ -535,7 +535,7 @@ A drawing is read back line by line: an SVG's paths' points and ids, a DXF's gro
 
 ## 18. Determinism
 
-`src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus runs on the calling thread alone: its `parallelFor` is serial until its `Parallel` interface lands (`locus/docs/architecture.md` §4), which this driver will implement over oneTBB.
+`src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus starts no thread of its own: the B-Rep driver hands it a `Parallel` over oneTBB (`bindings/parallel.zig`, `bindings/parallel_c.cpp`, which `kupcad_set_max_threads` caps too), serial in the WebAssembly build, and Locus merges whatever ran in parallel in index order.
 
 ## 19. Geometry Invariants
 
