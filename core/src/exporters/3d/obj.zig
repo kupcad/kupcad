@@ -13,7 +13,8 @@ const vec3 = @import("../../core/vec3.zig");
 const material_groups = @import("material_groups.zig");
 const mesh_part = @import("mesh_part.zig");
 const MeshPart = mesh_part.MeshPart;
-const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const material = @import("../../core/material.zig");
+const MaterialDef = material.MaterialDef;
 
 const HEADER = "# KupCAD Export\n# millimetres, Z up\n";
 /// The material of faces without one (kernel.DEFAULT_MATERIAL_SLOT), neutral grey as the
@@ -23,10 +24,10 @@ const DEFAULT_GREY = 0.8;
 
 /// `parts` as OBJ text, owned by `allocator`; their engine must tessellate (the caller
 /// checks). `title` is a comment at the top (an assembly's name). With `mtl_name`, the file
-/// names that library (`mtllib`, of the default and `material_count` materials:
-/// buildMaterialLibrary's) and each run of faces its material. error.NoGeometry when no
+/// names that library (`mtllib`, buildMaterialLibrary's) and each run of faces its
+/// material, of `materials` (the VM's, which the slots index). error.NoGeometry when no
 /// part has a triangle.
-pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_count: usize, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
+pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, materials: []const MaterialDef, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -63,7 +64,7 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_cou
         }
         // The faces by material, each run under its `usemtl`; a normal per face, in the
         // faces' order
-        var groups = try material_groups.Groups.collect(allocator, mesh, material_count);
+        var groups = try material_groups.Groups.collect(allocator, mesh, materials.len);
         defer groups.deinit(allocator);
         for (0..groups.count()) |g| {
             for (groups.at(g).tri_starts) |tri| {
@@ -75,7 +76,7 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_cou
             const group = groups.at(g);
             if (mtl_name != null) {
                 try w.writeAll("usemtl ");
-                try writeMaterialName(w, group.slot);
+                try writeName(w, keyOf(materials, group.slot));
                 try w.writeByte('\n');
             }
             for (group.tri_starts) |tri| {
@@ -91,33 +92,52 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, material_cou
     return out.toOwnedSlice();
 }
 
-/// The material library (`.mtl`) of a model: the default material, then each of the
-/// script's (`materials`, in the VM's order, so a face's slot is its number), its colour as
-/// the diffuse and ambient colour and its alpha as the dissolve.
-pub fn buildMaterialLibrary(allocator: std.mem.Allocator, materials: []const MaterialDef) ![]u8 {
+/// The material library (`.mtl`) of the materials of `slots` (kernel.materialSlot, of
+/// `materials`), those an OBJ's faces use (material_groups.UsedSlots), each once by its
+/// name: its colour as the diffuse and ambient colour and its alpha as the dissolve.
+pub fn buildMaterialLibrary(allocator: std.mem.Allocator, materials: []const MaterialDef, slots: []const u32) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
     try w.writeAll("# KupCAD Export\n");
-    try writeMaterial(w, kernel.DEFAULT_MATERIAL_SLOT, .{ DEFAULT_GREY, DEFAULT_GREY, DEFAULT_GREY }, 1.0);
-    for (materials, 1..) |def, slot| {
-        var rgb: [3]f64 = undefined;
-        for (def.rgb, &rgb) |byte, *channel| channel.* = @as(f64, @floatFromInt(byte)) / 255.0;
-        try writeMaterial(w, @intCast(slot), rgb, std.math.clamp(def.alpha, 0, 1));
+    var written: std.ArrayList(?[4]u8) = .empty;
+    defer written.deinit(allocator);
+    for (slots) |slot| {
+        // Two materials of one colour and alpha are one in a library, which holds no more
+        const key = keyOf(materials, slot);
+        for (written.items) |known| {
+            if (std.meta.eql(known, key)) break;
+        } else {
+            try written.append(allocator, key);
+            var rgb: [3]f64 = @splat(DEFAULT_GREY);
+            var alpha: f64 = 1;
+            if (key) |rgba| {
+                for (rgba[0..3], &rgb) |byte, *channel| channel.* = @as(f64, @floatFromInt(byte)) / 255.0;
+                alpha = std.math.clamp(materials[slot - 1].alpha, 0, 1);
+            }
+            try w.writeAll("newmtl ");
+            try writeName(w, key);
+            try w.print("\nKd {d} {d} {d}\nKa {d} {d} {d}\nd {d}\n", .{ rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2], alpha });
+        }
     }
     return out.toOwnedSlice();
 }
 
-fn writeMaterial(w: *std.Io.Writer, slot: u32, rgb: [3]f64, alpha: f64) !void {
-    try w.writeAll("newmtl ");
-    try writeMaterialName(w, slot);
-    try w.print("\nKd {d} {d} {d}\nKa {d} {d} {d}\nd {d}\n", .{ rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2], alpha });
+/// What names the material of `slot` (of `materials`) in an OBJ and its library: null for
+/// the default, else its colour and alpha, all a library holds of it. A name by its colour
+/// (`material_ff0000ff`) is the same in each file of a split, which share one library, and
+/// whatever else the session has made.
+fn keyOf(materials: []const MaterialDef, slot: u32) ?[4]u8 {
+    if (slot == kernel.DEFAULT_MATERIAL_SLOT) return null;
+    const def = materials[slot - 1];
+    return .{ def.rgb[0], def.rgb[1], def.rgb[2], @intFromFloat(@round(std.math.clamp(def.alpha, 0, 1) * 255)) };
 }
 
-/// The name of material slot `slot`, in the library and after `usemtl`.
-fn writeMaterialName(w: *std.Io.Writer, slot: u32) !void {
-    if (slot == kernel.DEFAULT_MATERIAL_SLOT) return w.writeAll(DEFAULT_MATERIAL_NAME);
-    try w.print("material_{d}", .{slot});
+/// The name `key` (keyOf) gives a material, in the library and after `usemtl`.
+fn writeName(w: *std.Io.Writer, key: ?[4]u8) !void {
+    const rgba = key orelse return w.writeAll(DEFAULT_MATERIAL_NAME);
+    const hex = material.hexRgba(rgba);
+    try w.print("material_{s}", .{hex[1..]});
 }
 
 /// `text` on the current line: a script's name can hold a line break, which would start

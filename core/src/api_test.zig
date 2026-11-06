@@ -321,6 +321,41 @@ test "API: a model past what a 32-bit float holds is refused, not written as inf
     }
 }
 
+test "API: a file holds the materials its parts use, numbered alike whatever the session made" {
+    // Materials survive a session's runs (interned), and every file listed them all: a red
+    // made and not exported, and a ghost's, were materials of every 3MF and glTF
+    const used = "cube(5).ghost\ncube(2).material(color: \"#00FF00\")";
+    const formats = [_]api.ExportFormat{ .@"3mf", .gltf, .obj };
+    for (formats) |format| {
+        errdefer std.debug.print("format: {s}\n", .{@tagName(format)});
+        var bytes: [2][]const u8 = undefined;
+        for ([_][]const u8{ "", "unused = cube(1).material(color: \"#FF0000\")\nmore = cube(1).material(color: \"#0000FF\")\n" }, &bytes) |before, *out| {
+            var vm = try support.initVm();
+            defer vm.deinit();
+            const source = try std.mem.concat(testing.allocator, u8, &.{ before, used });
+            defer testing.allocator.free(source);
+            try testing.expectEqual(.ok, try support.runOn(&vm, source));
+            out.* = try api.exportModelFromVm(testing.allocator, &vm, format, .{ .mtl_name = "m.mtl" });
+            if (format == .obj) {
+                const library = try api.exportMaterialLibrary(testing.allocator, &vm);
+                defer testing.allocator.free(library);
+                try testing.expectEqualStrings("# KupCAD Export\nnewmtl material_00ff00ff\nKd 0 1 0\nKa 0 1 0\nd 1\n", library);
+            }
+        }
+        defer for (bytes) |b| testing.allocator.free(b);
+        // The same model, the same file, the earlier materials or not
+        try testing.expectEqualSlices(u8, bytes[0], bytes[1]);
+        switch (format) {
+            .gltf => {
+                // The ghost (the default's grey, as a ghost) and the green part
+                try testing.expectEqual(@as(usize, 2), std.mem.count(u8, bytes[0], "\"pbrMetallicRoughness\""));
+            },
+            .obj => try testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes[0], "usemtl material_00ff00ff")),
+            else => {},
+        }
+    }
+}
+
 test "API: a split that fails after its first file frees what it wrote, once" {
     // The list of files was freed before the files in it, so the errdefer that frees them
     // walked freed memory: `kupcad build --split` crashed.

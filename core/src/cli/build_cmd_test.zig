@@ -237,10 +237,10 @@ test "build_cmd: --mtl writes an obj's materials beside it, and only an obj's" {
     const obj = try fx.tmp.dir.readFileAlloc(testing.io, "part.obj", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(obj);
     try testing.expect(std.mem.find(u8, obj, "\nmtllib part.mtl\n") != null);
-    try testing.expect(std.mem.find(u8, obj, "\nusemtl material_1\n") != null);
+    try testing.expect(std.mem.find(u8, obj, "\nusemtl material_ff0000ff\n") != null);
     const mtl = try fx.tmp.dir.readFileAlloc(testing.io, "part.mtl", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(mtl);
-    try testing.expect(std.mem.find(u8, mtl, "newmtl material_1\nKd 1 0 0\n") != null);
+    try testing.expect(std.mem.find(u8, mtl, "newmtl material_ff0000ff\nKd 1 0 0\n") != null);
 
     // Another format has no library; refused rather than silently none
     var stl = try runBuild(&.{ fx.input, "-f", "stl", "--mtl" });

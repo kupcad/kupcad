@@ -151,12 +151,13 @@ pub fn buildGltfBuffer(
     var doc: Gltf = .{};
     defer doc.deinit(allocator);
     if (draco_bits) |bits| try doc.addDracoPrimitives(allocator, &parts, bits) else try doc.addPrimitives(allocator, &parts);
-    try doc.addMaterials(allocator, materials);
+    try doc.addMaterials(allocator, materials, parts.used.inOrder());
     return doc.write(allocator, container, parts.meshes.items);
 }
 
 /// One part's triangles with one material: a glTF primitive.
 const PartPrimitive = struct {
+    /// Its material's number in the file (Parts.used)
     material: u32,
     /// Into Parts.positions, as vertex numbers.
     indices: std.ArrayList(u32),
@@ -181,12 +182,15 @@ const Parts = struct {
     positions: std.ArrayList(f32) = .empty,
     primitives: std.ArrayList(PartPrimitive) = .empty,
     meshes: std.ArrayList(MeshRange) = .empty,
+    /// The material slots the primitives use, as the file numbers them
+    used: material_groups.UsedSlots = .{},
 
     fn deinit(self: *Parts, allocator: std.mem.Allocator) void {
         for (self.primitives.items) |*p| p.indices.deinit(allocator);
         self.primitives.deinit(allocator);
         self.meshes.deinit(allocator);
         self.positions.deinit(allocator);
+        self.used.deinit(allocator);
     }
 
     fn vertexCount(self: *const Parts) u32 {
@@ -236,7 +240,7 @@ const Parts = struct {
             for (group.tri_starts) |tri| {
                 for (mesh.tri_verts[tri..][0..3]) |vertex| indices.appendAssumeCapacity(vertex + base_vertex);
             }
-            self.primitives.appendAssumeCapacity(.{ .material = group.slot, .indices = indices });
+            self.primitives.appendAssumeCapacity(.{ .material = try self.used.numberOf(allocator, group.slot), .indices = indices });
         }
     }
 };
@@ -367,15 +371,19 @@ const Gltf = struct {
         }
     }
 
-    /// glTF material index == material slot: the default material first, then one per
-    /// user material (kernel.materialSlot).
-    fn addMaterials(self: *Gltf, allocator: std.mem.Allocator, defs: []const MaterialDef) !void {
-        try self.materials.append(allocator, .{
-            .pbrMetallicRoughness = .{ .baseColorFactor = DEFAULT_BASE_COLOR, .metallicFactor = 0.0, .roughnessFactor = DEFAULT_ROUGHNESS },
-            .alphaMode = "OPAQUE",
-        });
+    /// The materials of `slots` (kernel.materialSlot, of `defs`), in their order, which
+    /// numbers them as the primitives do: those the parts use alone.
+    fn addMaterials(self: *Gltf, allocator: std.mem.Allocator, defs: []const MaterialDef, slots: []const u32) !void {
         var has_transmission = false;
-        for (defs) |def| {
+        for (slots) |slot| {
+            if (slot == kernel.DEFAULT_MATERIAL_SLOT) {
+                try self.materials.append(allocator, .{
+                    .pbrMetallicRoughness = .{ .baseColorFactor = DEFAULT_BASE_COLOR, .metallicFactor = 0.0, .roughnessFactor = DEFAULT_ROUGHNESS },
+                    .alphaMode = "OPAQUE",
+                });
+                continue;
+            }
+            const def = defs[slot - 1];
             try self.materials.append(allocator, gltfMaterial(def));
             has_transmission = has_transmission or def.transmission > 0.0;
         }

@@ -110,7 +110,11 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, args: []const value.Value) 
     defer if (mtl_path) |p| vm.allocator.free(p);
     try exportTo(vm, receiver, filepath, .obj, .{ .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null }, "export_obj");
     if (mtl_path) |p| {
-        const library = try export_mod.exportMaterialLibrary(vm.allocator, vm);
+        // The materials of what was exported, not of the whole model
+        var held: std.ArrayList(value.Value) = .empty;
+        defer held.deinit(vm.allocator);
+        const shapes = try shapesOf(vm, receiver, "export_obj", .obj, &held);
+        const library = try export_mod.materialLibraryOf(vm.allocator, vm, shapes.solids);
         defer vm.allocator.free(library);
         try writeFile(vm, p, library, "export_obj");
     }

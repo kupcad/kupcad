@@ -363,7 +363,7 @@ fn reportExportFailure(allocator: std.mem.Allocator, vm: *const VM, reporter: Re
 
 /// Writes the model's material library (`--mtl`) to `path`; false, the failure reported, when
 /// it can't be written.
-fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []const u8, reporter: Reporter) !bool {
+fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: Reporter) !bool {
     const bytes = try api.exportMaterialLibrary(allocator, vm);
     defer allocator.free(bytes);
     if (!writeOutput(reporter, path, bytes)) return false;

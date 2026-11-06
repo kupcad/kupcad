@@ -18,6 +18,29 @@ pub fn slotOf(mesh: geom.Mesh, tri: usize, material_count: usize) u32 {
     return if (slot <= material_count) slot else kernel.DEFAULT_MATERIAL_SLOT;
 }
 
+/// The material slots a file's meshes use, each numbered by where it first appears (the
+/// parts in their order, each mesh's triangles in theirs): a file holds these materials
+/// alone, densely numbered, whatever else the session has made (VM.materials keeps every
+/// material a cached import may name), and the same model gives the same file.
+pub const UsedSlots = struct {
+    /// Each slot, in the order it first appeared: its number is its index
+    slots: std.AutoArrayHashMapUnmanaged(u32, void) = .empty,
+
+    pub fn deinit(self: *UsedSlots, allocator: std.mem.Allocator) void {
+        self.slots.deinit(allocator);
+    }
+
+    /// The number `slot` has in the file, given it the first time.
+    pub fn numberOf(self: *UsedSlots, allocator: std.mem.Allocator, slot: u32) !u32 {
+        return @intCast((try self.slots.getOrPut(allocator, slot)).index);
+    }
+
+    /// The slots, in the order of their numbers.
+    pub fn inOrder(self: *const UsedSlots) []const u32 {
+        return self.slots.keys();
+    }
+};
+
 /// Each material slot of a mesh with the starts of its triangles, slots in the order they
 /// first appear and triangles in the mesh's, so the output is the same every time.
 pub const Groups = struct {

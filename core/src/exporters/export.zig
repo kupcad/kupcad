@@ -26,16 +26,36 @@ const threemf_exporter = @import("3d/threemf.zig");
 const obj_exporter = @import("3d/obj.zig");
 const mesh_part = @import("3d/mesh_part.zig");
 const MeshPart = mesh_part.MeshPart;
+const material_groups = @import("3d/material_groups.zig");
 const svg_exporter = @import("2d/svg.zig");
 const dxf_exporter = @import("2d/dxf.zig");
 const drawing_mod = @import("2d/drawing.zig");
 const curves_mod = @import("2d/curves.zig");
 const log = std.log.scoped(.@"export");
 
-/// The material library (`.mtl`) of the model: the script's materials, as an OBJ written
-/// with `ExportOptions.mtl_name` refers to them.
-pub fn exportMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM) ![]u8 {
-    return obj_exporter.buildMaterialLibrary(allocator, vm.materials.items);
+/// The material library (`.mtl`) of the model the script left, as its OBJ written with
+/// `ExportOptions.mtl_name` (or the files of its split) refers to them (materialLibraryOf).
+pub fn exportMaterialLibrary(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
+    var model = try model_mod.collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    return materialLibraryOf(allocator, vm, model.solids.items);
+}
+
+/// The material library of an OBJ of `solids` (rooted by the caller): the materials their
+/// meshes use, in the order they first appear, not every one the session has made.
+pub fn materialLibraryOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]u8 {
+    var used: material_groups.UsedSlots = .{};
+    defer used.deinit(allocator);
+    for (solids) |solid| {
+        const handle = try vm.ensureConcrete(solid);
+        try vm.requireFeature(handle.engine, .mesh);
+        const mesh = try mesh_part.floatMesh(allocator, handle);
+        defer allocator.free(mesh.vert_props);
+        defer allocator.free(mesh.tri_verts);
+        var tri: usize = 0;
+        while (tri < mesh.tri_verts.len) : (tri += 3) _ = try used.numberOf(allocator, material_groups.slotOf(mesh, tri, vm.materials.items.len));
+    }
+    return obj_exporter.buildMaterialLibrary(allocator, vm.materials.items, used.inOrder());
 }
 
 /// Where an OBJ's material library goes: beside it, named after it (part.obj's is
@@ -207,7 +227,7 @@ fn exportSolids(
             var parts = try namedParts(allocator, vm, solids, ghosts);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
-            return obj_exporter.build(allocator, parts.items, vm.materials.items.len, title, options.mtl_name);
+            return obj_exporter.build(allocator, parts.items, vm.materials.items, title, options.mtl_name);
         },
         .svg, .dxf => unreachable, // 2D: exportDrawing
         .step => {

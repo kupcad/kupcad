@@ -54,13 +54,21 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, items: []con
         try writeEscaped(w, t);
         try w.writeAll("</metadata>\n");
     }
-    try w.writeAll(" <resources>\n");
-    try writeMaterials(w, materials);
+    // The objects first, aside: they number the materials they use, which come before them
+    var objects: std.Io.Writer.Allocating = .init(allocator);
+    defer objects.deinit();
+    var used: material_groups.UsedSlots = .{};
+    defer used.deinit(allocator);
+    // The default is every object's own (pindex 0), whether a triangle of it shows it or not
+    _ = try used.numberOf(allocator, kernel.DEFAULT_MATERIAL_SLOT);
     var next_id: u32 = MATERIALS_ID + 1;
     for (parts, object_ids) |part, *id| {
-        id.* = if (try writeObject(allocator, w, part, next_id, materials.len)) next_id else null;
+        id.* = if (try writeObject(allocator, &objects.writer, part, next_id, materials.len, &used)) next_id else null;
         if (id.* != null) next_id += 1;
     }
+    try w.writeAll(" <resources>\n");
+    try writeMaterials(w, materials, used.inOrder());
+    try w.writeAll(objects.written());
     try w.writeAll(" </resources>\n <build>\n");
     var written: usize = 0;
     for (items) |item| {
@@ -80,14 +88,18 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, items: []con
     });
 }
 
-/// The base materials: the default first, then the VM's in their order, so a triangle's
-/// material slot (kernel.materialSlot) is its index here.
-fn writeMaterials(w: *std.Io.Writer, defs: []const MaterialDef) !void {
+/// The base materials of `slots` (kernel.materialSlot, of `defs`), in the order that
+/// numbers them as the triangles do: the default first, then those the objects use.
+fn writeMaterials(w: *std.Io.Writer, defs: []const MaterialDef, slots: []const u32) !void {
     try w.print("  <basematerials id=\"{d}\">\n", .{MATERIALS_ID});
-    try writeBase(w, "default", DEFAULT_COLOR);
-    for (defs, 1..) |def, slot| {
+    for (slots, 0..) |slot, number| {
+        if (slot == kernel.DEFAULT_MATERIAL_SLOT) {
+            try writeBase(w, "default", DEFAULT_COLOR);
+            continue;
+        }
+        const def = defs[slot - 1];
         var name_buf: [32]u8 = undefined;
-        const name = try std.fmt.bufPrint(&name_buf, "material {d}", .{slot});
+        const name = try std.fmt.bufPrint(&name_buf, "material {d}", .{number});
         const alpha: u8 = @intFromFloat(@round(std.math.clamp(def.alpha, 0, 1) * 255));
         try writeBase(w, name, .{ def.rgb[0], def.rgb[1], def.rgb[2], alpha });
     }
@@ -99,8 +111,9 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
 }
 
 /// `part`'s mesh as the object `id`, its triangles in the materials they have (of
-/// `material_count`); false (and nothing written) when the mesh has none.
-fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize) !bool {
+/// `material_count`), each by its number in `used`; false (and nothing written) when the
+/// mesh has none.
+fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize, used: *material_groups.UsedSlots) !bool {
     const mesh = try mesh_part.floatMesh(allocator, part.handle);
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
@@ -124,7 +137,7 @@ fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, 
         const tri = mesh.tri_verts[t..][0..3];
         try w.print("     <triangle v1=\"{d}\" v2=\"{d}\" v3=\"{d}\"", .{ tri[0], tri[1], tri[2] });
         const slot = material_groups.slotOf(mesh, t, material_count);
-        if (slot != kernel.DEFAULT_MATERIAL_SLOT) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, slot });
+        if (slot != kernel.DEFAULT_MATERIAL_SLOT) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, try used.numberOf(allocator, slot) });
         try w.writeAll("/>\n");
     }
     try w.writeAll("    </triangles>\n   </mesh>\n  </object>\n");

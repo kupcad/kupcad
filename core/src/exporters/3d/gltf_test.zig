@@ -506,13 +506,15 @@ test "GLTF: a colour's base factor is its sRGB bytes decoded by the sRGB curve, 
     defer std.testing.allocator.free(bytes);
     var glb = try parseGlb(bytes);
     defer glb.deinit();
+    // The two parts' materials alone, in the order they first appear
     const materials = glb.array("materials");
+    try std.testing.expectEqual(@as(usize, 2), materials.len);
     // 0.8 above the knee: ((0.8 + 0.055) / 1.055) ^ 2.4; 0.2 too; 5/255 below it: linear
     const mid = std.math.pow(f64, (0.8 + 0.055) / 1.055, 2.4);
     const low = std.math.pow(f64, (0.2 + 0.055) / 1.055, 2.4);
-    try expectNumbers(&.{ mid, low, low, 1 }, pbr(materials[1].object).get("baseColorFactor").?);
+    try expectNumbers(&.{ mid, low, low, 1 }, pbr(materials[0].object).get("baseColorFactor").?);
     const dark = 5.0 / 255.0 / 12.92;
-    try expectNumbers(&.{ dark, dark, dark, 1 }, pbr(materials[2].object).get("baseColorFactor").?);
+    try expectNumbers(&.{ dark, dark, dark, 1 }, pbr(materials[1].object).get("baseColorFactor").?);
 }
 
 test "GLTF: each material keeps its colour, finish, transparency and role" {
@@ -529,8 +531,9 @@ test "GLTF: each material keeps its colour, finish, transparency and role" {
     var glb = try parseGlb(bytes);
     defer glb.deinit();
     const materials = glb.array("materials");
-    // The default first, then one per material(...), highlight and ghost, in call order.
-    try std.testing.expectEqual(@as(usize, 6), materials.len);
+    // Those the meshes use, as they first appear: the ghost's (ghosts come first), then one
+    // per material(...) and the highlight; no part has the default.
+    try std.testing.expectEqual(@as(usize, 5), materials.len);
 
     const shiny = materials[1].object;
     try expectNumbers(&.{ 1, 0, 0, 1 }, pbr(shiny).get("baseColorFactor").?);
@@ -554,7 +557,7 @@ test "GLTF: each material keeps its colour, finish, transparency and role" {
     try std.testing.expectEqual(@as(usize, 2), used);
 
     try std.testing.expectEqualStrings("highlight", materials[4].object.get("extras").?.object.get("kupcad_role").?.string);
-    const ghost = materials[5].object;
+    const ghost = materials[0].object;
     try std.testing.expectEqualStrings("ghost", ghost.get("extras").?.object.get("kupcad_role").?.string);
     try std.testing.expectEqualStrings("BLEND", ghost.get("alphaMode").?.string);
 }
