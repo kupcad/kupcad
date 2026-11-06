@@ -548,6 +548,16 @@ pub fn build(b: *std.Build) void {
 
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
+
+        // tatfi's own tests, with every table it reads, on wasm32 too: its offsets and lengths
+        // are usize, 32 bits there, where a font's u32s can overflow them
+        const tatfi_wasm_test = b.addTest(.{
+            .root_module = tatfiModule(b, wasm_target, optimize, .{}),
+            .filters = b.option([]const []const u8, "test-filter", "Filter tatfi's tests by name") orelse &.{},
+        });
+        const run_tatfi_wasm_test = b.addSystemCommand(&.{ "wasmtime", "--" });
+        run_tatfi_wasm_test.addFileArg2(tatfi_wasm_test.getEmittedBin(), .{});
+        test_wasm_step.dependOn(&run_tatfi_wasm_test.step);
     } else {
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,

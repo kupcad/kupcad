@@ -7,7 +7,7 @@ license, README and changelog), without upstream's editor and release tooling.
 
 KupCAD's `build.zig` makes the module itself (`tatfiModule`), with the tables `text()` needs:
 the characters, the outlines and the names, without OpenType layout (HarfBuzz reads GSUB and GPOS
-to shape text), variable fonts or Apple tables, which none of the embedded fonts has. tatfi's tests run in `zig build test` with every table on. tatfi's own `build.zig`
+to shape text), variable fonts or Apple tables, which none of the embedded fonts has. tatfi's tests run in `zig build test` with every table on, and in `zig build test-wasm` built for wasm32-wasi (under wasmtime), where `usize` is 32 bits. tatfi's own `build.zig`
 is kept as upstream has it but isn't used: as a dependency its module has no target, so its
 tests couldn't run in KupCAD's target and mode.
 
@@ -84,14 +84,14 @@ tests couldn't run in KupCAD's target and mode.
   its 65535 heights, is a checked add. `src/tests/math.zig` has "a constant past the end of the
   constants" and "a math kern of 65535 heights".
 - `src/tables/colr.zig`, `src/tables/cblc.zig`: an offset that is a sum of two offsets from
-  the font (a COLRv1 base glyph paint, a layer paint, a CBLC index subtable) is added in
-  `usize`, as ttf-parser does; added in their `u32`s, they overflowed. A COLR variable value's
+  the font (a COLRv1 base glyph paint, a layer paint, a CBLC index subtable) is a checked add
+  in `usize`; added in their `u32`s, they overflowed (and a 32-bit `usize`, on wasm32, too). A COLR variable value's
   delta index, its base plus its place, is a checked add (no deltas past the last index); from
   0xFFFFFFFE it overflowed. `src/tests/colr.zig` has "a base glyph paint past a u32", "a layer
   paint past a u32" and "a clip box's variation indices past a u32", `src/tests/cblc.zig` "an
   index subtable past a u32".
-- `src/delta_set.zig`: a DeltaSetIndexMap entry's offset is computed in `usize`, as ttf-parser
-  does; the `u32` index times the entry size overflowed. `src/tests/colr.zig` has "a var index
+- `src/delta_set.zig`: a DeltaSetIndexMap entry's offset is a checked product in `usize`; the
+  `u32` index times the entry size overflowed (and a 32-bit `usize`, on wasm32, too). `src/tests/colr.zig` has "a var index
   map entry past a u32".
 - `src/tables/gvar.zig`, `src/var_store.zig`: a region's scalar subtracts its start, peak and
   end in `i32`; in the font's `i16`s a region from -32768 to 0 overflowed (in ttf-parser too).
@@ -116,6 +116,17 @@ tests couldn't run in KupCAD's target and mode.
   add in `f32`, rounded once and null past the metric's type, as ttf-parser does; they were
   added in the metric's `u16` or `i16`, which overflowed (and a negative offset gave null).
   `src/tests/main.zig` has "variable metrics past their type".
+- `src/parser.zig`, `src/tables/cblc.zig`, `src/aat.zig`: what a 32-bit `usize` (wasm32)
+  overflowed on a font's `u32`s. `Stream.read_array`'s length, a `u32` count times the size,
+  is a checked product (a font collection of 0xFFFFFFFF faces; cmap format 12's groups);
+  `Stream.advance` saturates past the data, where reads fail (an item variation store's region
+  list at 0xFFFFFFFF), and `advance_checked` with it; a CBLC glyph's image offset is a checked
+  add; an extended state table's entry index is computed in `u64`. The tests run on wasm32 in
+  `zig build test-wasm`: `src/tests/main.zig`'s "font collection num fonts overflow",
+  `src/tests/cmap.zig`'s "format12 more groups than a 32-bit usize counts the bytes of",
+  `src/tests/var_store.zig`'s "a region list past a 32-bit usize", `src/tests/cblc.zig`'s "a
+  bitmap past a 32-bit usize" and `src/tests/aat.zig`'s "extended state table entry past a
+  32-bit usize", with the COLR, CBLC and delta set tests above.
 
 ## Updating
 

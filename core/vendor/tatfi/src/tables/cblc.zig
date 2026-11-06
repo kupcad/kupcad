@@ -71,11 +71,12 @@ fn get_impl(
         1 => {
             s.advance(glyph_diff * parser.size_of(parser.Offset32));
             const offset = try s.read(parser.Offset32);
-            image_offset += offset[0];
+            // [KupCAD] here and below, checked: two u32s overflow a 32-bit usize (wasm32)
+            image_offset = try std.math.add(usize, image_offset, offset[0]);
         },
         2 => {
             const image_size = try s.read(u32);
-            image_offset += try std.math.mul(usize, glyph_diff, image_size);
+            image_offset = try std.math.add(usize, image_offset, try std.math.mul(usize, glyph_diff, image_size));
             metrics.height = try s.read(u8);
             metrics.width = try s.read(u8);
             metrics.x = try s.read(i8);
@@ -84,7 +85,7 @@ fn get_impl(
         3 => {
             s.advance(glyph_diff * parser.size_of(parser.Offset16));
             const offset = try s.read(parser.Offset16);
-            image_offset += offset[0];
+            image_offset = try std.math.add(usize, image_offset, offset[0]);
         },
         4 => {
             const num_glyphs = try std.math.add(u32, try s.read(u32), 1);
@@ -94,7 +95,7 @@ fn get_impl(
                 if (p.glyph_id[0] == glyph_id[0]) break p;
             } else return error.ParseFail;
 
-            image_offset += pair.offset[0];
+            image_offset = try std.math.add(usize, image_offset, pair.offset[0]);
         },
         5 => {
             const image_size = try s.read(u32);
@@ -222,8 +223,9 @@ fn select_index_subtable(
         if (glyph_id[0] >= start_glyph_id[0] and glyph_id[0] <= end_glyph_id[0])
             return .{
                 .start_glyph_id = start_glyph_id,
-                // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
-                .offset = @as(usize, size_table.subtable_array_offset[0]) + offset[0],
+                // [KupCAD] checked: two u32s from the font overflowed (and overflow a 32-bit
+                // usize, wasm32)
+                .offset = try std.math.add(usize, size_table.subtable_array_offset[0], offset[0]),
             };
     }
 

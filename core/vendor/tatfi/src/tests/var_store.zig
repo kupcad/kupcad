@@ -38,3 +38,18 @@ test "a delta set past a u16" {
     const store = try ItemVariationStore.parse(&s);
     try t.expectError(error.ParseFail, store.parse_delta(0, 0, &.{.{ .inner = 0 }}));
 }
+
+test "a region list past a 32-bit usize" {
+    // [KupCAD] The store's offset plus the region list's, 0xFFFFFFFF, overflowed a 32-bit
+    // usize (wasm32) advancing to it.
+    const data = try convert(&.{
+        .{ .unt32 = 0 }, // what comes before the store
+        .{ .unt16 = 1 }, // format
+        .{ .unt32 = 0xFFFFFFFF }, // offset to the region list
+        .{ .unt16 = 0 }, // number of item variation data
+    });
+    defer t.allocator.free(data);
+
+    var s = try @import("../parser.zig").Stream.new_at(data, 4);
+    try t.expectError(error.ParseFail, ItemVariationStore.parse(&s));
+}

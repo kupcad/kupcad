@@ -295,8 +295,9 @@ fn paint_v1(
     defer if (clip_box_maybe != null) painter.pop_clip();
 
     self.parse_paint(
-        // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
-        @as(usize, self.base_glyph_paints_offset[0]) + base.paint_table_offset[0],
+        // [KupCAD] checked: two u32s from the font overflowed (and overflow a 32-bit usize,
+        // wasm32)
+        std.math.add(usize, self.base_glyph_paints_offset[0], base.paint_table_offset[0]) catch return,
         palette,
         painter,
         recursion_stack,
@@ -358,8 +359,9 @@ fn parse_paint_impl(
                 const paint_offset = self.layer_paint_offsets.get(index) orelse
                     return error.ParseFail;
 
-                // [KupCAD] in usize, as ttf-parser has it: two u32s from the font overflowed
-                const new_offset = @as(usize, self.layer_paint_offsets_offset[0]) + paint_offset[0];
+                // [KupCAD] checked: two u32s from the font overflowed (and overflow a 32-bit
+                // usize, wasm32)
+                const new_offset = try std.math.add(usize, self.layer_paint_offsets_offset[0], paint_offset[0]);
                 try self.parse_paint(
                     new_offset,
                     palette,

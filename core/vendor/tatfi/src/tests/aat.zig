@@ -383,3 +383,26 @@ test "state table of no classes" {
     const table = try ttf.apple_layout.StateTable.parse(data);
     try t.expectEqual(0, table.new_state(20));
 }
+
+test "extended state table entry past a 32-bit usize" {
+    // [KupCAD] State 0xFFFF times 0x10001 classes, plus class 1, overflowed a 32-bit usize
+    // (wasm32).
+    const data = try convert(&.{
+        .{ .unt32 = 0x10001 }, // number of classes
+        .{ .unt32 = 16 }, // lookup table offset
+        .{ .unt32 = 20 }, // state array offset
+        .{ .unt32 = 22 }, // entry table offset
+        // Lookup table: format 0, glyph 0 of class 1
+        .{ .unt16 = 0 },
+        .{ .unt16 = 1 },
+        // State array
+        .{ .unt16 = 0 },
+        // Entry table
+        .{ .unt32 = 0 },
+    });
+    defer t.allocator.free(data);
+
+    var s = @import("../parser.zig").Stream.new(data);
+    const table = try ttf.apple_layout.ExtendedStateTable(void).parse(1, &s);
+    try t.expectEqual(null, table.entry(0xFFFF, 1));
+}

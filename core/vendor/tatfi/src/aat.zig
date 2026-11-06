@@ -475,10 +475,13 @@ pub fn ExtendedStateTable(T: type) type {
             if (predef_class >= self.number_of_classes)
                 predef_class = predefined_class.OUT_OF_BOUNDS;
 
-            const state_idx = @as(usize, state) * @as(usize, self.number_of_classes) + @as(usize, predef_class);
+            // [KupCAD] in u64: a u16 state times the u32 number of classes overflows a 32-bit
+            // usize (wasm32)
+            const state_idx = @as(u64, state) * self.number_of_classes + predef_class;
 
             const entry_idx = i: {
-                var s = parser.Stream.new_at(self.state_array, state_idx * parser.size_of(u16)) catch return null;
+                const offset = std.math.cast(usize, state_idx * parser.size_of(u16)) orelse return null;
+                var s = parser.Stream.new_at(self.state_array, offset) catch return null;
                 break :i s.read(u16) catch return null;
             };
             var s = parser.Stream.new_at(self.entry_table, entry_idx * parser.size_of(GenericStateEntry(T))) catch return null;

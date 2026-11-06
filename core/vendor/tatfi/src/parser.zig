@@ -436,7 +436,8 @@ pub const Stream = struct {
         count: anytype,
     ) Error!LazyArray(@TypeOf(count), T) {
         const size = size_of(T);
-        const len = count * size;
+        // [KupCAD] checked: a u32 count times the size overflows a 32-bit usize (wasm32)
+        const len = std.math.mul(usize, count, size) catch return error.ParseFail;
         const bytes = try self.read_bytes(len);
         return LazyArray(@TypeOf(count), T).new(bytes);
     }
@@ -488,7 +489,9 @@ pub const Stream = struct {
         self: *Stream,
         len: usize,
     ) void {
-        self.offset += len;
+        // [KupCAD] saturating: an offset from the font past the data overflows a 32-bit usize
+        // (wasm32); past the data, reads fail as they do anywhere past it
+        self.offset +|= len;
     }
 
     /// Advances by the specified `len` and checks for bounds.
@@ -497,7 +500,7 @@ pub const Stream = struct {
         self: *Stream,
         len: usize,
     ) Error!void {
-        if (self.offset + len > self.data.len) return error.ParseFail;
+        if (self.offset +| len > self.data.len) return error.ParseFail;
         self.advance(len);
     }
 

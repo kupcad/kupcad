@@ -642,6 +642,21 @@ test "format13 a group past the last code point" {
     try t.expectEqualSlices(u21, &.{ 0x1FFFFE, 0x1FFFFF }, vec.items);
 }
 
+test "format12 more groups than a 32-bit usize counts the bytes of" {
+    // [KupCAD] The groups' length, 0x15555556 times 12 bytes, overflowed a 32-bit usize
+    // (wasm32).
+    const data = try convert(&.{
+        .{ .unt16 = 12 }, // format
+        .{ .unt16 = 0 }, // reserved
+        .{ .unt32 = 16 }, // length
+        .{ .unt32 = 0 }, // language
+        .{ .unt32 = 0x15555556 }, // number of groups
+    });
+    defer t.allocator.free(data);
+
+    try t.expectError(error.ParseFail, cmap.Subtable12.parse(data));
+}
+
 fn push_cp_to_vec(cp: u21, v: *std.ArrayList(u21)) void {
     v.append(t.allocator, cp) catch unreachable;
 }
