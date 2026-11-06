@@ -2341,7 +2341,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = "no error" }, // exact since M1
         .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = brepLacks(.boolean) }, // kept both solids
         .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = brepLacks(.boolean) },
-        .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = brepLacks(.sketch_boolean) }, // was a 3D cube
+        .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = "no error" }, // was a 3D cube; exact since M2
         .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" }, // was a 10 mm cube; exact since M1
         .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) },
         .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = "no error" }, // a rounded square is a polygon of chords on both engines, extruded

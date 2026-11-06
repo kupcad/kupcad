@@ -113,6 +113,22 @@ test "Driver: volume, area, genus and a sketch's area are exact" {
     try std.testing.expect(driver.supports(.sketch_measure));
 }
 
+test "Driver: sketch booleans are exact, two at a time and in a batch" {
+    const plate = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(plate);
+    const disc = driver.driver.circleFn(&TEST_CONFIG, 2, 64) orelse return error.CircleFailed;
+    defer driver.driver.destructCrossSectionFn(disc);
+    const hole = driver.driver.crossSectionTransformFn(disc, .{ 1, 0, 0, 1, 5, 5 }) orelse return error.TransformFailed;
+    defer driver.driver.destructCrossSectionFn(hole);
+    const pierced = driver.driver.crossSectionBooleanFn(plate, hole, .difference_op) orelse return error.BooleanFailed;
+    defer driver.driver.destructCrossSectionFn(pierced);
+    try std.testing.expectApproxEqRel(100 - std.math.pi * 4, driver.driver.crossSectionAreaFn(pierced), 1e-9);
+    const all = driver.driver.crossSectionBatchBooleanFn(std.testing.allocator, &.{ plate, hole, disc }, .union_op) orelse return error.BooleanFailed;
+    defer driver.driver.destructCrossSectionFn(all);
+    try std.testing.expectApproxEqRel(100 + std.math.pi * 4 * 3.0 / 4.0, driver.driver.crossSectionAreaFn(all), 1e-9);
+    try std.testing.expect(driver.supports(.sketch_boolean));
+}
+
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);

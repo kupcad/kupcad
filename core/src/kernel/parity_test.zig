@@ -51,6 +51,13 @@ const SHAPES = [_][]const u8{
     "square(10).translate(5, 0).extrude(1)",
     "square(10).extrude(5).translate(1, 2, 3).rotate(z: 90)",
     "regular_polygon(6, r: 5).extrude(2)",
+    // Sketch booleans (M2), extruded: a plate with a hole, a union of two squares, the
+    // lens of two circles, a difference that leaves two pieces
+    "(square(10) - square(4).translate(3, 3)).extrude(2)",
+    "(square(10) + square(10).translate(5, 5)).extrude(1)",
+    "(square(4, center: true) & circle(r: 3, segments: 64)).extrude(1)",
+    "(square(10) - square(2, 20).translate(4, -5)).extrude(1)",
+    "(square(10) - circle(r: 2, segments: 64).translate(5, 5)).extrude(3)",
     // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
     // every quarter turn, where the extremes are (segments a multiple of 4)
     "square(4).revolve(segments: 64)",
@@ -121,9 +128,11 @@ test "parity: each shape both engines build has the same box on each" {
 
 /// Whether a STEP export's vertices and whole circles reach the solid's extent: not a
 /// sphere's (its extent is in no vertex and not in its one meridian circle), and not a
-/// partial revolution's (its arcs are written as whole circles, which reach further).
+/// partial revolution's or a sketch intersection's (their arcs are written as whole
+/// circles, which reach further).
 fn stepBoxReaches(source: []const u8) bool {
-    return std.mem.indexOf(u8, source, "sphere") == null and std.mem.indexOf(u8, source, "deg:") == null;
+    for ([_][]const u8{ "sphere", "deg:", "&" }) |word| if (std.mem.indexOf(u8, source, word) != null) return false;
+    return true;
 }
 
 test "parity: a STEP export's vertices and circles bound what the kernel bounds, for the shapes they reach" {
@@ -156,9 +165,10 @@ test "parity: each shape's volume agrees on both engines within the chordal boun
     for (SHAPES) |source| {
         const bound = volumeBound(source) orelse continue;
         errdefer std.debug.print("script: {s}\n", .{source});
+        // A mesh falls short of a convex curve and reaches past a concave one (a round
+        // hole's chords leave more plate), either way within the chords' share
         const mesh = try volumeOn(.manifold, source);
         const exact = try volumeOn(.brep_native, source);
-        try testing.expect(mesh <= exact * (1 + 1e-9));
         try testing.expectApproxEqRel(exact, mesh, bound);
     }
 }

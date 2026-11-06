@@ -125,17 +125,16 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
 }
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons), their extrusions (no twist or taper) and
+/// (square, circle, polygon, even-odd polygons) and their booleans, their extrusions (no twist or taper) and
 /// revolutions (of a sketch on one side of the axis), their volume, area, genus and box
 /// (a sketch's area and box too), hulls of flat-faced solids, every rigid move, uniform scale and mirror, and STEP
 /// export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean => true,
         .boolean,
         .loft,
-        .sketch_boolean,
         .sketch_hull,
         .curved_hull,
         .extrude_twist,
@@ -458,18 +457,30 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
     return null;
 }
 
+/// The sketches combined by Locus's overlay: the first less the others for a difference,
+/// their union, or what all of them hold. The result keeps the first sketch's settings.
 fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    _ = allocator;
-    _ = sketches;
-    _ = op;
-    return null;
+    const bodies = allocator.alloc(*const Body, sketches.len) catch return null;
+    defer allocator.free(bodies);
+    for (sketches, bodies) |s, *body| body.* = &solidOf(s.ptr).body;
+    const first = solidOf(sketches[0].ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const which: locus.sketch.boolean.Op = switch (op) {
+        .union_op => .@"union",
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
+    const body = locus.sketch.boolean.boolean(backend_allocator, bodies, which, first.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, first.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    _ = a;
-    _ = b;
-    _ = op;
-    return null;
+    return crossSectionBatchBooleanImpl(backend_allocator, &.{ a, b }, op);
 }
 
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
