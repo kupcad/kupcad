@@ -52,6 +52,14 @@ tests couldn't run in KupCAD's target and mode.
 - `src/tables/cmap/format12.zig`, `format13.zig`: `codepoints` counts in a `u32` up to the last
   code point a `u21` holds; counting a `u21` to a group's end past it overflowed. `src/tests/cmap.zig`
   has "format12 a group past the last code point" and the same for format 13.
+- `src/tables/cff/charset.zig`: a format 1 range's count of glyphs after its first is widened
+  to a `u16` before the first is added, as ttf-parser's `u16::from` does, in parsing the
+  charset and in `sid_to_gid`; added in the `u8` it is read as, 255 overflowed, so a valid CFF
+  font of 257 glyphs or more could crash `Face.parse`. A format 2 range's count plus one is a
+  checked add (ttf-parser's `checked_add`). `src/tests/cff1.zig` has "a charset range of 256
+  glyphs" and "a charset range of 65536 glyphs".
+- `src/tables/cff/cff2.zig`: a `blend` with nothing on the stack is an error; popping its count
+  reached `unreachable`. `src/tests/cff2.zig` has "a blend of no operands".
 
 ## Updating
 

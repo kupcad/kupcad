@@ -8,6 +8,7 @@ test {
     _ = @import("aat.zig");
     _ = @import("ankr.zig");
     _ = @import("cff1.zig");
+    _ = @import("cff2.zig");
     _ = @import("cmap.zig");
     _ = @import("colr.zig");
     _ = @import("feat.zig");

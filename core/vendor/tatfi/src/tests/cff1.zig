@@ -1309,6 +1309,81 @@ fn gen_cff(
     return try writer_state.toOwnedSlice();
 }
 
+/// A CFF table of `number_of_glyphs` empty glyphs whose charset is `charset`.
+fn cff_with_charset(charset: []const Unit, number_of_glyphs: u16) ![]u8 {
+    const charset_data = try convert(charset);
+    defer t.allocator.free(charset_data);
+    const charset_offset = 27;
+    const char_strings_offset: i32 = @intCast(charset_offset + charset_data.len);
+
+    var data: std.ArrayList(u8) = .fromOwnedSlice(try convert(&.{
+        // Header
+        .{ .unt8 = 1 }, // major version
+        .{ .unt8 = 0 }, // minor version
+        .{ .unt8 = 4 }, // header size
+        .{ .unt8 = 0 }, // absolute offset
+        // Name INDEX
+        .{ .unt16 = 0 }, // count
+        // Top DICT
+        // INDEX
+        .{ .unt16 = 1 }, // count
+        .{ .unt8 = 1 }, // offset size
+        .{ .unt8 = 1 }, // index[0]
+        .{ .unt8 = 13 }, // index[1]
+        // Data: two five-byte numbers, so the offsets are known beforehand
+        .{ .unt8 = 29 },
+        .{ .int32 = charset_offset },
+        .{ .unt8 = @truncate(top_dict_operator.CHARSET_OFFSET) },
+        .{ .unt8 = 29 },
+        .{ .int32 = char_strings_offset },
+        .{ .unt8 = @truncate(top_dict_operator.CHAR_STRINGS_OFFSET) },
+        // String INDEX
+        .{ .unt16 = 0 }, // count
+        // Global Subroutines INDEX
+        .{ .unt16 = 0 }, // count
+        // Charset
+        .{ .raw = charset_data },
+        // CharString INDEX
+        .{ .unt16 = number_of_glyphs }, // count
+        .{ .unt8 = 2 }, // offset size
+    }));
+    errdefer data.deinit(t.allocator);
+    // Each glyph an endchar
+    for (1..number_of_glyphs + 2) |offset|
+        try data.appendSlice(t.allocator, &std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(offset))));
+    try data.appendNTimes(t.allocator, operator.ENDCHAR, number_of_glyphs);
+    return data.toOwnedSlice(t.allocator);
+}
+
+test "a charset range of 256 glyphs" {
+    // [KupCAD] A format 1 range's count of glyphs after its first, 255, plus that first
+    // overflowed the u8 it is read as, parsing the font and finding a glyph by name.
+    const data = try cff_with_charset(&.{
+        .{ .unt8 = 1 }, // format
+        .{ .unt16 = 400 }, // range 0: first SID
+        .{ .unt8 = 255 }, // glyphs left
+        .{ .unt16 = 1 }, // range 1: first SID, "space"
+        .{ .unt8 = 0 }, // glyphs left
+    }, 258);
+    defer t.allocator.free(data);
+
+    const table = try Table.parse(data);
+    try t.expectEqual(ttf.GlyphId{257}, table.glyph_index_by_name("space"));
+}
+
+test "a charset range of 65536 glyphs" {
+    // [KupCAD] A format 2 range's count of glyphs after its first, 65535, plus that first
+    // overflowed the u16 it is read as; ttf-parser's checked add fails the parse.
+    const data = try cff_with_charset(&.{
+        .{ .unt8 = 2 }, // format
+        .{ .unt16 = 400 }, // range 0: first SID
+        .{ .unt16 = 65535 }, // glyphs left
+    }, 2);
+    defer t.allocator.free(data);
+
+    try t.expectError(error.Overflow, Table.parse(data));
+}
+
 fn rect(x_min: i16, y_min: i16, x_max: i16, y_max: i16) ttf.Rect {
     return .{ .x_min = x_min, .y_min = y_min, .x_max = x_max, .y_max = y_max };
 }

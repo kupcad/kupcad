@@ -391,7 +391,7 @@ fn parse_char_string_recursive(
 
                 ctx.had_blend = true;
 
-                const n = utils.f32_to_u16((p.stack.pop() orelse unreachable)) orelse
+                const n = utils.f32_to_u16(p.stack.pop() orelse return error.InvalidArgumentsStackLength) orelse
                     return error.InvalidNumberOfBlendOperands;
                 const k = ctx.scalars.items.len;
 

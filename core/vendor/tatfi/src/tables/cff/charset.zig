@@ -33,7 +33,7 @@ pub const Charset = union(enum) {
                     while (total_left > 0) {
                         s_cloned.skip(StringId);
                         const left = try s_cloned.read(u8);
-                        total_left = try std.math.sub(u16, total_left, left + 1);
+                        total_left = try std.math.sub(u16, total_left, @as(u16, left) + 1);
                         count += 1;
                     }
                 }
@@ -52,7 +52,7 @@ pub const Charset = union(enum) {
                     while (total_left > 0) {
                         s_cloned.skip(StringId);
                         const left = try s_cloned.read(u16);
-                        total_left = try std.math.sub(u16, total_left, left + 1);
+                        total_left = try std.math.sub(u16, total_left, try std.math.add(u16, left, 1));
                         count += 1;
                     }
                 }
@@ -91,7 +91,7 @@ pub const Charset = union(enum) {
                         return .{id};
                     }
 
-                    id += range.left + 1;
+                    id += @as(u16, range.left) + 1;
                 } else return null;
             },
             .format2 => |array| {
