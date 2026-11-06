@@ -270,14 +270,18 @@ pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: [
             vertices[i] = try b.vertex(.{ contour[k][0], contour[k][1], 0 });
             uv.grow(contour[k]);
         }
-        var edges = try allocator.alloc(sew.EdgeSpec, contour.len);
-        errdefer allocator.free(edges);
-        for (0..contour.len) |i| {
-            if (vertices[i] == vertices[(i + 1) % contour.len]) return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "a contour's edge", .entity = .of(.vertex, @backingInt(vertices[i])) });
-            edges[i] = try b.straight(vertices[i], vertices[(i + 1) % contour.len]);
+        const edges = try allocator.alloc(sew.EdgeSpec, contour.len);
+        {
+            // Ours to free until `edge_lists` holds it
+            errdefer allocator.free(edges);
+            for (0..contour.len) |i| {
+                if (vertices[i] == vertices[(i + 1) % contour.len]) return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "a contour's edge", .entity = .of(.vertex, @backingInt(vertices[i])) });
+                edges[i] = try b.straight(vertices[i], vertices[(i + 1) % contour.len]);
+            }
+            try loops.ensureUnusedCapacity(allocator, 1);
+            try edge_lists.append(allocator, edges);
         }
-        try edge_lists.append(allocator, edges);
-        try loops.append(allocator, .{ .edges = edges });
+        loops.appendAssumeCapacity(.{ .edges = edges });
     }
     const plane = try b.plane(Frame.world);
     const specs = [1]sew.FaceSpec{.{ .surface = plane, .loops = loops.items, .uv_box = uv }};

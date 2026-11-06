@@ -96,12 +96,12 @@ pub const Mev = struct { vertex: VertexIndex, edge: EdgeIndex, out: CoedgeIndex,
 /// ending at `from`; `none` for a loop of just the vertex `from`). The edge's geometry
 /// runs from `from` (`t0`) to the new vertex (`t1`).
 pub fn mevSpur(body: *Body, loop: LoopIndex, after: CoedgeIndex, from: VertexIndex, point: geometry.PointIndex, geom: EdgeGeometry) Error!Mev {
-    const l = body.loop(loop);
     if (after == .none) {
-        if (l.first != .none or l.vertex != from) return error.Invalid;
+        if (body.loop(loop).first != .none or body.loop(loop).vertex != from) return error.Invalid;
     } else {
         if (body.coedge(after).loop != loop or body.coedgeEnd(after) != from) return error.Invalid;
     }
+    // Records are addressed by index after `reserve`: it may move the tables
     try body.reserve(1);
     const vertex = body.addVertex(.{ .point = point }) catch unreachable;
     const edge = body.addEdge(.{ .curve = geom.curve, .t0 = geom.t0, .t1 = geom.t1, .start = from, .end = vertex, .flags = geom.flags }) catch unreachable;
@@ -115,8 +115,8 @@ pub fn mevSpur(body: *Body, loop: LoopIndex, after: CoedgeIndex, from: VertexInd
     if (after == .none) {
         link(body, out, back);
         link(body, back, out);
-        l.first = out;
-        l.vertex = .none;
+        body.loop(loop).first = out;
+        body.loop(loop).vertex = .none;
     } else {
         const following = body.coedge(after).next;
         link(body, after, out);
@@ -162,9 +162,9 @@ pub const Split = struct { vertex: VertexIndex, edge: EdgeIndex, forward: Coedge
 /// takes `[t, t1]` with its own two coedges, each following its half in its loop.
 pub fn mevSplitEdge(body: *Body, coedge: CoedgeIndex, t: f64, point: geometry.PointIndex) Error!Split {
     const forward = forwardCoedge(body, coedge);
-    const e = body.edge(body.coedge(forward).edge);
-    if (!(e.t0 < t and t < e.t1)) return error.Invalid;
+    if (!(body.edge(body.coedge(forward).edge).t0 < t and t < body.edge(body.coedge(forward).edge).t1)) return error.Invalid;
     try body.reserve(1);
+    const e = body.edge(body.coedge(forward).edge);
     const vertex = body.addVertex(.{ .point = point }) catch unreachable;
     const far = e.end;
     const edge2 = body.addEdge(.{ .curve = e.curve, .t0 = t, .t1 = e.t1, .start = vertex, .end = e.end, .flags = e.flags, .regularity = e.regularity, .tag = e.tag }) catch unreachable;
@@ -576,13 +576,12 @@ pub const Slice = struct { face: FaceIndex, edge: EdgeIndex };
 /// coedge (`coedge`'s partner) moves to the new face, which also takes the new edge's
 /// reverse coedge; the new edge's forward coedge takes the partner's old place.
 pub fn sliceEdge(body: *Body, coedge: CoedgeIndex, geom: EdgeGeometry, surface: geometry.SurfaceRef, same_sense: bool) Error!Slice {
-    const c = body.coedge(coedge);
-    const partner = c.partner;
+    const partner = body.coedge(coedge).partner;
     if (partner == .none) return error.Invalid;
     const va = body.coedgeStart(coedge);
     const vb = body.coedgeEnd(coedge);
+    const shell = body.face(body.loop(body.coedge(coedge).loop).face).shell;
     try body.reserve(1);
-    const shell = body.face(body.loop(c.loop).face).shell;
     const face = body.addFace(.{ .surface = surface, .same_sense = same_sense, .shell = shell }) catch unreachable;
     body.appendFace(shell, face);
     const loop = body.addLoop(.{ .face = face }) catch unreachable;

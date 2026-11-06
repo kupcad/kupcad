@@ -253,9 +253,98 @@ pub const Quickhull = struct {
     }
 };
 
-/// The convex hull of `points` as a solid: a polyhedron over the points the hull's faces
-/// use, in their order of first use. Fewer than four points, or all of them coplanar, is
-/// `error.Degenerate`.
+/// How parallel two triangles' normals must be, as `1 − cos`, to lie on one face of the
+/// hull, and how close their planes.
+const COPLANAR_ANGLE: f64 = 1e-9;
+
+/// The hull's faces as convex polygons, corners counter-clockwise seen from outside: the
+/// triangles grouped by plane, each group's boundary chained, and the points on the
+/// boundary's edges (collinear with their neighbours) dropped. Quickhull keeps a point
+/// that lies on a face or an edge of the final hull whenever it was outside an earlier
+/// face, depending on the points' order; the polygons do not.
+pub fn facets(allocator: std.mem.Allocator, points: []const Vec3, tris: []const [3]u32, epsilon: f64) error{OutOfMemory}![][]u32 {
+    const Plane = struct { normal: Vec3, distance: f64, first: usize };
+    var planes = std.ArrayList(Plane).empty;
+    defer planes.deinit(allocator);
+    const group_of = try allocator.alloc(usize, tris.len);
+    defer allocator.free(group_of);
+    for (tris, 0..) |t, i| {
+        const n = vec.normalized(vec.cross(vec.sub(points[t[1]], points[t[0]]), vec.sub(points[t[2]], points[t[0]]))) orelse vec.X3;
+        const d = vec.dot(n, points[t[0]]);
+        group_of[i] = planes.items.len;
+        for (planes.items, 0..) |pl, g| {
+            if (1.0 - vec.dot(pl.normal, n) <= COPLANAR_ANGLE and @abs(pl.distance - d) <= epsilon) {
+                group_of[i] = g;
+                break;
+            }
+        }
+        if (group_of[i] == planes.items.len) try planes.append(allocator, .{ .normal = n, .distance = d, .first = i });
+    }
+    var out = std.ArrayList([]u32).empty;
+    errdefer {
+        for (out.items) |f| allocator.free(f);
+        out.deinit(allocator);
+    }
+    var successor = std.AutoHashMapUnmanaged(u32, u32).empty;
+    defer successor.deinit(allocator);
+    var reversed = std.AutoHashMapUnmanaged(u64, void).empty;
+    defer reversed.deinit(allocator);
+    var loop = std.ArrayList(u32).empty;
+    defer loop.deinit(allocator);
+    for (planes.items, 0..) |_, g| {
+        // The group's boundary: its directed edges whose reverse is not in the group
+        successor.clearRetainingCapacity();
+        reversed.clearRetainingCapacity();
+        for (tris, group_of) |t, tg| {
+            if (tg != g) continue;
+            for (0..3) |k| try reversed.put(allocator, key(t[(k + 1) % 3], t[k]), {});
+        }
+        var start: u32 = std.math.maxInt(u32);
+        for (tris, group_of) |t, tg| {
+            if (tg != g) continue;
+            for (0..3) |k| {
+                const a = t[k];
+                const b = t[(k + 1) % 3];
+                if (reversed.contains(key(a, b))) continue;
+                try successor.put(allocator, a, b);
+                start = @min(start, a);
+            }
+        }
+        if (start == std.math.maxInt(u32)) continue;
+        loop.clearRetainingCapacity();
+        var v = start;
+        var steps: usize = 0;
+        while (steps <= successor.count()) : (steps += 1) {
+            try loop.append(allocator, v);
+            v = successor.get(v) orelse break;
+            if (v == start) break;
+        }
+        // Drop the points collinear with their neighbours
+        var corners = std.ArrayList(u32).empty;
+        errdefer corners.deinit(allocator);
+        for (loop.items, 0..) |c, i| {
+            const prev = points[loop.items[(i + loop.items.len - 1) % loop.items.len]];
+            const next = points[loop.items[(i + 1) % loop.items.len]];
+            const turn = vec.length(vec.cross(vec.sub(points[c], prev), vec.sub(next, points[c])));
+            if (turn > epsilon * (vec.distance(points[c], prev) + vec.distance(next, points[c]))) try corners.append(allocator, c);
+        }
+        if (corners.items.len < 3) {
+            corners.deinit(allocator);
+            continue;
+        }
+        try out.ensureUnusedCapacity(allocator, 1);
+        out.appendAssumeCapacity(try corners.toOwnedSlice(allocator));
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn key(a: u32, b: u32) u64 {
+    return (@as(u64, a) << 32) | b;
+}
+
+/// The convex hull of `points` as a solid: a polyhedron over the points its faces use, in
+/// their order of first use, each face fanned from its first corner. Fewer than four
+/// points, or all of them coplanar, is `error.Degenerate`.
 pub fn hull(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "points", points.len);
     for (points) |p| for (p) |c| try diagnostics.input.finite(diag, "a point", c);
@@ -265,8 +354,19 @@ pub fn hull(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, 
         error.OutOfMemory => return error.OutOfMemory,
         error.Degenerate => return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the hull: fewer than four points off one plane", .measured = @floatFromInt(points.len) }),
     };
-    const tris = try qh.triangles(allocator);
-    defer allocator.free(tris);
+    const raw = try qh.triangles(allocator);
+    defer allocator.free(raw);
+    const polygons = try facets(allocator, points, raw, qh.epsilon);
+    defer {
+        for (polygons) |f| allocator.free(f);
+        allocator.free(polygons);
+    }
+    var fans = std.ArrayList([3]u32).empty;
+    defer fans.deinit(allocator);
+    for (polygons) |poly| {
+        for (1..poly.len - 1) |k| try fans.append(allocator, .{ poly[0], poly[k], poly[k + 1] });
+    }
+    const tris = fans.items;
     // Only the points the faces use, renumbered
     const corner_of = try allocator.alloc(u32, points.len);
     defer allocator.free(corner_of);

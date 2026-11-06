@@ -215,32 +215,35 @@ const Checker = struct {
 
     fn eulerPoincare(self: *Checker) Error!void {
         const b = self.body;
+        // One mark per vertex and edge, cleared per shell: the counts of a shell's
+        // entities through its faces
+        const vertex_seen = try self.allocator.alloc(bool, b.vertices.items.len);
+        defer self.allocator.free(vertex_seen);
+        const edge_seen = try self.allocator.alloc(bool, b.edges.items.len);
+        defer self.allocator.free(edge_seen);
         var shells = traverse.Shells.init(b);
         while (shells.next() catch return) |s| {
             if (b.shell(s).kind == .sheet) continue;
-            // Count the shell's entities through its faces
+            @memset(vertex_seen, false);
+            @memset(edge_seen, false);
             var faces_n: i64 = 0;
             var loops_n: i64 = 0;
-            var vertex_seen = std.AutoHashMapUnmanaged(u32, void).empty;
-            defer vertex_seen.deinit(self.allocator);
-            var edge_seen = std.AutoHashMapUnmanaged(u32, void).empty;
-            defer edge_seen.deinit(self.allocator);
             var faces = traverse.Faces.init(b, s);
             while (faces.next() catch return) |f| {
                 faces_n += 1;
                 var loops = traverse.Loops.init(b, f);
                 while (loops.next() catch return) |l| {
                     loops_n += 1;
-                    if (b.loop(l).vertex != .none) try vertex_seen.put(self.allocator, @backingInt(b.loop(l).vertex), {});
+                    if (b.loop(l).vertex != .none) vertex_seen[@backingInt(b.loop(l).vertex)] = true;
                     var it = traverse.Coedges.init(b, l);
                     while (it.next() catch return) |c| {
-                        try edge_seen.put(self.allocator, @backingInt(b.coedge(c).edge), {});
-                        try vertex_seen.put(self.allocator, @backingInt(b.coedgeStart(c)), {});
+                        edge_seen[@backingInt(b.coedge(c).edge)] = true;
+                        vertex_seen[@backingInt(b.coedgeStart(c))] = true;
                     }
                 }
             }
-            const v: i64 = @intCast(vertex_seen.count());
-            const e: i64 = @intCast(edge_seen.count());
+            const v: i64 = @intCast(std.mem.count(bool, vertex_seen, &.{true}));
+            const e: i64 = @intCast(std.mem.count(bool, edge_seen, &.{true}));
             const chi = v - e + faces_n - (loops_n - faces_n);
             // chi = 2(1 − G) for one shell
             const twice_one_minus_g = chi;

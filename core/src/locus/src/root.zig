@@ -89,4 +89,6 @@ test {
     _ = @import("io/step_write_test.zig");
     _ = @import("io/fixtures_test.zig");
     _ = @import("construct/transform_test.zig");
+    _ = @import("determinism_test.zig");
+    _ = @import("alloc_failure_test.zig");
 }
