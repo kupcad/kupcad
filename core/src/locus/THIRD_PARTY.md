@@ -13,5 +13,10 @@ The other kernels read while planning and building Locus — OCCT (LGPL-2.1), So
 cases only: data structures, phase orders, tolerance schemes, the lists of what goes wrong.
 No code of theirs is in this tree; KupCAD is dual-licensed, so none could be.
 
+The validators CI runs over Locus's exports (OpenCascade through the OCP bindings for
+STEP, the Khronos validator for glTF, lib3mf for 3MF; `core/scripts/`) are test tools
+installed in the CI job only: none is linked, vendored or shipped in any build, package or
+binding of KupCAD, and nothing is derived from them.
+
 A C or C++ library may be linked by a host of Locus (KupCAD links oneTBB behind the
 `Parallel` interface) but not by Locus itself: see docs/architecture.md §4 for the rule.
