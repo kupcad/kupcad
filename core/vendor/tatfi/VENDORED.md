@@ -43,6 +43,15 @@ tests couldn't run in KupCAD's target and mode.
   `tables/gvar.zig`'s shared tuples, fail on it. `src/tests/colr.zig` has "a base glyph with
   more layers than the table has", `src/tests/gvar.zig` "a tuple whose shared tuple isn't
   there".
+- `src/tables/loca.zig`: the number of offsets, one more than maxp's number of glyphs, is
+  counted in a `u32`; added in maxp's `u16`, it overflowed on 65535 glyphs, a valid font.
+  `src/tests/loca.zig` has "65535 glyphs".
+- `src/tables/cmap/format4.zig`: `codepoints` skips a segment that ends before it starts, as
+  ttf-parser's `start..=end` does; its range panicked. `src/tests/cmap.zig` has "format4 a
+  segment that ends before it starts".
+- `src/tables/cmap/format12.zig`, `format13.zig`: `codepoints` counts in a `u32` up to the last
+  code point a `u21` holds; counting a `u21` to a group's end past it overflowed. `src/tests/cmap.zig`
+  has "format12 a group past the last code point" and the same for format 13.
 
 ## Updating
 

@@ -51,9 +51,12 @@ pub fn codepoints(
 ) void {
     var iter = self.groups.iterator();
     while (iter.next()) |group| {
-        var code_point: u21 = @truncate(group.start_char_code);
-        while (code_point <= group.end_char_code) : (code_point += 1)
-            F(code_point, ctx);
+        // [KupCAD] up to the last code point a u21 holds: counting a u21 up to a group's
+        // end past it overflowed
+        const end = @min(group.end_char_code, std.math.maxInt(u21));
+        var code_point: u32 = group.start_char_code;
+        while (code_point <= end) : (code_point += 1)
+            F(@intCast(code_point), ctx);
     }
 }
 

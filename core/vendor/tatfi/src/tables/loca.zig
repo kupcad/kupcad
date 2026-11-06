@@ -22,7 +22,7 @@ pub const Table = union(enum) {
         data: []const u8,
     ) parser.Error!Table {
         // The number of ranges is `maxp.numGlyphs + 1`.
-        var total: u32 = number_of_glyphs + 1;
+        var total: u32 = @as(u32, number_of_glyphs) + 1;
 
         // By the spec, the number of `loca` offsets is `maxp.numGlyphs + 1`.
         // But some malformed fonts can have less glyphs than that.

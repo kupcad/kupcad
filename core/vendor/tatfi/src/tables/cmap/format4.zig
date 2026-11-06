@@ -123,6 +123,9 @@ pub fn codepoints(
 
         // OxFFFF value is special and indicates codes end.
         if (start == end and start == 0xFFFF) break;
+        // [KupCAD] a segment that ends before it starts has no code points, as ttf-parser's
+        // `start..=end` has it; the range below panicked on it
+        if (start > end) continue;
 
         for (start..end + 1) |code_point|
             F(@truncate(code_point), ctx);

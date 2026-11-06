@@ -15,6 +15,7 @@ test {
     _ = @import("gvar.zig");
     _ = @import("gpos.zig");
     _ = @import("hmtx.zig");
+    _ = @import("loca.zig");
     _ = @import("maxp.zig");
     _ = @import("sbix.zig");
     _ = @import("trak.zig");

@@ -571,6 +571,77 @@ test "format4 collect_codepoints" {
 
 // Helpers
 
+test "format4 a segment that ends before it starts" {
+    // [KupCAD] Listing a segment from 70 to 65 panicked on the range from 70 to 66.
+    const data = try convert(&.{
+        .{ .unt16 = 4 }, // format
+        .{ .unt16 = 32 }, // subtable size
+        .{ .unt16 = 0 }, // language ID
+        .{ .unt16 = 4 }, // 2 x segCount
+        .{ .unt16 = 2 }, // search range
+        .{ .unt16 = 0 }, // entry selector
+        .{ .unt16 = 2 }, // range shift
+        // End character codes
+        .{ .unt16 = 65 }, // char code [0]
+        .{ .unt16 = 65535 }, // char code [1]
+        .{ .unt16 = 0 }, // reserved
+        // Start character codes
+        .{ .unt16 = 70 }, // char code [0]
+        .{ .unt16 = 65535 }, // char code [1]
+        // Deltas
+        .{ .int16 = 0 }, // delta [0]
+        .{ .int16 = 1 }, // delta [1]
+        // Offsets into Glyph index array
+        .{ .unt16 = 0 }, // offset [0]
+        .{ .unt16 = 0 }, // offset [1]
+    });
+    defer t.allocator.free(data);
+
+    const subtable = try cmap.Subtable4.parse(data);
+    var vec: std.ArrayList(u21) = .empty;
+    defer vec.deinit(t.allocator);
+    subtable.codepoints(&vec, push_cp_to_vec);
+    try t.expectEqualSlices(u21, &.{}, vec.items);
+}
+
+/// A format 12 or 13 subtable of one group, from `start` to `end`.
+fn one_group(format: u16, start: u32, end: u32) ![]u8 {
+    return convert(&.{
+        .{ .unt16 = format }, // format
+        .{ .unt16 = 0 }, // reserved
+        .{ .unt32 = 28 }, // length
+        .{ .unt32 = 0 }, // language
+        .{ .unt32 = 1 }, // number of groups
+        .{ .unt32 = start }, // group 0's first code point
+        .{ .unt32 = end }, // its last
+        .{ .unt32 = 1 }, // its first glyph
+    });
+}
+
+test "format12 a group past the last code point" {
+    // [KupCAD] Listing the group counted a u21 past its largest value.
+    const data = try one_group(12, 0x1FFFFE, 0xFFFFFFFF);
+    defer t.allocator.free(data);
+
+    const subtable = try cmap.Subtable12.parse(data);
+    var vec: std.ArrayList(u21) = .empty;
+    defer vec.deinit(t.allocator);
+    subtable.codepoints(&vec, push_cp_to_vec);
+    try t.expectEqualSlices(u21, &.{ 0x1FFFFE, 0x1FFFFF }, vec.items);
+}
+
+test "format13 a group past the last code point" {
+    // [KupCAD] As format 12.
+    const data = try one_group(13, 0x1FFFFE, 0xFFFFFFFF);
+    defer t.allocator.free(data);
+
+    const subtable = try cmap.Subtable13.parse(data);
+    var vec: std.ArrayList(u21) = .empty;
+    defer vec.deinit(t.allocator);
+    subtable.codepoints(&vec, push_cp_to_vec);
+    try t.expectEqualSlices(u21, &.{ 0x1FFFFE, 0x1FFFFF }, vec.items);
+}
+
 fn push_cp_to_vec(cp: u21, v: *std.ArrayList(u21)) void {
     v.append(t.allocator, cp) catch unreachable;
 }
