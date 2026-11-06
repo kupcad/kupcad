@@ -16,7 +16,7 @@ const Vec3 = vec.Vec3;
 const tol = Tolerance.fromZone(1e-5);
 
 /// A tetrahedron: the smallest closed solid, by Euler operators.
-fn tetrahedron(allocator: std.mem.Allocator) !Body {
+pub fn tetrahedron(allocator: std.mem.Allocator) !Body {
     var b = Body.init(allocator, tol);
     errdefer b.deinit();
     const pts = [4]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };

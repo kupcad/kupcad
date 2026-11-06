@@ -42,6 +42,10 @@ pub const topology = struct {
     pub const euler = @import("topology/euler.zig");
     pub const check = @import("topology/check.zig");
 };
+/// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.
+pub const io = struct {
+    pub const body_json = @import("io/body_json.zig");
+};
 /// Spatial structures: the welding grid, interning over an arena, the BVH.
 pub const spatial = struct {
     pub const grid = @import("spatial/grid.zig");
@@ -103,6 +107,7 @@ test {
     _ = @import("topology/body_test.zig");
     _ = @import("topology/euler_test.zig");
     _ = @import("topology/check_test.zig");
+    _ = @import("io/body_json_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");
