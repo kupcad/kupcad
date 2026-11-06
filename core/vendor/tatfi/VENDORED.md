@@ -30,6 +30,19 @@ tests couldn't run in KupCAD's target and mode.
   itself is added, as ttf-parser does with `u32::from`. Added in the `u8` it was read as, a repeat
   count of 255 overflowed. `src/tests/glyf.zig` has "a flag repeated 255 times" (KupCAD's font
   fuzz target found it).
+- `src/parser.zig`: `Stream.read_bytes` has no debug assert that the end of what it reads fits
+  in a `u32`: a count from the font reaches it (a font collection of 0xFFFFFFFF faces, 16
+  bytes), and in Debug and ReleaseSafe it panicked. The end is a checked add, and past the data
+  it's a parse error, as ttf-parser's release build has it. `src/tests/main.zig`'s "font
+  collection num fonts overflow" checks it (upstream had the check commented out as panicking).
+- `src/parser.zig`: a `LazyArray` iterator's index saturates. It went one past the end of an
+  array of 65535 items, overflowing its `u16` (a font of 65535 table records).
+  `src/tests/main.zig` has "a font of 65535 tables".
+- `src/parser.zig`: `LazyArray.slice` returns null when the range is out of bounds, as
+  ttf-parser's does; it sliced past the data. Its callers, `tables/colr.zig`'s COLRv0 layers and
+  `tables/gvar.zig`'s shared tuples, fail on it. `src/tests/colr.zig` has "a base glyph with
+  more layers than the table has", `src/tests/gvar.zig` "a tuple whose shared tuple isn't
+  there".
 
 ## Updating
 

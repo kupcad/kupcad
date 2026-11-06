@@ -261,7 +261,7 @@ fn paint_v0(
 ) Error!void {
     const start = base.first_layer_index;
     const end = std.math.add(u16, start, base.num_layers) catch return error.PaintError;
-    const layers = self.layers.slice(start, end);
+    const layers = self.layers.slice(start, end) orelse return error.PaintError;
 
     var iter = layers.iterator();
     while (iter.next()) |layer| {

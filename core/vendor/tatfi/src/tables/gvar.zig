@@ -479,7 +479,7 @@ fn parse_tuple_variation_header(
         const start = try std.math.mul(u16, tuple_index, axis_count);
         const end = try std.math.add(u16, start, axis_count);
 
-        break :pt shared_tuple_records.slice(start, end);
+        break :pt shared_tuple_records.slice(start, end) orelse return error.ParseFail;
     };
 
     const start_tuple: parser.LazyArray16(parser.F2DOT14), const end_tuple: parser.LazyArray16(parser.F2DOT14) =

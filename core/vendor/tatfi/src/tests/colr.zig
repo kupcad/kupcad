@@ -692,6 +692,43 @@ test "colr1 variable translate" {
     ));
 }
 
+test "a base glyph with more layers than the table has" {
+    // [KupCAD] Slicing the layers past their end panicked; ttf-parser's slice returns None.
+    const cpal_data = try convert(&.{
+        .{ .unt16 = 0 }, // version
+        .{ .unt16 = 1 }, // number of palette entries
+        .{ .unt16 = 1 }, // number of palettes
+        .{ .unt16 = 1 }, // number of colors
+        .{ .unt32 = 14 }, // offset to colors
+        .{ .unt16 = 0 }, // index of palette 0's first color
+        .{ .unt32 = 0 }, // color 0
+    });
+    defer t.allocator.free(cpal_data);
+
+    const colr_data = try convert(&.{
+        .{ .unt16 = 0 }, // version
+        .{ .unt16 = 1 }, // number of base glyphs
+        .{ .unt32 = 14 }, // offset to base glyphs
+        .{ .unt32 = 20 }, // offset to layers
+        .{ .unt16 = 1 }, // number of layers
+        .{ .unt16 = 5 },
+        .{ .unt16 = 0 },
+        .{ .unt16 = 10 }, // base glyph 0 (id 5): ten layers from the first
+        .{ .unt16 = 1 },
+        .{ .unt16 = 0 }, // layer 0
+    });
+    defer t.allocator.free(colr_data);
+
+    const colr_table = try colr.parse(try cpal.parse(cpal_data), colr_data);
+
+    var commands: std.ArrayList(Command) = .empty;
+    defer commands.deinit(t.allocator);
+    try t.expectError(
+        error.PaintError,
+        colr_table.paint(.{5}, 0, init_painter(&commands), &.{}, .new(0, 0, 0, 255)),
+    );
+}
+
 // Helpers
 
 const CustomPaint = union(enum) {

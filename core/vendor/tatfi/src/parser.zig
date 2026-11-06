@@ -116,7 +116,9 @@ pub fn LazyArray(I: type, T: type) type {
             pub fn next(
                 self: *Iterator,
             ) ?T {
-                defer self.index += 1;
+                // [KupCAD] saturates: past the end of an array of maxInt(I) items, `get`
+                // returns null as it does past any other end
+                defer self.index +|= 1;
                 return self.data.get(self.index);
             }
         };
@@ -154,15 +156,18 @@ pub fn LazyArray(I: type, T: type) type {
         }
 
         /// Returns sub-array.
+        ///
+        /// Returns `null` when the range is out of bounds.
         pub fn slice(
             self: Self,
             start: I,
             end: I,
-        ) Self {
+        ) ?Self {
             const size = size_of(T);
 
             const start_t = start * size;
             const end_t = end * size;
+            if (start_t > end_t or end_t > self.data.len) return null;
             return .{ .data = self.data[start_t..end_t] };
         }
 
@@ -411,17 +416,10 @@ pub const Stream = struct {
         self: *Stream,
         len: usize,
     ) Error![]const u8 {
-        // [ARS] simulate Rust behaviour
-        const end = if (@import("builtin").mode == .debug) e: {
-            const end = self.offset + len;
-
-            // [RazrFalcon]
-            // An integer overflow here on 32bit systems is almost guarantee to be caused
-            // by an incorrect parsing logic from the caller side.
-            // Simply using `checked_add` here would silently swallow errors, which is not what we want.
-            std.debug.assert(end <= std.math.maxInt(u32));
-            break :e end;
-        } else try std.math.add(usize, self.offset, len);
+        // [KupCAD] no debug assert that the end fits in a u32, as ttf-parser has: a count
+        // from the font (a font collection's 0xFFFFFFFF faces) reaches it, and the data
+        // is never that long anyway
+        const end = std.math.add(usize, self.offset, len) catch return error.ParseFail;
 
         if (self.offset > self.data.len) return error.ParseFail;
         if (end > self.data.len) return error.ParseFail;

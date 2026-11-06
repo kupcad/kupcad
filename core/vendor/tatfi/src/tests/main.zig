@@ -12,6 +12,7 @@ test {
     _ = @import("colr.zig");
     _ = @import("feat.zig");
     _ = @import("glyf.zig");
+    _ = @import("gvar.zig");
     _ = @import("gpos.zig");
     _ = @import("hmtx.zig");
     _ = @import("maxp.zig");
@@ -120,6 +121,22 @@ test "tables count overflow" {
     try t.expectError(error.MalformedFont, ttf.Face.parse(data, 0));
 }
 
+test "a font of 65535 tables" {
+    // [KupCAD] Collecting the tables went one past the last of 65535 records, overflowing
+    // the iterator's u16 index.
+    var data: std.ArrayList(u8) = .fromOwnedSlice(try convert(&.{
+        .true_type_magic, // magic
+        .{ .unt16 = std.math.maxInt(u16) }, // numTables
+        .{ .unt16 = 0 }, // searchRange
+        .{ .unt16 = 0 }, // entrySelector
+        .{ .unt16 = 0 }, // rangeShift
+    }));
+    defer data.deinit(t.allocator);
+    try data.appendNTimes(t.allocator, 0, std.math.maxInt(u16) * 16); // empty table records
+
+    try t.expectError(error.NoHeadTable, ttf.Face.parse(data.items, 0));
+}
+
 test "empty font collection" {
     const data = try convert(&.{
         .font_collection_magic, // magic
@@ -143,7 +160,9 @@ test "font collection num fonts overflow" {
     defer t.allocator.free(data);
 
     try t.expectEqual(std.math.maxInt(u32), ttf.fonts_in_collection(data));
-    // try t.expectError(error.MalformedFont, ttf.Face.parse(data, 0)); // should panic
+    // [KupCAD] an error, where ttf-parser's debug assert panics: 16 bytes a script imports
+    // must not crash it
+    try t.expectError(error.MalformedFont, ttf.Face.parse(data, 0));
 }
 
 test "font index overflow" {
