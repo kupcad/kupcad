@@ -68,6 +68,7 @@ test "param: text a host gives that isn't UTF-8 is an error where a String must 
     const cases = [_]struct { source: []const u8, expected: []const u8 }{
         .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("text(label)"), .expected = "ValueError: text: the String isn't valid UTF-8" },
         .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("label.split(\"\")"), .expected = "ValueError: split: the String isn't valid UTF-8" },
+        .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("\"x\".rjust(5, label)"), .expected = "ValueError: rjust: the padding isn't valid UTF-8" },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}\n", .{case.source});
@@ -185,6 +186,14 @@ test "param: a declaration's rules are refused where they can't be" {
         .{ .src = "param(:k, validate: { in: [1, \"a\"] })", .message = "parameter :k's validate: in: holds 1, which isn't a String" },
         .{ .src = "param(:k, default: [5], validate: { items: { type: :number, max: 3 } })", .message = "parameter :k's default doesn't meet its rules: :k[0] expects a number at most 3, got 5" },
         .{ .src = "param(:k, default: { a: 1 }, validate: { fields: { a: :number, b: :number } })", .message = "parameter :k's default doesn't meet its rules: :k[:b] expects a number, got nothing" },
+        .{ .src = "param(:k, default: { x: nil })", .message = "parameter :k's default holds nil in its field :x" },
+        .{ .src = "param(:k, default: [1], validate: { items: { type: :number, title: 5 } })", .message = "parameter :k's validate: items: title: is a String, got 5" },
+        .{ .src = "param(:k, default: [1], validate: { items: { type: :number, step: 0 } })", .message = "parameter :k's validate: items: step: is a number above 0, got 0" },
+        .{ .src = "param(:k, default: 1, validate: { min_items: 1 })", .message = "parameter :k's validate: min_items: is for an Array, and it is a number" },
+        .{ .src = "param(:k, validate: { tuple: 5 })", .message = "parameter :k's validate: tuple: is a list of each place's rules, got 5" },
+        .{ .src = "param(:k, type: :array, validate: { fields: { a: :number } })", .message = "parameter :k's validate: fields: is for a Map, and it is an Array" },
+        .{ .src = "param(:k, validate: { fields: 5 })", .message = "parameter :k's validate: fields: is a Map of each field's rules, got 5" },
+        .{ .src = "param(:k, default: 1, validate: { in: 5 })", .message = "parameter :k's validate: in: is a list of choices, got 5" },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}\n", .{case.src});

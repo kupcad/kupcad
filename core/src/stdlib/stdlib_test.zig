@@ -1562,6 +1562,33 @@ test "Stdlib: sum, Range#count and to_h take a block, as in Ruby (it was ignored
     });
 }
 
+test "Stdlib: the natives and keywords no other test calls do what they say" {
+    try expectScripts(&.{
+        .{ .src = "r = [5.7.to_i, -5.7.to_i, 5.to_f, true.to_i, false.to_f, Math.abs(-3), Math.round(2.5), Math.round(-2.5)]", .expected = .{ .nums = &.{ 5, -5, 5, 1, 0, 3, 3, -3 } } },
+        .{ .src = "a = [1, 2, 3]\nr = [a.pop, a.size, [].pop.inspect, \"  a b \\n\".trim].inspect", .expected = .{ .str = "[3, 2, \"nil\", \"a b\"]" } },
+        // Each keyword means what its other spelling does
+        .{ .src = "r = arc(center: [0, 0], radius: 5, start: 0, sweep: 90).length - arc(center: [0, 0], r: 5, start: 0, sweep: 90).length", .expected = .{ .num = 0 } },
+        .{ .src = "r = regular_polygon(6, d: 10).area - regular_polygon(6, r: 5).area", .expected = .{ .num = 0 } },
+        .{ .src = "r = [cube(10).trim_by_plane(nx: 0, ny: 1, nz: 0, offset: 3).volume, cube(10).trim_by_plane(0, 1, 0, 3).volume]", .expected = .{ .nums = &.{ 700, 700 } } },
+        .{ .src = "p = line([0, 0], [10, 0])\nr = [p.arc_to([10, 10], radius: 10, large: true).length > p.arc_to([10, 10], r: 10).length, p.stroke(width: 2).area == p.stroke(2).area].inspect", .expected = .{ .str = "[true, true]" } },
+        .{ .src = "r = CAD.with_config(manifold: { simplify_coplanar: true }, brep: { max_newton_trials: 7, max_marching_steps: 9 }) { c = CAD.current_config\n [c[:manifold][:simplify_coplanar], c[:brep][:max_newton_trials], c[:brep][:max_marching_steps]].inspect }", .expected = .{ .str = "[true, 7, 9]" } },
+        .{ .src = "r = text(\"Hi\", size: 10, valign: :top).bbox.max[1]", .expected = .{ .num = 0 } },
+    });
+}
+
+test "Stdlib: the errors no other test raises say what is wrong" {
+    try expectScripts(&.{
+        .{ .src = comptime rescued("cube(1).difference(cube(1)).center_of_mass"), .expected = .{ .str = "ValueError: center_of_mass: the Solid is empty, it has no volume to balance" } },
+        .{ .src = comptime rescued("cube(1).rotate(30, axis: [0, 0, 1], angle: 30)"), .expected = .{ .str = "ArgumentError: rotate takes its angle once, as a number or angle:" } },
+        .{ .src = comptime rescued("cube(1).trim_by_plane(1, 2)"), .expected = .{ .str = "ArgumentError: trim_by_plane expects (nx, ny, nz[, offset]) or ([nx, ny, nz], offset), got 2 positional arguments" } },
+        .{ .src = comptime rescued("Math.gcd(2 ** 60, 4)"), .expected = .{ .str = "RangeError: Math.gcd works on whole numbers up to 2^53, got 1.152921504606847e18 and 4" } },
+        .{ .src = comptime rescued("Math.lcm(4, 2 ** 60)"), .expected = .{ .str = "RangeError: Math.lcm works on whole numbers up to 2^53, got 4 and 1.152921504606847e18" } },
+        .{ .src = comptime rescued("f = ->(*a) { a.size }\n  f.call(*(1..300).to_a)"), .expected = .{ .str = "ArgumentError: too many arguments after spreading: a call takes at most 255" } },
+        .{ .src = comptime rescued("square(1).loft(square(1) - square(0.5).translate(0.25, 0.25), 5).volume"), .expected = .{ .str = "ValueError: loft joins each outline and hole of one profile to one of the other, and the base has 0 holes where the top has 1" } },
+        .{ .src = comptime rescued("(square(1) - square(1)).loft(square(1) - square(1), 5).volume"), .expected = .{ .str = "ValueError: loft: an empty sketch has no outline to loft" } },
+    });
+}
+
 test "Stdlib: a measure beyond the largest number is a RangeError, as arithmetic's is" {
     // They were returned: cube(1e150).volume and circle(1e300).area were NaN, a triangle of
     // 1e300 sides had an area of Infinity, and cube(1).offset(1e300) gave the cube back
@@ -2846,9 +2873,11 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
 
 test "Stdlib: a VM its host gave no file system reads no file and writes none" {
     // VM.init gave every VM the disk at the working directory, so a host that didn't give
-    // its own (the LSP's hover run sets a sandbox after init) let a script use the disk
+    // its own (the LSP's hover run sets a sandbox after init) let a script use the disk.
+    // The file is there: run from elsewhere, FileNotFound proved nothing.
+    try std.Io.Dir.cwd().access(testing.io, @import("test_paths").core_dir ++ "/build.zig", .{});
     try test_support.expectScripts(&.{
-        .{ .src = comptime rescued("import_stl(\"build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file 'build.zig': FileNotFound" } },
+        .{ .src = comptime rescued("import_stl(\"" ++ @import("test_paths").core_dir ++ "/build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file '" ++ @import("test_paths").core_dir ++ "/build.zig': FileNotFound" } },
         .{ .src = comptime rescued("cube(1).export_stl(\"vm_no_files.stl\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'vm_no_files.stl': AccessDenied" } },
         // `mtl:` by keyword alone: `export_obj(path, true)` didn't say what it turned on
         .{ .src = comptime rescued("cube(1).export_obj(\"x.obj\", true)"), .expected = .{ .str = "ArgumentError: export_obj takes at most 1 positional argument (path), got 2" } },

@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const Span = @import("sequence.zig").Span;
+const sequence = @import("sequence.zig");
+const Span = sequence.Span;
+const support = @import("../test_support.zig");
 
 test "sequence: a span counts every value it walks, float steps and either way round" {
     const cases = [_]struct { span: Span, count: f64 }{
@@ -31,4 +33,12 @@ test "sequence: each value is computed from the start, and the last never oversh
     try testing.expectEqual(@as(f64, 3), down.at(1));
     try testing.expectEqual(@as(f64, 1), down.at(2));
     try testing.expectEqual(@as(f64, 1), down.at(3)); // clamped going down
+}
+
+test "sequence: a span that doesn't move is refused, naming its walk" {
+    // Range#step refuses a step of 0 first: this guards every other walk of a span
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectError(error.RuntimeError, sequence.validatedCount(&vm, .{ .start = 0, .end = 3, .step = 0, .is_exclusive = false }, "for"));
+    try testing.expectStringStartsWith(vm.last_error orelse "", "ValueError: for step can't be 0");
 }

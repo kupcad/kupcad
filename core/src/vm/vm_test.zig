@@ -43,8 +43,9 @@ fn steppingDebugger(vm: *VM) void {
 }
 
 /// A host's debugger a person answers after a while: longer than the run's time limit.
-fn slowDebugger(_: *VM) void {
-    testing.io.sleep(.fromMilliseconds(80), .awake) catch {};
+/// A person at the prompt until the run's time limit has passed.
+fn slowDebugger(vm: *VM) void {
+    while (!vm.pastDeadline()) testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
 }
 
 test "VM: Comprehensive Ruby-like language features integration" {
@@ -629,7 +630,9 @@ test "VM Debugger: the time at the debugger's prompt isn't the run's" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.debugger_handler = slowDebugger;
-    vm.setTimeLimit(50);
+    // Room for the run itself however slow the build (Debug, -Dgc-stress): a 50 ms limit
+    // failed it there, with the prompt in no part of it
+    vm.setTimeLimit(1000);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
     // Past the instructions between two looks at the clock, after the prompt
