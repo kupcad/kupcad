@@ -2878,10 +2878,11 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
 test "Stdlib: a VM its host gave no file system reads no file and writes none" {
     // VM.init gave every VM the disk at the working directory, so a host that didn't give
     // its own (the LSP's hover run sets a sandbox after init) let a script use the disk.
-    // The file is there: run from elsewhere, FileNotFound proved nothing.
+    // The file is there: run from elsewhere, FileNotFound proved nothing. Its path is in a
+    // single-quoted string, which takes a Windows path's backslashes as they are.
     try std.Io.Dir.cwd().access(testing.io, @import("test_paths").core_dir ++ "/build.zig", .{});
     try test_support.expectScripts(&.{
-        .{ .src = comptime rescued("import_stl(\"" ++ @import("test_paths").core_dir ++ "/build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file '" ++ @import("test_paths").core_dir ++ "/build.zig': FileNotFound" } },
+        .{ .src = comptime rescued("import_stl('" ++ @import("test_paths").core_dir ++ "/build.zig')"), .expected = .{ .str = "ImportError: could not read STL file '" ++ @import("test_paths").core_dir ++ "/build.zig': FileNotFound" } },
         .{ .src = comptime rescued("cube(1).export_stl(\"vm_no_files.stl\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'vm_no_files.stl': AccessDenied" } },
         // `mtl:` by keyword alone: `export_obj(path, true)` didn't say what it turned on
         .{ .src = comptime rescued("cube(1).export_obj(\"x.obj\", true)"), .expected = .{ .str = "ArgumentError: export_obj takes at most 1 positional argument (path), got 2" } },
