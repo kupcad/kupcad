@@ -7,6 +7,7 @@ const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
+const Diagnostics = @import("../diagnostics.zig").Diagnostics;
 const types = @import("types.zig");
 const Body = @import("body.zig").Body;
 const euler = @import("euler.zig");
@@ -47,7 +48,24 @@ pub fn tetrahedron(allocator: std.mem.Allocator) !Body {
     const rest = try euler.mef(&b, s1.back, apex.back, try line(&b, pts[1], pts[3]), left, true);
     // The edge 3 → 2: the rest keeps 3 0 2 (the left), the new face takes 2 1 3 (the slant)
     _ = try euler.mef(&b, startingIn(&b, rest.loop, apex.vertex), startingIn(&b, rest.loop, s2.vertex), try line(&b, pts[3], pts[2]), slant, true);
+    turnOutward(&b);
     return b;
+}
+
+/// Every loop run the other way, the senses with them, the vertices' coedges following:
+/// the Euler sequences of these tests lay their loops clockwise seen from outside, and
+/// the checker wants them counter-clockwise (the face to the left of each coedge).
+pub fn turnOutward(b: *Body) void {
+    for (b.coedges.items) |*c| {
+        if (c.tombstone) continue;
+        std.mem.swap(types.CoedgeIndex, &c.next, &c.prev);
+        c.same_sense = !c.same_sense;
+    }
+    for (b.vertices.items) |*v| {
+        if (v.tombstone or v.coedge == .none) continue;
+        const partner = b.coedge(v.coedge).partner;
+        if (partner != .none) v.coedge = partner;
+    }
 }
 
 /// The coedge of `loop` starting at `v`.
@@ -152,13 +170,14 @@ test "structural rules: each broken in one way is named" {
         b.coedge(types.CoedgeIndex.of(0)).loop = types.LoopIndex.of(1);
         try expectRule(&b, .structural, .coedge_loop_disagrees);
     }
-    // an edge with three coedges: the loop stops connecting there first; the count
-    // rule itself needs a loop that connects, which three coedges of one edge never do
+    // an edge with three coedges: the moved coedge's partner is on another edge, which
+    // the reciprocity rule names first; the count rule itself needs a loop that connects,
+    // which three coedges of one edge never do
     {
         var b = try tetrahedron(testing.allocator);
         defer b.deinit();
         b.coedge(types.CoedgeIndex.of(2)).edge = types.EdgeIndex.of(0);
-        try expectRule(&b, .structural, .loop_not_connected);
+        try expectRule(&b, .structural, .partner_not_reciprocal);
     }
     // degenerate flag without start == end
     {
@@ -271,6 +290,34 @@ test "orientation and geometric rules" {
         b.geometry.planes.items[0].frame.origin = .{ 0, 0, 0.01 };
         try expectRule(&b, .geometric, .edge_off_surface);
     }
+    // A face flipped alone: its loop runs the wrong way for its sense
+    {
+        var b = try tetrahedron(testing.allocator);
+        defer b.deinit();
+        b.face(types.FaceIndex.of(0)).same_sense = false;
+        try expectRule(&b, .geometric, .loop_winding);
+    }
+    // The whole shell turned inside out: every loop reversed and every sense flipped,
+    // which every local rule allows; the signed volume says so
+    {
+        var b = try tetrahedron(testing.allocator);
+        defer b.deinit();
+        for (b.faces.items) |*f| f.same_sense = !f.same_sense;
+        for (b.coedges.items) |*c| {
+            std.mem.swap(types.CoedgeIndex, &c.next, &c.prev);
+            c.same_sense = !c.same_sense;
+        }
+        for (b.vertices.items) |*v| v.coedge = b.coedge(v.coedge).partner;
+        try expectRule(&b, .geometric, .shell_inside_out);
+    }
+    // Two vertices at one place
+    {
+        var b = try tetrahedron(testing.allocator);
+        defer b.deinit();
+        const p = try b.geometry.addPoint(testing.allocator, .{ 1e-6, 0, 0 });
+        _ = try b.addVertex(.{ .point = p });
+        try expectRule(&b, .geometric, .vertices_too_close);
+    }
     // A UV box outside the domain, and one that wraps: on a cylinder
     {
         var b = try tetrahedron(testing.allocator);
@@ -291,3 +338,41 @@ test "orientation and geometric rules" {
         try testing.expect(found);
     }
 }
+
+test "global rules: a hole outside its outer loop; two faces on one plane are a warning, not a failure" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const primitives = @import("../construct/primitives.zig");
+    // The even-odd builder does not place holes; the checker's level 2 does
+    const outer = [_]vec.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    const far = [_]vec.Vec2{ .{ 20, 20 }, .{ 20, 22 }, .{ 22, 22 }, .{ 22, 20 } };
+    var astray = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag);
+    defer astray.deinit();
+    try expectRule(&astray, .global, .hole_outside_outer);
+    const inner = [_]vec.Vec2{ .{ 2, 2 }, .{ 2, 4 }, .{ 4, 4 }, .{ 4, 2 } };
+    var plate = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
+    defer plate.deinit();
+    var report = try check.run(testing.allocator, &plate, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    try testing.expectEqual(@as(usize, 0), report.warnings());
+
+    // A pyramid whose base is two coplanar triangles on one plane record
+    const pts = [_]Vec3{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 10, 10, 0 }, .{ 0, 10, 0 }, .{ 5, 5, 10 } };
+    const tris = [_][3]u32{ .{ 0, 3, 2 }, .{ 0, 2, 1 }, .{ 0, 1, 4 }, .{ 1, 2, 4 }, .{ 2, 3, 4 }, .{ 3, 0, 4 } };
+    var pyramid = try primitives.polyhedron(testing.allocator, tol, &pts, &tris, &diag);
+    defer pyramid.deinit();
+    var r2 = try check.run(testing.allocator, &pyramid, .global);
+    defer r2.deinit(testing.allocator);
+    try testing.expect(r2.ok());
+    try testing.expectEqual(@as(usize, 1), r2.warnings());
+    try testing.expectEqual(check.Rule.redundant_topology, r2.findings.items[0].code);
+    // The split cylinder and sphere are not: their shared edges are seams
+    var sphere = try primitives.sphere(testing.allocator, tol, 2, &diag);
+    defer sphere.deinit();
+    var r3 = try check.run(testing.allocator, &sphere, .global);
+    defer r3.deinit(testing.allocator);
+    try testing.expect(r3.ok());
+    try testing.expectEqual(@as(usize, 0), r3.warnings());
+}
+

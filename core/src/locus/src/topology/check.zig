@@ -16,6 +16,8 @@ const Body = body_mod.Body;
 const Finding = diagnostics.Finding;
 const EntityRef = diagnostics.EntityRef;
 const VertexIndex = types.VertexIndex;
+const Vec2 = vec.Vec2;
+const Vec3 = vec.Vec3;
 const EdgeIndex = types.EdgeIndex;
 const CoedgeIndex = types.CoedgeIndex;
 const LoopIndex = types.LoopIndex;
@@ -38,12 +40,21 @@ pub const Report = struct {
         self.* = undefined;
     }
 
+    /// No failures; warnings (level 2's "could be merged") are in `findings` still.
     pub fn ok(self: *const Report) bool {
-        return self.findings.items.len == 0;
+        return self.first() == null;
     }
 
+    /// The first failure.
     pub fn first(self: *const Report) ?Finding {
-        return if (self.findings.items.len == 0) null else self.findings.items[0];
+        for (self.findings.items) |f| if (f.severity == .failure) return f;
+        return null;
+    }
+
+    pub fn warnings(self: *const Report) usize {
+        var n: usize = 0;
+        for (self.findings.items) |f| n += @intFromBool(f.severity == .warning);
+        return n;
     }
 };
 
@@ -56,6 +67,8 @@ pub fn run(allocator: std.mem.Allocator, body: *const Body, level: Level) Error!
     if (!report.ok() or level == .structural) return report;
     try checker.orientation();
     try checker.geometric();
+    if (!report.ok() or level == .geometric) return report;
+    try checker.global();
     return report;
 }
 
@@ -81,6 +94,10 @@ const Checker = struct {
 
     fn add(self: *Checker, rule: Rule, entity: EntityRef, measured: f64, threshold: f64) Error!void {
         try self.report.findings.append(self.allocator, .{ .code = rule, .entity = entity, .measured = measured, .threshold = threshold });
+    }
+
+    fn warn(self: *Checker, rule: Rule, entity: EntityRef) Error!void {
+        try self.report.findings.append(self.allocator, .{ .code = rule, .severity = .warning, .entity = entity });
     }
 
     fn live(comptime T: type, item: T) bool {
@@ -397,8 +414,206 @@ const Checker = struct {
                 try self.add(.uv_box_wraps, .of(.face, i), 0, 0);
             }
         }
+        try self.windings();
+        try self.verticesApart();
+    }
+
+    /// Every loop runs counter-clockwise in UV about its face's outward normal when it is
+    /// the outer one, clockwise when a hole (what `same_sense` and the surface's own
+    /// orientation make of "the face to the left"); and the loops of a closed shell are
+    /// wound outward: the signed volume they enclose is positive for an outer shell,
+    /// negative for a void.
+    fn windings(self: *Checker) Error!void {
+        const b = self.body;
+        var uv = std.ArrayList(Vec2).empty;
+        defer uv.deinit(self.allocator);
+        var xyz = std.ArrayList(Vec3).empty;
+        defer xyz.deinit(self.allocator);
+        var shells = traverse.Shells.init(b);
+        while (shells.next() catch return) |s| {
+            var volume: f64 = 0;
+            var faces = traverse.Faces.init(b, s);
+            while (faces.next() catch return) |f| {
+                const face = b.face(f);
+                // The fans' apex: a point of the surface inside the face's UV box, so a
+                // curved face's bulge counts (a hemisphere's loop polygon is flat)
+                const surface = b.geometry.surface(face.surface);
+                const apex: ?Vec3 = if (face.uv_box.isEmpty()) null else surface.eval((face.uv_box.min[0] + face.uv_box.max[0]) / 2.0, (face.uv_box.min[1] + face.uv_box.max[1]) / 2.0);
+                var loops = traverse.Loops.init(b, f);
+                var outer = true;
+                while (loops.next() catch return) |l| : (outer = false) {
+                    if (b.loop(l).first == .none) continue;
+                    const sampled = try self.sampleLoop(l, &uv, &xyz);
+                    volume += fanVolume(apex orelse xyz.items[0], xyz.items);
+                    if (!sampled) continue;
+                    const area = shoelace(uv.items);
+                    const want_ccw = outer == face.same_sense;
+                    // A loop of no area (a spur, a lamina mid-construction) runs neither way
+                    if (@abs(area) > b.tol.param * b.tol.param and (area > 0) != want_ccw) try self.add(.loop_winding, .of(.loop, @backingInt(l)), area, 0);
+                }
+            }
+            // A shell of no volume (a lamina mid-construction) is neither way round
+            switch (b.shell(s).kind) {
+                .outer => if (volume < 0) try self.add(.shell_inside_out, .of(.shell, @backingInt(s)), volume, 0),
+                .void => if (volume > 0) try self.add(.shell_inside_out, .of(.shell, @backingInt(s)), volume, 0),
+                .sheet => {},
+            }
+        }
+    }
+
+    /// The loop as a polygon of `LOOP_SAMPLES` points per coedge, in space and in the
+    /// face's UV (by the pcurve, else by projection). False when a coedge on a periodic
+    /// surface has no pcurve: its UV would jump at the seam, so the UV polygon is not
+    /// trusted (the points in space are).
+    fn sampleLoop(self: *Checker, l: LoopIndex, uv: *std.ArrayList(Vec2), xyz: *std.ArrayList(Vec3)) Error!bool {
+        const b = self.body;
+        const tol = b.tol;
+        const face = b.face(b.loop(l).face);
+        const surface = b.geometry.surface(face.surface);
+        const periodic = surface.domainU().periodic or surface.domainV().periodic;
+        uv.clearRetainingCapacity();
+        xyz.clearRetainingCapacity();
+        var trusted = true;
+        var it = traverse.Coedges.init(b, l);
+        while (it.next() catch return false) |c| {
+            const coedge = b.coedge(c);
+            const e = b.edge(coedge.edge);
+            const curve = b.geometry.curve(e.curve);
+            const from: f64 = if (coedge.same_sense) e.t0 else e.t1;
+            const to: f64 = if (coedge.same_sense) e.t1 else e.t0;
+            var k: usize = 0;
+            while (k < LOOP_SAMPLES) : (k += 1) {
+                const t = from + (to - from) * @as(f64, @floatFromInt(k)) / LOOP_SAMPLES;
+                const p = curve.eval(t);
+                try xyz.append(self.allocator, p);
+                if (!coedge.pcurve.isNone()) {
+                    try uv.append(self.allocator, b.geometry.pcurve(coedge.pcurve).eval(t));
+                } else if (periodic) {
+                    trusted = false;
+                } else {
+                    try uv.append(self.allocator, surface.project(p, tol.approx, 50));
+                }
+            }
+        }
+        return trusted;
+    }
+
+    /// No two vertices within the zone of each other: sorted along x, each against the
+    /// ones that follow within the zone.
+    fn verticesApart(self: *Checker) Error!void {
+        const b = self.body;
+        var order = std.ArrayList(u32).empty;
+        defer order.deinit(self.allocator);
+        for (b.vertices.items, 0..) |v, i| if (!v.tombstone) try order.append(self.allocator, @intCast(i));
+        const Ctx = struct {
+            body: *const Body,
+            fn lessThan(ctx: @This(), i: u32, j: u32) bool {
+                return ctx.body.point(VertexIndex.of(i))[0] < ctx.body.point(VertexIndex.of(j))[0];
+            }
+        };
+        std.mem.sort(u32, order.items, Ctx{ .body = b }, Ctx.lessThan);
+        for (order.items, 0..) |i, k| {
+            const p = b.point(VertexIndex.of(i));
+            for (order.items[k + 1 ..]) |j| {
+                const q = b.point(VertexIndex.of(j));
+                if (q[0] - p[0] > b.tol.zone) break;
+                const d = vec.distance(p, q);
+                if (d <= b.tol.zone) try self.add(.vertices_too_close, .of(.vertex, j), d, b.tol.zone);
+            }
+        }
+    }
+
+    // --- global (level 2) ---
+
+    /// What needs the whole face or shell: a hole loop lies inside its face's outer loop
+    /// and in no other hole (by a point of it against the sampled UV polygons, even-odd);
+    /// and, as warnings, topology that a simplification could remove: an edge whose two
+    /// faces are one face, or lie on one surface the same way (never across a seam, which
+    /// D7 keeps). The rules that need an intersector (faces of a shell meeting only along
+    /// shared edges, voids inside the outer shell) wait for it.
+    fn global(self: *Checker) Error!void {
+        const b = self.body;
+        var uv = std.ArrayList(Vec2).empty;
+        defer uv.deinit(self.allocator);
+        var xyz = std.ArrayList(Vec3).empty;
+        defer xyz.deinit(self.allocator);
+        var outer_uv = std.ArrayList(Vec2).empty;
+        defer outer_uv.deinit(self.allocator);
+        var hole_points = std.ArrayList(Vec2).empty;
+        defer hole_points.deinit(self.allocator);
+        var hole_polygons = std.ArrayList([]Vec2).empty;
+        defer {
+            for (hole_polygons.items) |poly| self.allocator.free(poly);
+            hole_polygons.deinit(self.allocator);
+        }
+        for (b.faces.items, 0..) |face, fi| {
+            if (face.flags.tombstone) continue;
+            if (face.first_loop == .none or b.loop(face.first_loop).next_in_face == .none) continue;
+            if (!try self.sampleLoop(face.first_loop, &uv, &xyz)) continue;
+            outer_uv.clearRetainingCapacity();
+            try outer_uv.appendSlice(self.allocator, uv.items);
+            hole_points.clearRetainingCapacity();
+            for (hole_polygons.items) |poly| self.allocator.free(poly);
+            hole_polygons.clearRetainingCapacity();
+            var loops = traverse.Loops.init(b, types.FaceIndex.of(fi));
+            _ = loops.next() catch return;
+            while (loops.next() catch return) |l| {
+                if (!try self.sampleLoop(l, &uv, &xyz)) continue;
+                if (uv.items.len == 0) continue;
+                if (!insidePolygon(outer_uv.items, uv.items[0])) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
+                for (hole_polygons.items, hole_points.items) |poly, point| {
+                    if (insidePolygon(poly, uv.items[0]) or insidePolygon(uv.items, point)) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
+                }
+                try hole_points.append(self.allocator, uv.items[0]);
+                try hole_polygons.append(self.allocator, try self.allocator.dupe(Vec2, uv.items));
+            }
+        }
+        for (b.edges.items, 0..) |e, i| {
+            if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
+            const partner = b.coedge(e.coedge).partner;
+            if (partner == .none) continue;
+            const fa = b.face(b.loop(b.coedge(e.coedge).loop).face);
+            const fb = b.face(b.loop(b.coedge(partner).loop).face);
+            const one_face = b.loop(b.coedge(e.coedge).loop).face == b.loop(b.coedge(partner).loop).face;
+            if (one_face or (fa.surface == fb.surface and fa.same_sense == fb.same_sense)) try self.warn(.redundant_topology, .of(.edge, i));
+        }
     }
 };
+
+/// Points per coedge of a loop's sampled polygon.
+const LOOP_SAMPLES: usize = 4;
+
+/// Twice the signed area of a polygon in UV: positive counter-clockwise.
+fn shoelace(points: []const Vec2) f64 {
+    var area: f64 = 0;
+    for (points, 0..) |p, i| {
+        const q = points[(i + 1) % points.len];
+        area += p[0] * q[1] - q[0] * p[1];
+    }
+    return area;
+}
+
+/// The signed volume between the origin and the fan of a polygon about `apex`: summed
+/// over a closed surface's loops it is the volume they enclose, positive when wound
+/// outward (the fans of one face share their apex, so a hole's fan takes its share away).
+fn fanVolume(apex: Vec3, points: []const Vec3) f64 {
+    var volume: f64 = 0;
+    for (points, 0..) |p, i| volume += vec.dot(apex, vec.cross(p, points[(i + 1) % points.len])) / 6.0;
+    return volume;
+}
+
+/// Whether `p` is inside the polygon by the even-odd rule.
+fn insidePolygon(polygon: []const Vec2, p: Vec2) bool {
+    var inside = false;
+    for (polygon, 0..) |a, i| {
+        const b = polygon[(i + 1) % polygon.len];
+        if ((a[1] > p[1]) != (b[1] > p[1])) {
+            const x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+            if (p[0] < x) inside = !inside;
+        }
+    }
+    return inside;
+}
 
 /// The length of the polyline through `EDGE_SAMPLES + 1` points of the curve over the
 /// range: a lower bound on the edge's length, enough to tell a short edge.

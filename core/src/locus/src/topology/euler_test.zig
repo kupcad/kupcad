@@ -160,6 +160,16 @@ fn expectValid(body: *const Body, level: check.Level) !void {
     try testing.expect(report.ok());
 }
 
+/// The geometric rules on a copy turned outward: these sequences lay their loops clockwise
+/// seen from outside (check_test.turnOutward), which the structural rules allow and the
+/// winding rules do not.
+fn expectValidOutward(body: *const Body) !void {
+    var copy = try body.clone(testing.allocator);
+    defer copy.deinit();
+    @import("check_test.zig").turnOutward(&copy);
+    try expectValid(&copy, .geometric);
+}
+
 fn expectCounts(body: *const Body, v: usize, e: usize, f: usize, l: usize, s: usize) !void {
     const c = body.counts();
     try testing.expectEqual(v, c.vertices);
@@ -253,7 +263,7 @@ test "the cube built five ways is the same cube: counts, the checker, and the fa
     defer if (first_sig) |*s| s.deinit(allocator);
     for (kits) |kit| {
         try expectCounts(&kit.body, 8, 12, 6, 6, 1);
-        try expectValid(&kit.body, .geometric);
+        try expectValidOutward(&kit.body);
         var sig = try Signature.of(allocator, &kit.body);
         if (first_sig) |*s| {
             defer sig.deinit(allocator);
@@ -300,7 +310,7 @@ test "mvfs and kvfs: a shell of one face, one loop, one vertex; and back to noth
     defer kit.deinit();
     const r = try euler.mvfs(&kit.body, kit.points[0], kit.planes[Kit.BOTTOM], true, .outer);
     try expectCounts(&kit.body, 1, 0, 1, 1, 1);
-    try expectValid(&kit.body, .geometric);
+    try expectValidOutward(&kit.body);
     try testing.expectEqual(r.vertex, kit.body.loop(r.loop).vertex);
     try euler.kvfs(&kit.body, r.shell);
     try expectCounts(&kit.body, 0, 0, 0, 0, 0);
@@ -322,7 +332,7 @@ test "mevSpur and kevSpur: a spur grows from a vertex loop and from a loop's coe
     const second = try euler.mevSpur(b, start.loop, spur.out, spur.vertex, kit.points[2], try kit.line(1, 2));
     try expectCounts(b, 3, 2, 1, 1, 1);
     try testing.expectEqual(@as(usize, 4), try traverse.loopLength(b, start.loop));
-    try expectValid(b, .geometric);
+    try expectValidOutward(b);
     // The wrong anchor is refused and changes nothing
     try testing.expectError(error.Invalid, euler.mevSpur(b, start.loop, spur.out, start.vertex, kit.points[3], try kit.line(0, 3)));
     try euler.kevSpur(b, second.out);
@@ -331,7 +341,7 @@ test "mevSpur and kevSpur: a spur grows from a vertex loop and from a loop's coe
     try expectCounts(b, 1, 0, 1, 1, 1);
     try testing.expectEqual(start.vertex, b.loop(start.loop).vertex);
     try testing.expectEqual(CoedgeIndex.none, b.loop(start.loop).first);
-    try expectValid(b, .geometric);
+    try expectValidOutward(b);
 }
 
 test "mef and kef: a loop splits into two faces and merges back; the signature is unchanged" {
@@ -405,7 +415,7 @@ test "mevSplitVertex and kevMerge: a vertex's fan moves to a new vertex and merg
     try testing.expectEqual(r.vertex, b.coedgeStart(a));
     try euler.kevMerge(b, r.out);
     try expectCounts(b, 8, 12, 6, 6, 1);
-    try expectValid(b, .geometric);
+    try expectValidOutward(b);
     var after = try Signature.of(testing.allocator, b);
     defer after.deinit(testing.allocator);
     try testing.expect(before.eql(&after));

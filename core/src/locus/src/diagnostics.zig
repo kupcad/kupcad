@@ -95,6 +95,12 @@ pub const Code = enum(u16) {
     pcurve_off_edge,
     uv_box_outside_domain,
     uv_box_wraps,
+    loop_winding,
+    shell_inside_out,
+    vertices_too_close,
+    // Global (level 2)
+    hole_outside_outer,
+    redundant_topology,
 
     pub fn describe(self: Code) []const u8 {
         return switch (self) {
@@ -134,6 +140,11 @@ pub const Code = enum(u16) {
             .pcurve_off_edge => "has a pcurve that does not lift onto its edge",
             .uv_box_outside_domain => "has a UV box outside its surface's domain",
             .uv_box_wraps => "has a UV box wider than its surface's period",
+            .loop_winding => "runs the wrong way round in UV: an outer loop is counter-clockwise about the outward normal, a hole clockwise",
+            .shell_inside_out => "has its loops wound inward: its signed volume has the wrong sign",
+            .vertices_too_close => "is within the zone of another vertex",
+            .hole_outside_outer => "has a hole loop that is not inside its outer loop, or is inside another hole",
+            .redundant_topology => "could be merged: its two faces lie on one surface the same way, or are one face",
         };
     }
 };
