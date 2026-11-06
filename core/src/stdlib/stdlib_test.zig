@@ -1591,19 +1591,23 @@ test "Stdlib: the errors no other test raises say what is wrong" {
 
 test "Stdlib: a measure beyond the largest number is a RangeError, as arithmetic's is" {
     // They were returned: cube(1e150).volume and circle(1e300).area were NaN, a triangle of
-    // 1e300 sides had an area of Infinity, and cube(1).offset(1e300) gave the cube back
+    // 1e300 sides had an area of Infinity, and cube(1).offset(1e300) gave the cube back. A
+    // size past the kernel's 1e100 mm is refused where it is made, so a measure overflows
+    // only from what is moved, scaled or offset there.
     const overflows = " overflows: the result is beyond the largest number (1.8e308)";
+    const past_the_kernel = ": a coordinate reaches past 1e100 mm from the origin, the most the geometry kernel computes with";
     try expectScripts(&.{
-        .{ .src = comptime rescued("cube(1e150).volume"), .expected = .{ .str = "RangeError: volume" ++ overflows } },
         .{ .src = comptime rescued("cube(1).scale(1e200).volume"), .expected = .{ .str = "RangeError: volume" ++ overflows } },
-        .{ .src = comptime rescued("cube(1e150).surface_area"), .expected = .{ .str = "RangeError: surface_area" ++ overflows } },
-        .{ .src = comptime rescued("cube(1e150).center_of_mass"), .expected = .{ .str = "RangeError: center_of_mass" ++ overflows } },
-        .{ .src = comptime rescued("circle(1e300).area"), .expected = .{ .str = "RangeError: area" ++ overflows } },
-        .{ .src = comptime rescued("polygon([[0, 0], [1e300, 0], [0, 1e300]]).area"), .expected = .{ .str = "RangeError: area" ++ overflows } },
-        .{ .src = comptime rescued("cube(1e200).material(density: 1).mass"), .expected = .{ .str = "RangeError: mass" ++ overflows } },
-        .{ .src = comptime rescued("cube(1e200).bom"), .expected = .{ .str = "RangeError: bom" ++ overflows } },
+        .{ .src = comptime rescued("cube(1).scale(1e160).surface_area"), .expected = .{ .str = "RangeError: surface_area" ++ overflows } },
+        .{ .src = comptime rescued("cube(1).scale(1e150).center_of_mass"), .expected = .{ .str = "RangeError: center_of_mass" ++ overflows } },
+        .{ .src = comptime rescued("circle(1).scale(1e160).area"), .expected = .{ .str = "RangeError: area" ++ overflows } },
+        .{ .src = comptime rescued("polygon([[0, 0], [1, 0], [0, 1]]).scale(1e160).area"), .expected = .{ .str = "RangeError: area" ++ overflows } },
+        .{ .src = comptime rescued("cube(1).scale(1e200).material(density: 1).mass"), .expected = .{ .str = "RangeError: mass" ++ overflows } },
+        .{ .src = comptime rescued("cube(1).scale(1e200).bom"), .expected = .{ .str = "RangeError: bom" ++ overflows } },
         .{ .src = comptime rescued("line([0, 0], [1e308, 0]).line_to([-1e308, 0]).length"), .expected = .{ .str = "RangeError: length" ++ overflows } },
         .{ .src = comptime rescued("cube(1).offset(1e300)"), .expected = .{ .str = "RangeError: offset" ++ overflows } },
+        .{ .src = comptime rescued("cube(1e150).volume"), .expected = .{ .str = "GeometryError: cube" ++ past_the_kernel } },
+        .{ .src = comptime rescued("circle(1e300).area"), .expected = .{ .str = "GeometryError: circle" ++ past_the_kernel } },
         // Measures a number holds are unchanged
         .{ .src = "r = [cube(2).volume, cube(1).offset(1e10).bbox.size[0]]", .expected = .{ .nums = &.{ 8, 2e10 + 1 } } },
     });
