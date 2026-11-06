@@ -888,7 +888,8 @@ pub const Anchor = struct {
     ) parser.Error!Anchor {
         var s = parser.Stream.new(data);
         const format = try s.read(u16);
-        if (format < 1 and format > 3) return error.ParseFail;
+        // [KupCAD] `or`, as ttf-parser's `1..=3`: with `and` no format failed
+        if (format < 1 or format > 3) return error.ParseFail;
 
         var table = Anchor{
             .x = try s.read(i16),

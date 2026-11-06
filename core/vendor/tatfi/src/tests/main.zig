@@ -14,6 +14,7 @@ test {
     _ = @import("cmap.zig");
     _ = @import("colr.zig");
     _ = @import("feat.zig");
+    _ = @import("ggg.zig");
     _ = @import("glyf.zig");
     _ = @import("gvar.zig");
     _ = @import("gpos.zig");
@@ -23,6 +24,7 @@ test {
     _ = @import("maxp.zig");
     _ = @import("os2.zig");
     _ = @import("sbix.zig");
+    _ = @import("stat.zig");
     _ = @import("trak.zig");
     _ = @import("var_store.zig");
 
@@ -251,6 +253,65 @@ test "variable metrics past their type" {
     try t.expectEqual(null, face.glyph_hor_side_bearing(.{0}));
     try t.expectEqual(null, face.glyph_ver_side_bearing(.{0}));
     try t.expectEqual(null, face.glyph_y_origin(.{0}));
+}
+
+test "a vertical advance from the phantom points" {
+    // [KupCAD] Without VVAR, the vertical advance's variation is the bottom phantom point's,
+    // its y, as ttf-parser has it; it took its x.
+    const head = try head_table(.{ .x_min = 0, .y_min = 0, .x_max = 0, .y_max = 0 });
+    defer t.allocator.free(head);
+    const hhea = try hhea_table(800, -200);
+    defer t.allocator.free(hhea);
+    const fvar = try convert(&.{
+        .{ .unt32 = 0x00010000 }, // version
+        .{ .unt16 = 16 }, // offset to the axes
+        .{ .unt16 = 2 }, // reserved
+        .{ .unt16 = 1 }, // axis count
+        .{ .unt16 = 20 }, // axis size
+        .{ .unt16 = 0 }, // instance count
+        .{ .unt16 = 8 }, // instance size
+        .{ .raw = "wght" }, // axis 0
+        .{ .fixed = 0 }, // min
+        .{ .fixed = 0 }, // default
+        .{ .fixed = 1 }, // max
+        .{ .unt16 = 0 }, // flags
+        .{ .unt16 = 0 }, // name ID
+    });
+    defer t.allocator.free(fvar);
+    // Glyph 0, empty, has deltas for its four phantom points: the bottom one moves by (5, 7)
+    const gvar = try convert(&.{
+        .{ .unt32 = 0x00010000 }, // version
+        .{ .unt16 = 1 }, // axis count
+        .{ .unt16 = 0 }, // shared tuple count
+        .{ .unt32 = 28 }, // offset to shared tuples
+        .{ .unt16 = 1 }, // glyph count
+        .{ .unt16 = 1 }, // flags: long offsets
+        .{ .unt32 = 28 }, // offset to glyph variation data
+        .{ .unt32 = 0 }, // glyph 0's offset
+        .{ .unt32 = 19 }, // its end
+        // Glyph 0's variation data, at 28
+        .{ .unt16 = 1 }, // tuple variation count
+        .{ .unt16 = 10 }, // offset to the serialized data
+        .{ .unt16 = 9 }, // tuple 0's serialized data size
+        .{ .unt16 = 0x8000 }, // its index: an embedded peak
+        .{ .int16 = 0x4000 }, // peak: 1.0
+        // Serialized data: eight byte deltas, x then y of the four points
+        .{ .raw = &.{ 0x07, 0, 0, 0, 5, 0, 0, 0, 7 } },
+    });
+    defer t.allocator.free(gvar);
+    const loca = [_]u8{ 0, 0, 0, 0 }; // glyph 0 is empty
+    const metrics = [_]u8{ 0, 100, 0, 0 }; // advance 100, bearing 0
+    const data = try font_of(&.{
+        .{ "fvar", fvar },     .{ "glyf", &.{} },        .{ "gvar", gvar },
+        .{ "head", head },     .{ "hhea", hhea },        .{ "hmtx", &metrics },
+        .{ "loca", &loca },    .{ "maxp", &maxp_table }, .{ "vhea", hhea },
+        .{ "vmtx", &metrics },
+    });
+    defer t.allocator.free(data);
+
+    var face = try ttf.Face.parse(data, 0);
+    try face.set_variation(.from_bytes("wght"), 1);
+    try t.expectEqual(107, face.glyph_ver_advance(t.allocator, .{0}));
 }
 
 test "empty font" {

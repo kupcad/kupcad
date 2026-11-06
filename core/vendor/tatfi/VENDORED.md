@@ -133,6 +133,20 @@ tests couldn't run in KupCAD's target and mode.
   subroutines declare more than a `u32` counts, some 2^33 operators; saturated, the mask
   reaches past the data and the charstring fails. `src/tests/cff1.zig` has "stems past a
   u32", which tests the two at their limit.
+- `src/ggg.zig`: a format 2 class definition gives its range's class, as ttf-parser does; it
+  gave the class plus the glyph's place in the range, as a coverage index is computed.
+  `src/tests/ggg.zig` has "class definition format 2 gives its range's class".
+- `src/tables/gpos.zig`: an anchor of a format other than 1 to 3 fails, as ttf-parser's
+  `1..=3` does; the check took `and` for `or`, so none failed. `src/tests/gpos.zig` has "a mark
+  anchor of format 4".
+- `src/tables/stat.zig`: axis value offsets are from the start of their list, as ttf-parser and
+  the spec have them, not from the start of the table; and `subtable_for_axis` skips other
+  axes' format 1 and 3 subtables, as ttf-parser does, where it skipped the axis's own (format
+  2's check is as ttf-parser has it). `src/tests/stat.zig` has "axis values are read from their
+  offsets' list" and "an axis's subtable is that axis's".
+- `src/lib.zig`: without VVAR, `glyph_ver_advance` varies by the bottom phantom point's y, as
+  ttf-parser does; it took its x. `src/tests/main.zig` has "a vertical advance from the phantom
+  points".
 
 ## Updating
 

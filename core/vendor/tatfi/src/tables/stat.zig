@@ -95,8 +95,10 @@ pub fn subtable_for_axis(
             const axis_index = st.axis_index;
             const value = st.value;
 
+            // [KupCAD] skips the other axes' subtables, as ttf-parser does; `==` skipped this
+            // axis's
             const gotten_axis = self.axes.get(axis_index) orelse return null;
-            if (gotten_axis.tag.inner == axis.inner) continue;
+            if (gotten_axis.tag.inner != axis.inner) continue;
 
             if (match_value) |mv| {
                 if (mv.value == value.value) return subtable;
@@ -164,9 +166,10 @@ pub const AxisValueSubtables = struct {
     ) parser.Error!AxisValueSubtable {
         const data_offset = self.offsets.get(self.index) orelse return error.ParseFail;
 
+        // [KupCAD] the offsets are from the start of their list, as ttf-parser has them
         var s = try parser.Stream.new_at(
             try self.data.tail(),
-            data_offset[0],
+            @as(usize, data_offset[0]) + self.start[0],
         );
         self.index += 1;
         const format_variant = try s.read(u16);

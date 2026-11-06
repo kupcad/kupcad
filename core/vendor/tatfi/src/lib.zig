@@ -1012,7 +1012,8 @@ pub const Face = struct {
                 if (vvar.advance_offset(glyph_id, self.coords())) |offset|
                     advance_f += offset;
             } else if (self.glyph_phantom_points(gpa, glyph_id)) |points| {
-                advance_f += points.bottom.x;
+                // [KupCAD] the bottom phantom point's y, as ttf-parser has it
+                advance_f += points.bottom.y;
             }
             return utils.f32_to_u16(@round(advance_f));
         };

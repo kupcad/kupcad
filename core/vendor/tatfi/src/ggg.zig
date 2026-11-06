@@ -74,9 +74,10 @@ pub const ClassDefinition = union(enum) {
                 return f.classes.get(index) orelse 0;
             },
             .format2 => |f| {
+                // [KupCAD] the range's class, as ttf-parser has it; its value plus the glyph's
+                // place in the range is a coverage index, not a class
                 const record = RangeRecord.range(f.records, glyph) orelse return 0;
-                const offset = glyph[0] - record.start[0];
-                return std.math.add(u16, record.value, offset) catch 0;
+                return record.value;
             },
             .empty => return 0,
         }

@@ -131,3 +131,38 @@ test "an extension of an extension" {
 
     try t.expectError(error.ParseFail, gpos.PositioningSubtable.parse(data, 9));
 }
+
+test "a mark anchor of format 4" {
+    // [KupCAD] An anchor of a format past 3 was read as format 1: the check that fails it
+    // took `and` for `or`.
+    const data = try convert(&.{
+        .{ .unt16 = 1 }, // format
+        .{ .unt16 = 12 }, // mark coverage offset
+        .{ .unt16 = 18 }, // base coverage offset
+        .{ .unt16 = 1 }, // class count
+        .{ .unt16 = 24 }, // mark array offset
+        .{ .unt16 = 36 }, // base array offset
+        // Mark coverage, at 12: format 1, glyph 5
+        .{ .unt16 = 1 },
+        .{ .unt16 = 1 },
+        .{ .unt16 = 5 },
+        // Base coverage, at 18: format 1, glyph 6
+        .{ .unt16 = 1 },
+        .{ .unt16 = 1 },
+        .{ .unt16 = 6 },
+        // Mark array, at 24
+        .{ .unt16 = 1 }, // count
+        .{ .unt16 = 0 }, // mark 0: class
+        .{ .unt16 = 6 }, // its anchor's offset
+        // Anchor, at 30
+        .{ .unt16 = 4 }, // format
+        .{ .int16 = 10 }, // x
+        .{ .int16 = 20 }, // y
+        // Base array, at 36
+        .{ .unt16 = 0 }, // count
+    });
+    defer t.allocator.free(data);
+
+    const subtable = try gpos.PositioningSubtable.parse(data, 4);
+    try t.expectEqual(null, subtable.mark_to_base.marks.get(0));
+}
