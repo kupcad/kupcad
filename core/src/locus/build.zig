@@ -21,6 +21,9 @@ pub fn build(b: *std.Build) void {
     const locus_dir = b.root.root_dir.handle.realPathFileAlloc(b.graph.io, if (b.root.sub_path.len > 0) b.root.sub_path else ".", b.allocator) catch @panic("the build root has no real path");
     const test_paths = b.addOptions();
     test_paths.addOption([]const u8, "locus_dir", locus_dir);
+    // The fixtures (src/fixtures/*.json, the primitives' bodies as JSON) are rewritten from
+    // the current output instead of compared with it; the diff is reviewed like code.
+    test_paths.addOption(bool, "update_snapshots", b.option(bool, "update-snapshots", "Rewrite the body JSON fixtures from the current output") orelse false);
     module.addOptions("test_paths", test_paths);
 
     const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
@@ -45,6 +48,20 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run Locus's tests (through wasmtime on wasm32)");
     test_step.dependOn(&runTests(b, tests, target).step);
+
+    // `zig build bench`: the timed cases of test/bench/main.zig against their budgets,
+    // always ReleaseFast (a Debug timing says nothing about a budget)
+    const bench = b.addExecutable(.{
+        .name = "locus_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/bench/main.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "locus", .module = b.createModule(.{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = .ReleaseFast }) }},
+        }),
+    });
+    const bench_step = b.step("bench", "Time the benchmark cases (ReleaseFast) and fail on one past its budget");
+    bench_step.dependOn(&b.addRunArtifact(bench).step);
 }
 
 /// The tests run: natively as they are, on wasm32 through wasmtime (KupCAD's wasm job runs
