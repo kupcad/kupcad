@@ -395,7 +395,7 @@ fn resolve_coords_len(
     while (flags_left > 0) {
         const flags = try s.read(SimpleGlyphFlags);
         repeats = if (flags.repeat_flag)
-            (try s.read(u8)) + 1
+            @as(u32, try s.read(u8)) + 1
         else
             1;
 

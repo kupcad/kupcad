@@ -155,13 +155,16 @@ fn check3mf(data: []const u8) !void {
 test "fuzz: a font file a script imports" {
     // A TrueType font with a kern table, a CFF one with GPOS kerning (scripts/make-test-fonts.py),
     // and the start of each: their table directories alone; and fonts whose layout tables shape
-    // Arabic, Hebrew and Devanagari (scripts/make-shaping-test-fonts.py)
+    // Arabic, Hebrew and Devanagari (scripts/make-shaping-test-fonts.py); and the fuzzer's
+    // finds, kept so each plain test run reads them again
     const kern_table = @embedFile("core/test_fonts/kern-table.ttf");
     const gpos = @embedFile("core/test_fonts/gpos-kerning.otf");
     const arabic = @embedFile("core/test_fonts/arabic.ttf");
     const hebrew = @embedFile("core/test_fonts/hebrew.ttf");
     const devanagari = @embedFile("core/test_fonts/devanagari.ttf");
-    try fuzzParser(checkFont, &.{ kern_table, gpos, kern_table[0..200], gpos[0..200], arabic, hebrew, devanagari });
+    // A glyph's flag repeated 255 times, which overflowed tatfi's count (2026-11-06)
+    const flag_repeat_255 = @embedFile("core/test_fonts/glyf-flag-repeat-255.ttf");
+    try fuzzParser(checkFont, &.{ kern_table, gpos, kern_table[0..200], gpos[0..200], arabic, hebrew, devanagari, flag_repeat_255 });
 }
 
 fn checkFont(data: []const u8) !void {

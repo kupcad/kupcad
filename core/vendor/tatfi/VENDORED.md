@@ -26,6 +26,10 @@ tests couldn't run in KupCAD's target and mode.
   the glyph's width before it clears the operand stack. It read it after, an index out of
   bounds: ttf-parser's `clear` keeps the values, Zig's `clearRetainingCapacity` doesn't.
   `src/tests/cff1.zig` has a test of each (KupCAD's font fuzz target found it).
+- `src/tables/glyf.zig`: a simple glyph's flag repeat count is read as a `u32` before the flag
+  itself is added, as ttf-parser does with `u32::from`. Added in the `u8` it was read as, a repeat
+  count of 255 overflowed. `src/tests/glyf.zig` has "a flag repeated 255 times" (KupCAD's font
+  fuzz target found it).
 
 ## Updating
 

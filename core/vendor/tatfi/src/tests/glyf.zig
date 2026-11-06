@@ -28,3 +28,21 @@ test "endless_loop" {
 
     _ = face.outline_glyph(t.allocator, .{0}, builder);
 }
+
+test "a flag repeated 255 times" {
+    // One contour of 300 points: a flag repeated 255 more times (256 points), then one
+    // repeated 43 more (44), each on the curve with one-byte x and y. A repeat count of
+    // 255 plus the flag itself overflowed the u8 it was read as (KupCAD's font fuzz target
+    // found it).
+    const on_curve_short_repeated = 0x01 | 0x02 | 0x04 | 0x08;
+    const flags = "\x01\x2b" ++ // the contour's last point, 299
+        "\x00\x00" ++ // no instructions
+        [_]u8{ on_curve_short_repeated, 255, on_curve_short_repeated, 43 };
+    const coords: [600]u8 = @splat(1);
+    const data = flags ++ coords;
+
+    var points = try ttf.tables.glyf.parse_simple_outline(data, 1);
+    var count: usize = 0;
+    while (points.next()) |_| count += 1;
+    try t.expectEqual(300, count);
+}
