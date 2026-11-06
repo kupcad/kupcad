@@ -60,6 +60,12 @@ tests couldn't run in KupCAD's target and mode.
   glyphs" and "a charset range of 65536 glyphs".
 - `src/tables/cff/cff2.zig`: a `blend` with nothing on the stack is an error; popping its count
   reached `unreachable`. `src/tests/cff2.zig` has "a blend of no operands".
+- `src/lib.zig`, `src/tables/os2.zig`: `Face.height` and `vertical_height`, `Rect.width` and
+  `height`, and the OS/2 table's `windows_descender` saturate. They computed in the font's `i16`s
+  (as ttf-parser does, which panics in a debug build too), and an ascender of 32767 over a
+  descender of -1, or a Windows descent of 0x8000, overflowed. `src/tests/main.zig` has
+  "metrics past an i16" (with `font_of`, a font of given tables), `src/tests/os2.zig` "a
+  windows descent of 32768".
 
 ## Updating
 

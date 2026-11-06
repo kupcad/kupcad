@@ -18,6 +18,7 @@ test {
     _ = @import("hmtx.zig");
     _ = @import("loca.zig");
     _ = @import("maxp.zig");
+    _ = @import("os2.zig");
     _ = @import("sbix.zig");
     _ = @import("trak.zig");
 
@@ -90,6 +91,76 @@ pub fn convert(units: []const Unit) ![]u8 {
     for (units) |v| try w.writer.print("{f}", .{v});
 
     return try w.toOwnedSlice();
+}
+
+/// A font of `tables`, given in the order of their tags, as a table directory must have them.
+pub fn font_of(tables: []const struct { *const [4]u8, []const u8 }) ![]u8 {
+    var data: std.ArrayList(u8) = .fromOwnedSlice(try convert(&.{
+        .true_type_magic, // magic
+        .{ .unt16 = @intCast(tables.len) }, // numTables
+        .{ .unt16 = 0 }, // searchRange
+        .{ .unt16 = 0 }, // entrySelector
+        .{ .unt16 = 0 }, // rangeShift
+    }));
+    errdefer data.deinit(t.allocator);
+    var offset: u32 = @intCast(12 + 16 * tables.len);
+    for (tables) |table| {
+        const record = try convert(&.{
+            .{ .raw = table[0] }, // tag
+            .{ .unt32 = 0 }, // checksum
+            .{ .unt32 = offset }, // offset
+            .{ .unt32 = @intCast(table[1].len) }, // length
+        });
+        defer t.allocator.free(record);
+        try data.appendSlice(t.allocator, record);
+        offset += @intCast(table[1].len);
+    }
+    for (tables) |table| try data.appendSlice(t.allocator, table[1]);
+    return data.toOwnedSlice(t.allocator);
+}
+
+/// A head table whose global bounding box is `bbox`.
+pub fn head_table(bbox: ttf.Rect) ![]u8 {
+    var data = try t.allocator.alloc(u8, 54);
+    @memset(data, 0);
+    std.mem.writeInt(u16, data[18..20], 1000, .big); // units per em
+    std.mem.writeInt(i16, data[36..38], bbox.x_min, .big);
+    std.mem.writeInt(i16, data[38..40], bbox.y_min, .big);
+    std.mem.writeInt(i16, data[40..42], bbox.x_max, .big);
+    std.mem.writeInt(i16, data[42..44], bbox.y_max, .big);
+    return data;
+}
+
+/// An hhea or vhea table of `ascender` and `descender`, with one metric.
+pub fn hhea_table(ascender: i16, descender: i16) ![]u8 {
+    var data = try t.allocator.alloc(u8, 36);
+    @memset(data, 0);
+    std.mem.writeInt(i16, data[4..6], ascender, .big);
+    std.mem.writeInt(i16, data[6..8], descender, .big);
+    std.mem.writeInt(u16, data[34..36], 1, .big); // number of metrics
+    return data;
+}
+
+/// A maxp table of one glyph.
+pub const maxp_table = [_]u8{ 0x00, 0x00, 0x50, 0x00, 0x00, 0x01 };
+
+test "metrics past an i16" {
+    // [KupCAD] The face's height and vertical height, and its bounding box's width and
+    // height, overflowed the i16s they were computed in; they saturate.
+    const head = try head_table(.{ .x_min = -32768, .y_min = -2, .x_max = 32767, .y_max = 32767 });
+    defer t.allocator.free(head);
+    const hhea = try hhea_table(32767, -1);
+    defer t.allocator.free(hhea);
+    const vhea = try hhea_table(32767, 1);
+    defer t.allocator.free(vhea);
+    const data = try font_of(&.{ .{ "head", head }, .{ "hhea", hhea }, .{ "maxp", &maxp_table }, .{ "vhea", vhea } });
+    defer t.allocator.free(data);
+
+    const face = try ttf.Face.parse(data, 0);
+    try t.expectEqual(32767, face.height());
+    try t.expectEqual(32767, face.vertical_height());
+    try t.expectEqual(32767, face.global_bounding_box().width());
+    try t.expectEqual(32767, face.global_bounding_box().height());
 }
 
 test "empty font" {

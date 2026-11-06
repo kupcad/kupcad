@@ -566,7 +566,8 @@ pub const Face = struct {
     pub fn height(
         self: *const Face,
     ) i16 {
-        return self.ascender() - self.descender();
+        // [KupCAD] saturating: the i16s from the font can be any two
+        return self.ascender() -| self.descender();
     }
 
     /// Returns a horizontal face line gap.
@@ -672,7 +673,8 @@ pub const Face = struct {
     ) ?i16 {
         const a = self.vertical_ascender() orelse return null;
         const d = self.vertical_descender() orelse return null;
-        return a + d;
+        // [KupCAD] saturating: the i16s from the font can be any two
+        return a +| d;
     }
 
     /// Returns a vertical face line gap.
@@ -1794,14 +1796,16 @@ pub const Rect = struct {
     pub fn width(
         self: Rect,
     ) i16 {
-        return self.x_max - self.x_min;
+        // [KupCAD] saturating: the i16s from the font can be any two
+        return self.x_max -| self.x_min;
     }
 
     /// Returns rect's height.
     pub fn height(
         self: Rect,
     ) i16 {
-        return self.y_max - self.y_min;
+        // [KupCAD] saturating: the i16s from the font can be any two
+        return self.y_max -| self.y_min;
     }
 };
 

@@ -161,7 +161,8 @@ pub fn windows_descender(
     self: *const Table,
 ) i16 {
     var s = parser.Stream.new_at(self.data, WIN_DESCENT) catch return 0;
-    return -(s.read(i16) catch 0);
+    // [KupCAD] saturating: negating -32768 overflowed
+    return 0 -| (s.read(i16) catch 0);
 }
 
 /// Returns typographic line gap.
