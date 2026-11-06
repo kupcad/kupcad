@@ -42,6 +42,16 @@ pub const topology = struct {
     pub const euler = @import("topology/euler.zig");
     pub const check = @import("topology/check.zig");
 };
+/// Constructions: sewing, the primitives, the hull.
+pub const construct = struct {
+    pub const sew = @import("construct/sew.zig");
+    pub const primitives = @import("construct/primitives.zig");
+    pub const hull = @import("construct/hull.zig");
+};
+/// Measures: bounding boxes (volume, area and genus in M1).
+pub const measure = struct {
+    pub const bbox = @import("measure/bbox.zig");
+};
 /// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.
 pub const io = struct {
     pub const body_json = @import("io/body_json.zig");
@@ -50,6 +60,7 @@ pub const io = struct {
 pub const spatial = struct {
     pub const grid = @import("spatial/grid.zig");
     pub const intern = @import("spatial/intern.zig");
+    pub const bvh = @import("spatial/bvh.zig");
 };
 
 /// The first model (September 2026), which the driver still runs on: typed indices over two
@@ -108,6 +119,8 @@ test {
     _ = @import("topology/euler_test.zig");
     _ = @import("topology/check_test.zig");
     _ = @import("io/body_json_test.zig");
+    _ = @import("construct/primitives_test.zig");
+    _ = @import("spatial/bvh_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");
