@@ -50,7 +50,7 @@ pub const Plane = struct {
     }
 
     pub fn normal(self: Plane, _: f64, _: f64) Vec3 {
-        return self.frame.z;
+        return vec.scale(self.frame.z, self.frame.sign());
     }
 
     pub fn project(self: Plane, p: Vec3) Vec2 {
@@ -103,7 +103,7 @@ pub const Cylinder = struct {
     }
 
     pub fn normal(self: Cylinder, u: f64, _: f64) Vec3 {
-        return self.frame.toWorldDir(.{ @cos(u), @sin(u), 0 });
+        return vec.scale(self.frame.toWorldDir(.{ @cos(u), @sin(u), 0 }), self.frame.sign());
     }
 
     pub fn project(self: Cylinder, p: Vec3) Vec2 {
@@ -167,7 +167,7 @@ pub const Cone = struct {
     pub fn normal(self: Cone, u: f64, _: f64) Vec3 {
         const sa = @sin(self.half_angle);
         const ca = @cos(self.half_angle);
-        return self.frame.toWorldDir(.{ ca * @cos(u), ca * @sin(u), -sa });
+        return vec.scale(self.frame.toWorldDir(.{ ca * @cos(u), ca * @sin(u), -sa }), self.frame.sign());
     }
 
     /// The nearest point's parameters: the angle about the axis, and the position along the
@@ -224,7 +224,7 @@ pub const Sphere = struct {
 
     pub fn normal(self: Sphere, u: f64, v: f64) Vec3 {
         const cv = @cos(v);
-        return self.frame.toWorldDir(.{ cv * @cos(u), cv * @sin(u), @sin(v) });
+        return vec.scale(self.frame.toWorldDir(.{ cv * @cos(u), cv * @sin(u), @sin(v) }), self.frame.sign());
     }
 
     pub fn project(self: Sphere, p: Vec3) Vec2 {
@@ -296,7 +296,7 @@ pub const Torus = struct {
 
     pub fn normal(self: Torus, u: f64, v: f64) Vec3 {
         const cv = @cos(v);
-        return self.frame.toWorldDir(.{ cv * @cos(u), cv * @sin(u), @sin(v) });
+        return vec.scale(self.frame.toWorldDir(.{ cv * @cos(u), cv * @sin(u), @sin(v) }), self.frame.sign());
     }
 
     pub fn project(self: Torus, p: Vec3) Vec2 {
@@ -511,8 +511,9 @@ pub const Surface = union(types.SurfaceKind) {
         };
     }
 
-    /// The unit normal of the surface (before any face's `same_sense`): outward for the
-    /// closed analytic kinds.
+    /// The unit normal of the surface (before any face's `same_sense`): `du × dv` made unit,
+    /// which is outward for the closed analytic kinds in a right-handed frame and inward
+    /// in a left-handed one (a mirrored body's faces flip `same_sense` to stay outward).
     pub fn normal(self: Surface, u: f64, v: f64) Vec3 {
         return switch (self) {
             .nurbs => |s| blk: {

@@ -201,8 +201,10 @@ pub const Box2 = struct {
     }
 };
 
-/// A right-handed orthonormal frame at `origin`: the placement of every analytic surface
-/// (STEP's AXIS2_PLACEMENT_3D: `z` is its axis, `x` its reference direction).
+/// An orthonormal frame at `origin`: the placement of every analytic surface (STEP's
+/// AXIS2_PLACEMENT_3D: `z` is its axis, `x` its reference direction). Right-handed as
+/// built; left-handed after a mirror (transform.zig), which keeps every parameterization
+/// exact: the kinds' normals carry `sign`.
 pub const Frame = struct {
     origin: Vec3,
     x: Vec3,
@@ -221,6 +223,11 @@ pub const Frame = struct {
 
     /// The world frame at the origin.
     pub const world: Frame = .{ .origin = vec.ZERO3, .x = vec.X3, .y = vec.Y3, .z = vec.Z3 };
+
+    /// +1 for a right-handed frame (`x × y = z`), −1 for a left-handed one.
+    pub fn sign(self: Frame) f64 {
+        return if (vec.dot(vec.cross(self.x, self.y), self.z) < 0.0) -1.0 else 1.0;
+    }
 
     /// `p` in the frame's coordinates.
     pub fn toLocal(self: Frame, p: Vec3) Vec3 {

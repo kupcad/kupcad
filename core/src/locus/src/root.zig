@@ -27,6 +27,7 @@ pub const geometry = struct {
     pub const surfaces = @import("geometry/surfaces.zig");
     pub const nurbs = @import("geometry/nurbs.zig");
     pub const canonical = @import("geometry/canonical.zig");
+    pub const transform = @import("geometry/transform.zig");
     pub const arena = @import("geometry/arena.zig");
     pub const Geometry = arena.Geometry;
 };
@@ -87,6 +88,7 @@ test {
     _ = @import("geometry/nurbs_test.zig");
     _ = @import("geometry/surfaces_test.zig");
     _ = @import("spatial/intern_test.zig");
+    _ = @import("geometry/transform_test.zig");
 
     _ = @import("legacy/geometry/interning_test.zig");
     _ = @import("legacy/operations/generators_test.zig");
