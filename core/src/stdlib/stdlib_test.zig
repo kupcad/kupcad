@@ -2338,10 +2338,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
     // Locus is unfinished: each of these used to answer 0, a fixed 10 mm cube, an untouched
     // or surface-less copy, or a generic failure.
     const cases = [_]struct { src: []const u8, expected: []const u8 }{
-        .{ .src = comptime rescued("cube(10).translate(5, 0, 0).simplify"), .expected = brepLacks(.transform) }, // lost its planes' positions
-        .{ .src = comptime rescued("cube(10).rotate(0, 0, 45).simplify"), .expected = brepLacks(.transform) }, // was not turned
-        .{ .src = comptime rescued("cylinder(r: 5, h: 10).scale(2).simplify"), .expected = brepLacks(.transform) }, // lost its curved face
-        .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = brepLacks(.transform) },
+        .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = brepLacks(.boolean) }, // kept both solids
         .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = brepLacks(.boolean) },
         .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = brepLacks(.sketch_boolean) }, // was a 3D cube
@@ -2391,6 +2388,10 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).export_dxf(\"c.dxf\")"), .expected = brepLacks(.project) },
         // What it has keeps working.
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).translate(5, 0, 0).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).rotate(0, 0, 45).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10).scale(2).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10).mirror(1, 0, 0).simplify"), .expected = "no error" },
         .{ .src = comptime rescued("batch_hull([cube(10), cube(4, 4, 30)]).simplify"), .expected = "no error" },
         .{ .src = comptime rescued("cube(10).hull.simplify"), .expected = "no error" },
     };

@@ -13,7 +13,9 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 /// STEP writes coordinates with six decimals.
-const STEP_TOLERANCE = 1e-5;
+/// The STEP export writes every number at full precision; the box read from it is exact to
+/// floating point.
+const STEP_TOLERANCE = 1e-9;
 /// What the B-Rep scripts start with.
 const BREP_CONFIG = "CAD.config(engine: :brep)\n";
 

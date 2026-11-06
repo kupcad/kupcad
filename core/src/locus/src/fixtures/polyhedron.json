@@ -1,0 +1,793 @@
+{
+  "version": 1,
+  "kind": "solid",
+  "tolerance": {
+    "zone": 0.00001,
+    "xsect": 0.00002,
+    "approx": 0.000005,
+    "angle": 0.0001,
+    "param": 0.00001
+  },
+  "first_shell": 0,
+  "vertices": [
+    {
+      "point": 0,
+      "gap": 0,
+      "coedge": 0,
+      "tag": 0
+    },
+    {
+      "point": 1,
+      "gap": 0,
+      "coedge": 5,
+      "tag": 0
+    },
+    {
+      "point": 2,
+      "gap": 0,
+      "coedge": 2,
+      "tag": 0
+    },
+    {
+      "point": 3,
+      "gap": 0,
+      "coedge": 1,
+      "tag": 0
+    },
+    {
+      "point": 4,
+      "gap": 0,
+      "coedge": 8,
+      "tag": 0
+    }
+  ],
+  "edges": [
+    {
+      "curve": {
+        "kind": "line",
+        "index": 0
+      },
+      "t0": 0,
+      "t1": 10,
+      "start": 0,
+      "end": 3,
+      "gap": 0,
+      "coedge": 0,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 1
+      },
+      "t0": 0,
+      "t1": 10,
+      "start": 3,
+      "end": 2,
+      "gap": 0,
+      "coedge": 1,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 2
+      },
+      "t0": 0,
+      "t1": 14.14213562373095,
+      "start": 2,
+      "end": 0,
+      "gap": 0,
+      "coedge": 2,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 3
+      },
+      "t0": 0,
+      "t1": 10,
+      "start": 2,
+      "end": 1,
+      "gap": 0,
+      "coedge": 4,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 4
+      },
+      "t0": 0,
+      "t1": 10,
+      "start": 1,
+      "end": 0,
+      "gap": 0,
+      "coedge": 5,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 5
+      },
+      "t0": 0,
+      "t1": 12.24744871391589,
+      "start": 1,
+      "end": 4,
+      "gap": 0,
+      "coedge": 7,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 6
+      },
+      "t0": 0,
+      "t1": 12.24744871391589,
+      "start": 4,
+      "end": 0,
+      "gap": 0,
+      "coedge": 8,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 7
+      },
+      "t0": 0,
+      "t1": 12.24744871391589,
+      "start": 2,
+      "end": 4,
+      "gap": 0,
+      "coedge": 10,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    },
+    {
+      "curve": {
+        "kind": "line",
+        "index": 8
+      },
+      "t0": 0,
+      "t1": 12.24744871391589,
+      "start": 3,
+      "end": 4,
+      "gap": 0,
+      "coedge": 13,
+      "degenerate": false,
+      "seam": false,
+      "approx": false,
+      "regularity": "c0",
+      "tag": 0
+    }
+  ],
+  "coedges": [
+    {
+      "edge": 0,
+      "same_sense": true,
+      "partner": 15,
+      "next": 1,
+      "prev": 2,
+      "loop": 0,
+      "pcurve": null
+    },
+    {
+      "edge": 1,
+      "same_sense": true,
+      "partner": 12,
+      "next": 2,
+      "prev": 0,
+      "loop": 0,
+      "pcurve": null
+    },
+    {
+      "edge": 2,
+      "same_sense": true,
+      "partner": 3,
+      "next": 0,
+      "prev": 1,
+      "loop": 0,
+      "pcurve": null
+    },
+    {
+      "edge": 2,
+      "same_sense": false,
+      "partner": 2,
+      "next": 4,
+      "prev": 5,
+      "loop": 1,
+      "pcurve": null
+    },
+    {
+      "edge": 3,
+      "same_sense": true,
+      "partner": 9,
+      "next": 5,
+      "prev": 3,
+      "loop": 1,
+      "pcurve": null
+    },
+    {
+      "edge": 4,
+      "same_sense": true,
+      "partner": 6,
+      "next": 3,
+      "prev": 4,
+      "loop": 1,
+      "pcurve": null
+    },
+    {
+      "edge": 4,
+      "same_sense": false,
+      "partner": 5,
+      "next": 7,
+      "prev": 8,
+      "loop": 2,
+      "pcurve": null
+    },
+    {
+      "edge": 5,
+      "same_sense": true,
+      "partner": 11,
+      "next": 8,
+      "prev": 6,
+      "loop": 2,
+      "pcurve": null
+    },
+    {
+      "edge": 6,
+      "same_sense": true,
+      "partner": 16,
+      "next": 6,
+      "prev": 7,
+      "loop": 2,
+      "pcurve": null
+    },
+    {
+      "edge": 3,
+      "same_sense": false,
+      "partner": 4,
+      "next": 10,
+      "prev": 11,
+      "loop": 3,
+      "pcurve": null
+    },
+    {
+      "edge": 7,
+      "same_sense": true,
+      "partner": 14,
+      "next": 11,
+      "prev": 9,
+      "loop": 3,
+      "pcurve": null
+    },
+    {
+      "edge": 5,
+      "same_sense": false,
+      "partner": 7,
+      "next": 9,
+      "prev": 10,
+      "loop": 3,
+      "pcurve": null
+    },
+    {
+      "edge": 1,
+      "same_sense": false,
+      "partner": 1,
+      "next": 13,
+      "prev": 14,
+      "loop": 4,
+      "pcurve": null
+    },
+    {
+      "edge": 8,
+      "same_sense": true,
+      "partner": 17,
+      "next": 14,
+      "prev": 12,
+      "loop": 4,
+      "pcurve": null
+    },
+    {
+      "edge": 7,
+      "same_sense": false,
+      "partner": 10,
+      "next": 12,
+      "prev": 13,
+      "loop": 4,
+      "pcurve": null
+    },
+    {
+      "edge": 0,
+      "same_sense": false,
+      "partner": 0,
+      "next": 16,
+      "prev": 17,
+      "loop": 5,
+      "pcurve": null
+    },
+    {
+      "edge": 6,
+      "same_sense": false,
+      "partner": 8,
+      "next": 17,
+      "prev": 15,
+      "loop": 5,
+      "pcurve": null
+    },
+    {
+      "edge": 8,
+      "same_sense": false,
+      "partner": 13,
+      "next": 15,
+      "prev": 16,
+      "loop": 5,
+      "pcurve": null
+    }
+  ],
+  "loops": [
+    {
+      "face": 0,
+      "first": 0,
+      "vertex": null,
+      "next_in_face": null
+    },
+    {
+      "face": 1,
+      "first": 3,
+      "vertex": null,
+      "next_in_face": null
+    },
+    {
+      "face": 2,
+      "first": 6,
+      "vertex": null,
+      "next_in_face": null
+    },
+    {
+      "face": 3,
+      "first": 9,
+      "vertex": null,
+      "next_in_face": null
+    },
+    {
+      "face": 4,
+      "first": 12,
+      "vertex": null,
+      "next_in_face": null
+    },
+    {
+      "face": 5,
+      "first": 15,
+      "vertex": null,
+      "next_in_face": null
+    }
+  ],
+  "faces": [
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 0
+      },
+      "same_sense": true,
+      "first_loop": 0,
+      "shell": 0,
+      "next_in_shell": null,
+      "uv_box": [
+        0,
+        0,
+        10,
+        10
+      ],
+      "approx": false,
+      "tag": 0
+    },
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 0
+      },
+      "same_sense": true,
+      "first_loop": 1,
+      "shell": 0,
+      "next_in_shell": 0,
+      "uv_box": [
+        0,
+        0,
+        10,
+        10
+      ],
+      "approx": false,
+      "tag": 0
+    },
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 1
+      },
+      "same_sense": true,
+      "first_loop": 2,
+      "shell": 0,
+      "next_in_shell": 1,
+      "uv_box": [
+        0,
+        0,
+        10,
+        11.180339887498949
+      ],
+      "approx": false,
+      "tag": 0
+    },
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 2
+      },
+      "same_sense": true,
+      "first_loop": 3,
+      "shell": 0,
+      "next_in_shell": 2,
+      "uv_box": [
+        0,
+        0,
+        10,
+        11.180339887498949
+      ],
+      "approx": false,
+      "tag": 0
+    },
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 3
+      },
+      "same_sense": true,
+      "first_loop": 4,
+      "shell": 0,
+      "next_in_shell": 3,
+      "uv_box": [
+        0,
+        0,
+        10,
+        11.180339887498949
+      ],
+      "approx": false,
+      "tag": 0
+    },
+    {
+      "surface": {
+        "kind": "plane",
+        "index": 4
+      },
+      "same_sense": true,
+      "first_loop": 5,
+      "shell": 0,
+      "next_in_shell": 4,
+      "uv_box": [
+        0,
+        0,
+        10,
+        11.180339887498949
+      ],
+      "approx": false,
+      "tag": 0
+    }
+  ],
+  "shells": [
+    {
+      "first_face": 5,
+      "next_in_body": null,
+      "kind": "outer"
+    }
+  ],
+  "geometry": {
+    "points": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        10,
+        0,
+        0
+      ],
+      [
+        10,
+        10,
+        0
+      ],
+      [
+        0,
+        10,
+        0
+      ],
+      [
+        5,
+        5,
+        10
+      ]
+    ],
+    "lines": [
+      {
+        "o": [
+          0,
+          0,
+          0
+        ],
+        "d": [
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "o": [
+          0,
+          10,
+          0
+        ],
+        "d": [
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "o": [
+          10,
+          10,
+          0
+        ],
+        "d": [
+          -0.7071067811865475,
+          -0.7071067811865475,
+          0
+        ]
+      },
+      {
+        "o": [
+          10,
+          10,
+          0
+        ],
+        "d": [
+          0,
+          -1,
+          0
+        ]
+      },
+      {
+        "o": [
+          10,
+          0,
+          0
+        ],
+        "d": [
+          -1,
+          0,
+          0
+        ]
+      },
+      {
+        "o": [
+          10,
+          0,
+          0
+        ],
+        "d": [
+          -0.408248290463863,
+          0.408248290463863,
+          0.816496580927726
+        ]
+      },
+      {
+        "o": [
+          5,
+          5,
+          10
+        ],
+        "d": [
+          -0.408248290463863,
+          -0.408248290463863,
+          -0.816496580927726
+        ]
+      },
+      {
+        "o": [
+          10,
+          10,
+          0
+        ],
+        "d": [
+          -0.408248290463863,
+          -0.408248290463863,
+          0.816496580927726
+        ]
+      },
+      {
+        "o": [
+          0,
+          10,
+          0
+        ],
+        "d": [
+          0.408248290463863,
+          -0.408248290463863,
+          0.816496580927726
+        ]
+      }
+    ],
+    "circles": [],
+    "ellipses": [],
+    "nurbs_curves": [],
+    "planes": [
+      {
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x": [
+            0,
+            1,
+            0
+          ],
+          "y": [
+            1,
+            0,
+            0
+          ],
+          "z": [
+            0,
+            0,
+            -1
+          ]
+        }
+      },
+      {
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x": [
+            1,
+            0,
+            0
+          ],
+          "y": [
+            0,
+            0.447213595499958,
+            0.894427190999916
+          ],
+          "z": [
+            0,
+            -0.894427190999916,
+            0.447213595499958
+          ]
+        }
+      },
+      {
+        "frame": {
+          "origin": [
+            10,
+            0,
+            0
+          ],
+          "x": [
+            0,
+            1,
+            0
+          ],
+          "y": [
+            -0.447213595499958,
+            0,
+            0.894427190999916
+          ],
+          "z": [
+            0.894427190999916,
+            0,
+            0.447213595499958
+          ]
+        }
+      },
+      {
+        "frame": {
+          "origin": [
+            10,
+            10,
+            0
+          ],
+          "x": [
+            -1,
+            0,
+            0
+          ],
+          "y": [
+            0,
+            -0.447213595499958,
+            0.894427190999916
+          ],
+          "z": [
+            0,
+            0.894427190999916,
+            0.447213595499958
+          ]
+        }
+      },
+      {
+        "frame": {
+          "origin": [
+            0,
+            10,
+            0
+          ],
+          "x": [
+            0,
+            -1,
+            0
+          ],
+          "y": [
+            0.447213595499958,
+            0,
+            0.894427190999916
+          ],
+          "z": [
+            -0.894427190999916,
+            0,
+            0.447213595499958
+          ]
+        }
+      }
+    ],
+    "cylinders": [],
+    "cones": [],
+    "spheres": [],
+    "tori": [],
+    "extrusions": [],
+    "revolutions": [],
+    "nurbs_surfaces": [],
+    "lines2": [],
+    "circles2": [],
+    "nurbs_pcurves": []
+  },
+  "tags": []
+}

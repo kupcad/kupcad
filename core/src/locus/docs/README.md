@@ -4,13 +4,18 @@ Locus is an exact boundary-representation (B-Rep) solid modelling kernel in Zig:
 engine behind KupCAD's `engine: :brep`, and a library of its own. Nothing in Locus imports
 KupCAD.
 
-**Status (2026-11-02): early.** What works today is the data model (typed indices over two
-arenas, half-edges), Euler operators, a validity checker, primitive builders (box,
-cylinder, planar sketches, polyhedra; the sphere is still faceted), transforms, a convex
-hull, a BVH, a STEP writer for planes and cylinders, and snapshot fixtures. Booleans,
-sweeps, trimming, tessellation and the measurements are stubs, and KupCAD's driver refuses
-them (`kernel.Feature`, `supports`). An earlier, larger implementation was removed in
-September 2026; `architecture.md` says why and what replaces it.
+**Status (2026-11-06): M0, the foundations, nearly done.** Locus is a Zig package of its
+own (`build.zig`; `zig build test`, also under wasmtime; `zig build check` for
+wasm32-freestanding), pure Zig over `std`. What works: the math layer (exact predicates,
+solvers), the geometry of `architecture.md` §5.1 with the full parametric contract and
+the NURBS core, interning, the topology of §5.2 with every Euler operator, the checker
+(structural, orientation and geometric rules), tags, the body as JSON, the primitives
+(box, cylinder as two half-faces, the sketch faces, polyhedra), the hull, the BVH,
+bounding boxes, every rigid move, uniform scale and mirror, and the STEP writer at full
+precision. KupCAD's driver runs on this model; booleans, sweeps, tessellation and the
+measures are M1–M5 and are refused until then (`kernel.Feature`, `supports`). The first
+attempt was removed in September 2026, and the first skeleton in November; `architecture.md`
+§2 says why and what replaced them.
 
 **Read `architecture.md`.** It is the plan: goals and non-goals, the state of the code,
 the principles as concrete rules, the package layout, the geometry and topology model,

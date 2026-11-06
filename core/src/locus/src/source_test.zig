@@ -2,8 +2,8 @@
 //! run natively, not under WebAssembly): the layers and what each may import (the layout
 //! table of docs/architecture.md §4), the float mode and no fused multiply-add where
 //! topology is decided (§6), and no host services (file system, threads, process, printing:
-//! §4's targets). `legacy/` is exempt from all but its own layer rule and goes with M0.
-//! Tests and test helpers may import anything; root.zig is the top and has no rule.
+//! §4's targets). Tests and test helpers may import anything; root.zig is the top and
+//! has no rule.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -38,7 +38,6 @@ const RULES = [_]Rule{
     .{ .path = "io/", .may_import = &([_][]const u8{"io/"} ++ MODEL) },
     .{ .path = "boolean/", .may_import = &([_][]const u8{ "boolean/", "io/" } ++ OPERATIONS ++ MODEL) },
     .{ .path = "local/", .may_import = &([_][]const u8{ "local/", "io/" } ++ OPERATIONS ++ MODEL) },
-    .{ .path = "legacy/", .may_import = &.{ "legacy/", "tolerance.zig" } },
 };
 
 /// The directories where topology is decided: no `@mulAdd` there, so every platform rounds
@@ -57,7 +56,7 @@ const HOST_SERVICES = [_][]const u8{ "std.fs.", "std.Thread", "std.process", "st
 const EPSILON_FREE_EXEMPT = [_][]const u8{ "math/", "tolerance.zig", "diagnostics.zig" };
 
 /// Test helpers that aren't named `*_test.zig`: like tests, they may import anything.
-const TEST_HELPERS = [_][]const u8{"legacy/testing/fixture.zig"};
+const TEST_HELPERS = [_][]const u8{};
 
 const MAX_SOURCE = 1 << 22;
 
@@ -152,9 +151,7 @@ fn checkLayers(path: []const u8, source: []const u8) !void {
         };
         var allowed = false;
         for (rule.may_import) |prefix| allowed = allowed or std.mem.startsWith(u8, target, prefix);
-        if (!std.mem.startsWith(u8, path, "legacy/")) for (BASE) |prefix| {
-            allowed = allowed or std.mem.startsWith(u8, target, prefix);
-        };
+        for (BASE) |prefix| allowed = allowed or std.mem.startsWith(u8, target, prefix);
         if (!allowed) {
             std.debug.print("src/{s} imports src/{s}, which the {s} layer may not\n", .{ path, target, rule.path });
             violations += 1;
@@ -173,7 +170,7 @@ test "Layers: every file under src/ imports only what the layout lets its layer"
 const SELF = "source_test.zig";
 
 fn checkFloat(path: []const u8, source: []const u8) !void {
-    if (std.mem.startsWith(u8, path, "legacy/") or std.mem.eql(u8, path, SELF)) return;
+    if (std.mem.eql(u8, path, SELF)) return;
     // Strict is Zig's default and the only mode Locus runs in: nothing loosens it
     if (std.mem.find(u8, source, "@setFloatMode(.optimized)") != null) {
         std.debug.print("src/{s} sets the optimized float mode\n", .{path});
@@ -196,7 +193,7 @@ test "Floats: no file loosens the strict float mode, and none that decides topol
 }
 
 fn checkHostServices(path: []const u8, source: []const u8) !void {
-    if (std.mem.startsWith(u8, path, "legacy/") or isTest(path) or std.mem.eql(u8, path, SELF)) return;
+    if (isTest(path) or std.mem.eql(u8, path, SELF)) return;
     for (HOST_SERVICES) |service| {
         if (std.mem.find(u8, source, service) != null) {
             std.debug.print("src/{s} uses {s}: Locus touches no file system, thread, process or console\n", .{ path, service });
@@ -206,7 +203,7 @@ fn checkHostServices(path: []const u8, source: []const u8) !void {
 }
 
 fn checkEpsilons(path: []const u8, source: []const u8) !void {
-    if (std.mem.startsWith(u8, path, "legacy/") or isTest(path) or std.mem.eql(u8, path, SELF)) return;
+    if (isTest(path) or std.mem.eql(u8, path, SELF)) return;
     for (EPSILON_FREE_EXEMPT) |prefix| if (std.mem.startsWith(u8, path, prefix)) return;
     var lines = std.mem.splitScalar(u8, source, '\n');
     var number: usize = 1;
@@ -255,7 +252,7 @@ test "Layers: an import is resolved against its file, and the longest rule wins"
     try testing.expectEqualStrings("math/vec.zig", resolve(&buf, "tolerance.zig", "math/vec.zig").?);
     try testing.expectEqualStrings("boolean/pave.zig", resolve(&buf, "boolean/pipeline.zig", "./pave.zig").?);
     try testing.expect(resolve(&buf, "math/vec.zig", "../../core/x.zig") == null);
-    try testing.expectEqualStrings("legacy/", ruleFor("legacy/operations/generators.zig").?.path);
+    try testing.expectEqualStrings("construct/", ruleFor("construct/primitives.zig").?.path);
     try testing.expectEqualStrings("io/", ruleFor("io/step_write.zig").?.path);
     try testing.expect(ruleFor("root.zig") == null);
 }

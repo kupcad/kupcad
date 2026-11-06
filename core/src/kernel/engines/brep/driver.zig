@@ -1,750 +1,99 @@
 //! The Locus B-Rep engine's kernel driver: `driver` maps each kernel operation onto Locus
-//! (solids as `BrepSolid`), and `supports` says which ones Locus implements so far, so the
-//! others become errors instead of wrong geometry. Also writes STEP (`exportStep`).
+//! (solids and sketches as `BrepSolid`, a Locus body), and `supports` says which ones Locus
+//! implements so far, so the others become errors instead of wrong geometry. Also writes
+//! STEP (`exportStep`).
 
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
-const path = @import("../../../core/path.zig");
-
-// --- Locus, the B-Rep kernel (the `locus` package, src/locus): its first model, which M0
-// replaces (locus.legacy) ---
-const locus = @import("locus").legacy;
+const locus = @import("locus");
 const parallel_binding = @import("../../../bindings/parallel.zig");
 
 /// The threads Locus's operations may split work over: oneTBB's (src/bindings/parallel.zig).
 pub const parallel = parallel_binding.parallel;
-const locus_math = locus.math;
-const locus_env = locus.math_env;
-const locus_topo_types = locus.topology.types;
-const locus_topo_arena = locus.topology.arena;
-const locus_geom_arena = locus.geometry.arena;
 
-// --- Locus Operations ---
-const locus_gen = locus.operations.generators;
-const locus_sweeps = locus.operations.sweeps;
-const locus_trans = locus.operations.transforms;
-const locus_tess = locus.operations.tessellate;
-const locus_mink = locus.operations.minkowski;
-const locus_bool = locus.operations.booleans;
-const locus_bool2d = locus.operations.booleans_2d;
-const locus_slicing = locus.operations.slicing;
-const locus_qh = locus.operations.quickhull;
-const locus_prop = locus.operations.properties;
-const locus_insp = locus.operations.inspection;
-const locus_proj = locus.operations.projections;
-const locus_query = locus.operations.queries;
-const locus_step = locus.operations.step_export;
-
-/// What Locus allocates its working data and solids with. The driver interface carries no
-/// allocator (Locus is unfinished), so this is libc's general-purpose allocator: it was
-/// std.heap.page_allocator, which gives every allocation, however small, its own pages.
+/// What Locus allocates its bodies with. The driver interface carries no allocator, so this
+/// is libc's general-purpose allocator.
 const backend_allocator = std.heap.c_allocator;
 
-pub const BrepSolid = struct {
-    allocator: std.mem.Allocator,
-    /// The settings the solid was built under (CAD.config); every solid made from it
-    /// keeps them, so a whole model is computed with one tolerance.
-    env: locus_env.MathEnv,
-    t_arena: locus_topo_arena.TopologyArena,
-    g_arena: locus_geom_arena.GeometryArena,
-    solid_id: locus_topo_types.SolidIndex,
+const Affine = locus.math.mat.Affine;
+const Body = locus.Body;
 
-    pub fn create(allocator: std.mem.Allocator, env: locus_env.MathEnv) !*BrepSolid {
-        const self = try allocator.create(BrepSolid);
-        self.* = .{
-            .allocator = allocator,
-            .env = env,
-            .t_arena = locus_topo_arena.TopologyArena.init(),
-            .g_arena = locus_geom_arena.GeometryArena.init(),
-            .solid_id = @fromBackingInt(0),
+/// A solid or a sketch of the B-Rep engine: a Locus body with the limits it was built under.
+pub const BrepSolid = struct {
+    body: Body,
+    /// The bounds on Locus's iterations, from the settings the part was built under.
+    limits: locus.Limits,
+
+    /// Takes `body` into a new handle; on failure the body is freed.
+    pub fn create(body: Body, bounds: locus.Limits) !*BrepSolid {
+        const self = backend_allocator.create(BrepSolid) catch |e| {
+            var b = body;
+            b.deinit();
+            return e;
         };
+        self.* = .{ .body = body, .limits = bounds };
         return self;
     }
 
-    /// An independent copy: Locus has no copy operation, and copying through an identity
-    /// transform dropped the curved surfaces (a cylinder's, a sphere's).
-    pub fn clone(self: *const BrepSolid) !*BrepSolid {
-        const copy = try create(self.allocator, self.env);
-        errdefer copy.destroy();
-        copy.t_arena = try cloneArena(locus_topo_arena.TopologyArena, self.allocator, &self.t_arena);
-        copy.g_arena = try cloneArena(locus_geom_arena.GeometryArena, self.allocator, &self.g_arena);
-        copy.solid_id = self.solid_id;
-        return copy;
+    pub fn destroy(self: *BrepSolid) void {
+        self.body.deinit();
+        backend_allocator.destroy(self);
     }
 
-    pub fn destroy(self: *BrepSolid) void {
-        self.t_arena.deinit(self.allocator);
-        self.g_arena.deinit(self.allocator);
-        self.allocator.destroy(self);
+    /// An independent copy: the same body, index for index.
+    pub fn clone(self: *const BrepSolid) !*BrepSolid {
+        return create(try self.body.clone(backend_allocator), self.limits);
+    }
+
+    fn options(self: *const BrepSolid) locus.Options {
+        return .{ .limits = self.limits, .parallel = parallel };
     }
 };
 
-/// A deep copy of a Locus arena: every list, and every slice its items own (NURBS knots and
-/// control points, which the arena's deinit frees).
-fn cloneArena(comptime Arena: type, allocator: std.mem.Allocator, src: *const Arena) !Arena {
-    var out: Arena = .{};
-    errdefer out.deinit(allocator);
-    inline for (comptime @typeInfo(Arena).@"struct".field_names) |name| {
-        const items = @field(src, name).items;
-        try @field(out, name).ensureTotalCapacityPrecise(allocator, items.len);
-        for (items) |item| @field(out, name).appendAssumeCapacity(try dupeOwned(allocator, item));
-    }
-    return out;
+/// The Locus tolerance for solids built under `config`: every distance tolerance follows
+/// the one `tolerance` (its `zone`); the angular one compares unit directions and never
+/// scales with the model.
+pub fn tolerance(config: *const engine_config.EngineConfig) locus.Tolerance {
+    return locus.Tolerance.fromZone(config.tolerance);
 }
 
-/// `item` with each slice field copied, so the copy owns its own.
-fn dupeOwned(allocator: std.mem.Allocator, item: anytype) !@TypeOf(item) {
-    const T = @TypeOf(item);
-    if (@typeInfo(T) != .@"struct") return item;
-    const info = @typeInfo(T).@"struct";
-    var copy = item;
-    var duped: usize = 0;
-    errdefer inline for (info.field_names, info.field_types, 0..) |name, F, i| {
-        if (comptime isSlice(F)) if (i < duped) allocator.free(@field(copy, name));
-    };
-    inline for (info.field_names, info.field_types, 0..) |name, F, i| {
-        if (comptime isSlice(F)) @field(copy, name) = try allocator.dupe(@typeInfo(F).pointer.child, @field(item, name));
-        duped = i + 1;
-    }
-    return copy;
-}
-
-fn isSlice(comptime T: type) bool {
-    return @typeInfo(T) == .pointer and @typeInfo(T).pointer.size == .slice;
-}
-
-/// The Locus settings for solids built under `config`. Every distance tolerance follows
-/// the one `tolerance`; the angular one compares unit directions, so it doesn't scale with
-/// the model and stays fixed.
-pub fn mathEnv(config: *const engine_config.EngineConfig) locus_env.MathEnv {
-    return .init(.{
-        .vertex_tolerance = config.tolerance,
-        .sewing_tolerance = config.tolerance,
-        .parametric_tolerance = config.tolerance,
-        .angular_tolerance = engine_config.ANGULAR_TOLERANCE,
-        .max_newton_trials = config.brep.max_newton_trials,
-        .max_marching_steps = config.brep.max_marching_steps,
-        .resolution = config.resolution,
-    });
+/// The bounds on Locus's iterations under `config`.
+pub fn limits(config: *const engine_config.EngineConfig) locus.Limits {
+    return .{ .newton_trials = config.brep.max_newton_trials, .marching_steps = config.brep.max_marching_steps };
 }
 
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
-    var step_solids = std.ArrayList(locus_step.StepSolid).empty;
-    defer step_solids.deinit(allocator);
-
+    var bodies = std.ArrayList(*const Body).empty;
+    defer bodies.deinit(allocator);
     for (handles) |h| {
         // Never skipped: a part left out is a wrong file (callers refuse mesh parts first,
         // exporters/export.zig requireExactParts).
         if (h.engine != .brep_native) return error.NotExactGeometry;
-
-        const solid = solidOf(h.ptr);
-        try step_solids.append(allocator, .{
-            .t_arena = &solid.t_arena,
-            .g_arena = &solid.g_arena,
-            .solid_id = solid.solid_id,
-        });
+        try bodies.append(allocator, &solidOf(h.ptr).body);
     }
-
-    if (step_solids.items.len == 0) return error.NoGeometry;
-    return locus_step.buildStepBuffer(allocator, step_solids.items);
-}
-
-fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
-    var pts = std.ArrayList(locus_math.Vec3).empty;
-    var seen = std.AutoHashMap(u32, void).init(allocator);
-    defer seen.deinit();
-
-    for (handles) |h| {
-        const solid = solidOf(h.ptr);
-        const s = solid.t_arena.solids.items[@backingInt(solid.solid_id)];
-        // Point indices are per solid: carried over, the second solid's points looked seen.
-        seen.clearRetainingCapacity();
-
-        for (0..s.shells_len) |s_off| {
-            const shell_idx = solid.t_arena.solid_shells.items[s.shells_start + s_off];
-            const shell = solid.t_arena.shells.items[@backingInt(shell_idx)];
-
-            for (0..shell.faces_len) |f_off| {
-                const face_idx = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
-                const face = solid.t_arena.faces.items[@backingInt(face_idx)];
-
-                for (0..face.loops_len) |l_off| {
-                    const loop_idx = solid.t_arena.face_loops.items[face.loops_start + l_off];
-                    const loop = solid.t_arena.loops.items[@backingInt(loop_idx)];
-                    var curr = loop.first_half_edge;
-
-                    while (true) {
-                        const he = solid.t_arena.half_edges.items[@backingInt(curr)];
-                        const v = solid.t_arena.vertices.items[@backingInt(he.start_vertex)];
-                        const pt_idx = @backingInt(v.point);
-
-                        // Deduplicate points before passing them to Quickhull
-                        if (!seen.contains(pt_idx)) {
-                            try seen.put(pt_idx, {});
-                            try pts.append(allocator, solid.g_arena.points.items[pt_idx]);
-                        }
-
-                        curr = he.next;
-                        if (curr == loop.first_half_edge) break;
-                    }
-                }
-            }
-        }
-    }
-    return pts.toOwnedSlice(allocator);
-}
-
-fn buildHullFromHandles(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
-    const solid = hullOf(handles) catch return null;
-    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
-}
-
-/// The convex hull of the solids' vertices, as a new solid with the first one's settings.
-/// Only the points the hull's faces use become its vertices: the others (inside the hull,
-/// or on a face of it) used to stay behind as unconnected vertices.
-fn hullOf(handles: []const geom.GeometryHandle) !*BrepSolid {
-    const pts = try extractAllVertices(backend_allocator, handles);
-    defer backend_allocator.free(pts);
-    if (pts.len < 4) return error.TooFewPoints;
-
-    var builder = locus_qh.QuickhullBuilder.init(backend_allocator, pts);
-    defer builder.deinit();
-    try builder.buildHull();
-
-    // The hull's triangles, their corners renumbered over the points they use.
-    var corner_of = std.AutoHashMapUnmanaged(u32, u32).empty; // point index -> corner index
-    defer corner_of.deinit(backend_allocator);
-    var corners = std.ArrayList(locus_math.Vec3).empty;
-    defer corners.deinit(backend_allocator);
-    var tris = std.ArrayList([3]u32).empty;
-    defer tris.deinit(backend_allocator);
-    for (builder.faces.items) |hull_face| {
-        if (hull_face.disabled) continue;
-        const he0 = builder.half_edges.items[hull_face.first_half_edge];
-        const he1 = builder.half_edges.items[he0.next_edge];
-        const he2 = builder.half_edges.items[he1.next_edge];
-        const ends = [3]u32{ @intCast(he2.end_vertex), @intCast(he0.end_vertex), @intCast(he1.end_vertex) };
-        var tri: [3]u32 = undefined;
-        for (ends, &tri) |point, *corner| {
-            const entry = try corner_of.getOrPut(backend_allocator, point);
-            if (!entry.found_existing) {
-                entry.value_ptr.* = @intCast(corners.items.len);
-                try corners.append(backend_allocator, pts[point]);
-            }
-            corner.* = entry.value_ptr.*;
-        }
-        try tris.append(backend_allocator, tri);
-    }
-
-    const solid = try BrepSolid.create(backend_allocator, solidOf(handles[0].ptr).env);
-    errdefer solid.destroy();
-    solid.solid_id = try locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, corners.items, tris.items);
-    return solid;
-}
-
-fn destructImpl(handle: geom.GeometryHandle) void {
-    std.debug.assert(handle.engine == .brep_native);
-    if (@intFromPtr(handle.ptr) != 0) {
-        const solid = solidOf(handle.ptr);
-        solid.destroy();
-    }
-}
-
-fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
-    std.debug.assert(handle.engine == .brep_native);
-    if (@intFromPtr(handle.ptr) != 0) {
-        const solid = solidOf(handle.ptr);
-        solid.destroy();
-    }
-}
-
-/// B-Rep has no empty shape yet (supports(.empty) is false, so this is never reached).
-fn emptyImpl(config: *const engine_config.EngineConfig) ?geom.GeometryHandle {
-    _ = config;
-    return null;
-}
-
-fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSectionHandle {
-    _ = config;
-    return null;
-}
-
-fn cubeImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateCube, .{ x, y, z, center });
-}
-
-fn cylinderImpl(config: *const engine_config.EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    _ = r2;
-    _ = segments;
-    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateCylinder, .{ r1, height, center });
-}
-
-fn sphereImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
-    _ = segments;
-    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateSphere, .{radius});
-}
-
-fn squareImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generateSquare, .{ x, y, center });
-}
-
-fn circleImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generateCircle, .{ radius, segments });
-}
-
-/// The face an outline encloses, whichever way it runs: Locus keeps the loop as given,
-/// so a clockwise one is turned around first (Manifold fills either by the even-odd rule).
-fn polygonImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
-    if (path.polygonArea(pts) >= 0) return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygon, .{pts});
-    const turned = allocator.dupe([2]f64, pts) catch return null;
-    defer allocator.free(turned);
-    std.mem.reverse([2]f64, turned);
-    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygon, .{@as([]const [2]f64, turned)});
-}
-
-fn polyhedronImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    _ = allocator;
-    return build(geom.GeometryHandle, mathEnv(config), locus_gen.buildPolyhedron, .{ pts, faces });
-}
-
-fn polygonsEvenOddImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
-    _ = allocator;
-    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygonsEvenOdd, .{contours});
-}
-
-fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
-    _ = slices;
-    _ = twist_degrees;
-    _ = scale_x;
-    _ = scale_y;
-    const src = solidOf(cs.ptr);
-    return build(geom.GeometryHandle, src.env, locus_sweeps.extrudeFace, .{ &src.t_arena, &src.g_arena, faceOf(src), [3]f64{ 0, 0, height }, src.env });
-}
-
-fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    const src = solidOf(cs.ptr);
-    return build(geom.GeometryHandle, src.env, locus_sweeps.revolveFace, .{ &src.t_arena, faceOf(src), @as(u32, @intCast(segments)), revolve_degrees, src.env });
-}
-
-fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_trans.translateSolid, .{ x, y, z });
-}
-
-fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_trans.rotateSolid, .{ x, y, z });
-}
-
-fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_trans.scaleSolid, .{ x, y, z });
-}
-
-fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_trans.transformMatrixSolid, .{mat});
-}
-
-fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
-    const mat3d = [12]f64{
-        mat[0], mat[1], 0.0, mat[2],
-        mat[3], mat[4], 0.0, mat[5],
-        0.0,    0.0,    1.0, 0.0,
-    };
-    return derive(geom.CrossSectionHandle, cs.ptr, locus_trans.transformMatrixSolid, .{mat3d});
-}
-
-fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_trans.mirrorSolid, .{ nx, ny, nz });
-}
-
-/// Not implemented for B-Rep yet (supports(.minkowski) is false).
-fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
-    _ = a;
-    _ = radius;
-    _ = segments;
-    return null;
-}
-
-/// Not implemented for B-Rep yet (supports(.sketch_hull) is false).
-fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    _ = allocator;
-    _ = sketches;
-    return null;
-}
-
-fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
-    _ = miter_limit;
-    _ = join_type;
-    _ = delta;
-    _ = segments;
-    // Not implemented for B-Rep yet. Report failure instead of returning the unchanged
-    // sketch, which would be silently wrong geometry.
-    _ = cs;
-    return null;
-}
-
-fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    // Real check: a Manifold pointer reinterpreted as a BrepSolid silently yields garbage.
-    if (a.engine != .brep_native or b.engine != .brep_native) return null;
-    const other = solidOf(b.ptr);
-    return derive(geom.GeometryHandle, a.ptr, locus_bool.computeBoolean, .{ &other.t_arena, &other.g_arena, other.solid_id, locusBooleanOp(op) });
-}
-
-fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    _ = allocator;
-    if (objs.len == 0) return null;
-
-    for (objs) |obj| if (obj.engine != .brep_native) return null;
-
-    var acc = objs[0];
-    for (objs[1..]) |obj| {
-        // One failed step fails the whole batch; skipping it would drop an operand silently.
-        const res = booleanImpl(acc, obj, op) orelse {
-            if (acc.ptr != objs[0].ptr) destructImpl(acc);
-            return null;
-        };
-        if (acc.ptr != objs[0].ptr) destructImpl(acc);
-        acc = res;
-    }
-    // Never hand back a borrowed input: the caller owns (and will destroy) the result.
-    if (acc.ptr == objs[0].ptr) return cloneImpl(objs[0]);
-    return acc;
-}
-
-fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    if (a.engine != .brep_native or b.engine != .brep_native) return null;
-    const other = solidOf(b.ptr);
-    return derive(geom.GeometryHandle, a.ptr, locus_mink.minkowskiSumConvex, .{ &other.t_arena, &other.g_arena, other.solid_id });
-}
-
-/// `op` over the sketches, one pair at a time (Locus has no batch): the first with the second,
-/// the result with the third, and on. One failed step fails it all.
-fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    _ = allocator;
-    if (sketches.len < 2) return null;
-    var acc = crossSectionBooleanImpl(sketches[0], sketches[1], op) orelse return null;
-    for (sketches[2..]) |cs| {
-        const next = crossSectionBooleanImpl(acc, cs, op);
-        destructCrossSectionImpl(acc);
-        acc = next orelse return null;
-    }
-    return acc;
-}
-
-fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    if (a.engine != .brep_native or b.engine != .brep_native) return null;
-    const other = solidOf(b.ptr);
-    return derive(geom.CrossSectionHandle, a.ptr, locus_bool2d.crossSectionBoolean, .{ &other.t_arena, &other.g_arena, other.solid_id, locusBooleanOp(op) });
-}
-
-fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-    return derive(geom.GeometryHandle, a.ptr, locus_slicing.trimByPlane, .{ nx, ny, nz, offset });
-}
-
-fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
-    return buildHullFromHandles(&[_]geom.GeometryHandle{a});
-}
-
-fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
-    _ = allocator;
-    if (objs.len == 0) return null;
-    for (objs) |obj| if (obj.engine != .brep_native) return null;
-    return buildHullFromHandles(objs);
-}
-
-fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
-    _ = allocator; // Locus allocates with backend_allocator
-    if (a.engine != .brep_native or b.engine != .brep_native) return null;
-
-    const src_a = solidOf(a.ptr);
-    const env = src_a.env;
-    const src_b = solidOf(b.ptr);
-
-    const pts_a = locus_bool2d.extractPolygon(backend_allocator, &src_a.t_arena, &src_a.g_arena, src_a.solid_id) catch return null;
-    defer backend_allocator.free(pts_a);
-
-    const pts_b = locus_bool2d.extractPolygon(backend_allocator, &src_b.t_arena, &src_b.g_arena, src_b.solid_id) catch return null;
-    defer backend_allocator.free(pts_b);
-
-    return build(geom.GeometryHandle, env, locus_sweeps.loftPolygons, .{ pts_a, pts_b, height, env });
-}
-
-fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    // B-Rep decomposition is not implemented: the single "component" is a copy of
-    // the input, because the caller takes ownership of every returned handle.
-    const part = cloneImpl(handle) orelse return null;
-    var res = allocator.alloc(geom.GeometryHandle, 1) catch {
-        destructImpl(part);
-        return null;
-    };
-    res[0] = part;
-    return res;
-}
-
-fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    const src_solid = solidOf(a.ptr);
-    const env = src_solid.env;
-
-    var mesh = locus_tess.Mesh{};
-    defer mesh.deinit(backend_allocator);
-    locus_tess.tessellateSolid(backend_allocator, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, &mesh, env) catch return null;
-
-    const contours = locus_slicing.sliceMeshToContours(backend_allocator, &mesh, height) catch return null;
-    defer {
-        for (contours) |c| backend_allocator.free(c);
-        backend_allocator.free(contours);
-    }
-
-    if (contours.len == 0) return null;
-
-    return build(geom.CrossSectionHandle, env, locus_gen.generatePolygonsEvenOdd, .{contours});
-}
-
-fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
-    const src_solid = solidOf(a.ptr);
-
-    const dest_cs = BrepSolid.create(backend_allocator, src_solid.env) catch return null;
-
-    if (locus_proj.projectSolid(
-        backend_allocator,
-        &dest_cs.t_arena,
-        &dest_cs.g_arena,
-        &src_solid.t_arena,
-        &src_solid.g_arena,
-        src_solid.solid_id,
-    ) catch null) |cs_id| {
-        dest_cs.solid_id = cs_id;
-        return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_cs) };
-    }
-
-    dest_cs.destroy();
-    return null;
-}
-
-fn genusImpl(handle: geom.GeometryHandle) i32 {
-    const solid = solidOf(handle.ptr);
-    return locus_prop.genus(backend_allocator, &solid.t_arena, solid.solid_id);
-}
-
-fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    const solid = solidOf(handle.ptr);
-    if (locus_prop.boundingBox(&solid.t_arena, &solid.g_arena, solid.solid_id)) |bb| {
-        return geom.BoundingBox{ .min = bb.min, .max = bb.max };
-    }
-    return null;
-}
-
-fn volumeImpl(handle: geom.GeometryHandle) f64 {
-    const solid = solidOf(handle.ptr);
-    const env = solid.env;
-    return locus_prop.volume(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, env);
-}
-
-fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
-    const solid = solidOf(handle.ptr);
-    const env = solid.env;
-    return locus_prop.surfaceArea(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, env);
-}
-
-fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
-    const solid = solidOf(handle.ptr);
-    return locus_prop.crossSectionArea(&solid.t_arena, &solid.g_arena, solid.solid_id);
-}
-
-fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
-    const solid = solidOf(handle.ptr);
-    return solid.t_arena.vertices.items.len;
-}
-
-/// Locus does not expose sketch contours yet; null tells the caller this engine can't
-/// answer, so the user gets a clear error instead of a wrong `false`.
-fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
-    _ = handle;
-    _ = pt;
-    _ = tolerance;
-    return null;
-}
-
-/// Locus does not expose sketch contours yet (supports(.sketch_contours) is false).
-fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
-    _ = handle;
-    _ = allocator;
-    return null;
-}
-
-/// Unknown for B-Rep sketches (no contour access yet); callers treat null as "can't tell".
-fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
-    _ = handle;
-    return null;
-}
-
-fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
-    const solid = solidOf(handle.ptr);
-    const bb = locus_prop.crossSectionBounds(&solid.t_arena, &solid.g_arena, solid.solid_id);
-    return .{ .min = .{ bb.min[0], bb.min[1] }, .max = .{ bb.max[0], bb.max[1] } };
-}
-
-fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
-    const solid = solidOf(handle.ptr);
-
-    const l_faces = (locus_insp.queryFaces(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, direction, tolerance) catch return null) orelse return null;
-    defer allocator.free(l_faces); // also when the copy below fails (it used to leak)
-    const handles = allocator.alloc(geom.FaceHandle, l_faces.len) catch return null;
-    for (l_faces, handles) |f, *h| h.* = .{ .index = f.index, .normal = f.normal, .centroid = f.centroid };
-    return handles;
-}
-
-/// Whether `pt` lies in the solid, within `config`'s tolerance (Locus's point test, under
-/// the settings the shape is measured under).
-fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const engine_config.EngineConfig, pt: [3]f64) ?bool {
-    const solid = solidOf(a.ptr);
-    return locus_bool.isPointInsideSolid(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, pt, mathEnv(config));
-}
-
-/// Capped at `sl`, the search length, as Manifold's is: beyond it the gap is not looked for.
-fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    if (a.engine != .brep_native or b.engine != .brep_native) return 0.0;
-
-    const solid_a = solidOf(a.ptr);
-    const env = solid_a.env;
-    const solid_b = solidOf(b.ptr);
-
-    return @min(sl, locus_query.minGap(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id, env));
-}
-
-fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    const solid = solidOf(a.ptr);
-    const env = solid.env;
-
-    if (locus_query.rayCast(alloc, &solid.t_arena, &solid.g_arena, solid.solid_id, o, e, env) catch null) |hits| {
-        var mapped = alloc.alloc(geom.RayHit, hits.len) catch return null;
-        for (hits, 0..) |h, i| mapped[i] = .{ .distance = h.distance, .position = h.position, .normal = h.normal, .crossing = h.crossing };
-        alloc.free(hits);
-        return mapped;
-    }
-    return null;
-}
-
-fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
-    std.debug.assert(handle.engine == .brep_native);
-    const solid = solidOf(handle.ptr);
-    const env = solid.env;
-
-    var mesh = locus_tess.Mesh{};
-    defer mesh.deinit(backend_allocator);
-
-    locus_tess.tessellateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, &mesh, env) catch return null;
-    return copyMesh(allocator, &mesh) catch null;
-}
-
-/// The tessellation in `allocator`'s memory; on failure nothing stays allocated (the
-/// vertices used to leak when the triangles' allocation failed).
-pub fn copyMesh(allocator: std.mem.Allocator, mesh: *const locus_tess.Mesh) !geom.Mesh {
-    const vert_props = try allocator.alloc(f32, mesh.vertices.items.len * 3);
-    errdefer allocator.free(vert_props);
-    for (mesh.vertices.items, 0..) |v, i| {
-        for (0..3) |axis| vert_props[i * 3 + axis] = @floatCast(v[axis]);
-    }
-    const tri_verts = try allocator.alloc(u32, mesh.triangles.items.len * 3);
-    for (mesh.triangles.items, 0..) |t, i| {
-        for (0..3) |corner| tri_verts[i * 3 + corner] = t[corner];
-    }
-    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3 };
-}
-
-fn numVertsImpl(handle: geom.GeometryHandle) usize {
-    std.debug.assert(handle.engine == .brep_native);
-    const solid = solidOf(handle.ptr);
-    return solid.t_arena.vertices.items.len;
-}
-
-/// A B-Rep solid has faces, not triangles; a mesh of it exists only once tessellated.
-fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
-    std.debug.assert(handle.engine == .brep_native);
-    return null;
-}
-
-fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
-    _ = tolerance;
-    // No-op for B-Rep, but must still return a NEW handle (single-owner rule, see kernel.zig).
-    return cloneImpl(a);
-}
-
-fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
-    _ = material_id;
-    // Materials are not stored on B-Rep solids yet; return a copy, never the input.
-    return cloneImpl(a);
-}
-
-fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
-    const copy = solidOf(a.ptr).clone() catch return null;
-    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
-}
-
-/// A B-Rep sketch is a BrepSolid too, so its copy is a solid's.
-fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    const copy = cloneImpl(.{ .engine = a.engine, .ptr = a.ptr }) orelse return null;
-    return .{ .engine = copy.engine, .ptr = copy.ptr };
-}
-
-fn solidOf(ptr: *anyopaque) *BrepSolid {
-    return @ptrCast(@alignCast(ptr));
-}
-
-/// A new B-Rep solid under `env`, made by Locus's `make` into its arenas (`make` takes the
-/// allocator, the new solid's two arenas, then `args`), as a handle of kind `Handle`; null
-/// when Locus fails, nothing kept.
-fn build(comptime Handle: type, env: locus_env.MathEnv, comptime make: anytype, args: anytype) ?Handle {
-    const solid = BrepSolid.create(backend_allocator, env) catch return null;
-    solid.solid_id = @call(.auto, make, .{ backend_allocator, &solid.t_arena, &solid.g_arena } ++ args) catch {
-        solid.destroy();
-        return null;
-    };
-    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
-}
-
-/// `build` from the solid at `src_ptr`, under its settings: `make` takes the new solid's
-/// arenas, then the source's arenas and solid, then `args` and the settings (Locus's
-/// transforms, trims, booleans and Minkowski sums).
-fn derive(comptime Handle: type, src_ptr: *anyopaque, comptime make: anytype, args: anytype) ?Handle {
-    const src = solidOf(src_ptr);
-    return build(Handle, src.env, make, .{ &src.t_arena, &src.g_arena, src.solid_id } ++ args ++ .{src.env});
-}
-
-/// A sketch's one face, which Locus's sweeps take.
-fn faceOf(sketch: *const BrepSolid) locus_topo_types.FaceIndex {
-    return @fromBackingInt(@backingInt(sketch.solid_id));
-}
-
-fn locusBooleanOp(op: kernel.BooleanOp) locus_bool.BooleanOp {
-    return switch (op) {
-        .union_op => .union_op,
-        .difference_op => .difference,
-        .intersection_op => .intersection,
-    };
-}
-
-/// B-Rep solids are validated by Locus as they are built; there is no deferred status.
-fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
-    _ = a;
-    return null;
+    if (bodies.items.len == 0) return error.NoGeometry;
+    return locus.io.step_write.write(allocator, bodies.items);
 }
 
 /// Whether any face of the solid lies on a curved surface. The hull is built from the
 /// solid's vertices, which is the true hull only when every face is flat.
 pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
-    const g = &solidOf(handle.ptr).g_arena;
-    return g.spheres.items.len + g.cylinders.items.len + g.cones.items.len + g.toruses.items.len + g.nurbs_surfaces.items.len > 0;
+    const body = &solidOf(handle.ptr).body;
+    for (body.faces.items) |f| {
+        if (!f.flags.tombstone and f.surface.kind != .plane) return true;
+    }
+    return false;
 }
 
-/// What Locus implements so far: cubes, cylinders, polyhedra, sketches, hulls of flat-faced
-/// solids and STEP export. Its other
-/// operations are still stubs that answer 0, a fixed 10 mm cube, an untouched copy, or
-/// drop the curved surfaces (the transforms), so callers turn these into errors
-/// (kernel.Feature).
+/// What Locus implements so far: boxes, cylinders, polyhedra, sketches (square, circle,
+/// polygon, even-odd polygons), hulls of flat-faced solids, every rigid move, uniform scale
+/// and mirror, and STEP export. Everything else is refused before the driver runs
+/// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform,
+        .transform => true,
         .boolean,
         .extrude,
         .revolve,
@@ -752,7 +101,7 @@ pub fn supports(feature: kernel.Feature) bool {
         .sketch_boolean,
         .sketch_hull,
         .curved_hull,
-        .sphere, // Locus builds a fixed 16-sided faceted one, whatever the resolution
+        .sphere,
         .cone,
         .extrude_twist,
         .extrude_scale,
@@ -838,3 +187,417 @@ pub const driver = struct {
     pub const destructCrossSectionFn = destructCrossSectionImpl;
     pub const setMaterialFn = setMaterialImpl;
 };
+
+// --- building ---
+
+/// A new handle of kind `Handle` around the body `make` builds (given the allocator, the
+/// tolerance, then `args`, then the diagnostics); null when Locus refuses, nothing kept.
+fn build(comptime Handle: type, config: *const engine_config.EngineConfig, comptime make: anytype, args: anytype) ?Handle {
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = @call(.auto, make, .{ backend_allocator, tolerance(config) } ++ args ++ .{&diag}) catch return null;
+    const solid = BrepSolid.create(body, limits(config)) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+/// The solid at `ptr` under `affine`, as a new handle of kind `Handle`; null when Locus
+/// refuses (a non-uniform scale of a curved part), nothing kept.
+fn transformed(comptime Handle: type, ptr: *anyopaque, affine: Affine) ?Handle {
+    const src = solidOf(ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.construct.transform.transform(backend_allocator, &src.body, &affine, src.options(), &diag) catch return null;
+    const solid = BrepSolid.create(body, src.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn solidOf(ptr: *anyopaque) *BrepSolid {
+    return @ptrCast(@alignCast(ptr));
+}
+
+fn cubeImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
+    return build(geom.GeometryHandle, config, locus.construct.primitives.box, .{ x, y, z, center });
+}
+
+/// A cylinder; a cone (`r2 != r1`) is refused before the driver (supports(.cone) is false),
+/// and the exact surface needs no `segments`.
+fn cylinderImpl(config: *const engine_config.EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    _ = segments;
+    if (r2 != r1) return null;
+    return build(geom.GeometryHandle, config, locus.construct.primitives.cylinder, .{ r1, height, center });
+}
+
+/// Not implemented for B-Rep yet (supports(.sphere) is false).
+fn sphereImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
+    _ = config;
+    _ = radius;
+    _ = segments;
+    return null;
+}
+
+fn squareImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.square, .{ x, y, center });
+}
+
+/// An exact circle: `segments` is the mesh engine's and the tessellation's, not the shape's.
+fn circleImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.CrossSectionHandle {
+    _ = segments;
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.circle, .{radius});
+}
+
+/// The face an outline encloses, whichever way it runs (Locus turns a clockwise one around,
+/// as Manifold fills either by the even-odd rule).
+fn polygonImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
+    _ = allocator;
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.polygon, .{pts});
+}
+
+fn polyhedronImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    _ = allocator;
+    return build(geom.GeometryHandle, config, locus.construct.primitives.polyhedron, .{ pts, faces });
+}
+
+fn polygonsEvenOddImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    _ = allocator;
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.polygonsEvenOdd, .{contours});
+}
+
+// --- transforms ---
+
+fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    return transformed(geom.GeometryHandle, a.ptr, Affine.translate(.{ x, y, z }));
+}
+
+/// Rotations about x, then y, then z, in degrees, as the mesh engine's.
+fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    return transformed(geom.GeometryHandle, a.ptr, Affine.rotateXyzDegrees(x, y, z));
+}
+
+fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    return transformed(geom.GeometryHandle, a.ptr, Affine.scaleBy(.{ x, y, z }));
+}
+
+/// The kernel's 3×4 matrix is column-major: the images of the axes, then the translation.
+fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
+    return transformed(geom.GeometryHandle, a.ptr, Affine.fromColumns(mat));
+}
+
+fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
+    return transformed(geom.CrossSectionHandle, cs.ptr, Affine.fromColumns2d(mat));
+}
+
+/// Reflection in the plane through the origin with normal `(nx, ny, nz)`.
+fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
+    const n = locus.math.vec.normalized(.{ nx, ny, nz }) orelse return null;
+    return transformed(geom.GeometryHandle, a.ptr, Affine.mirror(n));
+}
+
+// --- hulls ---
+
+/// The convex hull of the solids' vertices, as a new solid with the first one's settings.
+/// Only the points the hull's faces use become its vertices.
+fn hullOf(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    if (handles.len == 0) return null;
+    for (handles) |h| if (h.engine != .brep_native) return null;
+    var pts = std.ArrayList(locus.math.vec.Vec3).empty;
+    defer pts.deinit(backend_allocator);
+    for (handles) |h| {
+        const body = &solidOf(h.ptr).body;
+        for (body.vertices.items) |v| {
+            if (v.tombstone) continue;
+            pts.append(backend_allocator, body.geometry.point(v.point)) catch return null;
+        }
+    }
+    const first = solidOf(handles[0].ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.construct.hull.hull(backend_allocator, first.body.tol, pts.items, &diag) catch return null;
+    const solid = BrepSolid.create(body, first.limits) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    return hullOf(&.{a});
+}
+
+fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    _ = allocator;
+    return hullOf(objs);
+}
+
+// --- not implemented for B-Rep yet: each is refused before the driver (supports), and
+// answers null here, never a stand-in ---
+
+fn emptyImpl(config: *const engine_config.EngineConfig) ?geom.GeometryHandle {
+    _ = config;
+    return null;
+}
+
+fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSectionHandle {
+    _ = config;
+    return null;
+}
+
+fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
+    _ = cs;
+    _ = height;
+    _ = slices;
+    _ = twist_degrees;
+    _ = scale_x;
+    _ = scale_y;
+    return null;
+}
+
+fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
+    _ = cs;
+    _ = segments;
+    _ = revolve_degrees;
+    return null;
+}
+
+fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
+    _ = a;
+    _ = radius;
+    _ = segments;
+    return null;
+}
+
+fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    _ = allocator;
+    _ = sketches;
+    return null;
+}
+
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
+    _ = cs;
+    _ = delta;
+    _ = join_type;
+    _ = segments;
+    _ = miter_limit;
+    return null;
+}
+
+fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    _ = a;
+    _ = b;
+    _ = op;
+    return null;
+}
+
+/// A batch of one is that solid, copied (the caller owns the result); any more is a boolean.
+fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    _ = allocator;
+    _ = op;
+    if (objs.len != 1 or objs[0].engine != .brep_native) return null;
+    return cloneImpl(objs[0]);
+}
+
+fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    _ = a;
+    _ = b;
+    return null;
+}
+
+fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    _ = allocator;
+    _ = sketches;
+    _ = op;
+    return null;
+}
+
+fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    _ = a;
+    _ = b;
+    _ = op;
+    return null;
+}
+
+fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = nx;
+    _ = ny;
+    _ = nz;
+    _ = offset;
+    return null;
+}
+
+fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    _ = allocator;
+    _ = a;
+    _ = b;
+    _ = height;
+    return null;
+}
+
+/// Decomposition is not implemented: the one "part" is a copy of the input, because the
+/// caller takes ownership of every returned handle.
+fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
+    const part = cloneImpl(handle) orelse return null;
+    const res = allocator.alloc(geom.GeometryHandle, 1) catch {
+        destructImpl(part);
+        return null;
+    };
+    res[0] = part;
+    return res;
+}
+
+fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
+    _ = a;
+    _ = height;
+    return null;
+}
+
+fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
+    _ = a;
+    return null;
+}
+
+fn genusImpl(handle: geom.GeometryHandle) i32 {
+    _ = handle;
+    return 0;
+}
+
+/// The exact box of the part's edges and faces (supports(.bounding_box) stays false until
+/// the parity tests cover it).
+fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
+    const box = locus.measure.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
+    if (box.isEmpty()) return null;
+    return .{ .min = box.min, .max = box.max };
+}
+
+fn volumeImpl(handle: geom.GeometryHandle) f64 {
+    _ = handle;
+    return 0;
+}
+
+fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
+    _ = handle;
+    return 0;
+}
+
+fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
+    _ = handle;
+    return 0;
+}
+
+fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
+    return solidOf(handle.ptr).body.counts().vertices;
+}
+
+/// Locus does not expose sketch contours yet; null tells the caller this engine can't
+/// answer, so the user gets a clear error instead of a wrong `false`.
+fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tol: f64) ?bool {
+    _ = handle;
+    _ = pt;
+    _ = tol;
+    return null;
+}
+
+fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
+    _ = handle;
+    _ = allocator;
+    return null;
+}
+
+fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
+    _ = handle;
+    return null;
+}
+
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
+    const box = locus.measure.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
+    if (box.isEmpty()) return null;
+    return .{ .min = .{ box.min[0], box.min[1] }, .max = .{ box.max[0], box.max[1] } };
+}
+
+fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tol: f64) ?[]geom.FaceHandle {
+    _ = allocator;
+    _ = handle;
+    _ = direction;
+    _ = tol;
+    return null;
+}
+
+fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const engine_config.EngineConfig, pt: [3]f64) ?bool {
+    _ = allocator;
+    _ = a;
+    _ = config;
+    _ = pt;
+    return null;
+}
+
+fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
+    _ = a;
+    _ = b;
+    _ = sl;
+    return 0;
+}
+
+fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
+    _ = alloc;
+    _ = a;
+    _ = o;
+    _ = e;
+    return null;
+}
+
+/// Tessellation is M3's: an empty mesh, as before, so a viewer draws nothing rather than
+/// fails (exports refuse through supports(.mesh)).
+fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
+    _ = handle;
+    const vert_props = allocator.alloc(f32, 0) catch return null;
+    const tri_verts = allocator.alloc(u32, 0) catch {
+        allocator.free(vert_props);
+        return null;
+    };
+    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3 };
+}
+
+fn numVertsImpl(handle: geom.GeometryHandle) usize {
+    return solidOf(handle.ptr).body.counts().vertices;
+}
+
+/// A B-Rep solid has faces, not triangles; a mesh of it exists only once tessellated.
+fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
+    _ = handle;
+    return null;
+}
+
+fn simplifyImpl(a: geom.GeometryHandle, tol: f64) ?geom.GeometryHandle {
+    _ = tol;
+    // No-op for B-Rep, but must still return a NEW handle (single-owner rule, see kernel.zig).
+    return cloneImpl(a);
+}
+
+fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
+    _ = material_id;
+    // Materials are not stored on B-Rep solids yet; return a copy, never the input.
+    return cloneImpl(a);
+}
+
+fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    const copy = solidOf(a.ptr).clone() catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
+}
+
+/// A B-Rep sketch is a BrepSolid too, so its copy is a solid's.
+fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    const copy = cloneImpl(.{ .engine = a.engine, .ptr = a.ptr }) orelse return null;
+    return .{ .engine = copy.engine, .ptr = copy.ptr };
+}
+
+fn destructImpl(handle: geom.GeometryHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) != 0) solidOf(handle.ptr).destroy();
+}
+
+fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) != 0) solidOf(handle.ptr).destroy();
+}
+
+/// B-Rep solids are validated by Locus as they are built; there is no deferred status.
+fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
+    _ = a;
+    return null;
+}

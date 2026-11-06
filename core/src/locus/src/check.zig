@@ -1,7 +1,6 @@
 //! The root of `zig build check`: a library that references everything the module exports,
 //! so that compiling it for a target (wasm32-freestanding, which has no test runner) proves
-//! every public declaration builds there. `legacy` is left out: it reads files and goes
-//! with M0.
+//! every public declaration builds there.
 
 const std = @import("std");
 const locus = @import("locus");
@@ -9,9 +8,7 @@ const locus = @import("locus");
 comptime {
     // The walk over every declaration is long for the compiler's default budget
     @setEvalBranchQuota(1_000_000);
-    for (std.meta.declarations(locus)) |name| {
-        if (!std.mem.eql(u8, name, "legacy")) refAll(@field(locus, name));
-    }
+    for (std.meta.declarations(locus)) |name| refAll(@field(locus, name));
 }
 
 /// References `value` and, when it is a namespace, every declaration in it.

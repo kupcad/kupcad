@@ -57,7 +57,14 @@ the OCCT, SMLib/usd-brep, SolveSpace and libfive sources.
 
 ## 2. Where the code is today
 
-`core/src/locus` holds 6,136 lines. What works: typed indices and the two arenas,
+**2026-11-06, M0 in progress.** The skeleton described below was replaced, item by item of
+`backups/locus-plan/MILESTONES.md`, by the model of §5 on branch `locus-next`: the layout
+of §4 stands, every public operation takes `*Diagnostics` and `Options`, the checker is
+the oracle of every test, and KupCAD's driver runs on it. What the driver still refuses
+(`supports`) is what M1–M5 build. The paragraphs below describe the skeleton as it was on
+2026-11-02, for the record of what was wrong with it.
+
+`core/src/locus` held 6,136 lines. What worked: typed indices and the two arenas,
 half-edges with twins, Euler operators `mev/mef/kef/kev/kemr`, a validity checker,
 primitive builders (box, cylinder as two half-faces with seam edges, square, circle,
 polygon, even-odd polygons, polyhedron), transforms, quickhull, a flat AABB BVH, a

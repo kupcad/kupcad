@@ -3,6 +3,7 @@
 //! `Affine`, the rigid moves, scales and mirrors a body is transformed by. Column vectors:
 //! a point `p` maps to `M·p + t`.
 
+const std = @import("std");
 const vec = @import("vec.zig");
 const Vec3 = vec.Vec3;
 
@@ -141,13 +142,38 @@ pub const Affine = struct {
         } };
     }
 
-    /// From the 3×4 row-major matrix a host gives (KupCAD's `transform`): three rows of
-    /// `(m00 m01 m02 t0)`.
+    /// From the 3×4 row-major matrix: three rows of `(m00 m01 m02 t0)`.
     pub fn fromRows(rows: [12]f64) Affine {
         return .{
             .linear = .{ rows[0], rows[1], rows[2], rows[4], rows[5], rows[6], rows[8], rows[9], rows[10] },
             .translation = .{ rows[3], rows[7], rows[11] },
         };
+    }
+
+    /// From the 3×4 column-major matrix a host gives (KupCAD's `transform`, Manifold's
+    /// layout): the images of the three axes, then the translation.
+    pub fn fromColumns(cols: [12]f64) Affine {
+        return .{
+            .linear = .{ cols[0], cols[3], cols[6], cols[1], cols[4], cols[7], cols[2], cols[5], cols[8] },
+            .translation = .{ cols[9], cols[10], cols[11] },
+        };
+    }
+
+    /// From a 2×3 column-major matrix in the plane `z = 0`: the images of x and y, then
+    /// the translation; z is kept.
+    pub fn fromColumns2d(cols: [6]f64) Affine {
+        return .{
+            .linear = .{ cols[0], cols[2], 0, cols[1], cols[3], 0, 0, 0, 1 },
+            .translation = .{ cols[4], cols[5], 0 },
+        };
+    }
+
+    /// Rotations about x, then y, then z, in degrees (Manifold's `Rotate`).
+    pub fn rotateXyzDegrees(x: f64, y: f64, z: f64) Affine {
+        const rx = rotate(vec.X3, std.math.degreesToRadians(x));
+        const ry = rotate(vec.Y3, std.math.degreesToRadians(y));
+        const rz = rotate(vec.Z3, std.math.degreesToRadians(z));
+        return rz.compose(&ry.compose(&rx));
     }
 
     pub fn point(self: *const Affine, p: Vec3) Vec3 {
