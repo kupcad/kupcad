@@ -1,6 +1,4 @@
 5:3 W [brep-unsupported] volume: the brep engine can't measure volume yet, so this fails when the script runs
-13:8 W [brep-unsupported] cylinder(r1:, r2:): the brep engine can't make cones (a cylinder with r1 different from r2) yet, so this fails when the script runs
-14:8 W [brep-unsupported] sphere: the brep engine can't make exact spheres yet, so this fails when the script runs
 37:7 W [brep-unsupported] -: the brep engine can't combine solids (union, difference, intersection) yet, so this fails when the script runs
 38:10 W [brep-unsupported] +: the brep engine can't combine solids (union, difference, intersection) yet, so this fails when the script runs
 38:16 W [brep-unsupported] extrude: the brep engine can't extrude sketches yet, so this fails when the script runs

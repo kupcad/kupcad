@@ -1,7 +1,8 @@
 //! Engine parity: a script both engines run must mean the same on each. Every primitive and
 //! keyword the B-Rep engine takes builds the same box on it as on Manifold, and an argument
-//! one engine refuses the other refuses with the same error. B-Rep measures nothing yet, so
-//! its box is read from its STEP export: the vertices, and each circle's exact extent.
+//! one engine refuses the other refuses with the same error. The B-Rep box is the kernel's
+//! (its driver bounds every face by its surface's extremes); a STEP export's box, from its
+//! vertices and circles, is checked against it for the shapes it can bound.
 
 const std = @import("std");
 const testing = std.testing;
@@ -12,7 +13,6 @@ const support = @import("../test_support.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
-/// STEP writes coordinates with six decimals.
 /// The STEP export writes every number at full precision; the box read from it is exact to
 /// floating point.
 const STEP_TOLERANCE = 1e-9;
@@ -36,6 +36,13 @@ const SHAPES = [_][]const u8{
     "cylinder(r: 1, segments: 64)",
     "cylinder(h: 2, segments: 64)",
     "cylinder(2, d: 3, h: 1, segments: 64)",
+    // The exact sphere and cone (M1); the mesh sphere has vertices on every axis
+    "sphere(r: 2)",
+    "sphere(d: 3, segments: 64)",
+    "cylinder(r1: 2, r2: 1, h: 3, segments: 64)",
+    "cylinder(r1: 1, r2: 2, h: 3, center: true, segments: 64)",
+    "sphere(r: 2).translate(1, 2, 3).scale(2)",
+    "cylinder(r1: 2, r2: 1, h: 3, segments: 64).rotate(x: 90)",
     // Moves, turns, scales and mirrors (M0): the matrix is the images of the axes, then
     // the translation; a cylinder turned a quarter keeps its extremes on the axes
     "cube(2).translate(1, 2, 3)",
@@ -83,8 +90,8 @@ const REFUSED = [_][]const u8{
 test "parity: each shape both engines build has the same box on each" {
     for (SHAPES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});
-        const mesh_box = try manifoldBox(source);
-        const brep_box = try brepBox(source);
+        const mesh_box = try boxOn(.manifold, source);
+        const brep_box = try boxOn(.brep_native, source);
         for (0..3) |k| {
             try testing.expectApproxEqAbs(mesh_box.min[k], brep_box.min[k], STEP_TOLERANCE);
             try testing.expectApproxEqAbs(mesh_box.max[k], brep_box.max[k], STEP_TOLERANCE);
@@ -92,11 +99,26 @@ test "parity: each shape both engines build has the same box on each" {
     }
 }
 
+test "parity: a STEP export's vertices and circles bound what the kernel bounds, for the shapes they reach" {
+    // A sphere's extent is not in its vertices (the poles) or its one meridian circle, so
+    // the STEP box is checked for the others
+    for (SHAPES) |source| {
+        if (std.mem.indexOf(u8, source, "sphere") != null) continue;
+        errdefer std.debug.print("script: {s}\n", .{source});
+        const brep_box = try boxOn(.brep_native, source);
+        const step_box = try stepBoxOf(source);
+        for (0..3) |k| {
+            try testing.expectApproxEqAbs(brep_box.min[k], step_box.min[k], STEP_TOLERANCE);
+            try testing.expectApproxEqAbs(brep_box.max[k], step_box.max[k], STEP_TOLERANCE);
+        }
+    }
+}
+
 test "parity: a non-uniform scale of a curved part is refused on the B-Rep engine and built on the mesh engine" {
     for (BREP_REFUSES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});
-        _ = try manifoldBox(source);
-        try testing.expectError(error.RuntimeError, brepBox(source));
+        _ = try boxOn(.manifold, source);
+        try testing.expectError(error.RuntimeError, stepBoxOf(source));
     }
 }
 
@@ -199,20 +221,21 @@ fn rescuedMessage(source: []const u8, buf: []u8) ![]const u8 {
     return buf[0..text.len];
 }
 
-fn manifoldBox(source: []const u8) !geom.BoundingBox {
+/// The kernel's box of what `source` builds on `engine`.
+fn boxOn(engine: geom.EngineType, source: []const u8) !geom.BoundingBox {
     var vm = try support.initVm();
     defer vm.deinit();
     var script: std.Io.Writer.Allocating = .init(testing.allocator);
     defer script.deinit();
-    try script.writer.print("r = {s}", .{source});
+    try script.writer.print("{s}r = {s}", .{ if (engine == .brep_native) BREP_CONFIG else "", source });
     try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
     const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
-    try testing.expectEqual(geom.EngineType.manifold, handle.engine);
+    try testing.expectEqual(engine, handle.engine);
     return kernel.boundingBox(handle) orelse error.NoBounds;
 }
 
 /// The box of the B-Rep solid the script builds, read from its STEP export.
-fn brepBox(source: []const u8) !geom.BoundingBox {
+fn stepBoxOf(source: []const u8) !geom.BoundingBox {
     const step = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .step });
     defer testing.allocator.free(step);
     return stepBox(testing.allocator, step);

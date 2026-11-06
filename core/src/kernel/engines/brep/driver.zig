@@ -124,13 +124,13 @@ pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
     return false;
 }
 
-/// What Locus implements so far: boxes, cylinders, polyhedra, sketches (square, circle,
-/// polygon, even-odd polygons), hulls of flat-faced solids, every rigid move, uniform scale
-/// and mirror, and STEP export. Everything else is refused before the driver runs
+/// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
+/// (square, circle, polygon, even-odd polygons), hulls of flat-faced solids, every rigid
+/// move, uniform scale and mirror, and STEP export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform => true,
+        .transform, .sphere, .cone => true,
         .boolean,
         .extrude,
         .revolve,
@@ -138,8 +138,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .sketch_boolean,
         .sketch_hull,
         .curved_hull,
-        .sphere,
-        .cone,
         .extrude_twist,
         .extrude_scale,
         .offset,
@@ -263,20 +261,18 @@ fn cubeImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, z: f64, c
     return build(geom.GeometryHandle, config, locus.construct.primitives.box, .{ x, y, z, center });
 }
 
-/// A cylinder; a cone (`r2 != r1`) is refused before the driver (supports(.cone) is false),
-/// and the exact surface needs no `segments`.
+/// A cylinder, or a cone when the radii differ (an apex where one is 0); the exact surface
+/// needs no `segments`.
 fn cylinderImpl(config: *const engine_config.EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
     _ = segments;
-    if (r2 != r1) return null;
-    return build(geom.GeometryHandle, config, locus.construct.primitives.cylinder, .{ r1, height, center });
+    if (r2 == r1) return build(geom.GeometryHandle, config, locus.construct.primitives.cylinder, .{ r1, height, center });
+    return build(geom.GeometryHandle, config, locus.construct.primitives.cone, .{ r1, r2, height, center });
 }
 
-/// Not implemented for B-Rep yet (supports(.sphere) is false).
+/// The exact sphere: two hemispheres; `segments` is the mesh engine's.
 fn sphereImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
-    _ = config;
-    _ = radius;
     _ = segments;
-    return null;
+    return build(geom.GeometryHandle, config, locus.construct.primitives.sphere, .{radius});
 }
 
 fn squareImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {

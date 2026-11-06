@@ -27,13 +27,33 @@ test "Driver: the primitives it has, each a valid body with the right counts" {
     try std.testing.expectEqual(@as(usize, 4), driver.driver.numVertsFn(cyl));
     try std.testing.expect(driver.hasCurvedFaces(cyl));
     try std.testing.expect(!driver.hasCurvedFaces(cube));
-    // A cone is refused (supports(.cone) is false): never a plain cylinder in its place
-    try std.testing.expect(driver.driver.cylinderFn(&TEST_CONFIG, 5, 2, 15, true, 32) == null);
-    // Spheres are not built yet
-    try std.testing.expect(driver.driver.sphereFn(&TEST_CONFIG, 5, 0) == null);
-    try std.testing.expect(!driver.supports(.sphere));
     // Bad arguments are refused, nothing kept
     try std.testing.expect(driver.driver.cubeFn(&TEST_CONFIG, 0, 10, 10, true) == null);
+    try std.testing.expect(driver.driver.cylinderFn(&TEST_CONFIG, 0, 0, 15, true, 32) == null);
+    try std.testing.expect(driver.driver.sphereFn(&TEST_CONFIG, -1, 0) == null);
+}
+
+test "Driver: the exact sphere and cone, their boxes, and the mesh engine's segments ignored" {
+    const sphere = driver.driver.sphereFn(&TEST_CONFIG, 4, 7) orelse return error.SphereFailed;
+    defer driver.driver.destructFn(sphere);
+    try std.testing.expectEqual(@as(usize, 2), driver.driver.numVertsFn(sphere));
+    try std.testing.expectEqual([3]f64{ -4, -4, -4 }, (try boxOf(sphere)).min);
+    try std.testing.expectEqual([3]f64{ 4, 4, 4 }, (try boxOf(sphere)).max);
+    try std.testing.expectEqual(@as(usize, 1), bodyOf(sphere).geometry.spheres.items.len);
+
+    const frustum = driver.driver.cylinderFn(&TEST_CONFIG, 3, 1, 6, true, 5) orelse return error.ConeFailed;
+    defer driver.driver.destructFn(frustum);
+    try std.testing.expectEqual(@as(usize, 4), driver.driver.numVertsFn(frustum));
+    try std.testing.expectEqual([3]f64{ -3, -3, -3 }, (try boxOf(frustum)).min);
+    try std.testing.expectEqual([3]f64{ 3, 3, 3 }, (try boxOf(frustum)).max);
+    try std.testing.expectEqual(@as(usize, 1), bodyOf(frustum).geometry.cones.items.len);
+
+    const pointed = driver.driver.cylinderFn(&TEST_CONFIG, 0, 2, 5, false, 5) orelse return error.ConeFailed;
+    defer driver.driver.destructFn(pointed);
+    try std.testing.expectEqual(@as(usize, 3), driver.driver.numVertsFn(pointed));
+    try std.testing.expect(driver.supports(.sphere));
+    try std.testing.expect(driver.supports(.cone));
+    try std.testing.expect(driver.hasCurvedFaces(sphere));
 }
 
 test "Driver: transforms keep the topology and move the box; the matrix is column-major" {

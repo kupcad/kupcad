@@ -2349,9 +2349,9 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.revolve) }, // before measuring the profile for its segments
         .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
-        .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
+        .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = "no error" }, // was a plain cylinder; exact since M1
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = brepLacks(.extrude) }, // a prism is an extrusion
-        .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = brepLacks(.sphere) }, // was 16-sided whatever the resolution
+        .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = "no error" }, // was 16-sided whatever the resolution; exact since M1
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
@@ -2362,7 +2362,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
-        .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
+        .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
         .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
