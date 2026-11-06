@@ -151,3 +151,18 @@ test "allocation failure: every operation on a body leaves nothing allocated and
     try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opCompact});
     try testing.checkAllAllocationFailures(testing.allocator, withBody, .{opBvh});
 }
+
+test "cancel: a flag set before the call is error.Canceled, with nothing allocated and the input untouched" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var body = try primitives.cylinder(testing.allocator, tol, 2, 5, true, &diag);
+    defer body.deinit();
+    const before = try body_json.dump(testing.allocator, &body);
+    defer testing.allocator.free(before);
+    var flag = std.atomic.Value(bool).init(true);
+    const affine = mat.Affine.translate(.{ 1, 0, 0 });
+    try testing.expectError(error.Canceled, transform.transform(testing.allocator, &body, &affine, .{ .cancel = &flag }, &diag));
+    const after = try body_json.dump(testing.allocator, &body);
+    defer testing.allocator.free(after);
+    try testing.expectEqualStrings(before, after);
+}
