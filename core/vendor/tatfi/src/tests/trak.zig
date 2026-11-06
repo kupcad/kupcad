@@ -65,9 +65,9 @@ test "basic" {
     try t.expectEqual(-1.0, table.horizontal.tracks.get(0).?.value);
     try t.expectEqual(0.0, table.horizontal.tracks.get(1).?.value);
     try t.expectEqual(1.0, table.horizontal.tracks.get(2).?.value);
-    try t.expectEqual(256, @intFromEnum(table.horizontal.tracks.get(0).?.name_index));
-    try t.expectEqual(258, @intFromEnum(table.horizontal.tracks.get(1).?.name_index));
-    try t.expectEqual(257, @intFromEnum(table.horizontal.tracks.get(2).?.name_index));
+    try t.expectEqual(256, @backingInt(table.horizontal.tracks.get(0).?.name_index));
+    try t.expectEqual(258, @backingInt(table.horizontal.tracks.get(1).?.name_index));
+    try t.expectEqual(257, @backingInt(table.horizontal.tracks.get(2).?.name_index));
     try t.expectEqual(2, table.horizontal.tracks.get(0).?.values.len());
     try t.expectEqual(-15, table.horizontal.tracks.get(0).?.values.get(0).?);
     try t.expectEqual(-7, table.horizontal.tracks.get(0).?.values.get(1).?);

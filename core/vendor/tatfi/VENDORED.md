@@ -120,5 +120,6 @@ tests couldn't run in KupCAD's target and mode.
 ## Updating
 
 Copy the files above from a newer upstream commit over these, apply the changes listed here
-again unless upstream has them, update the commit above, and run `zig build test` (it runs
-tatfi's own tests too).
+again unless upstream has them, update the commit above, run `zig fmt core/vendor/tatfi` (upstream
+leaves a few files unformatted; ours are kept as `zig fmt` writes them), and run `zig build test`
+(it runs tatfi's own tests too).

@@ -63,7 +63,7 @@ test "basic" {
     try t.expectEqual(0, feature0.feature);
     try t.expectEqual(1, feature0.setting_names.len());
     try t.expectEqual(false, feature0.exclusive);
-    try t.expectEqual(260, @intFromEnum(feature0.name_index));
+    try t.expectEqual(260, @backingInt(feature0.name_index));
 
     const feature2 = table.names.get(2).?;
     try t.expectEqual(3, feature2.feature);
@@ -71,7 +71,7 @@ test "basic" {
     try t.expectEqual(true, feature2.exclusive);
 
     try t.expectEqual(3, feature2.setting_names.get(1).?.setting);
-    try t.expectEqual(264, @intFromEnum(feature2.setting_names.get(1).?.name_index));
+    try t.expectEqual(264, @backingInt(feature2.setting_names.get(1).?.name_index));
 
     const feature3 = table.names.get(3).?;
     try t.expectEqual(1, feature3.default_setting_index);
