@@ -8,8 +8,9 @@ const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
 const path = @import("../../../core/path.zig");
 
-// --- Locus, the B-Rep kernel (the `locus` package, src/locus) ---
-const locus = @import("locus");
+// --- Locus, the B-Rep kernel (the `locus` package, src/locus): its first model, which M0
+// replaces (locus.legacy) ---
+const locus = @import("locus").legacy;
 const locus_math = locus.math;
 const locus_env = locus.math_env;
 const locus_topo_types = locus.topology.types;

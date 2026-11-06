@@ -28,6 +28,30 @@ pub fn build(b: *std.Build) void {
         .root_module = module,
         .filters = test_filters,
     });
-    const test_step = b.step("test", "Run Locus's tests");
-    test_step.dependOn(&b.addRunArtifact(tests).step);
+    // `zig build check` compiles a library that references every public declaration, for a
+    // target the tests can't run on (wasm32-freestanding, which has no test runner).
+    const check = b.addLibrary(.{
+        .linkage = .static,
+        .name = "locus_check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "locus", .module = module }},
+        }),
+    });
+    const check_step = b.step("check", "Compile every public declaration for the target (wasm32-freestanding has no test runner)");
+    check_step.dependOn(&check.step);
+
+    const test_step = b.step("test", "Run Locus's tests (through wasmtime on wasm32)");
+    test_step.dependOn(&runTests(b, tests, target).step);
+}
+
+/// The tests run: natively as they are, on wasm32 through wasmtime (KupCAD's wasm job runs
+/// them so too).
+pub fn runTests(b: *std.Build, tests: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) *std.Build.Step.Run {
+    if (target.result.cpu.arch != .wasm32) return b.addRunArtifact(tests);
+    const run = b.addSystemCommand(&.{ "wasmtime", "--" });
+    run.addFileArg2(tests.getEmittedBin(), .{});
+    return run;
 }

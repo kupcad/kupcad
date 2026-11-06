@@ -547,8 +547,15 @@ pub fn build(b: *std.Build) void {
         run_wasm_test.addArg("--");
         run_wasm_test.addFileArg2(wasm_test.getEmittedBin(), .{});
 
+        // Locus's own tests on wasm32 too: its tests of the sources (layers, float mode)
+        // skip there, everything else runs, as it will in the browser
+        const locus_wasm_tests = b.addTest(.{ .root_module = locus.module("locus") });
+        const run_locus_wasm_tests = b.addSystemCommand(&.{ "wasmtime", "--" });
+        run_locus_wasm_tests.addFileArg2(locus_wasm_tests.getEmittedBin(), .{});
+
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
+        test_wasm_step.dependOn(&run_locus_wasm_tests.step);
 
         // tatfi's own tests, with every table it reads, on wasm32 too: its offsets and lengths
         // are usize, 32 bits there, where a font's u32s can overflow them

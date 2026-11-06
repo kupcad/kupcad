@@ -10,7 +10,7 @@ const chunk = kupcad.chunk;
 const value = kupcad.value;
 
 // Locus CAD Native Imports
-const locus = kupcad.locus;
+const locus = kupcad.locus.legacy;
 const math = locus.math;
 const eigen = locus.eigen;
 

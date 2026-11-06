@@ -307,43 +307,22 @@ pub const Fixture = struct {
         };
     }
 
-    /// Snapshot testing: fails unless the solid's state is the snapshot at `file_path` (its
-    /// JSON, `dump`'s). A snapshot that isn't there is error.SnapshotMissing, the state
-    /// printed to save as one once reviewed: it was written on the spot, relative to wherever
-    /// the tests ran, and the test failed only that once.
+    /// Snapshot testing: fails unless the solid's state is `expected_json` (`dump`'s JSON,
+    /// the embedded fixture named `name`), with the two shown apart. The snapshots were read
+    /// from disk by a path, which no WebAssembly run of the tests can reach.
     pub fn matchSnapshot(
         allocator: std.mem.Allocator,
-        io: std.Io,
-        file_path: []const u8,
+        name: []const u8,
+        expected_json: []const u8,
         t_arena: *const topo_arena.TopologyArena,
         g_arena: *const geom_arena.GeometryArena,
         solid_idx: topo_types.SolidIndex,
         env: math_env.MathEnv,
     ) !void {
-        // 1. Generate the current topological state as JSON
         const current_json = try dump(allocator, t_arena, g_arena, solid_idx, env);
         defer allocator.free(current_json);
-
-        // 2. Open the snapshot
-        var file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| {
-            if (err == error.FileNotFound) {
-                std.debug.print("\n[X] No snapshot at {s}. Its state now, to review and save there:\n{s}\n", .{ file_path, current_json });
-                return error.SnapshotMissing;
-            }
-            return err;
-        };
-        defer file.close(io);
-
-        // 3. Verify it
-        const file_len = try file.length(io);
-        const expected_json = try allocator.alloc(u8, file_len);
-        defer allocator.free(expected_json);
-
-        const read_len = try std.Io.File.readPositionalAll(file, io, expected_json, 0);
-
-        // Uses std.testing to give us a nice diff output if the geometries diverge
-        std.testing.expectEqualStrings(expected_json[0..read_len], current_json) catch |err| {
-            std.log.err("\n[X] Snapshot mismatch for {s}! The generator logic has changed.\n", .{file_path});
+        std.testing.expectEqualStrings(expected_json, current_json) catch |err| {
+            std.debug.print("\nSnapshot mismatch for {s}: the generator changed. Its state now, to review and save there:\n{s}\n", .{ name, current_json });
             return err;
         };
     }
