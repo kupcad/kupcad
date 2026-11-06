@@ -2,6 +2,10 @@
 # exported 3MF files with.
 lib3mf==2.5.0
 
+# OpenCascade's Python bindings, which `pnpm check:step` (scripts/validate-step.py) reads
+# exported STEP files with: its reader, its shape checker and its volume.
+cadquery-ocp==8.0.1.1.0
+
 # ezdxf, which `pnpm check:drawings` (scripts/validate-drawings.py) reads exported DXF files
 # with, its auditor finding what a reader would have to fix.
 ezdxf==1.4.2

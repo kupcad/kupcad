@@ -336,6 +336,12 @@ jobs:
           pip install -r core/scripts/requirements.txt
           pnpm check:3mf
 
+      # OpenCascade reads every kind the B-Rep engine writes to STEP: a shape its checker
+      # finds invalid, a face count other than Locus's, or a volume off the exact one fails.
+      - name: Validate exported STEP with OpenCascade
+        if: matrix.name == 'linux debug'
+        run: pnpm check:step
+
       # ezdxf's recovering reader and auditor: an error, or anything it had to fix, fails
       # the check; an SVG must be well-formed XML with a path per shape.
       - name: Validate exported SVG and DXF
