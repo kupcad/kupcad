@@ -97,4 +97,29 @@ describe('a context menu', () => {
     expect(onclose).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(elsewhere);
   });
+
+  it.each([
+    ['the window is resized', () => window.dispatchEvent(new Event('resize'))],
+    ['the page scrolls', () => document.body.dispatchEvent(new Event('scroll'))],
+    [
+      'a pointer is pressed elsewhere (a splitter, which takes the pointer)',
+      () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })),
+    ],
+  ])('closes, nothing done, when %s: what it was at may have moved', async (_, happen) => {
+    // It stayed where it opened while the layout moved under it
+    const { onclose, rename, remove, menu } = menuAt();
+    happen();
+    expect(menu.dataset.shown).toBeUndefined();
+    await toggled();
+    expect(onclose).toHaveBeenCalledOnce();
+    expect(rename).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('stays open as a pointer is pressed on it, or it scrolls itself', () => {
+    const { menu } = menuAt();
+    item('Delete…').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    menu.dispatchEvent(new Event('scroll'));
+    expect(menu.dataset.shown).toBe('true');
+  });
 });

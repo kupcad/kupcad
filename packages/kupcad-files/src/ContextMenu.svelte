@@ -4,7 +4,9 @@
   one: in the page's top layer (an auto popover), moved in to stay in the window. It takes the
   focus, on its first item; the arrow keys, Home and End move between its items. Choosing one
   closes it and does what it says; Escape, a click elsewhere or the focus leaving close it with
-  nothing done. Closed either way, it says so (`onclose`, for the host to drop it), the focus
+  nothing done, and so does the layout moving under it (the window resized, the page scrolled, a
+  pointer pressed elsewhere, as on a splitter): it doesn't follow what it was opened at, as a
+  system's menu doesn't. Closed either way, it says so (`onclose`, for the host to drop it), the focus
   back where it was unless it went elsewhere.
 -->
 <script>
@@ -83,11 +85,24 @@
     all[next]?.focus();
   }
 
+  /**
+   * Something outside it scrolled, or a pointer was pressed there: it closes, as what it was
+   * opened at may move. Heard as the event goes down, so a splitter that takes the pointer (and
+   * so keeps the browser from closing it) can't stop it.
+   * @param {Event} event
+   */
+  function elsewhere(event) {
+    if (!menu?.contains(/** @type {Node | null} */ (event.target))) close();
+  }
+
   /** The focus left it (Tab, a click on something that takes it): it closes. @param {FocusEvent} event */
   function focusout(event) {
     if (!menu?.contains(/** @type {Node | null} */ (event.relatedTarget))) close();
   }
 </script>
+
+<svelte:window onresize={close} />
+<svelte:document onscrollcapture={elsewhere} onpointerdowncapture={elsewhere} />
 
 <div
   bind:this={bound}
