@@ -263,7 +263,8 @@ Every public function's doc comment states what it assumes, what it returns, how
 fail and roughly what it costs, in the plain style of KupCAD's own docs.
 
 **Licensing.** The reference kernels are sources of ideas, not code: OCCT is LGPL,
-SolveSpace GPL-3, SMLib proprietary, libfive MPL-2. Nothing is copied from them. Shewchuk's
+SolveSpace GPL-3, SMLib proprietary, libfive MPL-2, SolidCraft MIT or Apache-2.0 (read for
+its test apparatus and record rules, 2026-11-07). Nothing is copied from them. Shewchuk's
 predicates are public domain and are ported; the books' algorithms are reimplemented from
 their descriptions.
 

@@ -9,8 +9,8 @@ elsewhere is listed here; nothing else is copied.
 | The NURBS algorithms (`src/geometry/nurbs.zig`), by their numbers | Piegl and Tiller, *The NURBS Book*, 2nd ed. | The book's pseudocode, reimplemented | Written from the descriptions, tested on the book's examples |
 
 The other kernels read while planning and building Locus — OCCT (LGPL-2.1), SolveSpace
-(GPL-3), SMLib and usd-brep (proprietary), libfive (MPL-2) — contributed ideas and test
-cases only: data structures, phase orders, tolerance schemes, the lists of what goes wrong.
+(GPL-3), SMLib and usd-brep (proprietary), libfive (MPL-2), SolidCraft (MIT OR Apache-2.0)
+— contributed ideas and test cases only: data structures, phase orders, tolerance schemes, the lists of what goes wrong.
 No code of theirs is in this tree; KupCAD is dual-licensed, so none could be.
 
 The validators CI runs over Locus's exports (OpenCascade through the OCP bindings for
