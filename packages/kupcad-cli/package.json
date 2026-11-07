@@ -1,0 +1,41 @@
+{
+  "name": "kupcad",
+  "version": "0.1.11",
+  "description": "KupCAD, code-CAD in a Ruby-like language: the kupcad command (build, run, watch, check, fmt, the language server), the native build for this system.",
+  "keywords": [
+    "3d",
+    "3mf",
+    "cad",
+    "code-cad",
+    "kupcad",
+    "step",
+    "stl"
+  ],
+  "homepage": "https://kupcad.org",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-cli"
+  },
+  "bin": {
+    "kupcad": "bin/kupcad.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "!**/*.test.js"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p jsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

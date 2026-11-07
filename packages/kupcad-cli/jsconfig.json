@@ -1,0 +1,7 @@
+{
+  "extends": "../../jsconfig.base.json",
+  "compilerOptions": {
+    "maxNodeModuleJsDepth": 0
+  },
+  "include": ["bin", "lib", "scripts"]
+}

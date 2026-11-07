@@ -557,6 +557,25 @@ jobs:
           for dir in artifacts/symbols-*; do mv "$dir" "binaries/${dir#artifacts/symbols-}/symbols"; done
           core/scripts/package-release.sh "$VERSION" binaries dist
 
+      # The kupcad command for npm, of the archives just made: each system's package (its kupcad,
+      # licenses and notices) and `kupcad`, which runs the one npm installed. Packed here, as an
+      # artifact keeps no file's mode and a tarball keeps kupcad runnable; the npm job publishes them
+      - name: Pack the command for npm
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node packages/kupcad-cli/scripts/pack.js "$VERSION" dist npm-staged
+          mkdir npm-command
+          for dir in npm-staged/*; do npm pack "./$dir" --pack-destination npm-command; done
+          ls -l npm-command
+
+      - name: Keep the command's packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-command
+          path: npm-command/
+          if-no-files-found: error
+
       # The desktop app's installers beside the CLI, their SHA-256 in the same checksums.txt, and
       # the updater's latest.json, which holds their signatures (so the .sig files aren't shipped):
       # the apps installed read it as the latest release's (tauri.conf.json's endpoint), so a
@@ -655,6 +674,28 @@ jobs:
               continue
             fi
             npm publish "./npm/kupcad-$name-$VERSION.tgz" --provenance --access public --tag "$tag"
+          done
+
+      - name: Collect the command's packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-command
+          path: npm-command
+
+      # Each system's kupcad before `kupcad`, which depends on them; one on npm already skipped
+      - name: Publish the command
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tag=latest
+          if [[ $VERSION == *-* ]]; then tag=next; fi
+          for tarball in npm-command/kupcad-cli-*.tgz "npm-command/kupcad-$VERSION.tgz"; do
+            name=$(tar -xOzf "$tarball" package/package.json | jq -r .name)
+            if [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "$name@$VERSION is on npm already"
+              continue
+            fi
+            npm publish "./$tarball" --provenance --access public --tag "$tag"
           done
 
   # The Visual Studio Marketplace's trusted publishing: the job's OIDC token is the credential,

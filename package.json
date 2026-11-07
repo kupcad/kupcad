@@ -1,5 +1,5 @@
 {
-  "name": "kupcad",
+  "name": "kupcad-monorepo",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",

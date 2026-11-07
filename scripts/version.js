@@ -1,6 +1,6 @@
 // The release's version, in every file that carries it: the core's build.zig.zon (what
-// `kupcad --version` prints), the package.json of the npm packages, the VS Code extension and the
-// desktop app, the desktop app's tauri.conf.json, the Ruby gem's version.rb and Gemfile.lock, and
+// `kupcad --version` prints), the package.json of the npm packages (the kupcad command's too), the
+// VS Code extension and the desktop app, the desktop app's tauri.conf.json, the Ruby gem's version.rb and Gemfile.lock, and
 // the Python package's _version.py. `bump` sets them all, as `npm version` sets a package's; the
 // Release workflow checks a tag against them with `check`.
 //
@@ -19,7 +19,17 @@ const RELEASES = ['major', 'minor', 'patch'];
 /** The top-level "version" of a package.json or a tauri.conf.json. */
 const JSON_VERSION = /(?<=^ {2}"version": ")[^"]+(?=",$)/gm;
 /** The packages carrying the version, each packages/kupcad-<name>. */
-const PACKAGES = ['protocol', 'wasm', 'ui', 'editor', 'playground', 'files', 'vscode', 'desktop'];
+const PACKAGES = [
+  'protocol',
+  'wasm',
+  'ui',
+  'editor',
+  'playground',
+  'files',
+  'vscode',
+  'desktop',
+  'cli',
+];
 
 /**
  * Each file that carries the version, by its path from the root, its pattern, and how many times
