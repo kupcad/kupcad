@@ -19,7 +19,8 @@
       "svelte": "./src/index.js",
       "default": "./src/index.js"
     },
-    "./tree": "./src/tree.js"
+    "./tree": "./src/tree.js",
+    "./jsdom": "./src/jsdom.js"
   },
   "publishConfig": {
     "access": "public"

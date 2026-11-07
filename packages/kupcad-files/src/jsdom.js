@@ -1,4 +1,6 @@
-// What jsdom lacks for the components' tests, done as a browser does it:
+// What jsdom lacks for tests of these components, done as a browser does it: imported once
+// before them (Vitest's `setupFiles`), here and by a host testing its own components with them
+// (`@kupcad/files/jsdom`):
 // - a popover (ContextMenu's), shown and hidden: jsdom's own styles hide every popover, so one
 //   shown is displayed here; hidden, the focus is moved off it, and its `toggle` event said a
 //   moment later;

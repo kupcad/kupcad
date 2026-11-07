@@ -70,5 +70,6 @@ host brings the file system.
   window's `dragover` and `drop`, keeps a drop the page didn't take from opening the file in its
   place.
 
-`pnpm test` runs its tests under jsdom (the popover and the modal dialog are stood in for,
-`dom.test-helper.js`).
+`pnpm test` runs its tests under jsdom. jsdom has no popover or modal dialog of its own;
+`@kupcad/files/jsdom` stands in for them as a browser does, and a host testing its own
+components with these under jsdom imports it first too (Vitest's `setupFiles`).

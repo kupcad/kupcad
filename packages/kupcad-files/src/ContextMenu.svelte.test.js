@@ -122,4 +122,30 @@ describe('a context menu', () => {
     menu.dispatchEvent(new Event('scroll'));
     expect(menu.dataset.shown).toBe('true');
   });
+
+  it("shows an item that doesn't apply greyed out, skipped by the keys and doing nothing", async () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    opener.focus();
+    const rename = vi.fn();
+    const remove = vi.fn();
+    const copy = vi.fn();
+    /** @type {MenuItem[]} */
+    const items = [
+      { text: 'Rename…', action: rename, enabled: false },
+      { text: 'Copy', action: copy },
+      { text: 'Delete…', action: remove, enabled: false },
+    ];
+    render(ContextMenu, { props: { items, at: { x: 0, y: 0 }, onclose: vi.fn() } });
+    expect(/** @type {HTMLButtonElement} */ (item('Rename…')).disabled).toBe(true);
+    // The first it can do takes the focus, and the arrows go round the others
+    expect(document.activeElement).toBe(item('Copy'));
+    await fireEvent.keyDown(item('Copy'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(item('Copy'));
+    await fireEvent.keyDown(item('Copy'), { key: 'End' });
+    expect(document.activeElement).toBe(item('Copy'));
+    // A click as a person's: a browser gives a disabled button none
+    item('Delete…').click();
+    expect(remove).not.toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
+  });
 });

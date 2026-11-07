@@ -10,7 +10,7 @@ export { default as AskDialog } from './AskDialog.svelte';
 export { default as ConflictBar } from './ConflictBar.svelte';
 export { default as ContextMenu } from './ContextMenu.svelte';
 export { default as FileTree } from './FileTree.svelte';
-export { clashQuestion, putFiles, refuseStrayDrop } from './drop.js';
+export { clashQuestion, freeName, putFiles, refuseStrayDrop } from './drop.js';
 export { rowMenu } from './menu.js';
 export { Project } from './project.svelte.js';
 export { Scripts } from './scripts.svelte.js';

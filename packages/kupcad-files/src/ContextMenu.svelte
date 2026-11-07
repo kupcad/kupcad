@@ -2,7 +2,8 @@
   @component
   A menu at a point of the page (a tree row's, as `rowMenu` gives it), for a host with no native
   one: in the page's top layer (an auto popover), moved in to stay in the window. It takes the
-  focus, on its first item; the arrow keys, Home and End move between its items. Choosing one
+  focus, on its first item; the arrow keys, Home and End move between its items. An item not
+  enabled is shown greyed out, and the focus passes it by. Choosing one
   closes it and does what it says; Escape, a click elsewhere or the focus leaving close it with
   nothing done, and so does the layout moving under it (the window resized, the page scrolled, a
   pointer pressed elsewhere, as on a splitter): it doesn't follow what it was opened at, as a
@@ -46,7 +47,11 @@
     return close;
   });
 
-  const itemsOf = () => [...(menu?.querySelectorAll('button') ?? [])];
+  /** The items that can be chosen: one not enabled is passed by. */
+  const itemsOf = () =>
+    /** @type {HTMLButtonElement[]} */ ([
+      ...(menu?.querySelectorAll('button:not(:disabled)') ?? []),
+    ]);
 
   function close() {
     if (!open) return;
@@ -119,7 +124,13 @@
     {#if item === '-'}
       <div class="separator" role="separator"></div>
     {:else}
-      <button type="button" role="menuitem" tabindex="-1" onclick={() => choose(item)}>
+      <button
+        type="button"
+        role="menuitem"
+        tabindex="-1"
+        disabled={item.enabled === false}
+        onclick={() => choose(item)}
+      >
         {item.text}
       </button>
     {/if}
@@ -161,6 +172,12 @@
   button:focus-visible {
     outline: 2px solid var(--kc-focus);
     outline-offset: -2px;
+  }
+  /* As a native menu's item that doesn't apply: there, but greyed out */
+  button:disabled {
+    color: var(--kc-muted);
+    background: none;
+    cursor: default;
   }
   .separator {
     height: 1px;

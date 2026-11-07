@@ -4,8 +4,10 @@
 /** @import { Entry } from './tree.js' */
 
 /**
- * An item of a menu: what it says and does, or a separator.
- * @typedef {{ text: string, action: () => void } | '-'} MenuItem
+ * An item of a menu: what it says and does, or a separator. One `enabled: false` is shown, but
+ * greyed out and doing nothing, as a native menu's item that doesn't apply (the desktop's
+ * native menus take the same field).
+ * @typedef {{ text: string, action: () => void, enabled?: boolean } | '-'} MenuItem
  */
 
 /**
