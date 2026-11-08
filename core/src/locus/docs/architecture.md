@@ -741,9 +741,15 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
   exactly through a vertex, collinear overlapping sketch edges, cocircular points.
   SMLib keeps ~60 such surface-pair files; OCCT and SolveSpace fixed each of theirs after
   a bug report, so the list is seeded from their issue history.
-- **Fuzz**: random placements, rotations and scales of primitives combined by random
-  booleans; every result is valid or a clean error; no hang (the test harness has a
-  timeout and every traversal is bounded by entity counts).
+- **Fuzz**: coverage-guided, as KupCAD's language is fuzzed (`std.testing.fuzz` with a
+  `Smith` choosing the input, `zig build fuzz --fuzz=<runs>` searching from a corpus
+  nightly, a plain test run replaying it): the body JSON reader and later the STEP reader
+  on any bytes; the 2D kernel on generated rings of points on a coarse grid with
+  operation chains (M2); random placements, rotations and scales of primitives combined
+  by random booleans (M4). Every result is valid or a clean error, nothing leaks, the
+  area and volume identities of booleans hold exactly, and no run hangs (every traversal
+  is bounded by entity counts). A failing input is saved as a script, so it becomes a
+  parity case.
 - **Allocation failure**: every operation under KupCAD's failing-allocator sweep leaves
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.
