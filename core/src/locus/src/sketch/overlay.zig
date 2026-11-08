@@ -1001,7 +1001,8 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                         vec.sub2(sampleAlong(at, s.a, .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw }, reach), at)
                     else
                         vec.sub2(sampleAlong(at, s.b, arc, reach), at);
-                    consider(&best, .{ .x = x, .up = up, .cycle = if (descending) s.cycle else s.beyond });
+                    const top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
+                    consider(&best, .{ .x = x, .up = up, .top = top, .cycle = if (descending) s.cycle else s.beyond });
                 }
                 continue;
             }
@@ -1010,7 +1011,7 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
             if (x >= v[0]) continue;
             const descending = s.a[1] > s.b[1];
             const up = if (descending) vec.sub2(s.a, s.b) else vec.sub2(s.b, s.a);
-            consider(&best, .{ .x = x, .up = up, .cycle = if (descending) s.cycle else s.beyond });
+            consider(&best, .{ .x = x, .up = up, .top = if (descending) s.a else s.b, .cycle = if (descending) s.cycle else s.beyond });
         }
         if (best) |hit| parent[i] = hit.cycle;
     }
@@ -1034,14 +1035,19 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
 /// A crossing of the ray from a hole's leftmost vertex to −x.
 const Hit = struct {
     x: f64,
-    /// The direction up from the ray along the segment (any length).
+    /// The direction up from the ray along the segment (any length), and the point above
+    /// the ray it leads to (the segment's upper end: a vertex, or a circle's top).
     up: Vec2,
+    top: Vec2,
     /// The cycle whose region is just east of the crossing.
     cycle: u32,
 };
 
-/// Keeps the hit nearer the vertex: the greater x, or at one x (a vertex on the ray) the
-/// segment up from it that is the most clockwise.
+/// Keeps the hit nearer the vertex: the greater x; at one x, two segments through one
+/// vertex by the ray: a vertex on the ray, with the segments going up from it, the most
+/// clockwise is nearer; a vertex a rounding above the ray, with the segments coming down
+/// through it to the same point, the most counter-clockwise (the crossings differ by
+/// less than the x can tell, and the sides of the vertex tell instead).
 fn consider(best: *?Hit, hit: Hit) void {
     const b = best.* orelse {
         best.* = hit;
@@ -1052,7 +1058,9 @@ fn consider(best: *?Hit, hit: Hit) void {
         best.* = hit;
         return;
     }
-    if (vec.cross2(hit.up, b.up) > 0) best.* = hit;
+    const turn = vec.cross2(hit.up, b.up);
+    const converge = hit.top[0] == b.top[0] and hit.top[1] == b.top[1];
+    if (if (converge) turn < 0 else turn > 0) best.* = hit;
 }
 
 /// Whether `p` is left of `q`: by x, then by y.

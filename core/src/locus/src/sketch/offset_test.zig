@@ -15,6 +15,7 @@ const transform = @import("../construct/transform.zig");
 const mass = @import("../measure/mass.zig");
 const boolean = @import("boolean.zig");
 const offset = @import("offset.zig");
+const hull = @import("hull.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
@@ -296,4 +297,34 @@ test "offset: a grown sheet holds its sheet where a join arc is tangent to a nei
     var held = try boolean.boolean(testing.allocator, &.{ &d, &g }, .intersection, .{}, &diag);
     defer held.deinit();
     try testing.expectApproxEqRel(try areaOf(&d), try areaOf(&held), 1e-9);
+}
+
+test "offset: a shrunk sheet lies within its sheet where the nesting ray passes a rounding below a vertex" {
+    // The fuzzer's find (2026-11-09): a hull less a sheet, shrunk by one half with square
+    // joins. One shrunk face's leftmost vertex is (2.7071, 0.9999999999999999), and the
+    // ray from it to −x passes one rounding below the sheet's vertex (2, 1), where two
+    // edges come down through the ray to that vertex at the same computed x; the most
+    // clockwise of them was taken as nearer, as for a vertex on the ray, and the face was
+    // nested in the plane, outside its sheet
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a1 = [_]Vec2{ .{ 3, 3 }, .{ 2, 0 }, .{ 1, 1 }, .{ 0, 1 }, .{ 2, 0 }, .{ 6, 2 } };
+    const a2 = [_]Vec2{ .{ 6, 2 }, .{ 6, 1 }, .{ 5, 4 }, .{ 6, 1 }, .{ 1, 6 }, .{ 6, 4 } };
+    const a3 = [_]Vec2{ .{ 2, 5 }, .{ 1, 4 }, .{ 0, 6 }, .{ 4, 3 }, .{ 5, 6 } };
+    var a = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a1, &a2, &a3 }, &diag);
+    defer a.deinit();
+    var h = try hull.hull(testing.allocator, &.{&a}, .{}, &diag);
+    defer h.deinit();
+    const b1 = [_]Vec2{ .{ 3, 4 }, .{ 5, 1 }, .{ 3, 5 }, .{ 6, 5 }, .{ 3, 0 }, .{ 2, 1 } };
+    const b2 = [_]Vec2{ .{ 5, 3 }, .{ 1, 4 }, .{ 0, 4 }, .{ 0, 0 }, .{ 5, 0 }, .{ 0, 6 }, .{ 6, 1 }, .{ 1, 5 } };
+    const b3 = [_]Vec2{ .{ 4, 6 }, .{ 0, 0 }, .{ 3, 4 }, .{ 1, 6 }, .{ 6, 5 }, .{ 1, 0 } };
+    var b = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b1, &b2, &b3 }, &diag);
+    defer b.deinit();
+    var d = try boolean.boolean(testing.allocator, &.{ &h, &b }, .difference, .{}, &diag);
+    defer d.deinit();
+    var s = try offset.offset(testing.allocator, &d, -0.5, .square, 4, .{}, &diag);
+    defer s.deinit();
+    var both = try boolean.boolean(testing.allocator, &.{ &d, &s }, .intersection, .{}, &diag);
+    defer both.deinit();
+    try testing.expectApproxEqRel(try areaOf(&s), try areaOf(&both), 1e-9);
 }
