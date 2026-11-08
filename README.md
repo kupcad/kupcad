@@ -141,6 +141,10 @@ KupCAD is dual-licensed:
 * **Open-Source:** Released under the [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE).
 * **Commercial:** For proprietary integrations, closed-source SaaS backends, or enterprise support, see our [Commercial Licensing Options](#).
 
+Two parts are MIT-licensed instead, so anyone can use them freely, in closed-source projects too:
+[`@kupcad/protocol`](./packages/kupcad-protocol) (the shapes of what the core sends, for tools that
+read KupCAD's output) and the [examples](./examples).
+
 > **Note on Model Output:** 3D files (STL, 3MF, STEP) exported by KupCAD belong 100% to you and are **not** subject to AGPL copyleft terms.
 
 For common questions regarding commercial usage, derivative works, and contribution guidelines, read our [License FAQ](./LICENSE-FAQ.md) and [Contributor License Agreement (CLA)](./.github/CLA.md).
