@@ -45,10 +45,11 @@ const EXTREME_ONE_IN: u8 = 16;
 const EXTREMES = [_]f64{ -std.math.inf(f64), std.math.inf(f64), std.math.nan(f64), std.math.floatMax(f64), std.math.floatTrueMin(f64), -1e15, -1e-15, 1e-15, 1e15, 1e-5, 2e-5 };
 /// How close an identity of areas must hold, relative to the larger area.
 const AREA_CLOSE = 1e-9;
-/// How close the booleans' identities must hold: the overlay welds arcs cocircular
-/// within the zone (1e-5 here) onto one circle, which moves a boundary by up to the zone,
-/// so a result's area may differ from its operands' by the zone times the perimeter.
-const IDENTITY_CLOSE = 1e-7;
+/// How close the booleans' identities must hold beyond the welding: the overlay welds
+/// vertices and arcs within the zone, which moves a boundary by up to the zone, so a
+/// result's area may differ from its operands' own by the zone times their perimeters
+/// (`weldingSlack`); this is the rounding on top.
+const IDENTITY_CLOSE = 1e-9;
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
 const PLAIN_RUN_BYTES = 256;
@@ -308,7 +309,20 @@ fn expectWithin(inner: *const Body, outer: *const Body, diag: *Diagnostics) !voi
     defer both.deinit();
     const a_inner = (try mass.mass(inner, .{}, diag)).area;
     const a_both = (try mass.mass(&both, .{}, diag)).area;
-    try testing.expectApproxEqAbs(a_inner, a_both, IDENTITY_CLOSE * @max(a_inner, 1));
+    try testing.expectApproxEqAbs(a_inner, a_both, try weldingSlack(inner, diag) + try weldingSlack(outer, diag) + IDENTITY_CLOSE * @max(a_inner, 1));
+}
+
+/// How much a sheet's area may move when an overlay welds its vertices and arcs: the zone
+/// along its perimeter (chorded at the default resolution, a fair measure of it).
+fn weldingSlack(body: *const Body, diag: *Diagnostics) !f64 {
+    var outline = try query.contours(testing.allocator, body, .{}, diag);
+    defer outline.deinit(testing.allocator);
+    var perimeter: f64 = 0;
+    for (0..outline.count()) |i| {
+        const contour = outline.contour(i);
+        for (contour, 0..) |p, k| perimeter += vec.distance2(p, contour[(k + 1) % contour.len]);
+    }
+    return tol.zone * perimeter;
 }
 
 /// A(P ∪ Q) + A(P ∩ Q) = A(P) + A(Q) and A(P − Q) = A(P) − A(P ∩ Q), where every one of the
@@ -327,7 +341,7 @@ fn expectAreaIdentities(p: *const Body, q: *const Body, diag: *Diagnostics) !voi
         };
         areas[i] = (try mass.mass(&results[i].?, .{}, diag)).area;
     }
-    const scale = @max(ap + aq, 1);
-    try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], IDENTITY_CLOSE * scale);
-    try testing.expectApproxEqAbs(ap - areas[1], areas[2], IDENTITY_CLOSE * scale);
+    const slack = try weldingSlack(p, diag) + try weldingSlack(q, diag) + IDENTITY_CLOSE * @max(ap + aq, 1);
+    try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], slack);
+    try testing.expectApproxEqAbs(ap - areas[1], areas[2], slack);
 }
