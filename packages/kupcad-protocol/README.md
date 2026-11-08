@@ -105,3 +105,9 @@ The tests read real headers the core's preview worker sent (`src/fixtures/`, wri
 sources, so a change there fails here until this package follows it. CI captures the fixtures
 again from the core it built and fails when they differ from the committed ones: run
 `pnpm fixtures` after a change to what the core sends.
+
+## License
+
+MIT ([LICENSE](./LICENSE)), unlike the rest of KupCAD (AGPLv3): this package is only the shapes
+of what the core sends and the functions that read them, so any tool may read KupCAD's output
+with it, closed-source ones too.
