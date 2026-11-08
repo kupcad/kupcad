@@ -98,6 +98,13 @@ pub const Overlay = struct {
     allocator: std.mem.Allocator,
     tol: Tolerance,
     inputs: u32 = 0,
+    /// The arcs' centres, welded like the vertices, and their radii, each the first seen
+    /// within the zone: cocircular arcs that reach the overlay by different arithmetic (a
+    /// round join at a vertex three faces share, each face's own) are one circle here, so
+    /// their pieces merge into one arrangement edge instead of lying on each other.
+    centers: std.ArrayList(Vec3) = .empty,
+    center_welder: grid.PointWelder,
+    radii: std.ArrayList(f64) = .empty,
     /// The welded vertices, as 3D points for the welder (z = 0).
     points: std.ArrayList(Vec3) = .empty,
     welder: grid.PointWelder,
@@ -138,13 +145,16 @@ pub const Overlay = struct {
     const EdgeKey = struct { a: u32, b: u32, arc: u64 };
 
     pub fn init(allocator: std.mem.Allocator, tol: Tolerance) Overlay {
-        return .{ .allocator = allocator, .tol = tol, .welder = grid.PointWelder.init(tol.zone) };
+        return .{ .allocator = allocator, .tol = tol, .welder = grid.PointWelder.init(tol.zone), .center_welder = grid.PointWelder.init(tol.zone) };
     }
 
     pub fn deinit(self: *Overlay) void {
         const a = self.allocator;
         self.points.deinit(a);
         self.welder.deinit(a);
+        self.centers.deinit(a);
+        self.center_welder.deinit(a);
+        self.radii.deinit(a);
         self.given.deinit(a);
         self.edges.deinit(a);
         self.contributions.deinit(a);
@@ -174,7 +184,29 @@ pub const Overlay = struct {
         const a = try self.vertex(edge.a);
         const b = try self.vertex(edge.b);
         if (a == b) return;
-        try self.given.append(self.allocator, .{ .a = a, .b = b, .arc = edge.arc, .input = self.inputs - 1 });
+        const arc: ?Arc = if (edge.arc) |given| try self.weldArc(given) else null;
+        try self.given.append(self.allocator, .{ .a = a, .b = b, .arc = arc, .input = self.inputs - 1 });
+    }
+
+    /// The arc about the centre and with the radius first seen within the zone of its own.
+    fn weldArc(self: *Overlay, arc: Arc) Error!Arc {
+        const p3 = Vec3{ arc.c[0], arc.c[1], 0 };
+        var c = arc.c;
+        if (try self.center_welder.find(self.centers.items, p3)) |found| {
+            c = .{ self.centers.items[found][0], self.centers.items[found][1] };
+        } else {
+            const index: u32 = @intCast(self.centers.items.len);
+            try self.centers.append(self.allocator, p3);
+            try self.center_welder.add(self.allocator, self.centers.items, index);
+        }
+        var r = arc.r;
+        for (self.radii.items) |known| {
+            if (@abs(known - arc.r) <= self.tol.zone) {
+                r = known;
+                break;
+            }
+        } else try self.radii.append(self.allocator, arc.r);
+        return .{ .c = c, .r = r, .ccw = arc.ccw };
     }
 
     /// The vertex at `p`: an existing one within the zone, else a new one.
@@ -463,10 +495,10 @@ pub const Overlay = struct {
         try self.contributions.append(self.allocator, .{ .edge = entry.value_ptr.*, .input = g.input, .along = forward });
     }
 
-    /// An arc's identity for merging: its circle as bits and which way round it runs in
-    /// the edge's own direction (the two halves of a circle share their ends and their
-    /// circle, and are two arcs). A merge missed makes two edges on one circle, which the
-    /// checker names, never a wrong face.
+    /// An arc's identity for merging: its circle as bits (welded in `addEdge`, so arcs
+    /// cocircular within the zone have the same bits) and which way round it runs in the
+    /// edge's own direction (the two halves of a circle share their ends and their
+    /// circle, and are two arcs).
     fn arcKey(arc: Arc) u64 {
         var h = std.hash.Wyhash.init(0);
         h.update(std.mem.asBytes(&arc.c));

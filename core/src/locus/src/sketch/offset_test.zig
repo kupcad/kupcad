@@ -16,6 +16,7 @@ const offset = @import("offset.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
+const Vec2 = vec.Vec2;
 
 fn areaOf(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
@@ -60,6 +61,31 @@ test "offset: a square by one, with each join; shrunk; shrunk to nothing" {
     var gone = try grown(&sq, -3, .round, &diag);
     defer gone.deinit();
     try testing.expect(gone.isEmpty());
+}
+
+test "offset: a round join at a vertex three faces share is one arc, not three on one circle" {
+    // Three rings through (0, 3) (the fuzzer's): each face's round join about it is
+    // computed by its own arithmetic, a bit apart; the overlay welds the centres, so
+    // the joins' overlapping pieces are one edge each, and no two edges share their ends
+    // and circle
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a0 = [_]Vec2{ .{ 0, 3 }, .{ 1, 2 }, .{ 2, 3 } };
+    const a1 = [_]Vec2{ .{ 0, 3 }, .{ 3, 6 }, .{ 0, 2 } };
+    const a2 = [_]Vec2{ .{ 4, 4 }, .{ 0, 3 }, .{ 6, 2 }, .{ 3, 0 }, .{ 6, 1 } };
+    var sheet = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a0, &a1, &a2 }, &diag);
+    defer sheet.deinit();
+    var rounded = try offset.offset(testing.allocator, &sheet, 1.5, .round, 3, .{}, &diag);
+    defer rounded.deinit();
+    for (rounded.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone) continue;
+        for (rounded.edges.items[0..i]) |other| {
+            if (other.flags.tombstone) continue;
+            const same_ends = (other.start == e.start and other.end == e.end) or (other.start == e.end and other.end == e.start);
+            try testing.expect(!(same_ends and other.curve.kind == e.curve.kind and e.curve.kind == .circle));
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), rounded.counts().faces);
 }
 
 test "offset: a circle keeps its centre; a plate with a round hole grows as its hole shrinks; a miter past its limit is squared" {
