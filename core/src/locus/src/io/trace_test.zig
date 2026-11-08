@@ -53,20 +53,25 @@ test "trace: a transform reports its phases as bodies that load back; no sink, n
 
     var moved = try transform.transform(testing.allocator, &box, &affine, .{ .trace = collector.sink() }, &diag);
     defer moved.deinit();
-    try testing.expectEqual(@as(usize, 2), collector.entries.items.len);
+    try testing.expectEqual(@as(usize, 3), collector.entries.items.len);
     try testing.expectEqualStrings("transform", collector.entries.items[0].operation);
-    try testing.expectEqualStrings("mapped", collector.entries.items[0].phase);
-    try testing.expectEqualStrings("checked", collector.entries.items[1].phase);
-    // Each phase is a body; the last is the result
-    for (collector.entries.items) |e| {
+    // The arguments first, as JSON of plain data, for a replay
+    try testing.expectEqualStrings("arguments", collector.entries.items[0].phase);
+    try testing.expect(std.mem.indexOf(u8, collector.entries.items[0].text, "\"translation\"") != null);
+    try testing.expect(std.mem.indexOf(u8, collector.entries.items[0].text, "5") != null);
+    try testing.expectEqualStrings("mapped", collector.entries.items[1].phase);
+    try testing.expectEqualStrings("checked", collector.entries.items[2].phase);
+    // Each phase after the arguments is a body; the last is the result
+    for (collector.entries.items[1..]) |e| {
         var loaded = try body_json.load(testing.allocator, e.text);
         loaded.deinit();
     }
     const result = try body_json.dump(testing.allocator, &moved);
     defer testing.allocator.free(result);
-    try testing.expectEqualStrings(result, collector.entries.items[1].text);
+    try testing.expectEqualStrings(result, collector.entries.items[2].text);
 
     // `phase` without a sink is nothing
     try trace.phase(testing.allocator, &.{}, &box, "none", "none");
-    try testing.expectEqual(@as(usize, 2), collector.entries.items.len);
+    try trace.arguments(testing.allocator, &.{}, "none", .{ .n = 1 });
+    try testing.expectEqual(@as(usize, 3), collector.entries.items.len);
 }

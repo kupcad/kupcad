@@ -26,6 +26,7 @@ const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const limits = @import("../core/limits.zig");
 const brep_readiness = @import("../tools/dev/brep_readiness.zig");
+const case_rig = @import("../tools/dev/case_rig.zig");
 const brep_trace = @import("../tools/dev/brep_trace.zig");
 
 const log = std.log.scoped(.dev);
@@ -48,7 +49,7 @@ pub const USAGE =
     \\                   KUPCAD_CRASH_DIR captures crash reports
     \\  brep-readiness [path...]  Build each script (or the .kup files of each folder;
     \\                   examples/ by default) on the B-Rep engine and list what each
-    \\                   still lacks there
+    \\                   still lacks there, then the case rig's ladder with its frontier
     \\  brep-trace <file>  Run the script on the B-Rep engine writing the body after each
     \\                   phase of each operation into <file>.trace/
     \\
@@ -119,9 +120,17 @@ fn executeReadiness(init: std.process.Init, allocator: std.mem.Allocator, args_i
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     try brep_readiness.writeReport(&out.writer, results.items);
+    // The case rig's ladder (tools/dev/cases.zig): where the kernel stands, case by case
+    const ladder = try case_rig.runAll(allocator, init.io, .brep_native, LADDER_TIME_LIMIT_MS);
+    defer case_rig.freeResults(allocator, ladder);
+    try out.writer.writeAll("\n");
+    try case_rig.writeLadder(&out.writer, "B-Rep", ladder);
     reporter.out("{s}", .{out.written()});
     return .success;
 }
+
+/// The most a case of the ladder may take before it counts as a hang.
+const LADDER_TIME_LIMIT_MS: u64 = 60_000;
 
 /// Adds `path` to `scripts`: the file, or the `.kup` files of the folder in name order.
 /// False, reported, when it can't be read.

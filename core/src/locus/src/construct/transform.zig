@@ -28,6 +28,7 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const
     for (affine.linear) |v| try diagnostics.input.finite(diag, "the matrix", v);
     for (affine.translation) |v| try diagnostics.input.finite(diag, "the matrix", v);
     try options.checkCancel();
+    try trace.arguments(allocator, &options, "transform", .{ .linear = affine.linear, .translation = affine.translation });
     const tol = options.tolerance orelse body.tol;
     const shape = geo_transform.classify(affine, tol);
     if (shape == .singular) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .label = "the matrix's determinant", .measured = affine.determinant() });

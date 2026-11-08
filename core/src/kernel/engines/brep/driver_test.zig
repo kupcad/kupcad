@@ -232,7 +232,7 @@ test "Driver: a trace sink set on the thread receives each operation's phases, u
         var phases: usize = 0;
         fn write(_: ?*anyopaque, operation: []const u8, phase: []const u8, body_json: []const u8) void {
             std.debug.assert(std.mem.eql(u8, operation, "transform"));
-            std.debug.assert(std.mem.eql(u8, phase, "mapped") or std.mem.eql(u8, phase, "checked"));
+            std.debug.assert(std.mem.eql(u8, phase, "arguments") or std.mem.eql(u8, phase, "mapped") or std.mem.eql(u8, phase, "checked"));
             std.debug.assert(std.mem.startsWith(u8, body_json, "{"));
             phases += 1;
         }
@@ -243,10 +243,10 @@ test "Driver: a trace sink set on the thread receives each operation's phases, u
     const moved = driver.driver.translateFn(cube, 1, 0, 0) orelse return error.TranslateFailed;
     defer driver.driver.destructFn(moved);
     driver.setTrace(null);
-    try std.testing.expectEqual(@as(usize, 2), Count.phases);
+    try std.testing.expectEqual(@as(usize, 3), Count.phases);
     const again = driver.driver.translateFn(cube, 1, 0, 0) orelse return error.TranslateFailed;
     defer driver.driver.destructFn(again);
-    try std.testing.expectEqual(@as(usize, 2), Count.phases);
+    try std.testing.expectEqual(@as(usize, 3), Count.phases);
 }
 
 test "Driver: a polyhedron from triangles, and polygons by the even-odd rule" {

@@ -807,6 +807,26 @@ the whole corpus and not only the table. Today the parity test reads Locus's box
 STEP export at `1e-5` (six decimals); with M0's full-precision writer that drops to
 floating point, and with M1's `bounding_box` the box is read directly.
 
+*The case rig.* Beside the tables, `tools/dev/cases.zig` is a rig of cases with their own
+right answers (research: SolidCraft's kernel-cases): each a script, what it is, its
+answer with the **formula in words** (`method`), where it came from (`from`: a plan item,
+a fuzzer find, a report) and whether the answer is a closed form (`analytic`) or an
+identity (`invariants`); the answer is never a kernel's output. Cases are ordered as a
+**ladder** by tier (primitives, booleans, profiles, sweeps, holes, fillets, offsets,
+patterns, cumulative parts), each tier on the shapes of the tiers before it. `case_rig.zig`
+runs each case on an engine within a time limit and judges it: `pass`, `fail` (off its
+answer, refused where a result was due, or built where a refusal was due, which says the
+milestone landed and the case wants its closed form), `crash` (the host failed under it),
+`hang` (past the limit), `refused` (by design, until the milestone the case names, counted
+apart). A tier's **frontier** is its first case that fails, crashes or hangs; a case known
+to fail is listed in `KNOWN_FRONTIER` with why, and the test holds the ladder to exactly
+that list, so a regression and a fix that forgets the list both fail. On the B-Rep engine
+the volume must match to 1e-9; on the mesh engine within the case's chordal bound. The
+ladder with its frontier closes the `brep-readiness` report (§12). The first run found
+the sweep case's own answer wrong (the profile's x rides the radius inward), the B-Rep
+engine refusing to sweep an empty sketch where the mesh engine sweeps it to the empty
+solid (fixed), and `cube(round_r:)` chorded on the exact engine (the known frontier).
+
 ---
 
 ## 10. Roadmap
@@ -903,12 +923,15 @@ otherwise returns `error.InvalidInput` naming the model size; the fix is the hos
 
 **Trace.** Every operation can be run with `options.trace` set to a sink (`Trace`: a
 context and a `write(context, operation, phase, body_json)` function), which receives the
-body as JSON after each phase (`io/trace.zig`; `transform` reports `mapped` and `checked`,
-a boolean will report `paved`, `imprinted`, …), so a failing boolean is inspected as a
-sequence of valid bodies rather than a stack trace (Stroud: "print or draw any entity",
-S p.605). Locus writes no files (§4's targets); the host does: KupCAD's `kupcad dev
-brep-trace <script>` writes `001-transform-mapped.json`, `002-transform-checked.json`, …
-beside the script; the playground can later load a trace and show each phase.
+operation's arguments first (`arguments`: the inputs that are not bodies, as JSON of
+plain data, for a replay), then the body as JSON after each phase (`io/trace.zig`;
+`transform` reports `mapped` and `checked`, a boolean will report `paved`, `imprinted`,
+…), so a failing boolean is inspected as a sequence of valid bodies rather than a stack
+trace (Stroud: "print or draw any entity", S p.605) and rerun from its inputs. Locus
+writes no files (§4's targets); the host does: KupCAD's `kupcad dev brep-trace <script>`
+writes `001-transform-arguments.json`, `002-transform-mapped.json`,
+`003-transform-checked.json`, … beside the script; the playground can later load a trace
+and show each phase.
 
 **Fixtures.** Body JSON fixtures carry a format `version`; they are regenerated only by
 `zig build test -Dupdate-snapshots` and the diff is reviewed like code, as KupCAD does
@@ -930,7 +953,9 @@ and determinism tests on every run; the fuzz harness for a fixed budget nightly.
 
 **Readiness.** A `kupcad dev brep-readiness` report runs every example and documentation
 snippet with `engine: :brep` and lists, per script, the features still refused; each
-milestone's exit criteria name the examples that must newly build.
+milestone's exit criteria name the examples that must newly build. It ends with the
+case rig's ladder (§9.3): each tier's counts of pass, fail, crash, hang and refused by
+design, with its frontier.
 
 ## 13. Risks
 

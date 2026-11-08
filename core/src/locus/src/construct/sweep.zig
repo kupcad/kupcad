@@ -23,6 +23,7 @@ const surfaces = @import("../geometry/surfaces.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Affine = @import("../math/mat.zig").Affine;
 const diagnostics = @import("../diagnostics.zig");
+const trace = @import("../io/trace.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
@@ -41,6 +42,7 @@ const Error = diagnostics.Error;
 pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
     for (direction) |c| try diagnostics.input.finite(diag, "the direction", c);
     try options.checkCancel();
+    try trace.arguments(allocator, &options, "extrude", .{ .direction = direction });
     if (sheet.kind != .sheet or sheet.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
     const tol = options.tolerance orelse sheet.tol;
     const height = vec.length(direction);
@@ -157,6 +159,7 @@ pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, a
     for (axis) |c| try diagnostics.input.finite(diag, "the axis", c);
     try diagnostics.input.finite(diag, "the angle", angle);
     try options.checkCancel();
+    try trace.arguments(allocator, &options, "revolve", .{ .origin = origin, .axis = axis, .angle = angle });
     if (sheet.kind != .sheet or sheet.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
     const tol = options.tolerance orelse sheet.tol;
     const z = vec.normalized(axis) orelse return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's length" });

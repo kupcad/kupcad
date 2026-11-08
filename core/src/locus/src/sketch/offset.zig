@@ -16,6 +16,7 @@
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const diagnostics = @import("../diagnostics.zig");
+const trace = @import("../io/trace.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const overlay_mod = @import("overlay.zig");
@@ -44,6 +45,7 @@ pub fn offset(allocator: std.mem.Allocator, sheet: *const Body, delta: f64, join
     try diagnostics.input.finite(diag, "delta", delta);
     try diagnostics.input.finite(diag, "miter_limit", miter_limit);
     try options.checkCancel();
+    try trace.arguments(allocator, &options, "offset", .{ .delta = delta, .join = join, .miter_limit = miter_limit });
     if (sheet.kind != .sheet) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the sketch: a sheet" });
     const tol = options.tolerance orelse sheet.tol;
     if (@abs(delta) <= tol.zone) return sheet.clone(allocator) catch return error.OutOfMemory;

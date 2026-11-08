@@ -35,6 +35,8 @@ const RULES = [_]Rule{
     // The B-Rep readiness report and trace run whole scripts, as a command does
     .{ .path = "tools/dev/brep_readiness.zig", .may_import = &.{ "api.zig", "vfs/" } },
     .{ .path = "tools/dev/brep_trace.zig", .may_import = &.{ "api.zig", "vfs/", "kernel/" } },
+    // The case rig runs each case's script as the API sets a VM up, and reads the result
+    .{ .path = "tools/dev/case_rig.zig", .may_import = &.{ "api.zig", "vm/", "compiler/", "core/", "kernel/", "tools/dev/" } },
     // The preview frame (frame.zig) and its making from a run
     .{ .path = "preview/", .may_import = &.{ "preview/", "core/", "frontend/", "vm/", "kernel/", "exporters/", "tools/doc/" } },
     .{ .path = "session/", .may_import = &.{ "session/", "core/", "frontend/", "compiler/", "vm/", "kernel/", "stdlib/", "vfs/", "api.zig" } },

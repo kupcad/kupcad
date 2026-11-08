@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const trace = @import("../io/trace.zig");
 const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
@@ -37,6 +38,7 @@ const ANGLE_SLACK: f64 = 1e-9;
 pub fn boolean(allocator: std.mem.Allocator, sheets: []const *const Body, op: Op, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "sheets", sheets.len);
     try options.checkCancel();
+    try trace.arguments(allocator, &options, "boolean", .{ .op = op, .sheets = sheets.len });
     var tol = options.tolerance orelse sheets[0].tol;
     for (sheets) |s| {
         if (s.kind != .sheet) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "an operand: a sheet" });

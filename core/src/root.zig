@@ -176,6 +176,7 @@ test {
     _ = @import("tools/dev/ast_dumper_test.zig");
     _ = @import("tools/dev/disassembler_test.zig");
     _ = @import("tools/dev/brep_readiness_test.zig");
+    _ = @import("tools/dev/case_rig_test.zig");
     _ = @import("tools/dev/brep_trace_test.zig");
 
     // Formatter Tests

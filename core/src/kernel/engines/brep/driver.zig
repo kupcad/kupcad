@@ -384,6 +384,12 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
 // --- not implemented for B-Rep yet: each is refused before the driver (supports), and
 // answers null here, never a stand-in ---
 
+/// The empty solid under `like`'s settings: what a sweep of the empty sketch is.
+fn emptySolidLike(like: *const BrepSolid) ?geom.GeometryHandle {
+    const solid = BrepSolid.create(Body.empty(backend_allocator, like.body.tol), like.settings) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
 fn emptyImpl(config: *const engine_config.EngineConfig) ?geom.GeometryHandle {
     _ = config;
     return null;
@@ -400,6 +406,9 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     _ = slices;
     if (twist_degrees != 0 or scale_x != 1 or scale_y != 1) return null;
     const src = solidOf(cs.ptr);
+    // Sweeping the empty Sketch gives the empty Solid, as on the mesh engine (a sketch an
+    // offset shrank to nothing extrudes to nothing, not to an error)
+    if (src.body.isEmpty()) return emptySolidLike(src);
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
     const body = locus.construct.sweep.extrude(backend_allocator, &src.body, .{ 0, 0, height }, src.options(), &diag) catch {
@@ -417,6 +426,7 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     _ = segments;
     const src = solidOf(cs.ptr);
+    if (src.body.isEmpty()) return emptySolidLike(src);
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
     const stand_up = Affine.rotate(locus.math.vec.X3, std.math.pi / 2.0);
