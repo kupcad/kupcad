@@ -63,6 +63,7 @@ pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagno
     var partition = try Partition.init(allocator, rings);
     defer partition.deinit(allocator);
     try partition.run(diag);
+    try attachDiagonals(allocator, rings, partition.diagonals.items);
     var graph = try Graph.init(allocator, rings, partition.diagonals.items, false);
     defer graph.deinit(allocator);
     var triangles: std.ArrayList([3]u32) = .empty;
@@ -84,6 +85,71 @@ pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagno
         corner.* = woven.source[corner.*];
     };
     return triangles.toOwnedSlice(allocator);
+}
+
+/// Each diagonal's ends moved to the passage through their point whose wedge of the
+/// region faces the diagonal. The sweep tells two passages through one point apart only
+/// by their order, so a diagonal may reach the passage whose wedge lies on the other
+/// side; the graph needs the one the diagonal runs into, or its cycles cross over.
+fn attachDiagonals(allocator: std.mem.Allocator, rings: Polygon, diagonals: [][2]u32) Error!void {
+    const n = rings.points.len;
+    // The next passage through the same point, a chain per point; NONE at the end
+    const next_same = try allocator.alloc(u32, n);
+    defer allocator.free(next_same);
+    @memset(next_same, NONE);
+    const next = try allocator.alloc(u32, n);
+    defer allocator.free(next);
+    const prev = try allocator.alloc(u32, n);
+    defer allocator.free(prev);
+    var first_at: std.AutoHashMapUnmanaged([2]u64, u32) = .empty;
+    defer first_at.deinit(allocator);
+    try first_at.ensureTotalCapacity(allocator, @intCast(n));
+    var any_shared = false;
+    for (0..rings.rings()) |r| {
+        const first = rings.starts[r];
+        const last = rings.starts[r + 1] - 1;
+        for (first..last + 1) |i| {
+            next[i] = if (i == last) first else @intCast(i + 1);
+            prev[i] = if (i == first) last else @intCast(i - 1);
+            const p = rings.points[i];
+            const key: [2]u64 = .{ @bitCast(p[0] + 0.0), @bitCast(p[1] + 0.0) };
+            const entry = first_at.getOrPutAssumeCapacity(key);
+            if (entry.found_existing) {
+                next_same[i] = next_same[entry.value_ptr.*];
+                next_same[entry.value_ptr.*] = @intCast(i);
+                any_shared = true;
+            } else entry.value_ptr.* = @intCast(i);
+        }
+    }
+    if (!any_shared) return;
+    for (diagonals) |*d| {
+        for (0..2) |end| {
+            const v = d[end];
+            const other = rings.points[d[1 - end]];
+            const p = rings.points[v];
+            const key: [2]u64 = .{ @bitCast(p[0] + 0.0), @bitCast(p[1] + 0.0) };
+            var candidate = first_at.get(key).?;
+            while (candidate != NONE) : (candidate = next_same[candidate]) {
+                if (wedgeHolds(rings.points, prev[candidate], candidate, next[candidate], other)) {
+                    d[end] = candidate;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Whether the direction from `v` to `target` lies in the region's wedge at `v`, which
+/// opens from the edge to `w` counter-clockwise round to the edge from `u`.
+fn wedgeHolds(points: []const Vec2, u: u32, v: u32, w: u32, target: Vec2) bool {
+    const o = vec.sub2(points[w], points[v]);
+    const i = vec.sub2(points[u], points[v]);
+    const d = vec.sub2(target, points[v]);
+    const span = vec.cross2(o, i);
+    if (span > 0) return vec.cross2(o, d) > 0 and vec.cross2(d, i) > 0;
+    if (span < 0) return !(vec.cross2(i, d) > 0 and vec.cross2(d, o) > 0);
+    // A straight passage: the region is on its left
+    return vec.cross2(o, d) > 0;
 }
 
 /// The rings rewoven at the points they pass more than once: the points in the order
