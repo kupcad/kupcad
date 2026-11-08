@@ -1,5 +1,7 @@
 //! Offsets against closed forms: a square grown with each join, shrunk, shrunk to nothing;
-//! a circle; a plate with a hole, whose hole shrinks as the plate grows.
+//! a circle; a plate with a hole, whose hole shrinks as the plate grows; a sliver shrunk
+//! past its width; a U whose slot is narrower than the offset, shrunk with each join and
+//! grown shut.
 
 const std = @import("std");
 const testing = std.testing;
@@ -130,4 +132,77 @@ test "offset: a circle keeps its centre; a plate with a round hole grows as its 
     defer reaching.deinit();
     try testing.expect(try areaOf(&capped) < try areaOf(&reaching));
     try testing.expectEqual(@as(usize, 3), reaching.counts().edges);
+}
+
+test "offset: a sliver shrunk past its width is gone; grown, it is the sliver, its perimeter's band and a disc" {
+    // The fuzzer's find (2026-11-08): the raw outline of a sliver shrunk past its width
+    // turns inside out with positive winding, which the classic recipe kept as a region
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const sliver = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 5, 0.1 } };
+    var tri = try primitives.polygon(testing.allocator, tol, &sliver, &diag);
+    defer tri.deinit();
+    var gone = try grown(&tri, -1, .round, &diag);
+    defer gone.deinit();
+    try testing.expect(gone.isEmpty());
+    // A convex region grown by d (round): its area, its perimeter times d, and πd²
+    var fat = try grown(&tri, 1, .round, &diag);
+    defer fat.deinit();
+    const perimeter = 10 + 2 * @sqrt(25.0 + 0.01);
+    try testing.expectApproxEqRel(0.5 + perimeter + PI, try areaOf(&fat), 1e-12);
+    // The fuzzer's own sliver, of area 0.0019, and the whole of its chain's first offset
+    const tiny = [_]Vec2{ .{ 2.5, 2 }, .{ 2.6, 2 }, .{ 2.5926, 2.037 } };
+    var small = try primitives.polygon(testing.allocator, tol, &tiny, &diag);
+    defer small.deinit();
+    var nothing = try grown(&small, -1, .round, &diag);
+    defer nothing.deinit();
+    try testing.expect(nothing.isEmpty());
+    // A disc shrunk past its radius: the arcs' sweeps pass the centre
+    var disc = try primitives.circle(testing.allocator, tol, 2, &diag);
+    defer disc.deinit();
+    var no_disc = try grown(&disc, -3, .round, &diag);
+    defer no_disc.deinit();
+    try testing.expect(no_disc.isEmpty());
+    // A plate's hole narrower than the growth fills: the hole's arcs swept past their centre
+    var plate = try primitives.square(testing.allocator, tol, 10, 10, false, &diag);
+    defer plate.deinit();
+    var hole = try transform.transform(testing.allocator, &disc, &mat.Affine.translate(.{ 5, 5, 0 }), .{}, &diag);
+    defer hole.deinit();
+    var pierced = try boolean.boolean(testing.allocator, &.{ &plate, &hole }, .difference, .{}, &diag);
+    defer pierced.deinit();
+    var filled = try grown(&pierced, 3, .round, &diag);
+    defer filled.deinit();
+    try testing.expectApproxEqRel(100 + 120 + 9 * PI, try areaOf(&filled), 1e-12);
+    try testing.expectEqual(@as(usize, 1), filled.counts().loops);
+}
+
+test "offset: a U with a slot narrower than the offset, shrunk with each join and grown shut" {
+    // A 6 by 7 plate with a slot one wide and four deep from its top: shrunk by one, a U
+    // again (legs half wide, base one high, area 8) whose inner corners the join shapes:
+    // round leaves the square between the sweeps less a quarter disc at each, bevel half
+    // of it, miter nothing
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const outline = [_]Vec2{ .{ 0, 0 }, .{ 6, 0 }, .{ 6, 7 }, .{ 3.5, 7 }, .{ 3.5, 3 }, .{ 2.5, 3 }, .{ 2.5, 7 }, .{ 0, 7 } };
+    var u = try primitives.polygon(testing.allocator, tol, &outline, &diag);
+    defer u.deinit();
+    var round = try grown(&u, -1, .round, &diag);
+    defer round.deinit();
+    try testing.expectApproxEqRel(8 + 2 * (1 - PI / 4.0), try areaOf(&round), 1e-12);
+    try testing.expectEqual(@as(usize, 1), round.counts().faces);
+    var bevel = try grown(&u, -1, .bevel, &diag);
+    defer bevel.deinit();
+    try testing.expectApproxEqRel(@as(f64, 9), try areaOf(&bevel), 1e-12);
+    var miter = try grown(&u, -1, .miter, &diag);
+    defer miter.deinit();
+    try testing.expectApproxEqRel(@as(f64, 8), try areaOf(&miter), 1e-12);
+    try testing.expectEqual(@as(usize, 8), miter.counts().edges);
+    // Grown by one, the slot closes (every point of it is within half of a wall) but
+    // for the notch at its mouth beyond the reach of the two corners' discs: the grown
+    // plate, 68 + π, less 2∫₀^½ (1 − √(1 − u²)) du = 1 − √3/4 − π/6
+    var shut = try grown(&u, 1, .round, &diag);
+    defer shut.deinit();
+    const notch = 1 - @sqrt(3.0) / 4.0 - PI / 6.0;
+    try testing.expectApproxEqRel(68 + PI - notch, try areaOf(&shut), 1e-12);
+    try testing.expectEqual(@as(usize, 1), shut.counts().loops);
 }

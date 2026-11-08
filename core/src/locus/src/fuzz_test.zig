@@ -157,6 +157,8 @@ fn runChain(smith: *Smith) !void {
                 var result = offset.offset(testing.allocator, &current, delta, join, limit, .{}, &diag) catch |err| return clean(err);
                 errdefer result.deinit();
                 try expectSound(&result, &diag);
+                // Shrunk, the sheet holds its result; grown, the result holds the sheet
+                if (delta < 0) try expectWithin(&result, &current, &diag) else try expectWithin(&current, &result, &diag);
                 current.deinit();
                 current = result;
             },
@@ -250,10 +252,22 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     var outline = try query.contours(testing.allocator, body, .{}, diag);
     defer outline.deinit(testing.allocator);
     var polygon_area: f64 = 0;
-    for (0..outline.count()) |i| polygon_area += primitives.signedArea(outline.contour(i)) / 2;
+    var perimeter: f64 = 0;
+    for (0..outline.count()) |i| {
+        const contour = outline.contour(i);
+        polygon_area += primitives.signedArea(contour) / 2;
+        for (contour, 0..) |p, k| perimeter += vec.distance2(p, contour[(k + 1) % contour.len]);
+    }
     // The mesh may have refined an arc's chords where they would cross a neighbour, so it
-    // is held to the exact area within the chords' bound, as the outline is
-    const bound = try chordBound(body, diag) + AREA_CLOSE * @max(m.area, 1);
+    // is held to the exact area within the chords' bound, as the outline is; and a
+    // vertex sits within the zone of its edges' curves (welded), which moves the outline
+    // by up to the zone along the perimeter
+    const bound = try chordBound(body, diag) + tol.zone * perimeter + AREA_CLOSE * @max(m.area, 1);
+    errdefer {
+        std.debug.print("exact {d} covered {d} outline {d} bound {d}; faces:", .{ m.area, covered, polygon_area, bound });
+        for (mesh.faces) |range| std.debug.print(" {s}", .{@tagName(range.status)});
+        std.debug.print("\n{f}\n", .{diag});
+    }
     try testing.expect(@abs(m.area - covered) <= bound);
     try testing.expect(@abs(m.area - polygon_area) <= bound);
     for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
@@ -277,6 +291,19 @@ fn chordBound(body: *const Body, diag: *Diagnostics) !f64 {
         bound += segments * 0.5 * circle.r * circle.r * (theta - @sin(theta));
     }
     return bound;
+}
+
+/// `inner` lies within `outer`: A(inner ∩ outer) = A(inner) (a refusal of the
+/// intersection is a clean error, not a failure).
+fn expectWithin(inner: *const Body, outer: *const Body, diag: *Diagnostics) !void {
+    var both = boolean.boolean(testing.allocator, &.{ inner, outer }, .intersection, .{}, diag) catch |err| {
+        try clean(err);
+        return;
+    };
+    defer both.deinit();
+    const a_inner = (try mass.mass(inner, .{}, diag)).area;
+    const a_both = (try mass.mass(&both, .{}, diag)).area;
+    try testing.expectApproxEqAbs(a_inner, a_both, IDENTITY_CLOSE * @max(a_inner, 1));
 }
 
 /// A(P ∪ Q) + A(P ∩ Q) = A(P) + A(Q) and A(P − Q) = A(P) − A(P ∩ Q), where every one of the

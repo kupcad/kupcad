@@ -232,4 +232,3 @@ test "overlay: the boundary of a union, a difference and an intersection as cycl
         try testing.expectEqual(o.target(h), o.origin(next));
     }
 }
-

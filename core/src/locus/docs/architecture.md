@@ -569,9 +569,10 @@ flow through step 3 (copied) and 7 (unioned).
 
 A sketch is a body of planar faces on `z = 0`, bounded by lines and circular arcs (NURBS
 later), so it reuses the topology, the overlay engine and the checker. Sketch booleans are
-the overlay with winding labels; offset displaces each edge (line → line, arc → arc),
-joins them with arcs, miters or squares, and resolves self-intersections by the same
-overlay; hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
+the overlay with winding labels; offset is the sheet united with (grown) or less (shrunk)
+the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector, the pies
+about a centre the offset passes) and each opening corner's join (round, miter, bevel,
+square) a simple region the overlay counts as a second input (D25); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
 are left out of the hull's boundary; documented, and the driver refuses a sketch with arcs
 as `curved_hull`, D24, until the hull keeps its arcs); contours output closed polylines at a
 `Resolution` for SVG/DXF; measures (area by Green's theorem on lines and arcs) are exact.
@@ -874,6 +875,7 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D21 | `Checkpoint` is a copy of the body | A snapshot of the tables' lengths | Operators relink existing entities, which a length snapshot cannot undo (2026-11-06) |
 | D22 | The trace is a sink the host supplies (`Trace{context, write}`), fed body JSON per phase by `io/trace.zig`; an operation may import `io` for it | A directory path Locus writes into | Locus touches no file system (§4's targets); the host (`kupcad dev brep-trace`) names and writes the files (2026-11-06) |
 | D23 | KupCAD's driver keeps the first finding of a failed operation on the thread, and the script's error carries it (`polygon failed: an edge is shorter than …`) | The kernel interface's null alone | The driver interface answers a failure with null and the findings would be lost; the reason is what a readiness report is for (2026-11-06) |
+| D25 | A sketch offset is the sheet plus or minus the band its boundary sweeps (sweeps and joins as simple regions, one overlay input, positive winding) | The displaced outline filled by its winding (Chen–McMains) | A feature thinner than the offset turns its displaced outline inside out with positive winding: a sliver shrunk past its width kept a region of area 0.94, and each further offset of that garbage grew it fivefold until the overlay's nesting never ended (the fuzzer, 2026-11-08); the band is the definition of the offset itself (points within the distance of the boundary) and needs no rule about self-intersections |
 | D24 | A hull of a sketch with arcs is refused by the driver (`curved_hull`, as a curved solid's hull is) until the hull keeps arcs; Locus's `sketch/hull.zig` hulls the vertices and the arcs' extreme points, documented | Answering the polygon through the extreme points | A disc's hull of area 2r² is a stand-in for πr², the kind of answer the parity rules forbid; the arc hull (tangent lines between arcs) is a later item (2026-11-06) |
 
 ---
