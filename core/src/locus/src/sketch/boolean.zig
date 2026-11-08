@@ -139,6 +139,14 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     if (n_cycles == 0) return b.body;
     // Each cycle's pieces merged along one curve, then its vertices (once) and edges, and
     // its area
+    // How many boundary half-edges leave each vertex: pieces merge across a vertex only
+    // when the boundary passes it once, never across one another passage of the boundary
+    // (a pinch, a hole touching the outer loop) also uses, which would leave an edge
+    // running through a vertex
+    const uses = try allocator.alloc(u32, o.points.items.len);
+    defer allocator.free(uses);
+    @memset(uses, 0);
+    for (halves.items) |h| uses[o.origin(h)] += 1;
     const pieces = try allocator.alloc(Piece, halves.items.len);
     defer allocator.free(pieces);
     const piece_starts = try allocator.alloc(u32, n_cycles + 1);
@@ -146,7 +154,7 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     var n_pieces: u32 = 0;
     for (0..n_cycles) |ci| {
         piece_starts[ci] = n_pieces;
-        n_pieces += mergePieces(o, halves.items[starts.items[ci]..starts.items[ci + 1]], pieces[n_pieces..], tol);
+        n_pieces += mergePieces(o, halves.items[starts.items[ci]..starts.items[ci + 1]], pieces[n_pieces..], uses, tol);
     }
     piece_starts[n_cycles] = n_pieces;
     const vertex_of = try allocator.alloc(types.VertexIndex, o.points.items.len);
@@ -218,13 +226,14 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
 const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc };
 
 /// The cycle's half-edges as pieces, consecutive ones on one line (collinear, the same
-/// way) or on one circle (the same centre, radius and sense) merged, the merge wrapping
+/// way) or on one circle (the same centre, radius and sense) merged where the boundary
+/// passes their shared vertex once (`uses`), the merge wrapping
 /// round the cycle's start. Returns how many pieces `out` got.
-fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, tol: Tolerance) u32 {
+fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, uses: []const u32, tol: Tolerance) u32 {
     var n: u32 = 0;
     for (halves) |h| {
         const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h) };
-        if (n > 0 and continues(o, out[n - 1], piece, tol)) {
+        if (n > 0 and uses[piece.a] == 1 and continues(o, out[n - 1], piece, tol)) {
             out[n - 1].b = piece.b;
         } else {
             out[n] = piece;
@@ -232,7 +241,7 @@ fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, tol: Tolera
         }
     }
     // The last and the first
-    while (n > 1 and continues(o, out[n - 1], out[0], tol)) {
+    while (n > 1 and uses[out[0].a] == 1 and continues(o, out[n - 1], out[0], tol)) {
         out[0].a = out[n - 1].a;
         n -= 1;
     }

@@ -15,6 +15,8 @@ const sweep = @import("../construct/sweep.zig");
 const transform = @import("../construct/transform.zig");
 const edges = @import("edges.zig");
 const tessellate = @import("tessellate.zig");
+const boolean = @import("../sketch/boolean.zig");
+const mass = @import("../measure/mass.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Mesh = tessellate.Mesh;
@@ -209,6 +211,30 @@ test "tessellate: a mirrored box keeps its triangles facing out" {
     defer mesh.deinit(testing.allocator);
     try expectEdgePairs(mesh);
     try testing.expectApproxEqRel(@as(f64, 24), signedVolume(mesh), CLOSE);
+}
+
+test "tessellate: a union whose boundary passes a vertex twice, once along a straight run, keeps the vertex on both passages" {
+    // Two sheets of crossing rings (the fuzzer's): their union's boundary runs along the
+    // line y = 0.8x through (3, 2.4), a vertex its other passage turns at; the straight
+    // run's pieces were once merged into one edge through that vertex, which no
+    // triangulation could take. All faces are triangulated and cover the exact area.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a0 = [_]Vec2{ .{ 6, 4 }, .{ 2, 0 }, .{ 6, 5 } };
+    const a1 = [_]Vec2{ .{ 3, 1 }, .{ 3, 6 }, .{ 6, 2 }, .{ 1, 2 }, .{ 6, 3 }, .{ 3, 5 }, .{ 0, 2 } };
+    var first = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a0, &a1 }, &diag);
+    defer first.deinit();
+    const b0 = [_]Vec2{ .{ 2, 6 }, .{ 5, 4 }, .{ 1, 0 }, .{ 4, 0 }, .{ 0, 6 }, .{ 1, 4 }, .{ 0, 4 } };
+    const b1 = [_]Vec2{ .{ 2, 5 }, .{ 0, 1 }, .{ 5, 4 }, .{ 0, 0 }, .{ 3, 2 }, .{ 5, 6 }, .{ 5, 2 }, .{ 0, 1 } };
+    var second = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b0, &b1 }, &diag);
+    defer second.deinit();
+    var joined = try boolean.boolean(testing.allocator, &.{ &first, &second }, .@"union", .{}, &diag);
+    defer joined.deinit();
+    var mesh = try meshOf(&joined, .{});
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+    try testing.expectApproxEqRel((try mass.mass(&joined, .{}, &diag)).area, area(mesh), 1e-9);
+    try testing.expectEqual(@as(usize, 0), diag.warnings());
 }
 
 test "tessellate: the same body twice gives the same mesh" {

@@ -362,7 +362,11 @@ pub const Overlay = struct {
     }
 
     /// The crossing of two line segments inside both (an end on the other is a cut of its
-    /// own; collinear ones overlap along their ends, which are cuts too).
+    /// own; collinear ones overlap along their ends, which are cuts too). Coincidence
+    /// first (D16): an end within the zone of the other segment's line is on it, a
+    /// T-junction or an overlap for `cutAt`, never a crossing, whichever side the exact
+    /// turn puts it: a crossing computed from two near-zero turns could land anywhere
+    /// along the segment.
     fn lineLine(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) usize {
         const a = self.point(gi.a);
         const b = self.point(gi.b);
@@ -372,8 +376,12 @@ pub const Overlay = struct {
         const abd = predicates.orient2d(a, b, d);
         const cda = predicates.orient2d(c, d, a);
         const cdb = predicates.orient2d(c, d, b);
-        if (abc == 0 or abd == 0 or (abc > 0) == (abd > 0)) return 0;
-        if (cda == 0 or cdb == 0 or (cda > 0) == (cdb > 0)) return 0;
+        // A turn is twice the triangle's area: the end's distance from the line times the
+        // line's length
+        const ab_zone = self.tol.zone * vec.distance2(a, b);
+        const cd_zone = self.tol.zone * vec.distance2(c, d);
+        if (@abs(abc) <= ab_zone or @abs(abd) <= ab_zone or @abs(cda) <= cd_zone or @abs(cdb) <= cd_zone) return 0;
+        if ((abc > 0) == (abd > 0) or (cda > 0) == (cdb > 0)) return 0;
         out[0] = vec.addScaled2(a, vec.sub2(b, a), cda / (cda - cdb));
         return 1;
     }
