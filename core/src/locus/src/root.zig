@@ -63,6 +63,8 @@ pub const construct = struct {
 /// Meshes: the triangulator (M2), the tessellation of bodies (planar faces in M2).
 pub const mesh = struct {
     pub const triangulate = @import("mesh/triangulate.zig");
+    pub const edges = @import("mesh/edges.zig");
+    pub const tessellate = @import("mesh/tessellate.zig");
 };
 /// Measures: bounding boxes (volume, area and genus in M1).
 pub const measure = struct {
@@ -114,6 +116,7 @@ test {
     _ = @import("sketch/offset_test.zig");
     _ = @import("sketch/query_test.zig");
     _ = @import("mesh/triangulate_test.zig");
+    _ = @import("mesh/tessellate_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
 }

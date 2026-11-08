@@ -17,6 +17,7 @@ const body_json = @import("io/body_json.zig");
 const step_write = @import("io/step_write.zig");
 const check = @import("topology/check.zig");
 const bvh = @import("spatial/bvh.zig");
+const tessellate = @import("mesh/tessellate.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -142,6 +143,13 @@ fn opCompact(allocator: std.mem.Allocator, body: *const Body) !void {
     remap.deinit(allocator);
 }
 
+fn opTessellate(allocator: std.mem.Allocator, body: *const Body) !void {
+    var diag = Diagnostics.init(allocator);
+    defer diag.deinit();
+    var mesh = try tessellate.tessellate(allocator, body, .{}, .{}, &diag);
+    mesh.deinit(allocator);
+}
+
 fn opBvh(allocator: std.mem.Allocator, body: *const Body) !void {
     _ = body;
     var boxes: [40]@import("geometry/types.zig").Box3 = undefined;
@@ -171,6 +179,7 @@ test "allocation failure: every operation on a body leaves nothing allocated and
     try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opClone});
     try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opCompact});
     try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opBvh});
+    try testing.checkAllAllocationFailures(NoResize.allocator, withBody, .{opTessellate});
 }
 
 test "cancel: a flag set before the call is error.Canceled, with nothing allocated and the input untouched" {
