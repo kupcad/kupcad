@@ -14,8 +14,9 @@ jobs:
     # the built-ins, on scripts that compile), each on random bytes from the corpus in
     # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig), the
     # parsers of what KupCAD reads but didn't write (importers_fuzz_test.zig), and the JSON
-    # files scripts read (stdlib/json_fuzz_test.zig, from json_fuzz_corpus/). A plain test run
-    # replays the corpus on every platform; searching runs here, one job per target.
+    # files scripts read (stdlib/json_fuzz_test.zig, from json_fuzz_corpus/), and Locus's body
+    # reader and 2D kernel (locus/src/fuzz_test.zig). A plain test run replays the corpus on
+    # every platform; searching runs here, one job per target.
     name: Fuzz the ${{ matrix.target }} (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -47,6 +48,11 @@ jobs:
           # small TrueType and CFF seeds (src/core/test_fonts).
           - target: fonts
             runs: 2M
+          # Locus, the B-Rep kernel: its body JSON reader on bytes and its 2D kernel on
+          # generated sketch chains (src/locus/src/fuzz_test.zig); a chain builds up to four
+          # sheets and runs its booleans twice over for the area identities.
+          - target: locus
+            runs: 1M
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

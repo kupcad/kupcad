@@ -119,4 +119,5 @@ test {
     _ = @import("mesh/tessellate_test.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
+    _ = @import("fuzz_test.zig");
 }

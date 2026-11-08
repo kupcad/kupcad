@@ -735,8 +735,8 @@ pub fn build(b: *std.Build) void {
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts, locus };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import, locus for the B-Rep kernel's body reader and 2D kernel");
         // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
             .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
@@ -748,14 +748,28 @@ pub fn build(b: *std.Build) void {
             .json => "stdlib.json_fuzz_test.test.fuzz: a JSON file a script reads",
             // Also among the importers, but tatfi is the largest parser of what scripts give
             .fonts => "importers_fuzz_test.test.fuzz: a font file a script imports",
+            // Locus's tests are a test of their own, below
+            .locus => "fuzz:",
         } else "fuzz:";
-        const fuzz_tests = b.addTest(.{
-            .root_module = mod,
-            .filters = b.graph.dupeStrings(&.{fuzz_filter}),
-            .use_llvm = true,
-        });
-        const fuzz_step = b.step("fuzz", "Fuzz the front end and the runtime (with --fuzz; without it, replay the corpus)");
-        fuzz_step.dependOn(&b.addRunArtifact(fuzz_tests).step);
+        const fuzz_step = b.step("fuzz", "Fuzz the front end, the runtime and Locus (with --fuzz; without it, replay the corpus)");
+        if (fuzz_target != .locus) {
+            const fuzz_tests = b.addTest(.{
+                .root_module = mod,
+                .filters = b.graph.dupeStrings(&.{fuzz_filter}),
+                .use_llvm = true,
+            });
+            fuzz_step.dependOn(&b.addRunArtifact(fuzz_tests).step);
+        }
+        // Locus is its own module, so its fuzz tests (src/locus/src/fuzz_test.zig) are a
+        // test of their own, built the same way
+        if (fuzz_target == null or fuzz_target == .locus) {
+            const locus_fuzz_tests = b.addTest(.{
+                .root_module = locus.module("locus"),
+                .filters = b.graph.dupeStrings(&.{"fuzz:"}),
+                .use_llvm = true,
+            });
+            fuzz_step.dependOn(&b.addRunArtifact(locus_fuzz_tests).step);
+        }
 
         const gen_grammar_exe = b.addExecutable(.{
             .name = "gen_grammar",
