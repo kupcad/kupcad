@@ -232,3 +232,30 @@ test "offset: a grown sheet holds its sheet (the fuzzer's chain whose grown shee
     try testing.expectApproxEqRel(try areaOf(&u), try areaOf(&both), 1e-9);
     try testing.expect(try areaOf(&g) > try areaOf(&u) + 20);
 }
+
+test "offset: a shrunk sheet lies within its sheet (the fuzzer's chain of 12,899 overlay edges)" {
+    // Three edges within a degree of one another at one vertex had no order in the
+    // overlay's angular sort, and two lines through one vertex a fraction of a degree
+    // apart were interned as one: the shrunk sheet came out as 43 slivers outside the
+    // sheet
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a1 = [_]Vec2{ .{ 1, 3 }, .{ 3, 5 }, .{ 0, 1 }, .{ 6, 5 }, .{ 4, 0 }, .{ 1, 4 }, .{ 2, 6 }, .{ 6, 1 } };
+    const a2 = [_]Vec2{ .{ 3, 1 }, .{ 1, 3 }, .{ 2, 5 }, .{ 0, 0 }, .{ 6, 6 }, .{ 2, 2 }, .{ 3, 1 } };
+    const a3 = [_]Vec2{ .{ 4, 3 }, .{ 4, 6 }, .{ 4, 0 }, .{ 5, 2 }, .{ 1, 1 }, .{ 6, 4 }, .{ 2, 5 }, .{ 1, 3 } };
+    var a = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a1, &a2, &a3 }, &diag);
+    defer a.deinit();
+    const b1 = [_]Vec2{ .{ 3, 6 }, .{ 4, 2 }, .{ 0, 4 }, .{ 3, 3 }, .{ 2, 3 }, .{ 4, 4 }, .{ 0, 4 }, .{ 4, 6 } };
+    const b2 = [_]Vec2{ .{ 3, 1 }, .{ 0, 5 }, .{ 2, 5 }, .{ 1, 6 }, .{ 4, 1 }, .{ 2, 1 }, .{ 1, 5 } };
+    const b3 = [_]Vec2{ .{ 5, 6 }, .{ 3, 3 }, .{ 6, 6 }, .{ 1, 5 }, .{ 2, 6 }, .{ 2, 1 }, .{ 2, 6 }, .{ 2, 2 } };
+    var b = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b1, &b2, &b3 }, &diag);
+    defer b.deinit();
+    var u = try boolean.boolean(testing.allocator, &.{ &a, &b }, .@"union", .{}, &diag);
+    defer u.deinit();
+    var s = try offset.offset(testing.allocator, &u, -1, .round, 3, .{}, &diag);
+    defer s.deinit();
+    var both = try boolean.boolean(testing.allocator, &.{ &u, &s }, .intersection, .{}, &diag);
+    defer both.deinit();
+    try testing.expectApproxEqRel(try areaOf(&s), try areaOf(&both), 1e-9);
+    try testing.expect(try areaOf(&s) < try areaOf(&u));
+}

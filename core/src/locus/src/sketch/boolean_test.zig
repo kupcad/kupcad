@@ -182,3 +182,26 @@ test "even-odd fill: nested outlines, an island in a hole, a bow tie, and two le
     try expectCounts(&word, 8, 8, 2, 2);
     try testing.expectApproxEqRel(@as(f64, 8), try areaOf(&word), 1e-12);
 }
+
+test "sketch booleans: three edges within a degree of each other at one vertex keep their order" {
+    // Two slivers sharing an edge: at the origin, three half-edges leave within 0.6° of
+    // one another. Ordered by curvature as near-tangent (both zero), the two lines were
+    // neither less than the other, the sort put them anyhow, and the cycles came out
+    // wrong; lines are ordered by the exact turn between their ends
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const lower = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 0.1 } };
+    const upper = [_]Vec2{ .{ 0, 0 }, .{ 10, 0.1 }, .{ 10, 0.2 } };
+    var a = try primitives.polygon(testing.allocator, tol, &lower, &diag);
+    defer a.deinit();
+    var b = try primitives.polygon(testing.allocator, tol, &upper, &diag);
+    defer b.deinit();
+    var u = try boolean.boolean(testing.allocator, &.{ &a, &b }, .@"union", .{}, &diag);
+    defer u.deinit();
+    try testing.expectApproxEqRel(@as(f64, 1), try areaOf(&u), 1e-12);
+    try testing.expectEqual(@as(usize, 1), u.counts().faces);
+    try testing.expectEqual(@as(usize, 3), u.counts().edges);
+    var i = try boolean.boolean(testing.allocator, &.{ &a, &b }, .intersection, .{}, &diag);
+    defer i.deinit();
+    try testing.expect(i.isEmpty());
+}

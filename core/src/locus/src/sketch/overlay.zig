@@ -31,10 +31,14 @@ pub const Error = error{ OutOfMemory, TooMany, OutOfRange };
 pub const MAX_INPUTS: usize = 1 << 16;
 /// Edges meeting at one vertex at most.
 const MAX_DEGREE: usize = 1 << 16;
-/// How far inside a region its probe point sits, in zones.
-const PROBE_ZONES: f64 = 4;
 /// How far past an arc's end an angle may be and still count as on it, in radians.
 const SPAN_SLACK: f64 = 1e-9;
+/// How far along its curve a half-edge is sampled for the order about its origin, in
+/// zones: past any crossing within the zone of the vertex (snapped to it: the order past
+/// the vertex is the order past the crossing, and the tangents at the vertex told the
+/// order before it, a rotation system of genus one), and far enough that an arc's bend
+/// outweighs the arithmetic of its sample (a radius of 1000 bends 5e-10 in 1e-3).
+const ORDER_REACH: f64 = 100;
 
 /// A circular arc's circle: the arc runs from the edge's `a` to its `b` about `c`,
 /// counter-clockwise when `ccw`.
@@ -483,7 +487,15 @@ pub const Overlay = struct {
         const forward = from < to;
         const a = if (forward) from else to;
         const b = if (forward) to else from;
-        const arc: ?Arc = if (g.arc) |given_arc| .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw } else null;
+        var arc: ?Arc = if (g.arc) |given_arc| .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw } else null;
+        // An arc piece within the zone of its chord is its chord: its ends are welded
+        // vertices within the zone of its circle, not on it, so a lens thinner than the
+        // zone between it and a line through the same vertices has an area at the
+        // rounding level, of either sign, and is no region
+        if (arc) |piece_arc| {
+            const sweep = arcSpan(self.point(a), self.point(b), piece_arc).sweep;
+            if (piece_arc.r * (1 - @cos(sweep / 2)) <= self.tol.zone) arc = null;
+        }
         const key = EdgeKey{ .a = a, .b = b, .arc = if (arc) |piece_arc| arcKey(piece_arc) else 0 };
         try merged.ensureUnusedCapacity(self.allocator, 1);
         const entry = merged.getOrPutAssumeCapacity(key);
@@ -537,36 +549,30 @@ pub const Overlay = struct {
         }
     }
 
-    const Leaving = struct { tangent: Vec2, curvature: f64 };
-
-    /// A half-edge's unit tangent at its origin, and its curvature there (positive
-    /// turning left).
-    fn leaving(self: *const Overlay, half: u32) Leaving {
-        const a = self.point(self.origin(half));
-        if (self.arcOf(half)) |arc| {
-            const radial = vec.sub2(a, arc.c);
-            const tangent = if (arc.ccw) Vec2{ -radial[1], radial[0] } else Vec2{ radial[1], -radial[0] };
-            return .{ .tangent = vec.normalized2(tangent) orelse Vec2{ 1, 0 }, .curvature = if (arc.ccw) 1.0 / arc.r else -1.0 / arc.r };
-        }
-        const d = vec.sub2(self.point(self.target(half)), a);
-        return .{ .tangent = vec.normalized2(d) orelse Vec2{ 1, 0 }, .curvature = 0 };
+    /// Whether `x` leaves its origin at a smaller angle than `y`, counter-clockwise from
+    /// the positive x axis: by the directions to their samples a reach along them
+    /// (`sampleAlong`), by half-plane, then by the exact predicate on the sample points.
+    /// Tangent curves (a join arc and the line it joins) part by their bend within the
+    /// reach, so no curvature rule is needed; two lines a fraction of a degree apart have
+    /// their definite order (as near-tangent by an angle tolerance they had none, and the
+    /// sort put them anyhow). No angle is ever computed, so a direction along the
+    /// negative x axis has no seam to fall across.
+    fn lessAbout(self: *const Overlay, x: u32, y: u32) bool {
+        const o = self.point(self.origin(x));
+        const px = self.sample(x);
+        const py = self.sample(y);
+        const ux = upperHalf(vec.sub2(px, o));
+        const uy = upperHalf(vec.sub2(py, o));
+        if (ux != uy) return ux;
+        const side = predicates.orient2d(o, px, py);
+        if (side != 0) return side > 0;
+        return x < y;
     }
 
-    /// Whether `x` leaves its origin at a smaller angle than `y`, counter-clockwise from
-    /// the positive x axis: by half-plane, then by the exact turn between the tangents; two
-    /// tangents within the angle tolerance of each other (an arc tangent to a line or to
-    /// another arc) by curvature, the one curving left further round. No angle is ever
-    /// computed, so a tangent along the negative x axis has no seam to fall across.
-    fn lessAbout(self: *const Overlay, x: u32, y: u32) bool {
-        const lx = self.leaving(x);
-        const ly = self.leaving(y);
-        const turn = vec.cross2(lx.tangent, ly.tangent);
-        if (vec.dot2(lx.tangent, ly.tangent) > 0 and @abs(turn) <= self.tol.angle) return lx.curvature < ly.curvature;
-        const ux = upperHalf(lx.tangent);
-        const uy = upperHalf(ly.tangent);
-        if (ux != uy) return ux;
-        if (turn != 0) return turn > 0;
-        return x < y;
+    /// The half-edge's point `ORDER_REACH` zones along it from its origin, or its middle
+    /// when it is shorter than twice that; a line's far end, which is exact.
+    fn sample(self: *const Overlay, half: u32) Vec2 {
+        return sampleAlong(self.point(self.origin(half)), self.point(self.target(half)), self.arcOf(half), ORDER_REACH * self.tol.zone);
     }
 
     fn upperHalf(d: Vec2) bool {
@@ -627,75 +633,47 @@ pub const Overlay = struct {
     // --- faces ---
 
     /// Each counter-clockwise cycle bounds a face; each clockwise one is a hole of the
-    /// innermost face whose outer cycle holds a point of it, else of the plane.
+    /// face it lies in (`nestCycles`), else of the plane.
     fn nest(self: *Overlay) Error!void {
         const allocator = self.allocator;
         self.faces.clearRetainingCapacity();
         self.face_holes.clearRetainingCapacity();
+        const n = self.cycles.items.len;
         for (self.cycles.items, 0..) |*c, i| {
+            c.face = UNBOUNDED;
             if (c.area > 0) {
                 c.face = @intCast(self.faces.items.len);
                 try self.faces.append(allocator, .{ .outer = @intCast(i) });
             }
         }
-        const owner = try allocator.alloc(u32, self.cycles.items.len);
-        defer allocator.free(owner);
+        // Every half-edge as a segment of its cycle, the cycles' halves being laid out
+        // one cycle after another
+        const segments = try allocator.alloc(Segment, self.cycle_halves.items.len);
+        defer allocator.free(segments);
+        const starts = try allocator.alloc(u32, n + 1);
+        defer allocator.free(starts);
+        const areas = try allocator.alloc(f64, n);
+        defer allocator.free(areas);
         for (self.cycles.items, 0..) |c, i| {
-            owner[i] = UNBOUNDED;
-            if (c.area > 0) continue;
-            const probe = self.insidePoint(@intCast(i));
-            var best_area = std.math.inf(f64);
-            for (self.faces.items, 0..) |f, fi| {
-                const outer = self.cycles.items[f.outer];
-                if (outer.area < best_area and self.contains(f.outer, probe)) {
-                    best_area = outer.area;
-                    owner[i] = @intCast(fi);
-                }
+            starts[i] = c.first_half;
+            areas[i] = c.area;
+            for (self.halvesOf(@intCast(i)), c.first_half..) |h, k| {
+                segments[k] = .{ .a = self.point(self.origin(h)), .b = self.point(self.target(h)), .arc = self.arcOf(h), .cycle = @intCast(i), .beyond = self.cycle_of.items[h ^ 1] };
             }
-            self.cycles.items[i].face = owner[i];
+        }
+        starts[n] = @intCast(self.cycle_halves.items.len);
+        const owner = try allocator.alloc(u32, n);
+        defer allocator.free(owner);
+        try nestCycles(allocator, segments, starts, areas, owner, self.tol);
+        for (self.cycles.items, owner) |*c, within| {
+            if (c.area > 0) continue;
+            c.face = if (within == UNBOUNDED) UNBOUNDED else self.cycles.items[within].face;
         }
         for (self.faces.items, 0..) |*f, fi| {
             f.first_hole = @intCast(self.face_holes.items.len);
-            for (owner, 0..) |o, ci| if (o == fi) try self.face_holes.append(allocator, @intCast(ci));
+            for (self.cycles.items, 0..) |c, ci| if (c.area <= 0 and c.face == fi) try self.face_holes.append(allocator, @intCast(ci));
             f.hole_count = @intCast(self.face_holes.items.len - f.first_hole);
         }
-    }
-
-    /// A point just inside a cycle's region: a few zones to the left of its first
-    /// half-edge's middle (for a hole, into the surrounding face), less than any edge is
-    /// long.
-    fn insidePoint(self: *const Overlay, cycle: u32) Vec2 {
-        const half = self.cycle_halves.items[self.cycles.items[cycle].first_half];
-        const a = self.point(self.origin(half));
-        const b = self.point(self.target(half));
-        var middle = vec.scale2(vec.add2(a, b), 0.5);
-        var tangent = vec.normalized2(vec.sub2(b, a)) orelse Vec2{ 1, 0 };
-        if (self.arcOf(half)) |arc| {
-            const span = arcSpan(a, b, arc);
-            const angle = span.start + span.sweep / 2.0 * (if (arc.ccw) @as(f64, 1) else -1);
-            middle = vec.addScaled2(arc.c, .{ @cos(angle), @sin(angle) }, arc.r);
-            const radial = vec.sub2(middle, arc.c);
-            tangent = vec.normalized2(if (arc.ccw) Vec2{ -radial[1], radial[0] } else Vec2{ radial[1], -radial[0] }).?;
-        }
-        const left = Vec2{ -tangent[1], tangent[0] };
-        return vec.addScaled2(middle, left, PROBE_ZONES * self.tol.zone);
-    }
-
-    /// Whether `p` is inside a cycle, by the crossings of the ray to +x with its edges,
-    /// each y-monotone piece counted on the half-open rule.
-    fn contains(self: *const Overlay, cycle: u32, p: Vec2) bool {
-        var inside = false;
-        for (self.halvesOf(cycle)) |h| {
-            const a = self.point(self.origin(h));
-            const b = self.point(self.target(h));
-            if (self.arcOf(h)) |arc| {
-                inside = inside != arcCrossings(a, b, arc, p);
-            } else if ((a[1] > p[1]) != (b[1] > p[1])) {
-                const x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-                if (p[0] < x) inside = !inside;
-            }
-        }
-        return inside;
     }
 
     // --- windings ---
@@ -834,6 +812,17 @@ const Span = struct {
     }
 };
 
+/// The point `reach` along the curve from `a` to `b` (straight, or along `arc`), or its
+/// middle when the curve is shorter than twice the reach; `b` itself for a line, whose
+/// direction from `a` is the same anywhere along it and exact there.
+fn sampleAlong(a: Vec2, b: Vec2, arc: ?Arc, reach: f64) Vec2 {
+    const circle = arc orelse return b;
+    const span = arcSpan(a, b, circle);
+    const s = @min(reach, circle.r * span.sweep / 2.0);
+    const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
+    return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
+}
+
 fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
     const start = trig.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
     const end = trig.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
@@ -843,46 +832,202 @@ fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
     return .{ .start = start, .sweep = sweep, .ccw = arc.ccw };
 }
 
-/// Whether the ray from `p` to +x crosses the arc an odd number of times: the arc cut at
-/// its topmost and bottommost points into y-monotone pieces, each counted on the half-open
-/// rule as a straight edge would be. A piece's height at an end of the arc is the end's
-/// own point, not the circle's point at its angle, which may differ by a rounding: the
-/// edge beyond the vertex counts the vertex by its point, and a ray at that height must
-/// find the two of them agreeing whether the vertex is above it.
-pub fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
-    const span = arcSpan(a, b, arc);
-    const sign: f64 = if (arc.ccw) 1 else -1;
-    const Cut = struct { t: f64, y: f64 };
-    var cuts: [4]Cut = undefined;
-    var n: usize = 0;
-    cuts[n] = .{ .t = 0, .y = a[1] };
-    n += 1;
-    for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }, [_]f64{ arc.r, -arc.r }) |extreme, rise| {
-        if (span.offsetOf(extreme)) |t| {
-            if (t > 0 and t < span.sweep) {
-                cuts[n] = .{ .t = t, .y = arc.c[1] + rise };
-                n += 1;
+/// The y-monotone pieces of an arc from `a` to `b`, with the heights of their ends: the
+/// ends' own points at the arc's ends, never the circle's point at the end's angle, which
+/// may differ by a rounding (2 − 1.2e-16 is the double below 2) while the edge beyond the
+/// vertex counts the vertex by its point; the circle's top and bottom at the extremes
+/// between. Pieces that short are kept: the half-open rule then agrees at every vertex.
+const ArcPieces = struct {
+    span: Span,
+    sign: f64,
+    cuts: [4]Cut,
+    n: usize,
+    at: usize = 0,
+
+    const Cut = struct { t: f64, x: f64, y: f64 };
+
+    const Piece = struct {
+        y0: f64,
+        y1: f64,
+        /// The ends' x, exact where an end is a vertex or an extreme.
+        x0: f64,
+        x1: f64,
+        /// The angle of the piece's middle: the side of the centre it lies on.
+        mid: f64,
+    };
+
+    fn init(a: Vec2, b: Vec2, arc: Arc) ArcPieces {
+        const span = arcSpan(a, b, arc);
+        var cuts: [4]Cut = undefined;
+        var n: usize = 0;
+        cuts[n] = .{ .t = 0, .x = a[0], .y = a[1] };
+        n += 1;
+        for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }, [_]f64{ arc.r, -arc.r }) |extreme, rise| {
+            if (span.offsetOf(extreme)) |t| {
+                if (t > 0 and t < span.sweep) {
+                    cuts[n] = .{ .t = t, .x = arc.c[0], .y = arc.c[1] + rise };
+                    n += 1;
+                }
             }
         }
+        cuts[n] = .{ .t = span.sweep, .x = b[0], .y = b[1] };
+        n += 1;
+        std.mem.sort(Cut, cuts[0..n], {}, struct {
+            fn lessThan(_: void, x: Cut, y: Cut) bool {
+                return x.t < y.t;
+            }
+        }.lessThan);
+        return .{ .span = span, .sign = if (arc.ccw) 1 else -1, .cuts = cuts, .n = n };
     }
-    cuts[n] = .{ .t = span.sweep, .y = b[1] };
-    n += 1;
-    std.mem.sort(Cut, cuts[0..n], {}, struct {
-        fn lessThan(_: void, x: Cut, y: Cut) bool {
-            return x.t < y.t;
-        }
-    }.lessThan);
+
+    fn next(self: *ArcPieces) ?Piece {
+        if (self.at + 1 >= self.n) return null;
+        const c0 = self.cuts[self.at];
+        const c1 = self.cuts[self.at + 1];
+        self.at += 1;
+        return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .mid = self.span.start + self.sign * (c0.t + c1.t) / 2.0 };
+    }
+};
+
+/// Where the piece of the circle `arc` whose middle is at the angle `mid` is at height `y`.
+fn arcXAt(arc: Arc, mid: f64, y: f64) f64 {
+    const dy = y - arc.c[1];
+    const dx = @sqrt(@max(arc.r * arc.r - dy * dy, 0));
+    return if (@cos(mid) >= 0) arc.c[0] + dx else arc.c[0] - dx;
+}
+
+/// Whether the ray from `p` to +x crosses the arc an odd number of times: each y-monotone
+/// piece counted on the half-open rule as a straight edge would be.
+pub fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
+    var pieces = ArcPieces.init(a, b, arc);
     var odd = false;
-    for (0..n - 1) |i| {
-        const y0 = cuts[i].y;
-        const y1 = cuts[i + 1].y;
-        if ((y0 > p[1]) == (y1 > p[1])) continue;
-        // The piece's x at p's height, on the side of the centre its middle is on
-        const mid = span.start + sign * (cuts[i].t + cuts[i + 1].t) / 2.0;
-        const dy = p[1] - arc.c[1];
-        const dx = @sqrt(@max(arc.r * arc.r - dy * dy, 0));
-        const x = if (@cos(mid) >= 0) arc.c[0] + dx else arc.c[0] - dx;
-        if (p[0] < x) odd = !odd;
+    while (pieces.next()) |piece| {
+        if ((piece.y0 > p[1]) == (piece.y1 > p[1])) continue;
+        if (p[0] < arcXAt(arc, piece.mid, p[1])) odd = !odd;
     }
     return odd;
+}
+
+/// A segment of a cycle for `nestCycles`: from `a` to `b`, straight or along `arc`, run
+/// by `cycle` with its region on the left; `beyond` is the cycle on its other side, when
+/// known (the overlay's twin half-edge), else `UNBOUNDED`.
+pub const Segment = struct {
+    a: Vec2,
+    b: Vec2,
+    arc: ?Arc = null,
+    cycle: u32,
+    beyond: u32 = UNBOUNDED,
+};
+
+/// The cycle each clockwise cycle lies in, into `owner`: the index of a counter-clockwise
+/// cycle, or `UNBOUNDED` for a hole of the plane (and for the counter-clockwise cycles
+/// themselves). Cycle `i` is `segments[starts[i]..starts[i + 1]]`, of signed area
+/// `areas[i]`. By the textbook rule (BKOS §2.3), exact where the probe point was not:
+/// the region just left of a hole's leftmost (then lowest) vertex is the hole's face,
+/// since the hole lies to that vertex's right with its corner within the closed right
+/// half-plane; the ray from the vertex to −x, just above it (the half-open rule), reaches
+/// the nearest segment it crosses, and the face is on that segment's left when the
+/// segment runs down through the ray, else beyond it. Where the ray meets a vertex,
+/// the segments up from it tie at its x, and the most clockwise of them (the tangent,
+/// then the bend) bounds the region east of it. A clockwise cycle found that way lies in
+/// the same face and reaches further left, so the owners resolve in a bounded chain.
+pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, starts: []const u32, areas: []const f64, owner: []u32, tol: Tolerance) error{OutOfMemory}!void {
+    const reach = ORDER_REACH * tol.zone;
+    const n = areas.len;
+    const parent = try allocator.alloc(u32, n);
+    defer allocator.free(parent);
+    for (0..n) |i| {
+        owner[i] = UNBOUNDED;
+        parent[i] = UNBOUNDED;
+        if (areas[i] > 0) continue;
+        // The cycle's leftmost point: a vertex, or an arc's west extreme when the arc
+        // bulges past its ends (the cycle's own segment there is at the point's x, so
+        // the ray, which wants a crossing strictly left, passes it)
+        var v = segments[starts[i]].a;
+        for (segments[starts[i]..starts[i + 1]]) |s| {
+            if (lefter(s.a, v)) v = s.a;
+            if (s.arc) |arc| {
+                const west: Vec2 = .{ arc.c[0] - arc.r, arc.c[1] };
+                if (arcSpan(s.a, s.b, arc).holds(std.math.pi) and lefter(west, v)) v = west;
+            }
+        }
+        var best: ?Hit = null;
+        for (segments) |s| {
+            if (s.arc) |arc| {
+                var pieces = ArcPieces.init(s.a, s.b, arc);
+                while (pieces.next()) |piece| {
+                    if ((piece.y0 > v[1]) == (piece.y1 > v[1])) continue;
+                    const x = if (v[1] == piece.y0) piece.x0 else if (v[1] == piece.y1) piece.x1 else arcXAt(arc, piece.mid, v[1]);
+                    if (x >= v[0]) continue;
+                    // The direction up from the ray along the piece: from a vertex on
+                    // the ray, to the sample a reach along the arc (as the order about
+                    // a vertex is told); else the tangent at the crossing
+                    const descending = piece.y0 > piece.y1;
+                    const at: Vec2 = .{ x, v[1] };
+                    const up = if (v[1] == s.a[1] and x == s.a[0])
+                        vec.sub2(sampleAlong(s.a, s.b, arc, reach), s.a)
+                    else if (v[1] == s.b[1] and x == s.b[0])
+                        vec.sub2(sampleAlong(s.b, s.a, .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw }, reach), s.b)
+                    else tangent: {
+                        const radial = vec.normalized2(vec.sub2(at, arc.c)) orelse continue;
+                        const along = if (arc.ccw) vec.perp2(radial) else vec.scale2(vec.perp2(radial), -1);
+                        break :tangent if (descending) vec.scale2(along, -1) else along;
+                    };
+                    consider(&best, .{ .x = x, .up = up, .cycle = if (descending) s.cycle else s.beyond });
+                }
+                continue;
+            }
+            if ((s.a[1] > v[1]) == (s.b[1] > v[1])) continue;
+            const x = if (v[1] == s.a[1]) s.a[0] else if (v[1] == s.b[1]) s.b[0] else s.a[0] + (v[1] - s.a[1]) * (s.b[0] - s.a[0]) / (s.b[1] - s.a[1]);
+            if (x >= v[0]) continue;
+            const descending = s.a[1] > s.b[1];
+            const up = if (descending) vec.sub2(s.a, s.b) else vec.sub2(s.b, s.a);
+            consider(&best, .{ .x = x, .up = up, .cycle = if (descending) s.cycle else s.beyond });
+        }
+        if (best) |hit| parent[i] = hit.cycle;
+    }
+    for (0..n) |i| {
+        if (areas[i] > 0) continue;
+        var within = parent[i];
+        var steps: usize = 0;
+        while (within != UNBOUNDED and areas[within] <= 0) : (steps += 1) {
+            // A chain of holes reaches further left each step and cannot loop; bounded all
+            // the same, so that no input can make this spin
+            if (steps > n) {
+                within = UNBOUNDED;
+                break;
+            }
+            within = parent[within];
+        }
+        owner[i] = within;
+    }
+}
+
+/// A crossing of the ray from a hole's leftmost vertex to −x.
+const Hit = struct {
+    x: f64,
+    /// The direction up from the ray along the segment (any length).
+    up: Vec2,
+    /// The cycle whose region is just east of the crossing.
+    cycle: u32,
+};
+
+/// Keeps the hit nearer the vertex: the greater x, or at one x (a vertex on the ray) the
+/// segment up from it that is the most clockwise.
+fn consider(best: *?Hit, hit: Hit) void {
+    const b = best.* orelse {
+        best.* = hit;
+        return;
+    };
+    if (hit.x < b.x) return;
+    if (hit.x > b.x) {
+        best.* = hit;
+        return;
+    }
+    if (vec.cross2(hit.up, b.up) > 0) best.* = hit;
+}
+
+/// Whether `p` is left of `q`: by x, then by y.
+fn lefter(p: Vec2, q: Vec2) bool {
+    return p[0] < q[0] or (p[0] == q[0] and p[1] < q[1]);
 }

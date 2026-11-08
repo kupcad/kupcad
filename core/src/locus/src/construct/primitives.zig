@@ -83,7 +83,7 @@ pub const Builder = struct {
 
     pub fn line(self: *Builder, a: Vec3, b: Vec3) Error!geometry.CurveRef {
         const l = curves.Line.through(a, b) orelse return self.diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "an edge" });
-        return self.interner.line(self.body.allocator, &self.body.geometry, l) catch |e| return self.fail(e);
+        return self.interner.line(self.body.allocator, &self.body.geometry, l, a, b) catch |e| return self.fail(e);
     }
 
     pub fn plane(self: *Builder, frame: Frame) Error!geometry.SurfaceRef {

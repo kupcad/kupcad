@@ -119,9 +119,17 @@ pub const Interner = struct {
         return index;
     }
 
-    pub fn line(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Line) Error!CurveRef {
+    /// The line `item` through `a` and `b`: a kept line that is the same and holds both
+    /// `a` and `b` within `zone`, else `item` added. The same key and direction within
+    /// the angle are not enough: two lines through one point a fraction of a degree apart
+    /// are one line there and apart further along, so a line is shared only over the
+    /// extent that asks for it.
+    pub fn line(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Line, a: Vec3, b: Vec3) Error!CurveRef {
         try self.lines.candidates(allocator, canonical.lineKey(item), &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameLine(g.lines.items[i], item, self.tol)) return CurveRef.of(.line, i);
+        for (self.scratch.items) |i| {
+            const kept = g.lines.items[i];
+            if (canonical.sameLine(kept, item, self.tol) and canonical.lineHolds(kept, a, self.tol) and canonical.lineHolds(kept, b, self.tol)) return CurveRef.of(.line, i);
+        }
         const ref = try g.addLine(allocator, item);
         errdefer _ = g.lines.pop();
         try self.lines.add(allocator, canonical.lineKey(item));

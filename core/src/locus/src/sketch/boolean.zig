@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
@@ -28,8 +29,6 @@ const Error = diagnostics.Error;
 
 pub const Op = enum { @"union", difference, intersection };
 
-/// How far inside a region its probe point sits, in zones.
-const PROBE_ZONES: f64 = 4;
 /// How far past an arc's start its end may be read and still be a full turn's worth.
 const ANGLE_SLACK: f64 = 1e-9;
 
@@ -174,24 +173,23 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
         }
         areas[ci] = area / 2.0;
     }
-    // Each hole's face: the innermost outer cycle containing a point of it
+    // Each hole's face: the outer cycle it lies in (`nestCycles`); the region is on
+    // every piece's left and nothing is known beyond it
+    const segments = try allocator.alloc(overlay_mod.Segment, n_pieces);
+    defer allocator.free(segments);
+    for (0..n_cycles) |ci| {
+        for (pieces[piece_starts[ci]..piece_starts[ci + 1]], piece_starts[ci]..) |piece, k| {
+            segments[k] = .{ .a = o.point(piece.a), .b = o.point(piece.b), .arc = piece.arc, .cycle = @intCast(ci) };
+        }
+    }
     const owner = try allocator.alloc(u32, n_cycles);
     defer allocator.free(owner);
+    try overlay_mod.nestCycles(allocator, segments, piece_starts, areas, owner, tol);
     var n_faces: usize = 0;
     for (0..n_cycles) |ci| {
-        owner[ci] = overlay_mod.UNBOUNDED;
         if (areas[ci] > 0) {
             n_faces += 1;
             continue;
-        }
-        const probe = insidePoint(o, pieces[piece_starts[ci]]);
-        var best = std.math.inf(f64);
-        for (0..n_cycles) |oi| {
-            if (areas[oi] <= 0 or areas[oi] >= best) continue;
-            if (containsPoint(o, pieces[piece_starts[oi]..piece_starts[oi + 1]], probe)) {
-                best = areas[oi];
-                owner[ci] = @intCast(oi);
-            }
         }
         if (owner[ci] == overlay_mod.UNBOUNDED) return diag.fail(error.NotValid, .{ .code = .hole_outside_outer, .label = "the result" });
     }
@@ -260,9 +258,13 @@ fn continues(o: *const Overlay, prev: Piece, next: Piece, tol: Tolerance) bool {
     const a = o.point(prev.a);
     const b = o.point(prev.b);
     const c = o.point(next.b);
-    const d1 = vec.normalized2(vec.sub2(b, a)) orelse return false;
-    const d2 = vec.normalized2(vec.sub2(c, b)) orelse return false;
-    return @abs(vec.cross2(d1, d2)) <= tol.angle and vec.dot2(d1, d2) > 0;
+    // The shared vertex within the zone of the line from the first end to the last (the
+    // turn is twice the triangle's area, that distance times the line's length), and
+    // the same way: not the angle tolerance, which merged pieces a fraction of a degree
+    // apart into a line the vertex was far off
+    const turn = predicates.orient2d(a, b, c);
+    if (@abs(turn) > tol.zone * vec.distance2(a, c)) return false;
+    return vec.dot2(vec.sub2(b, a), vec.sub2(c, b)) > 0;
 }
 
 /// A piece as an edge specification of the new sheet: a line through its ends, or its
@@ -301,39 +303,6 @@ fn areaTerm(o: *const Overlay, piece: Piece) f64 {
         twice += if (arc.ccw) segment else -segment;
     }
     return twice;
-}
-
-/// A point just to the left of a piece's middle: a few zones in, for a hole into the face
-/// about it.
-fn insidePoint(o: *const Overlay, piece: Piece) Vec2 {
-    const a = o.point(piece.a);
-    const b = o.point(piece.b);
-    var middle = vec.scale2(vec.add2(a, b), 0.5);
-    var tangent = vec.normalized2(vec.sub2(b, a)) orelse Vec2{ 1, 0 };
-    if (piece.arc) |arc| {
-        const range = rangeOf(o, piece);
-        const angle = (range[0] + range[1]) / 2.0;
-        middle = vec.addScaled2(arc.c, .{ @cos(angle), @sin(angle) }, arc.r);
-        const radial = vec.sub2(middle, arc.c);
-        tangent = vec.normalized2(if (arc.ccw) Vec2{ -radial[1], radial[0] } else Vec2{ radial[1], -radial[0] }).?;
-    }
-    return vec.addScaled2(middle, .{ -tangent[1], tangent[0] }, PROBE_ZONES * o.tol.zone);
-}
-
-/// Whether `p` is inside the cycle of `pieces`, by the ray to +x.
-fn containsPoint(o: *const Overlay, pieces: []const Piece, p: Vec2) bool {
-    var inside = false;
-    for (pieces) |piece| {
-        const a = o.point(piece.a);
-        const b = o.point(piece.b);
-        if (piece.arc) |arc| {
-            inside = inside != overlay_mod.arcCrossings(a, b, arc, p);
-        } else if ((a[1] > p[1]) != (b[1] > p[1])) {
-            const x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-            if (p[0] < x) inside = !inside;
-        }
-    }
-    return inside;
 }
 
 /// The UV box of a cycle on the world plane: its ends and its arcs' extreme points.

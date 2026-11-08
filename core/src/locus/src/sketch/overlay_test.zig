@@ -246,3 +246,24 @@ test "overlay: a ray at a vertex's height where a line meets an arc counts the v
     try testing.expect(!overlay.arcCrossings(a, b, arc, .{ -1.00004, 2 }));
     try testing.expect(!overlay.arcCrossings(a, b, arc, .{ 3.5, 1.9999999999999998 }));
 }
+
+test "overlay: a hole is nested by the ray from its leftmost vertex, through a vertex on the ray" {
+    // A square with a vertex on its left side at the ray's height, a diamond hole whose
+    // bottom vertex lies on the ray with two edges up from it, and a triangle hole to
+    // the right: the ray from the triangle's leftmost vertex meets the diamond's bottom
+    // vertex first, where the more clockwise of the two edges up bounds the region east
+    // of it, the square's; the diamond's inside is a face of its own with no holes
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try polygon(&o, &.{ .{ 0, 0 }, .{ 6, 0 }, .{ 6, 6 }, .{ 0, 6 }, .{ 0, 2 } });
+    try polygon(&o, &.{ .{ 1, 2 }, .{ 0.5, 3 }, .{ 1, 4 }, .{ 1.5, 3 } });
+    try polygon(&o, &.{ .{ 3, 2 }, .{ 3, 4 }, .{ 5, 3 } });
+    try o.run();
+    try testing.expectEqual(@as(usize, 3), o.faces.items.len);
+    for (o.faces.items, 0..) |f, i| {
+        const area = o.cycles.items[f.outer].area;
+        const holes = o.holesOf(@intCast(i)).len;
+        if (area > 30) try testing.expectEqual(@as(usize, 2), holes) else try testing.expectEqual(@as(usize, 0), holes);
+    }
+}

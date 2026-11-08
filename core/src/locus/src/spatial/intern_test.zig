@@ -114,15 +114,23 @@ test "Interner: the same line, plane and surface get one index; different ones t
     const l1 = curves.Line.through(.{ 0, 0, 0 }, .{ 2, 0, 0 }).?;
     const l2 = curves.Line.through(.{ 5, 0, 0 }, .{ -3, 0, 0 }).?;
     const l3 = curves.Line.through(.{ 0, 1, 0 }, .{ 2, 1, 0 }).?;
-    const r1 = try interner.line(testing.allocator, &g, l1);
-    try testing.expect(r1.eql(try interner.line(testing.allocator, &g, l2)));
-    try testing.expect(!r1.eql(try interner.line(testing.allocator, &g, l3)));
+    const r1 = try interner.line(testing.allocator, &g, l1, .{ 0, 0, 0 }, .{ 2, 0, 0 });
+    try testing.expect(r1.eql(try interner.line(testing.allocator, &g, l2, .{ 5, 0, 0 }, .{ -3, 0, 0 })));
+    try testing.expect(!r1.eql(try interner.line(testing.allocator, &g, l3, .{ 0, 1, 0 }, .{ 2, 1, 0 })));
     try testing.expectEqual(@as(usize, 2), g.lines.items.len);
     // A line through the origin shares its key with every other such line
     const through_origin = curves.Line.through(.{ 0, 0, 0 }, .{ 0, 0, 1 }).?;
-    const r4 = try interner.line(testing.allocator, &g, through_origin);
+    const r4 = try interner.line(testing.allocator, &g, through_origin, .{ 0, 0, 0 }, .{ 0, 0, 1 });
     try testing.expect(!r4.eql(r1));
     try testing.expectEqual(@as(usize, 3), g.lines.items.len);
+    // A line through the origin a fraction of a degree off the x axis is within the angle
+    // and shares the key, but its far end is 0.1 off the x axis: its own line (over a
+    // short edge near the origin it would be the same)
+    const askew = curves.Line.through(.{ 0, 0, 0 }, .{ 10, 0.1, 0 }).?;
+    const r5 = try interner.line(testing.allocator, &g, askew, .{ 0, 0, 0 }, .{ 10, 0.1, 0 });
+    try testing.expect(!r5.eql(r1));
+    try testing.expectEqual(@as(usize, 4), g.lines.items.len);
+    try testing.expect(r1.eql(try interner.line(testing.allocator, &g, askew, .{ 0, 0, 0 }, .{ 0.001, 0.00001, 0 })));
 
     // Planes: z = 1 with either normal, and its parallel at z = 1 + zone/2 is the same
     const p1 = surfaces.Plane{ .frame = Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3) };

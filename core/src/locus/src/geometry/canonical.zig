@@ -23,6 +23,13 @@ pub fn sameLine(a: curves.Line, b: curves.Line, tol: Tolerance) bool {
     return tol.parallel(a.d, b.d) and tol.samePoint(lineKey(a), lineKey(b));
 }
 
+/// Whether `p` lies on the line within `zone`.
+pub fn lineHolds(line: curves.Line, p: Vec3, tol: Tolerance) bool {
+    const d = vec.sub(p, line.o);
+    const off = vec.addScaled(d, line.d, -vec.dot(d, line.d));
+    return vec.lengthSq(off) <= tol.zone * tol.zone;
+}
+
 pub fn sameCircle(a: curves.Circle, b: curves.Circle, tol: Tolerance) bool {
     return tol.samePoint(a.c, b.c) and @abs(a.r - b.r) <= tol.zone and tol.parallel(a.normal(), b.normal());
 }
