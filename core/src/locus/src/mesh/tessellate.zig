@@ -174,6 +174,16 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
                         try ring_id.append(allocator, id);
                     }
                 }
+                // A lens thinner than its chords (a line and a slight arc between two
+                // vertices, the arc's polyline fallen onto the line) is a spike of no
+                // area in the polygon: pruned, its area within the chords' error. A
+                // loop that is all spike at this resolution is left out
+                pruneSpikes(&ring_uv, &ring_id, ring_start);
+                if (ring_uv.items.len - ring_start < 3) {
+                    ring_uv.shrinkRetainingCapacity(ring_start);
+                    ring_id.shrinkRetainingCapacity(ring_start);
+                    continue;
+                }
                 // Loops run counter-clockwise in UV when the outward normal is the
                 // surface's; the triangulator wants them so
                 if (!face.same_sense) {
@@ -181,6 +191,10 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
                     std.mem.reverse(u32, ring_id.items[ring_start..]);
                 }
                 try starts.append(allocator, @intCast(ring_uv.items.len));
+            }
+            if (starts.items.len < 2) {
+                try faces.append(allocator, .{ .face = f, .first = first, .count = 0, .status = .ok });
+                continue;
             }
             const polygon: triangulate.Polygon = .{ .points = ring_uv.items, .starts = starts.items };
             var face_diag = Diagnostics.init(allocator);
@@ -210,6 +224,36 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
     const owned_triangles = try triangles.toOwnedSlice(allocator);
     errdefer allocator.free(owned_triangles);
     return .{ .positions = owned_positions, .triangles = owned_triangles, .faces = try faces.toOwnedSlice(allocator) };
+}
+
+/// Removes every spike from the ring at `start`: a point whose neighbours are one mesh
+/// vertex goes with the step back, again until none is left (a spike of several steps
+/// shrinks from its tip).
+fn pruneSpikes(ring_uv: *std.ArrayList(Vec2), ring_id: *std.ArrayList(u32), start: usize) void {
+    var pruned = true;
+    while (pruned) {
+        pruned = false;
+        const ids = ring_id.items[start..];
+        const n = ids.len;
+        if (n < 3) return;
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const before = ids[(i + n - 1) % n];
+            const after = ids[(i + 1) % n];
+            if (before != after) continue;
+            // Drop the tip `i` and the step back to `before`: the later index first
+            const tip = start + i;
+            const back = start + (i + 1) % n;
+            const hi = @max(tip, back);
+            const lo = @min(tip, back);
+            _ = ring_uv.orderedRemove(hi);
+            _ = ring_id.orderedRemove(hi);
+            _ = ring_uv.orderedRemove(lo);
+            _ = ring_id.orderedRemove(lo);
+            pruned = true;
+            break;
+        }
+    }
 }
 
 fn corrupt(diag: *Diagnostics) Error {
