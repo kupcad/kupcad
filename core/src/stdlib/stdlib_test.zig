@@ -2409,6 +2409,41 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
     }
 }
 
+test "Stdlib: the sketch measures and operations answer alike on both engines" {
+    // Exact on the B-Rep engine, chords on the mesh engine: alike where no arc is cut
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "r = square(10).area", .expected = 100 },
+        .{ .src = "r = polygon([[0, 0], [10, 10], [10, 0], [0, 10]]).area", .expected = 50 },
+        .{ .src = "r = (square(10) - square(4).translate(3, 3)).area", .expected = 84 },
+        .{ .src = "r = (square(10) & square(10).translate(5, 5)).area", .expected = 25 },
+        .{ .src = "r = (square(10) + square(10).translate(5, 5)).area", .expected = 175 },
+        .{ .src = "r = square(4).offset(-1).area", .expected = 4 },
+        .{ .src = "r = square(4).offset(1, join: :miter).area", .expected = 36 },
+        .{ .src = "r = square(10).shell(1).area", .expected = 36 },
+        .{ .src = "r = square(1).hull(square(1).translate(3, 0)).area", .expected = 4 },
+        .{ .src = "r = square(1).hull([square(1).translate(3, 0), square(1).translate(0, 3)]).area", .expected = 16 - 4.5 },
+        .{ .src = "r = square(10).bbox.size[0] + square(10).translate(2, 3).bbox.min[1]", .expected = 13 },
+        .{ .src = "r = (square(10) - square(4).translate(3, 3)).contains?([5, 5]) ? 1 : 0", .expected = 0 },
+        .{ .src = "r = (square(10) - square(4).translate(3, 3)).contains?([1, 1]) ? 1 : 0", .expected = 1 },
+        .{ .src = "r = square(10).translate(5, 0).extrude(2).volume", .expected = 200 },
+        .{ .src = "r = (square(10) - square(4).translate(3, 3)).extrude(2).volume", .expected = 168 },
+        .{ .src = "r = square(4).offset(1, join: :miter).extrude(1).volume", .expected = 36 },
+        .{ .src = "r = text(\"Hi\", size: 10).extrude(2).volume", .expected = 43.42159032821655 },
+    };
+    for ([_][]const u8{ "manifold", "brep" }) |engine| {
+        for (cases) |case| {
+            errdefer std.debug.print("engine: {s}\nscript: {s}\n", .{ engine, case.src });
+            var vm = try initVm();
+            defer vm.deinit();
+            const config = try std.fmt.allocPrint(testing.allocator, "CAD.config(engine: :{s})", .{engine});
+            defer testing.allocator.free(config);
+            try testing.expectEqual(InterpretResult.ok, try runOn(&vm, config));
+            try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+            try testing.expectApproxEqAbs(case.expected, vm.globals.get("r").?.asNumber(), 1e-9);
+        }
+    }
+}
+
 test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped silently" {
     const warnings = test_support.expectWarnings();
     defer warnings.restore();

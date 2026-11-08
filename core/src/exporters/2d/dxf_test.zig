@@ -155,6 +155,34 @@ test "DXF: a half circle is a bulge of 1, a rounded corner a bulge of its angle,
     try testing.expect(std.mem.find(u8, holed, "\n42\n-") != null);
 }
 
+test "DXF: a B-Rep sketch is drawn as the mesh engine's, its circle a CIRCLE and its arcs bulges" {
+    // The B-Rep engine reads its outlines exactly, its arcs' chords ending on the circle, so
+    // the drawing turns them back into the same entities
+    const source = "[square(10, 5), circle(r: 5).translate(x: 20)]";
+    const mesh = try exportDxf(source);
+    defer testing.allocator.free(mesh);
+    const brep = try exportDxf("CAD.config(engine: :brep)\n" ++ source);
+    defer testing.allocator.free(brep);
+    try testing.expectEqualStrings(mesh, brep);
+    // A rounded square's polyline may start at another corner on the B-Rep engine (its
+    // loops begin where they were built), with the same points and the same four bulges
+    const rounded = try exportDxf("CAD.config(engine: :brep)\nsquare(20, round_r: 4, segments: 16)");
+    defer testing.allocator.free(rounded);
+    var pairs = try readPairs(rounded);
+    defer pairs.deinit(testing.allocator);
+    var bulges: usize = 0;
+    for (pairs.items) |p| {
+        if (p.code != 42) continue;
+        bulges += 1;
+        try testing.expectApproxEqAbs(@tan(std.math.pi / 8.0), try std.fmt.parseFloat(f64, p.value), 1e-12);
+    }
+    try testing.expectEqual(@as(usize, 4), bulges);
+    var lines = try polylines(pairs.items);
+    defer freePolylines(&lines);
+    try testing.expectEqual(@as(usize, 1), lines.items.len);
+    try testing.expectEqual(@as(usize, 8), lines.items[0].points.items.len);
+}
+
 test "DXF: a Path is an open polyline with its end as a vertex, its arcs as bulges" {
     const dxf = try exportDxf("line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])");
     defer testing.allocator.free(dxf);

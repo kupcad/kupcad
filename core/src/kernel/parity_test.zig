@@ -66,6 +66,8 @@ const SHAPES = [_][]const u8{
     // Sweeps along one segment (M2, through the profile's outline): a line extrudes, an arc revolves
     "square(2).sweep(line([0, 0], [10, 0]))",
     "square(2).sweep(arc(center: [10, 0], r: 10, start: 180, sweep: 90), segments: 64)",
+    // Text (M2): its glyphs' chords filled by the even-odd rule on both engines, so exact
+    "text(\"Hi\", size: 10).extrude(2)",
     // The hull of sketches (M2), of polygons: one with arcs is refused (`curved_hull`)
     "square(10).hull(square(4).translate(15, 5)).extrude(1)",
     // Revolutions (M1): the profile stood up, x the radius; the mesh engine's slices at
