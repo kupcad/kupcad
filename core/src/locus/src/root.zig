@@ -114,6 +114,7 @@ test {
     _ = @import("sketch/overlay_test.zig");
     _ = @import("sketch/boolean_test.zig");
     _ = @import("sketch/offset_test.zig");
+    _ = @import("sketch/parameters_test.zig");
     _ = @import("sketch/query_test.zig");
     _ = @import("mesh/triangulate_test.zig");
     _ = @import("mesh/tessellate_test.zig");

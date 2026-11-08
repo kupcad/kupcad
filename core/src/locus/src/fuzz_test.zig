@@ -36,9 +36,13 @@ const MAX_RINGS = 3;
 const MIN_POINTS = 3;
 const MAX_POINTS = 8;
 const MAX_OPS = 4;
-/// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps.
+/// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps, or, one chain in
+/// EXTREME_ONE_IN, a value a script would never write (a parameter sweep inside the
+/// chains, beside sketch/parameters_test.zig's table on fixed sheets).
 const OFFSET_STEP: f64 = 0.5;
 const OFFSET_STEPS: i32 = 3;
+const EXTREME_ONE_IN: u8 = 16;
+const EXTREMES = [_]f64{ -std.math.inf(f64), std.math.inf(f64), std.math.nan(f64), std.math.floatMax(f64), std.math.floatTrueMin(f64), -1e15, -1e-15, 1e-15, 1e15, 1e-5, 2e-5 };
 /// How close an identity of areas must hold, relative to the larger area.
 const AREA_CLOSE = 1e-9;
 /// How close the booleans' identities must hold: the overlay welds arcs cocircular
@@ -150,9 +154,10 @@ fn runChain(smith: *Smith) !void {
                 current = result;
             },
             .offset => {
-                const delta = @as(f64, @floatFromInt(smith.valueRangeAtMost(i32, -OFFSET_STEPS, OFFSET_STEPS))) * OFFSET_STEP;
+                const extreme = smith.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1;
+                const delta = if (extreme) EXTREMES[smith.index(EXTREMES.len)] else @as(f64, @floatFromInt(smith.valueRangeAtMost(i32, -OFFSET_STEPS, OFFSET_STEPS))) * OFFSET_STEP;
                 const join = pick(offset.Join, smith);
-                const limit: f64 = @floatFromInt(smith.valueRangeAtMost(u8, 2, 4));
+                const limit: f64 = if (extreme) EXTREMES[smith.index(EXTREMES.len)] else @floatFromInt(smith.valueRangeAtMost(u8, 2, 4));
                 try log.add("  offset {d} {s} miter {d}\n", .{ delta, @tagName(join), limit });
                 var result = offset.offset(testing.allocator, &current, delta, join, limit, .{}, &diag) catch |err| return clean(err);
                 errdefer result.deinit();
