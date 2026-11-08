@@ -845,35 +845,40 @@ fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
 
 /// Whether the ray from `p` to +x crosses the arc an odd number of times: the arc cut at
 /// its topmost and bottommost points into y-monotone pieces, each counted on the half-open
-/// rule as a straight edge would be.
+/// rule as a straight edge would be. A piece's height at an end of the arc is the end's
+/// own point, not the circle's point at its angle, which may differ by a rounding: the
+/// edge beyond the vertex counts the vertex by its point, and a ray at that height must
+/// find the two of them agreeing whether the vertex is above it.
 pub fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
     const span = arcSpan(a, b, arc);
-    var cuts: [4]f64 = undefined;
+    const sign: f64 = if (arc.ccw) 1 else -1;
+    const Cut = struct { t: f64, y: f64 };
+    var cuts: [4]Cut = undefined;
     var n: usize = 0;
-    cuts[n] = 0;
+    cuts[n] = .{ .t = 0, .y = a[1] };
     n += 1;
-    for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }) |extreme| {
+    for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }, [_]f64{ arc.r, -arc.r }) |extreme, rise| {
         if (span.offsetOf(extreme)) |t| {
             if (t > 0 and t < span.sweep) {
-                cuts[n] = t;
+                cuts[n] = .{ .t = t, .y = arc.c[1] + rise };
                 n += 1;
             }
         }
     }
-    cuts[n] = span.sweep;
+    cuts[n] = .{ .t = span.sweep, .y = b[1] };
     n += 1;
-    std.mem.sort(f64, cuts[0..n], {}, std.sort.asc(f64));
+    std.mem.sort(Cut, cuts[0..n], {}, struct {
+        fn lessThan(_: void, x: Cut, y: Cut) bool {
+            return x.t < y.t;
+        }
+    }.lessThan);
     var odd = false;
-    const sign: f64 = if (arc.ccw) 1 else -1;
     for (0..n - 1) |i| {
-        const t0 = cuts[i];
-        const t1 = cuts[i + 1];
-        if (t1 - t0 <= SPAN_SLACK) continue;
-        const y0 = arc.c[1] + arc.r * @sin(span.start + sign * t0);
-        const y1 = arc.c[1] + arc.r * @sin(span.start + sign * t1);
+        const y0 = cuts[i].y;
+        const y1 = cuts[i + 1].y;
         if ((y0 > p[1]) == (y1 > p[1])) continue;
         // The piece's x at p's height, on the side of the centre its middle is on
-        const mid = span.start + sign * (t0 + t1) / 2.0;
+        const mid = span.start + sign * (cuts[i].t + cuts[i + 1].t) / 2.0;
         const dy = p[1] - arc.c[1];
         const dx = @sqrt(@max(arc.r * arc.r - dy * dy, 0));
         const x = if (@cos(mid) >= 0) arc.c[0] + dx else arc.c[0] - dx;

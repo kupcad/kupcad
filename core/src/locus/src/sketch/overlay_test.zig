@@ -232,3 +232,17 @@ test "overlay: the boundary of a union, a difference and an intersection as cycl
         try testing.expectEqual(o.target(h), o.origin(next));
     }
 }
+
+test "overlay: a ray at a vertex's height where a line meets an arc counts the vertex as the line does" {
+    // The fuzzer's find (2026-11-08): the arc about (4, 2) ends at (3, 2), whose height
+    // from its angle is 2 − 1.2e-16, rounded to the double below 2; a ray at that very
+    // height (a probe point computed the same way) saw the line above it and the arc not,
+    // so a cycle of no area "contained" the point and the outer boundary nested in it
+    const a = Vec2{ 3.006310156317969, 1.8878371961692268 };
+    const b = Vec2{ 3, 2 };
+    const arc: overlay.Arc = .{ .c = .{ 4, 2 }, .r = 1, .ccw = false };
+    const p = Vec2{ -1.00004, 1.9999999999999998 };
+    try testing.expect(overlay.arcCrossings(a, b, arc, p));
+    try testing.expect(!overlay.arcCrossings(a, b, arc, .{ -1.00004, 2 }));
+    try testing.expect(!overlay.arcCrossings(a, b, arc, .{ 3.5, 1.9999999999999998 }));
+}

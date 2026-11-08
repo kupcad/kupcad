@@ -206,3 +206,29 @@ test "offset: a U with a slot narrower than the offset, shrunk with each join an
     try testing.expectApproxEqRel(68 + PI - notch, try areaOf(&shut), 1e-12);
     try testing.expectEqual(@as(usize, 1), shut.counts().loops);
 }
+
+test "offset: a grown sheet holds its sheet (the fuzzer's chain whose grown sheet was nothing)" {
+    // A union of two three-ring sheets grown by one: 1,063 input edges, 3,929 faces of
+    // the overlay. A ray-crossing rule that counted a vertex differently on its line and
+    // its arc nested the outer boundary in a face of no area and labelled nothing
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a1 = [_]Vec2{ .{ 1, 3 }, .{ 3, 5 }, .{ 0, 2 }, .{ 6, 2 }, .{ 4, 0 }, .{ 1, 0 }, .{ 2, 1 }, .{ 6, 5 } };
+    const a2 = [_]Vec2{ .{ 3, 1 }, .{ 1, 4 }, .{ 2, 2 }, .{ 0, 1 }, .{ 6, 1 }, .{ 2, 5 }, .{ 3, 0 } };
+    const a3 = [_]Vec2{ .{ 4, 4 }, .{ 4, 6 }, .{ 4, 1 }, .{ 5, 1 }, .{ 1, 3 }, .{ 6, 5 }, .{ 2, 0 }, .{ 1, 6 } };
+    var a = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a1, &a2, &a3 }, &diag);
+    defer a.deinit();
+    const b1 = [_]Vec2{ .{ 3, 2 }, .{ 2, 1 }, .{ 0, 3 }, .{ 3, 6 }, .{ 2, 0 }, .{ 4, 2 }, .{ 0, 1 }, .{ 6, 4 } };
+    const b2 = [_]Vec2{ .{ 6, 4 }, .{ 2, 3 }, .{ 3, 6 }, .{ 2, 5 }, .{ 3, 4 }, .{ 0, 3 }, .{ 0, 3 } };
+    const b3 = [_]Vec2{ .{ 6, 4 }, .{ 4, 4 }, .{ 6, 6 }, .{ 6, 1 }, .{ 1, 5 }, .{ 2, 5 }, .{ 0, 2 }, .{ 1, 1 } };
+    var b = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b1, &b2, &b3 }, &diag);
+    defer b.deinit();
+    var u = try boolean.boolean(testing.allocator, &.{ &a, &b }, .@"union", .{}, &diag);
+    defer u.deinit();
+    var g = try offset.offset(testing.allocator, &u, 1, .round, 3, .{}, &diag);
+    defer g.deinit();
+    var both = try boolean.boolean(testing.allocator, &.{ &u, &g }, .intersection, .{}, &diag);
+    defer both.deinit();
+    try testing.expectApproxEqRel(try areaOf(&u), try areaOf(&both), 1e-9);
+    try testing.expect(try areaOf(&g) > try areaOf(&u) + 20);
+}
