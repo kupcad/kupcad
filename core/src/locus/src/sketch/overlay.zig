@@ -537,25 +537,40 @@ pub const Overlay = struct {
         }
     }
 
-    const Leaving = struct { angle: f64, curvature: f64 };
+    const Leaving = struct { tangent: Vec2, curvature: f64 };
 
-    /// The angle of a half-edge's tangent at its origin, and its curvature there.
+    /// A half-edge's unit tangent at its origin, and its curvature there (positive
+    /// turning left).
     fn leaving(self: *const Overlay, half: u32) Leaving {
         const a = self.point(self.origin(half));
         if (self.arcOf(half)) |arc| {
             const radial = vec.sub2(a, arc.c);
             const tangent = if (arc.ccw) Vec2{ -radial[1], radial[0] } else Vec2{ radial[1], -radial[0] };
-            return .{ .angle = trig.atan2(tangent[1], tangent[0]), .curvature = if (arc.ccw) 1.0 / arc.r else -1.0 / arc.r };
+            return .{ .tangent = vec.normalized2(tangent) orelse Vec2{ 1, 0 }, .curvature = if (arc.ccw) 1.0 / arc.r else -1.0 / arc.r };
         }
         const d = vec.sub2(self.point(self.target(half)), a);
-        return .{ .angle = trig.atan2(d[1], d[0]), .curvature = 0 };
+        return .{ .tangent = vec.normalized2(d) orelse Vec2{ 1, 0 }, .curvature = 0 };
     }
 
+    /// Whether `x` leaves its origin at a smaller angle than `y`, counter-clockwise from
+    /// the positive x axis: by half-plane, then by the exact turn between the tangents; two
+    /// tangents within the angle tolerance of each other (an arc tangent to a line or to
+    /// another arc) by curvature, the one curving left further round. No angle is ever
+    /// computed, so a tangent along the negative x axis has no seam to fall across.
     fn lessAbout(self: *const Overlay, x: u32, y: u32) bool {
         const lx = self.leaving(x);
         const ly = self.leaving(y);
-        if (@abs(lx.angle - ly.angle) > self.tol.angle) return lx.angle < ly.angle;
-        return lx.curvature < ly.curvature;
+        const turn = vec.cross2(lx.tangent, ly.tangent);
+        if (vec.dot2(lx.tangent, ly.tangent) > 0 and @abs(turn) <= self.tol.angle) return lx.curvature < ly.curvature;
+        const ux = upperHalf(lx.tangent);
+        const uy = upperHalf(ly.tangent);
+        if (ux != uy) return ux;
+        if (turn != 0) return turn > 0;
+        return x < y;
+    }
+
+    fn upperHalf(d: Vec2) bool {
+        return d[1] > 0 or (d[1] == 0 and d[0] > 0);
     }
 
     // --- cycles ---

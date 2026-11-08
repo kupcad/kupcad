@@ -12,6 +12,7 @@ const primitives = @import("../construct/primitives.zig");
 const transform = @import("../construct/transform.zig");
 const mass = @import("../measure/mass.zig");
 const boolean = @import("boolean.zig");
+const offset_mod = @import("offset.zig");
 const Vec2 = vec.Vec2;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -123,6 +124,37 @@ test "sketch booleans: a hole cut, filled back, and a batch of three" {
     try testing.expectEqual(@as(usize, 1), core.counts().faces);
     // The lens of the two outer discs, two apart with radius 2: 8π/3 − 2√3
     try testing.expectApproxEqRel(8 * PI / 3.0 - 2 * @sqrt(3.0), try areaOf(&core), 1e-12);
+}
+
+test "sketch booleans: an arc tangent to a line at a shared vertex keeps the faces between them" {
+    // A round offset's arc arrives at (1, 1) tangent to the other sheet's edge along
+    // y = 1: both leave the vertex westward, the arc curving north. Their order about the
+    // vertex once fell across the ±π seam of an angle, and the faces between them were
+    // lost from the union and the intersection. The identities hold, and the intersection
+    // is what sampling the two regions gives.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a0 = [_]Vec2{ .{ 1, 2 }, .{ 3, 2 }, .{ 1, 2 }, .{ 6, 2 }, .{ 4, 4 } };
+    var sheet = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{&a0}, &diag);
+    defer sheet.deinit();
+    var grown = try offset_mod.offset(testing.allocator, &sheet, 1, .round, 2, .{}, &diag);
+    defer grown.deinit();
+    const b0 = [_]Vec2{ .{ 3, 5 }, .{ 1, 2 }, .{ 1, 6 }, .{ 1, 4 } };
+    const b1 = [_]Vec2{ .{ 6, 5 }, .{ 4, 1 }, .{ 4, 3 }, .{ 6, 2 } };
+    const b2 = [_]Vec2{ .{ 1, 1 }, .{ 0, 1 }, .{ 4, 3 } };
+    var other = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b0, &b1, &b2 }, &diag);
+    defer other.deinit();
+    var joined = try boolean.boolean(testing.allocator, &.{ &grown, &other }, .@"union", .{}, &diag);
+    defer joined.deinit();
+    var common = try boolean.boolean(testing.allocator, &.{ &grown, &other }, .intersection, .{}, &diag);
+    defer common.deinit();
+    var rest = try boolean.boolean(testing.allocator, &.{ &grown, &other }, .difference, .{}, &diag);
+    defer rest.deinit();
+    const ag = try areaOf(&grown);
+    const ao = try areaOf(&other);
+    try testing.expectApproxEqAbs(ag + ao, (try areaOf(&joined)) + (try areaOf(&common)), 1e-9);
+    try testing.expectApproxEqAbs(ag - (try areaOf(&common)), try areaOf(&rest), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.964), try areaOf(&common), 0.02);
 }
 
 test "even-odd fill: nested outlines, an island in a hole, a bow tie, and two letters" {
