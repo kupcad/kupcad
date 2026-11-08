@@ -51,7 +51,13 @@ fn winding(polygon: Polygon, p: Vec2) i32 {
 /// condition, checked the slow way).
 fn expectTriangulation(polygon: Polygon, triangles: []const [3]u32) !void {
     const points = polygon.points;
-    try testing.expectEqual(points.len + 2 * (polygon.rings() - 1) - 2, triangles.len);
+    // n + 2h − 2 triangles for a simple polygon; a weakly simple one (a point repeated)
+    // has fewer or more by two per touching point
+    var repeated = false;
+    for (points, 0..) |p, i| for (points[0..i]) |q| if (p[0] == q[0] and p[1] == q[1]) {
+        repeated = true;
+    };
+    if (!repeated) try testing.expectEqual(points.len + 2 * (polygon.rings() - 1) - 2, triangles.len);
     var area: f64 = 0;
     var edges: std.AutoHashMapUnmanaged(u64, u32) = .empty;
     defer edges.deinit(testing.allocator);
@@ -65,7 +71,8 @@ fn expectTriangulation(polygon: Polygon, triangles: []const [3]u32) !void {
         const centroid = vec.scale2(vec.add2(vec.add2(a, b), c), 1.0 / 3.0);
         try testing.expect(winding(polygon, centroid) != 0);
         for (0..3) |i| {
-            const key = edgeKey(t[i], t[(i + 1) % 3]);
+            // A touching point may be named by any of its passages
+            const key = edgeKey(firstAt(points, t[i]), firstAt(points, t[(i + 1) % 3]));
             const entry = try edges.getOrPut(testing.allocator, key);
             if (!entry.found_existing) entry.value_ptr.* = 0;
             entry.value_ptr.* += 1;
@@ -77,7 +84,7 @@ fn expectTriangulation(polygon: Polygon, triangles: []const [3]u32) !void {
         const last = polygon.starts[r + 1] - 1;
         for (first..last + 1) |i| {
             const j: u32 = if (i == last) first else @intCast(i + 1);
-            try testing.expectEqual(@as(?u32, 1), edges.get(edgeKey(@intCast(i), j)));
+            try testing.expectEqual(@as(?u32, 1), edges.get(edgeKey(firstAt(points, @intCast(i)), firstAt(points, j))));
         }
     }
     // Delaunay: for every pair of triangles across an unconstrained edge, the fourth
@@ -97,6 +104,12 @@ fn expectTriangulation(polygon: Polygon, triangles: []const [3]u32) !void {
     }
 }
 
+/// The first point at the place of point `i`: what the triangles name a touching point by.
+fn firstAt(points: []const Vec2, i: u32) u32 {
+    for (points[0..i], 0..) |p, k| if (p[0] == points[i][0] and p[1] == points[i][1]) return @intCast(k);
+    return i;
+}
+
 fn edgeKey(a: u32, b: u32) u64 {
     return (@as(u64, @min(a, b)) << 32) | @max(a, b);
 }
@@ -107,7 +120,9 @@ fn isRingEdge(polygon: Polygon, a: u32, b: u32) bool {
         const last = polygon.starts[r + 1] - 1;
         for (first..last + 1) |i| {
             const j: u32 = if (i == last) first else @intCast(i + 1);
-            if ((i == a and j == b) or (i == b and j == a)) return true;
+            const fi = firstAt(polygon.points, @intCast(i));
+            const fj = firstAt(polygon.points, j);
+            if ((fi == a and fj == b) or (fi == b and fj == a)) return true;
         }
     }
     return false;
@@ -117,6 +132,7 @@ fn expectPolygon(points: []const Vec2, starts: []const u32) !void {
     const polygon: Polygon = .{ .points = points, .starts = starts };
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
+    errdefer std.debug.print("polygon of {d} points in {d} rings: {f}\n", .{ points.len, starts.len - 1, &diag });
     const triangles = try triangulate.triangulate(testing.allocator, polygon, &diag);
     defer testing.allocator.free(triangles);
     try expectTriangulation(polygon, triangles);
@@ -175,6 +191,21 @@ test "triangulate: collinear and level vertices, horizontal edges, a flat vertex
     try expectPolygon(&.{ .{ 0, 0 }, .{ 30, 0 }, .{ 30, 10 }, .{ 20, 10 }, .{ 20, 20 }, .{ 10, 20 }, .{ 10, 30 }, .{ 0, 30 } }, &.{ 0, 8 });
     // A hole whose top is level with a notch of the outer ring
     try expectPolygon(&.{ .{ 0, 0 }, .{ 20, 0 }, .{ 20, 10 }, .{ 15, 10 }, .{ 15, 8 }, .{ 12, 8 }, .{ 12, 10 }, .{ 0, 10 }, .{ 3, 3 }, .{ 3, 8 }, .{ 8, 8 }, .{ 8, 3 } }, &.{ 0, 8, 12 });
+}
+
+test "triangulate: weakly simple polygons: an hourglass pinched at a point, a hole touching the outer ring, a slit as one loop" {
+    // An hourglass: one ring through its waist twice, two lobes of one triangle each
+    try expectPolygon(&.{ .{ 0, 10 }, .{ 5, 5 }, .{ 0, 0 }, .{ 10, 0 }, .{ 5, 5 }, .{ 10, 10 } }, &.{ 0, 6 });
+    // A square with a triangular hole whose corner is the square's corner
+    try expectPolygon(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 0, 0 }, .{ 3, 6 }, .{ 6, 3 } }, &.{ 0, 4, 7 });
+    // The same hole as one loop through the corner twice, as the overlay's boundary walk
+    // writes a hole that touches the outer loop
+    try expectPolygon(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 0, 0 }, .{ 3, 6 }, .{ 6, 3 } }, &.{ 0, 7 });
+    // A square split by a slit from the left side to a point of the right side: two
+    // lobes touching at that point, as one loop
+    try expectPolygon(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 5 }, .{ 10, 10 }, .{ 0, 10 }, .{ 0, 6 }, .{ 10, 5 }, .{ 0, 4 } }, &.{ 0, 8 });
+    // Two squares touching at a corner, as two rings
+    try expectPolygon(&.{ .{ 0, 0 }, .{ 5, 0 }, .{ 5, 5 }, .{ 0, 5 }, .{ 5, 5 }, .{ 10, 5 }, .{ 10, 10 }, .{ 5, 10 } }, &.{ 0, 4, 8 });
 }
 
 test "triangulate: a thin quadrilateral gets the Delaunay diagonal, the other being illegal" {

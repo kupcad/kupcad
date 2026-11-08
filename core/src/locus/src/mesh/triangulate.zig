@@ -4,8 +4,15 @@
 //! stack walk (BKOS §3.3), and Lawson flips (BKOS Lemma 9.4) turn the result into the
 //! constrained Delaunay triangulation, the polygon's own edges never flipped. Every turn
 //! and every circle test is an exact predicate and every tie is broken by the
-//! lexicographic order (y, then x), so the output is deterministic for any simple input in
-//! any position, collinear vertices included. Indices are the caller's point indices;
+//! lexicographic order (y, then x), so the output is deterministic for any input in any
+//! position, collinear and level vertices included. The polygon may be weakly simple: a
+//! ring may pass through a point twice and rings may touch at points (a face pinched at
+//! a vertex, a hole touching the outer loop, what the overlay's boundary walk makes), as
+//! long as no edges cross. Before the sweep, the rings are rewoven at every such point
+//! by the tightest turn (the edge arriving at the point continues into the first edge
+//! leaving it clockwise), so each passage through a point is a wedge of the region there
+//! and the sweep meets no crossing; the triangles are then counted against Euler's
+//! formula and their area against the polygon's. Indices are the caller's point indices;
 //! triangles come out counter-clockwise.
 
 const std = @import("std");
@@ -22,6 +29,9 @@ const NONE: u32 = std.math.maxInt(u32);
 const MAX_POINTS: usize = 1 << 29;
 /// A triangle's side `i` runs from its vertex `i` to its vertex `i + 1`.
 const SIDES = 3;
+/// How far the triangles' area may differ from the polygon's, relative to it: rounding
+/// in the sums of many small triangles.
+const AREA_SLACK: f64 = 1e-9;
 
 /// A polygon with holes as closed rings of points.
 pub const Polygon = struct {
@@ -42,24 +52,115 @@ pub const Polygon = struct {
 };
 
 /// The triangles of `polygon`, counter-clockwise, as indices into its points; owned by
-/// `allocator`. The rings must be simple and disjoint; a polygon that isn't, a ring of
-/// fewer than three points, or one that repeats a point is `error.InvalidInput` with a
+/// `allocator`. The rings must not cross; a polygon whose rings do, a ring of fewer than
+/// three points, or one that repeats a point in a row is `error.InvalidInput` with a
 /// finding that says which.
 pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) Error![][3]u32 {
     try validate(polygon, diag);
-    var partition = try Partition.init(allocator, polygon);
+    var woven = try reweave(allocator, polygon, diag);
+    defer woven.deinit(allocator);
+    const rings: Polygon = .{ .points = woven.points, .starts = woven.starts };
+    var partition = try Partition.init(allocator, rings);
     defer partition.deinit(allocator);
     try partition.run(diag);
-    var graph = try Graph.init(allocator, polygon, partition.diagonals.items);
+    var graph = try Graph.init(allocator, rings, partition.diagonals.items, false);
     defer graph.deinit(allocator);
     var triangles: std.ArrayList([3]u32) = .empty;
     errdefer triangles.deinit(allocator);
-    try graph.triangulatePieces(allocator, &triangles, diag);
-    // Every simple polygon of n points and h holes has n + 2h − 2 triangles (BKOS Thm 3.9)
-    const expected = polygon.points.len + 2 * (polygon.rings() - 1) - 2;
-    if (triangles.items.len != expected) return notSimple(diag, triangles.items.len, expected);
-    try delaunay(allocator, polygon, triangles.items);
+    const skipped = try graph.triangulatePieces(allocator, &triangles, diag);
+    // A simple polygon of n points and h holes has n + 2h − 2 triangles (BKOS Thm 3.9);
+    // one that passes a point twice fewer or more by two a time, so its check is the
+    // area's, which every polygon gets: rings that cross leave it uncovered or covered
+    // twice
+    if (woven.simple) {
+        const expected = polygon.points.len + 2 * (polygon.rings() - 1) - 2;
+        if (triangles.items.len + skipped != expected) return notSimple(diag, triangles.items.len + skipped, expected);
+    }
+    const covered = trianglesArea(rings.points, triangles.items);
+    const area = polygonArea(polygon);
+    if (@abs(covered - area) > AREA_SLACK * @max(area, 1)) return notSimple(diag, @intFromFloat(@round(covered * 1e6)), @intFromFloat(@round(area * 1e6)));
+    try delaunay(allocator, rings, triangles.items);
+    for (triangles.items) |*t| for (t) |*corner| {
+        corner.* = woven.source[corner.*];
+    };
     return triangles.toOwnedSlice(allocator);
+}
+
+/// The rings rewoven at the points they pass more than once: the points in the order
+/// the new rings visit them, each with the index of the caller's point it is.
+const Woven = struct {
+    points: []Vec2,
+    starts: []u32,
+    source: []u32,
+    /// Whether no two points were at one place: the rings are the caller's.
+    simple: bool,
+
+    fn deinit(self: *Woven, allocator: std.mem.Allocator) void {
+        allocator.free(self.points);
+        allocator.free(self.starts);
+        allocator.free(self.source);
+        self.* = undefined;
+    }
+};
+
+/// The rings rewoven by the tightest turn at every point the polygon passes more than
+/// once: the graph of the rings' edges with coincident points one vertex, each arriving
+/// edge continued into the first leaving one clockwise, which pairs the edges at the
+/// point into the wedges of the region there (a pinched face into its lobes, a hole
+/// touching the outer loop into one ring through the point twice). A simple polygon
+/// comes back as it is.
+fn reweave(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) Error!Woven {
+    var graph = try Graph.init(allocator, polygon, &.{}, true);
+    defer graph.deinit(allocator);
+    const n = polygon.points.len;
+    const points = try allocator.alloc(Vec2, n);
+    errdefer allocator.free(points);
+    const source = try allocator.alloc(u32, n);
+    errdefer allocator.free(source);
+    var starts: std.ArrayList(u32) = .empty;
+    errdefer starts.deinit(allocator);
+    const visited = try allocator.alloc(bool, graph.origin.len);
+    defer allocator.free(visited);
+    @memset(visited, false);
+    var filled: usize = 0;
+    for (0..graph.origin.len) |h| {
+        if (visited[h] or graph.outside[h]) continue;
+        try starts.append(allocator, @intCast(filled));
+        var at: u32 = @intCast(h);
+        while (!visited[at]) {
+            visited[at] = true;
+            if (filled == n) return notSimple(diag, h, 0);
+            const o = graph.origin[at];
+            points[filled] = polygon.points[o];
+            source[filled] = o;
+            filled += 1;
+            at = graph.next[at];
+        }
+        if (at != h) return notSimple(diag, h, 0);
+        if (filled - starts.items[starts.items.len - 1] < 3) return notSimple(diag, h, 0);
+    }
+    if (filled != n) return notSimple(diag, filled, n);
+    try starts.append(allocator, @intCast(filled));
+    return .{ .points = points, .starts = try starts.toOwnedSlice(allocator), .source = source, .simple = graph.welded == n };
+}
+
+/// The signed area of the rings: positive for the region on their left.
+fn polygonArea(polygon: Polygon) f64 {
+    var twice: f64 = 0;
+    for (0..polygon.rings()) |r| {
+        const ring = polygon.ring(r);
+        for (ring, 0..) |p, i| {
+            const q = ring[(i + 1) % ring.len];
+            twice += p[0] * q[1] - q[0] * p[1];
+        }
+    }
+    return twice / 2;
+}
+
+fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) f64 {
+    var twice: f64 = 0;
+    for (triangles) |t| twice += predicates.orient2d(points[t[0]], points[t[1]], points[t[2]]);
+    return twice / 2;
 }
 
 fn validate(polygon: Polygon, diag: *Diagnostics) Error!void {
@@ -84,9 +185,21 @@ fn notSimple(diag: *Diagnostics, measured: usize, threshold: usize) Error {
 
 /// The sweep's order (BKOS p. 50): `a` is above `b` when higher, or as high and further
 /// left; so no two distinct points are level, and a horizontal edge runs downward from its
-/// left end.
+/// left end. Two points at one place are ordered by `lessAbove`.
 fn above(a: Vec2, b: Vec2) bool {
     return a[1] > b[1] or (a[1] == b[1] and a[0] < b[0]);
+}
+
+/// The sweep's order of two points by index: the perturbation moves point `i` a hair to
+/// the right and down per index, so of two points at one place the earlier is above.
+fn lessAbove(points: []const Vec2, a: u32, b: u32) bool {
+    if (above(points[a], points[b])) return true;
+    if (above(points[b], points[a])) return false;
+    return a < b;
+}
+
+fn samePlace(p: Vec2, q: Vec2) bool {
+    return p[0] == q[0] and p[1] == q[1];
 }
 
 fn edgeKey(a: u32, b: u32) u64 {
@@ -151,22 +264,15 @@ const Partition = struct {
         self.* = undefined;
     }
 
-    fn lessAbove(points: []const Vec2, a: u32, b: u32) bool {
-        if (above(points[a], points[b])) return true;
-        if (above(points[b], points[a])) return false;
-        return a < b;
-    }
-
     /// A vertex by its neighbours (BKOS p. 50): a start or an end when both are below or
     /// above it and the corner is convex, a split or a merge when it is reflex, regular
     /// when the chain passes through.
     fn classify(self: *const Partition, v: u32) Kind {
-        const u = self.points[self.prev[v]];
-        const p = self.points[v];
-        const w = self.points[self.next[v]];
-        const convex = predicates.orient2d(u, p, w) > 0;
-        if (above(p, u) and above(p, w)) return if (convex) .start else .split;
-        if (above(u, p) and above(w, p)) return if (convex) .end else .merge;
+        const u = self.prev[v];
+        const w = self.next[v];
+        const convex = predicates.orient2d(self.points[u], self.points[v], self.points[w]) > 0;
+        if (lessAbove(self.points, v, u) and lessAbove(self.points, v, w)) return if (convex) .start else .split;
+        if (lessAbove(self.points, u, v) and lessAbove(self.points, w, v)) return if (convex) .end else .merge;
         return .regular;
     }
 
@@ -194,7 +300,7 @@ const Partition = struct {
                 },
                 .regular => {
                     // The interior is to the right of a vertex the chain passes downward
-                    if (above(self.points[u], self.points[v])) {
+                    if (lessAbove(self.points, u, v)) {
                         try self.fixUp(u, v);
                         try self.remove(u, diag);
                         try self.insert(v);
@@ -215,22 +321,28 @@ const Partition = struct {
         if (h != NONE and self.kind[h] == .merge) try self.diagonal(v, h);
     }
 
+    /// A diagonal; one between two passages through one point is no diagonal, the
+    /// passages being wedges of the region that meet there already.
     fn diagonal(self: *Partition, a: u32, b: u32) Error!void {
+        if (samePlace(self.points[a], self.points[b])) return;
         try self.diagonals.append(self.allocator, .{ a, b });
     }
 
-    /// Whether `p` is strictly to the right of status edge `e`, which runs downward.
-    fn rightOf(self: *const Partition, e: u32, p: Vec2) bool {
-        return predicates.orient2d(self.points[e], self.points[self.next[e]], p) > 0;
+    /// Whether vertex `v` is strictly east of status edge `e`, which runs downward from
+    /// vertex `e`. A vertex at an end of the edge (the ring's own other passage through the
+    /// point, or another ring's) is not: the edge west of a vertex is one the vertex is
+    /// not on.
+    fn rightOf(self: *const Partition, e: u32, v: u32) bool {
+        return predicates.orient2d(self.points[e], self.points[self.next[e]], self.points[v]) > 0;
     }
 
-    /// The first status index whose edge `p` is not to the right of.
-    fn position(self: *const Partition, p: Vec2) usize {
+    /// The first status index whose edge vertex `v` is not east of.
+    fn position(self: *const Partition, v: u32) usize {
         var lo: usize = 0;
         var hi: usize = self.status.items.len;
         while (lo < hi) {
             const mid = lo + (hi - lo) / 2;
-            if (self.rightOf(self.status.items[mid], p)) lo = mid + 1 else hi = mid;
+            if (self.rightOf(self.status.items[mid], v)) lo = mid + 1 else hi = mid;
         }
         return lo;
     }
@@ -238,12 +350,12 @@ const Partition = struct {
     /// Edge `e` leaves its upper vertex `e` downward: it joins the status at that vertex.
     fn insert(self: *Partition, e: u32) Error!void {
         self.helper[e] = e;
-        try self.status.insert(self.allocator, self.position(self.points[e]), e);
+        try self.status.insert(self.allocator, self.position(e), e);
     }
 
     /// Edge `e` ends at its lower vertex: it leaves the status there.
     fn remove(self: *Partition, e: u32, diag: *Diagnostics) Error!void {
-        const at = self.position(self.points[self.next[e]]);
+        const at = self.position(self.next[e]);
         if (at < self.status.items.len and self.status.items[at] == e) {
             _ = self.status.orderedRemove(at);
             return;
@@ -258,9 +370,9 @@ const Partition = struct {
         return notSimple(diag, e, 0);
     }
 
-    /// The status edge directly left of vertex `v`.
+    /// The status edge directly west of vertex `v`.
     fn leftOf(self: *const Partition, v: u32, diag: *Diagnostics) Error!u32 {
-        const at = self.position(self.points[v]);
+        const at = self.position(v);
         if (at == 0) return notSimple(diag, v, 0);
         return self.status.items[at - 1];
     }
@@ -270,16 +382,41 @@ const Partition = struct {
 /// faces are the monotone pieces: half-edge `2k` and `2k + 1` are twins, the rings' first
 /// (points `0..n`, forward, the piece on the left, then backward, outside), then the
 /// diagonals'. The half-edges leaving each vertex are sorted by angle and linked: the
-/// twin of each continues into the next one clockwise.
+/// twin of each continues into the next one clockwise. With `weld`, points at one place
+/// are one vertex (`reweave`); without, each point is its own, as the rewoven rings
+/// need.
 const Graph = struct {
     points: []const Vec2,
     origin: []u32,
     target: []u32,
     next: []u32,
     outside: []bool,
+    /// Each point's vertex: its own index, or that of the first point at the same place.
+    vertex_of: []u32,
+    /// How many vertices the points make: the point count when no two are at one place.
+    welded: usize,
 
-    fn init(allocator: std.mem.Allocator, polygon: Polygon, diagonals: []const [2]u32) Error!Graph {
+    fn init(allocator: std.mem.Allocator, polygon: Polygon, diagonals: []const [2]u32, weld: bool) Error!Graph {
         const n = polygon.points.len;
+        const vertex_of = try allocator.alloc(u32, n);
+        errdefer allocator.free(vertex_of);
+        for (vertex_of, 0..) |*v, i| v.* = @intCast(i);
+        var welded: usize = n;
+        if (weld) {
+            welded = 0;
+            var first_at: std.AutoHashMapUnmanaged([2]u64, u32) = .empty;
+            defer first_at.deinit(allocator);
+            try first_at.ensureTotalCapacity(allocator, @intCast(n));
+            for (polygon.points, 0..) |p, i| {
+                const key: [2]u64 = .{ @bitCast(p[0] + 0.0), @bitCast(p[1] + 0.0) }; // −0 as 0
+                const entry = first_at.getOrPutAssumeCapacity(key);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = @intCast(i);
+                    welded += 1;
+                }
+                vertex_of[i] = entry.value_ptr.*;
+            }
+        }
         const halves = 2 * (n + diagonals.len);
         const origin = try allocator.alloc(u32, halves);
         errdefer allocator.free(origin);
@@ -308,12 +445,13 @@ const Graph = struct {
             origin[2 * (n + k) + 1] = d[1];
             target[2 * (n + k) + 1] = d[0];
         }
-        var self: Graph = .{ .points = polygon.points, .origin = origin, .target = target, .next = next, .outside = outside };
+        var self: Graph = .{ .points = polygon.points, .origin = origin, .target = target, .next = next, .outside = outside, .vertex_of = vertex_of, .welded = welded };
         try self.link(allocator);
         return self;
     }
 
     fn deinit(self: *Graph, allocator: std.mem.Allocator) void {
+        allocator.free(self.vertex_of);
         allocator.free(self.origin);
         allocator.free(self.target);
         allocator.free(self.next);
@@ -329,7 +467,7 @@ const Graph = struct {
         const start = try allocator.alloc(u32, n + 1);
         defer allocator.free(start);
         @memset(start, 0);
-        for (self.origin) |o| start[o + 1] += 1;
+        for (self.origin) |o| start[self.vertex_of[o] + 1] += 1;
         for (1..n + 1) |v| start[v] += start[v - 1];
         const out = try allocator.alloc(u32, self.origin.len);
         defer allocator.free(out);
@@ -337,8 +475,9 @@ const Graph = struct {
         defer allocator.free(fill);
         @memset(fill, 0);
         for (self.origin, 0..) |o, h| {
-            out[start[o] + fill[o]] = @intCast(h);
-            fill[o] += 1;
+            const v = self.vertex_of[o];
+            out[start[v] + fill[v]] = @intCast(h);
+            fill[v] += 1;
         }
         for (0..n) |v| {
             const leaving = out[start[v]..start[v + 1]];
@@ -369,8 +508,9 @@ const Graph = struct {
         return d[1] > 0 or (d[1] == 0 and d[0] > 0);
     }
 
-    /// Each bounded face of the graph, a monotone piece, triangulated.
-    fn triangulatePieces(self: *const Graph, allocator: std.mem.Allocator, triangles: *std.ArrayList([3]u32), diag: *Diagnostics) Error!void {
+    /// Each bounded face of the graph, a monotone piece, triangulated; the number of
+    /// triangles of no area left out.
+    fn triangulatePieces(self: *const Graph, allocator: std.mem.Allocator, triangles: *std.ArrayList([3]u32), diag: *Diagnostics) Error!usize {
         const visited = try allocator.alloc(bool, self.origin.len);
         defer allocator.free(visited);
         @memset(visited, false);
@@ -380,6 +520,7 @@ const Graph = struct {
         defer merged.deinit(allocator);
         var stack: std.ArrayList(Chained) = .empty;
         defer stack.deinit(allocator);
+        var skipped: usize = 0;
         for (0..self.origin.len) |h| {
             if (visited[h] or self.outside[h]) continue;
             ring.clearRetainingCapacity();
@@ -390,23 +531,25 @@ const Graph = struct {
                 at = self.next[at];
             }
             if (at != h) return notSimple(diag, h, 0);
-            try self.triangulateMonotone(allocator, ring.items, &merged, &stack, triangles, diag);
+            skipped += try self.triangulateMonotone(allocator, ring.items, &merged, &stack, triangles, diag);
         }
+        return skipped;
     }
 
     const Side = enum(u8) { left, right };
     const Chained = struct { point: u32, side: Side };
 
     /// A y-monotone piece by the stack walk (BKOS §3.3): its two chains merged top down,
-    /// each vertex fanned to the stack of the reflex chain above it.
-    fn triangulateMonotone(self: *const Graph, allocator: std.mem.Allocator, ring: []const u32, merged: *std.ArrayList(Chained), stack: *std.ArrayList(Chained), triangles: *std.ArrayList([3]u32), diag: *Diagnostics) Error!void {
+    /// each vertex fanned to the stack of the reflex chain above it. Returns how many
+    /// triangles of no area were left out.
+    fn triangulateMonotone(self: *const Graph, allocator: std.mem.Allocator, ring: []const u32, merged: *std.ArrayList(Chained), stack: *std.ArrayList(Chained), triangles: *std.ArrayList([3]u32), diag: *Diagnostics) Error!usize {
         const m = ring.len;
         if (m < 3) return notSimple(diag, ring[0], 0);
         var top: usize = 0;
         var bottom: usize = 0;
         for (1..m) |i| {
-            if (above(self.points[ring[i]], self.points[ring[top]])) top = i;
-            if (above(self.points[ring[bottom]], self.points[ring[i]])) bottom = i;
+            if (lessAbove(self.points, ring[i], ring[top])) top = i;
+            if (lessAbove(self.points, ring[bottom], ring[i])) bottom = i;
         }
         // Counter-clockwise from the top, the ring runs down the left chain first
         merged.clearRetainingCapacity();
@@ -414,7 +557,7 @@ const Graph = struct {
         var l = (top + 1) % m;
         var r = (top + m - 1) % m;
         while (l != bottom or r != bottom) {
-            const take_left = r == bottom or (l != bottom and above(self.points[ring[l]], self.points[ring[r]]));
+            const take_left = r == bottom or (l != bottom and lessAbove(self.points, ring[l], ring[r]));
             if (take_left) {
                 try merged.append(allocator, .{ .point = ring[l], .side = .left });
                 l = (l + 1) % m;
@@ -426,6 +569,7 @@ const Graph = struct {
         try merged.append(allocator, .{ .point = ring[bottom], .side = .left });
 
         const u = merged.items;
+        var skipped: usize = 0;
         stack.clearRetainingCapacity();
         try stack.append(allocator, u[0]);
         try stack.append(allocator, u[1]);
@@ -435,7 +579,7 @@ const Graph = struct {
                 while (stack.items.len > 1) {
                     const a = stack.pop().?;
                     const b = stack.items[stack.items.len - 1];
-                    try self.emit(allocator, triangles, v.point, a.point, b.point, diag);
+                    skipped += try self.emit(allocator, triangles, v.point, a.point, b.point);
                 }
                 stack.clearRetainingCapacity();
                 try stack.append(allocator, u[j - 1]);
@@ -443,7 +587,7 @@ const Graph = struct {
             } else {
                 var last = stack.pop().?;
                 while (stack.items.len > 0 and self.insideChain(v, last.point, stack.items[stack.items.len - 1].point)) {
-                    try self.emit(allocator, triangles, v.point, last.point, stack.items[stack.items.len - 1].point, diag);
+                    skipped += try self.emit(allocator, triangles, v.point, last.point, stack.items[stack.items.len - 1].point);
                     last = stack.pop().?;
                 }
                 try stack.append(allocator, last);
@@ -451,7 +595,8 @@ const Graph = struct {
             }
         }
         const last = u[m - 1];
-        for (0..stack.items.len - 1) |k| try self.emit(allocator, triangles, last.point, stack.items[k].point, stack.items[k + 1].point, diag);
+        for (0..stack.items.len - 1) |k| skipped += try self.emit(allocator, triangles, last.point, stack.items[k].point, stack.items[k + 1].point);
+        return skipped;
     }
 
     /// Whether the diagonal from `v` to `top`, two vertices of one chain with `last`
@@ -462,18 +607,22 @@ const Graph = struct {
         return if (v.side == .left) turn > 0 else turn < 0;
     }
 
-    /// The triangle `a b c` counter-clockwise; one of no area is not a simple polygon's.
-    fn emit(self: *const Graph, allocator: std.mem.Allocator, triangles: *std.ArrayList([3]u32), a: u32, b: u32, c: u32, diag: *Diagnostics) Error!void {
+    /// The triangle `a b c` counter-clockwise; one of no area (the perturbation's hairs)
+    /// is left out and counted.
+    fn emit(self: *const Graph, allocator: std.mem.Allocator, triangles: *std.ArrayList([3]u32), a: u32, b: u32, c: u32) Error!usize {
         const turn = predicates.orient2d(self.points[a], self.points[b], self.points[c]);
-        if (turn == 0) return notSimple(diag, a, 0);
+        if (turn == 0) return 1;
         try triangles.append(allocator, if (turn > 0) .{ a, b, c } else .{ a, c, b });
+        return 0;
     }
 };
 
 /// Lawson's flips (BKOS §9.3): an edge of two triangles is illegal when the fourth point
 /// lies strictly inside the circumcircle of the other three; flipping it strictly
 /// increases the sorted angle vector, so the walk ends in the constrained Delaunay
-/// triangulation. The polygon's own edges are never flipped.
+/// triangulation. The polygon's own edges are never flipped. Two passages through one
+/// point are two vertices here too, so an edge between them and a triangle's edge to
+/// one of them never pair up: the edge stays, as a constraint would.
 fn delaunay(allocator: std.mem.Allocator, polygon: Polygon, triangles: [][3]u32) Error!void {
     const points = polygon.points;
     var constrained: std.AutoHashMapUnmanaged(u64, void) = .empty;

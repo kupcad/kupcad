@@ -22,6 +22,8 @@ const Error = diagnostics.Error;
 /// count as a point of its own rather than the vertex.
 const END_SLACK: f64 = 1e-9;
 const TWO_PI: f64 = 2 * std.math.pi;
+/// How often a circle's grid may be doubled: 2^8 times the resolution's count at most.
+pub const MAX_DOUBLINGS: u8 = 8;
 
 /// The polylines of a body's edges: edge `e` runs through `points[starts[e]..starts[e + 1]]`
 /// from its `t0` end to its `t1` end, the vertices' own points at the ends; a tombstoned
@@ -44,6 +46,13 @@ pub const EdgePoints = struct {
 
 /// The edges of `body` as polylines at `resolution`; owned by `allocator`.
 pub fn discretize(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, diag: *Diagnostics) Error!EdgePoints {
+    return discretizeRefined(allocator, body, resolution, null, diag);
+}
+
+/// As `discretize`, each edge's circle grid doubled `doublings[e]` times: the finer grid
+/// keeps the coarser one's points, so an edge refined where its chords would cross a
+/// neighbour still meets the edges around it where it did.
+pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: ?[]const u8, diag: *Diagnostics) Error!EdgePoints {
     var points: std.ArrayList(Vec3) = .empty;
     errdefer points.deinit(allocator);
     const starts = try allocator.alloc(u32, body.edges.items.len + 1);
@@ -59,7 +68,8 @@ pub fn discretize(allocator: std.mem.Allocator, body: *const Body, resolution: t
         switch (body.geometry.curve(e.curve)) {
             .line => {},
             .circle => |circle| {
-                const n = resolution.segmentsFor(circle.r);
+                const shift: u5 = if (doublings) |d| @intCast(@min(d[i], MAX_DOUBLINGS)) else 0;
+                const n = @as(u64, resolution.segmentsFor(circle.r)) << shift;
                 const step = TWO_PI / @as(f64, @floatFromInt(n));
                 // The grid angles strictly between the ends; a few more steps than the
                 // range holds are tried, since a range may start anywhere on the circle

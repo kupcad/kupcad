@@ -12,6 +12,7 @@ const diagnostics = @import("../diagnostics.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const overlay = @import("overlay.zig");
+const edges = @import("../mesh/edges.zig");
 const Body = body_mod.Body;
 const Vec2 = vec.Vec2;
 const Diagnostics = diagnostics.Diagnostics;
@@ -39,10 +40,14 @@ pub const Contours = struct {
     }
 };
 
-/// The sketch's loops as polylines, each arc cut into its share of the edges a full
-/// circle of its radius gets at `resolution` (at least one), a line kept whole. Owned by
-/// `allocator`.
+/// The sketch's loops as polylines, each arc cut on the grid a full circle of its radius
+/// gets at `resolution` (`mesh/edges.zig`: the mesh engine's polygon), a line kept whole.
+/// Owned by `allocator`.
 pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.Resolution, diag: *Diagnostics) Error!Contours {
+    // The edges' polylines are the mesh's (mesh/edges.zig): a circle's grid from angle 0,
+    // so a contour is the outline the tessellation has, and the mesh engine's polygon
+    var edge_points = try edges.discretize(allocator, sheet, resolution, diag);
+    defer edge_points.deinit(allocator);
     var points = std.ArrayList(Vec2).empty;
     defer points.deinit(allocator);
     var starts = std.ArrayList(u32).empty;
@@ -56,18 +61,12 @@ pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: to
                 try starts.append(allocator, @intCast(points.items.len));
                 var it = traverse.Coedges.init(sheet, l);
                 while (it.next() catch return corrupt(diag)) |c| {
-                    const edge = try edgeOf(sheet, c, diag);
-                    try points.append(allocator, edge.a);
-                    const arc = edge.arc orelse continue;
-                    // The arc's interior points, its ends being the vertices
-                    const sweep = sweepOf(edge);
-                    const per_turn = resolution.segmentsFor(arc.r);
-                    const pieces: usize = @max(1, @as(usize, @intFromFloat(@ceil(sweep / (2 * std.math.pi) * @as(f64, @floatFromInt(per_turn)) - CEIL_SLACK))));
-                    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
-                    const sign: f64 = if (arc.ccw) 1 else -1;
-                    for (1..pieces) |k| {
-                        const angle = start + sign * sweep * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(pieces));
-                        try points.append(allocator, vec.addScaled2(arc.c, .{ @cos(angle), @sin(angle) }, arc.r));
+                    const coedge = sheet.coedge(c);
+                    const pts = edge_points.of(coedge.edge);
+                    // The edge's points the coedge's way, its last left to the next coedge
+                    for (0..pts.len - 1) |step| {
+                        const k = if (coedge.same_sense) step else pts.len - 1 - step;
+                        try points.append(allocator, flat(pts[k]));
                     }
                 }
             }

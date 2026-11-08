@@ -62,10 +62,54 @@ pub const Mesh = struct {
 };
 
 /// The mesh of `body` at `resolution`; owned by `allocator`. `error.NotImplemented` for a
-/// body with a free-form edge (M3); a curved face is left out with its status.
+/// body with a free-form edge (M3); a curved face is left out with its status. A planar
+/// face whose chorded outline crosses itself at the resolution (a chord of an arc cutting
+/// across a hole or a neighbouring edge that the arc itself clears) has its arcs' grids
+/// doubled, the mesh built again, up to `edges.MAX_DOUBLINGS` times; what still fails is
+/// reported `.failed` with a warning.
 pub fn tessellate(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
     try options.checkCancel();
-    var edge_points = try edges_mod.discretize(allocator, body, resolution, diag);
+    const doublings = try allocator.alloc(u8, body.edges.items.len);
+    defer allocator.free(doublings);
+    @memset(doublings, 0);
+    var round: u8 = 0;
+    while (true) : (round += 1) {
+        var attempt = Diagnostics.init(allocator);
+        defer attempt.deinit();
+        var mesh = try build(allocator, body, resolution, doublings, options, &attempt);
+        errdefer mesh.deinit(allocator);
+        var refined = false;
+        if (round < edges_mod.MAX_DOUBLINGS) {
+            for (mesh.faces) |range| {
+                if (range.status == .failed and try doubleArcs(body, range.face, doublings, diag)) refined = true;
+            }
+        }
+        if (!refined) {
+            for (attempt.findings.items) |finding| try diag.add(finding);
+            return mesh;
+        }
+        mesh.deinit(allocator);
+    }
+}
+
+/// Doubles the grid of every arc edge of face `f`; whether it had any.
+fn doubleArcs(body: *const Body, f: types.FaceIndex, doublings: []u8, diag: *Diagnostics) Error!bool {
+    var any = false;
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        var coedges = traverse.Coedges.init(body, l);
+        while (coedges.next() catch return corrupt(diag)) |c| {
+            const e = body.coedge(c).edge;
+            if (body.geometry.curve(body.edge(e).curve) != .circle) continue;
+            doublings[@backingInt(e)] += 1;
+            any = true;
+        }
+    }
+    return any;
+}
+
+fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
+    var edge_points = try edges_mod.discretizeRefined(allocator, body, resolution, doublings, diag);
     defer edge_points.deinit(allocator);
 
     // Mesh vertices: the body's vertices first, then each edge's interior points
