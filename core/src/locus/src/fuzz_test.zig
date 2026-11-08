@@ -41,6 +41,10 @@ const OFFSET_STEP: f64 = 0.5;
 const OFFSET_STEPS: i32 = 3;
 /// How close an identity of areas must hold, relative to the larger area.
 const AREA_CLOSE = 1e-9;
+/// How close the booleans' identities must hold: the overlay welds arcs cocircular
+/// within the zone (1e-5 here) onto one circle, which moves a boundary by up to the zone,
+/// so a result's area may differ from its operands' by the zone times the perimeter.
+const IDENTITY_CLOSE = 1e-7;
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
 const PLAIN_RUN_BYTES = 256;
@@ -292,6 +296,6 @@ fn expectAreaIdentities(p: *const Body, q: *const Body, diag: *Diagnostics) !voi
         areas[i] = (try mass.mass(&results[i].?, .{}, diag)).area;
     }
     const scale = @max(ap + aq, 1);
-    try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], AREA_CLOSE * scale);
-    try testing.expectApproxEqAbs(ap - areas[1], areas[2], AREA_CLOSE * scale);
+    try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], IDENTITY_CLOSE * scale);
+    try testing.expectApproxEqAbs(ap - areas[1], areas[2], IDENTITY_CLOSE * scale);
 }

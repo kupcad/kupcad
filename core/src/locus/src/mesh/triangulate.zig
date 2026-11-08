@@ -342,41 +342,64 @@ const Partition = struct {
         return .regular;
     }
 
+    /// The sweep. The vertices at one point (the passages of a weakly simple polygon
+    /// through it) are one event: every edge ending there leaves the status before any
+    /// edge starting there joins it, so a vertex meets no edge it is the lower end of, and
+    /// the edges starting at a point are ordered by their directions.
     fn run(self: *Partition, diag: *Diagnostics) Error!void {
-        for (self.order) |v| {
-            const u = self.prev[v];
-            switch (self.kind[v]) {
-                .start => try self.insert(v),
-                .end => {
-                    try self.fixUp(u, v);
-                    try self.remove(u, diag);
-                },
-                .split => {
-                    const j = try self.leftOf(v, diag);
-                    try self.diagonal(v, self.helper[j]);
-                    self.helper[j] = v;
-                    try self.insert(v);
-                },
-                .merge => {
-                    try self.fixUp(u, v);
-                    try self.remove(u, diag);
-                    const j = try self.leftOf(v, diag);
-                    try self.fixUp(j, v);
-                    self.helper[j] = v;
-                },
-                .regular => {
-                    // The interior is to the right of a vertex the chain passes downward
-                    if (lessAbove(self.points, u, v)) {
+        var i: usize = 0;
+        while (i < self.order.len) {
+            var j = i + 1;
+            while (j < self.order.len and samePlace(self.points[self.order[j]], self.points[self.order[i]])) j += 1;
+            const group = self.order[i..j];
+            for (group) |v| {
+                const u = self.prev[v];
+                switch (self.kind[v]) {
+                    .end, .merge => {
                         try self.fixUp(u, v);
                         try self.remove(u, diag);
+                    },
+                    .regular => if (lessAbove(self.points, u, v)) {
+                        try self.fixUp(u, v);
+                        try self.remove(u, diag);
+                    },
+                    .start, .split => {},
+                }
+            }
+            for (group) |v| {
+                const u = self.prev[v];
+                const w = self.next[v];
+                switch (self.kind[v]) {
+                    .start => try self.insert(v),
+                    .end => {},
+                    .split => {
+                        // The wedge opens downward between the two edges; the one further
+                        // west stands for the vertex
+                        const to_u = vec.sub2(self.points[u], self.points[v]);
+                        const to_w = vec.sub2(self.points[w], self.points[v]);
+                        const west = if (vec.cross2(to_u, to_w) > 0) to_u else to_w;
+                        const j_edge = try self.leftOf(v, west, diag);
+                        try self.diagonal(v, self.helper[j_edge]);
+                        self.helper[j_edge] = v;
+                        try self.insert(v);
+                    },
+                    .merge => {
+                        const j_edge = try self.leftOf(v, .{ 0, -1 }, diag);
+                        try self.fixUp(j_edge, v);
+                        self.helper[j_edge] = v;
+                    },
+                    .regular => if (lessAbove(self.points, u, v)) {
                         try self.insert(v);
                     } else {
-                        const j = try self.leftOf(v, diag);
-                        try self.fixUp(j, v);
-                        self.helper[j] = v;
-                    }
-                },
+                        // The chain passes upward: the edge from the vertex down to `u`
+                        // stands for it
+                        const j_edge = try self.leftOf(v, vec.sub2(self.points[u], self.points[v]), diag);
+                        try self.fixUp(j_edge, v);
+                        self.helper[j_edge] = v;
+                    },
+                }
             }
+            i = j;
         }
     }
 
@@ -394,21 +417,26 @@ const Partition = struct {
         try self.diagonals.append(self.allocator, .{ a, b });
     }
 
-    /// Whether vertex `v` is strictly east of status edge `e`, which runs downward from
-    /// vertex `e`. A vertex at an end of the edge (the ring's own other passage through the
-    /// point, or another ring's) is not: the edge west of a vertex is one the vertex is
-    /// not on.
-    fn rightOf(self: *const Partition, e: u32, v: u32) bool {
-        return predicates.orient2d(self.points[e], self.points[self.next[e]], self.points[v]) > 0;
+    /// Whether vertex `v` is east of status edge `e`, which runs downward from vertex
+    /// `e`. A vertex at the edge's upper end (another passage of the polygon through the
+    /// point, or the vertex's own edge about to join) is east of it when the direction
+    /// standing for the vertex, `down`, turns counter-clockwise from the edge's: of two
+    /// edges running down from one point the counter-clockwise one lies east.
+    fn rightOf(self: *const Partition, e: u32, v: u32, down: Vec2) bool {
+        const upper = self.points[e];
+        const lower = self.points[self.next[e]];
+        const turn = predicates.orient2d(upper, lower, self.points[v]);
+        if (turn != 0) return turn > 0;
+        return vec.cross2(vec.sub2(lower, upper), down) > 0;
     }
 
     /// The first status index whose edge vertex `v` is not east of.
-    fn position(self: *const Partition, v: u32) usize {
+    fn position(self: *const Partition, v: u32, down: Vec2) usize {
         var lo: usize = 0;
         var hi: usize = self.status.items.len;
         while (lo < hi) {
             const mid = lo + (hi - lo) / 2;
-            if (self.rightOf(self.status.items[mid], v)) lo = mid + 1 else hi = mid;
+            if (self.rightOf(self.status.items[mid], v, down)) lo = mid + 1 else hi = mid;
         }
         return lo;
     }
@@ -416,12 +444,12 @@ const Partition = struct {
     /// Edge `e` leaves its upper vertex `e` downward: it joins the status at that vertex.
     fn insert(self: *Partition, e: u32) Error!void {
         self.helper[e] = e;
-        try self.status.insert(self.allocator, self.position(e), e);
+        try self.status.insert(self.allocator, self.position(e, vec.sub2(self.points[self.next[e]], self.points[e])), e);
     }
 
     /// Edge `e` ends at its lower vertex: it leaves the status there.
     fn remove(self: *Partition, e: u32, diag: *Diagnostics) Error!void {
-        const at = self.position(self.next[e]);
+        const at = self.position(self.next[e], .{ 0, -1 });
         if (at < self.status.items.len and self.status.items[at] == e) {
             _ = self.status.orderedRemove(at);
             return;
@@ -436,9 +464,10 @@ const Partition = struct {
         return notSimple(diag, e, 0);
     }
 
-    /// The status edge directly west of vertex `v`.
-    fn leftOf(self: *const Partition, v: u32, diag: *Diagnostics) Error!u32 {
-        const at = self.position(v);
+    /// The status edge directly west of vertex `v`, `down` the direction standing for the
+    /// vertex among edges starting at its point.
+    fn leftOf(self: *const Partition, v: u32, down: Vec2, diag: *Diagnostics) Error!u32 {
+        const at = self.position(v, down);
         if (at == 0) return notSimple(diag, v, 0);
         return self.status.items[at - 1];
     }
