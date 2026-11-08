@@ -299,6 +299,29 @@ pub const Overlay = struct {
                 try self.cutPair(i, j, &cuts);
             }
         }
+        // Every vertex within the zone of a given edge is a cut on it, whichever pair
+        // made the vertex: a crossing computed from one of two coincident edges and not
+        // from the other (a tangency, its discriminant a rounding either side of zero
+        // from either end) would otherwise split one and not the other, and the map
+        // would not be planar. The vertices by x, each edge's box binary-searched
+        const by_x = try allocator.alloc(u32, self.points.items.len);
+        defer allocator.free(by_x);
+        for (by_x, 0..) |*v, i| v.* = @intCast(i);
+        std.mem.sort(u32, by_x, self.points.items, byPointX);
+        for (boxes, 0..) |box, i| {
+            var lo: usize = 0;
+            var hi: usize = by_x.len;
+            while (lo < hi) {
+                const mid = (lo + hi) / 2;
+                if (self.points.items[by_x[mid]][0] < box.min[0] - self.tol.zone) lo = mid + 1 else hi = mid;
+            }
+            while (lo < by_x.len and self.points.items[by_x[lo]][0] <= box.max[0] + self.tol.zone) : (lo += 1) {
+                const v = by_x[lo];
+                const y = self.points.items[v][1];
+                if (y < box.min[1] - self.tol.zone or y > box.max[1] + self.tol.zone) continue;
+                try self.cutAt(@intCast(i), v, &cuts);
+            }
+        }
         // Each given edge's cuts in order along it, the pieces as edges
         std.mem.sort(Cut, cuts.items, {}, Cut.lessThan);
         var merged = std.AutoHashMapUnmanaged(EdgeKey, u32).empty;
@@ -326,6 +349,10 @@ pub const Overlay = struct {
 
     fn byMinX(boxes: []const Box, i: u32, j: u32) bool {
         return boxes[i].min[0] < boxes[j].min[0];
+    }
+
+    fn byPointX(points: []const Vec3, i: u32, j: u32) bool {
+        return points[i][0] < points[j][0];
     }
 
     /// The box of a given edge: its ends, and its arc's extreme points.
@@ -823,6 +850,10 @@ fn sampleAlong(a: Vec2, b: Vec2, arc: ?Arc, reach: f64) Vec2 {
     return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
 }
 
+pub fn arcSweep(a: Vec2, b: Vec2, arc: Arc) f64 {
+    return arcSpan(a, b, arc).sweep;
+}
+
 fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
     const start = trig.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
     const end = trig.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
@@ -959,20 +990,17 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     if ((piece.y0 > v[1]) == (piece.y1 > v[1])) continue;
                     const x = if (v[1] == piece.y0) piece.x0 else if (v[1] == piece.y1) piece.x1 else arcXAt(arc, piece.mid, v[1]);
                     if (x >= v[0]) continue;
-                    // The direction up from the ray along the piece: from a vertex on
-                    // the ray, to the sample a reach along the arc (as the order about
-                    // a vertex is told); else the tangent at the crossing
+                    // The direction up from the ray along the piece: to the sample a
+                    // reach along the arc from the crossing (as the order about a vertex
+                    // is told), never the tangent there: an arc tangent to a line where
+                    // the ray passes crosses it at the line's own x, and only the bend
+                    // tells which is nearer
                     const descending = piece.y0 > piece.y1;
                     const at: Vec2 = .{ x, v[1] };
-                    const up = if (v[1] == s.a[1] and x == s.a[0])
-                        vec.sub2(sampleAlong(s.a, s.b, arc, reach), s.a)
-                    else if (v[1] == s.b[1] and x == s.b[0])
-                        vec.sub2(sampleAlong(s.b, s.a, .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw }, reach), s.b)
-                    else tangent: {
-                        const radial = vec.normalized2(vec.sub2(at, arc.c)) orelse continue;
-                        const along = if (arc.ccw) vec.perp2(radial) else vec.scale2(vec.perp2(radial), -1);
-                        break :tangent if (descending) vec.scale2(along, -1) else along;
-                    };
+                    const up = if (descending)
+                        vec.sub2(sampleAlong(at, s.a, .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw }, reach), at)
+                    else
+                        vec.sub2(sampleAlong(at, s.b, arc, reach), at);
                     consider(&best, .{ .x = x, .up = up, .cycle = if (descending) s.cycle else s.beyond });
                 }
                 continue;

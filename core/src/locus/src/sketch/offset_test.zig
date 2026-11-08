@@ -259,3 +259,41 @@ test "offset: a shrunk sheet lies within its sheet (the fuzzer's chain of 12,899
     try testing.expectApproxEqRel(try areaOf(&s), try areaOf(&both), 1e-9);
     try testing.expect(try areaOf(&s) < try areaOf(&u));
 }
+
+test "offset: a grown sheet holds its sheet where a join arc is tangent to a neighbour's edge" {
+    // The fuzzer's find (2026-11-09): a triangle's join arc about (2.5, 3.5) of radius
+    // one half touches the other triangle's edge along y = 3 at (2.5, 3). The sheet's
+    // edge and the band's coincident copy of it, measured from either end, put the
+    // tangency's discriminant a rounding either side of zero: one was cut there and the
+    // other not, and the map was not planar. Every vertex within the zone of an edge is
+    // now a cut on it, whichever pair made the vertex
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const lower = [_]Vec2{ .{ 2.8, 3 }, .{ 2.6285714285714286, 3.2857142857142856 }, .{ 2.4, 3 } };
+    const upper = [_]Vec2{ .{ 2.5, 3.5 }, .{ 2.647058823529412, 3.5294117647058822 }, .{ 2.3333333333333335, 4 } };
+    var two = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &lower, &upper }, &diag);
+    defer two.deinit();
+    var fat = try offset.offset(testing.allocator, &two, 0.5, .round, 3, .{}, &diag);
+    defer fat.deinit();
+    try testing.expectEqual(@as(usize, 1), fat.counts().faces);
+    var both = try boolean.boolean(testing.allocator, &.{ &two, &fat }, .intersection, .{}, &diag);
+    defer both.deinit();
+    try testing.expectApproxEqRel(try areaOf(&two), try areaOf(&both), 1e-9);
+    // The whole chain: a difference of two three-ring sheets, grown by one half
+    const a1 = [_]Vec2{ .{ 1, 3 }, .{ 3, 2 }, .{ 0, 2 }, .{ 3, 2 } };
+    const a2 = [_]Vec2{ .{ 4, 1 }, .{ 1, 6 }, .{ 2, 1 }, .{ 2, 5 }, .{ 0, 1 }, .{ 2, 4 }, .{ 5, 4 }, .{ 0, 3 } };
+    const a3 = [_]Vec2{ .{ 2, 1 }, .{ 0, 5 }, .{ 0, 2 }, .{ 0, 4 } };
+    var a = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a1, &a2, &a3 }, &diag);
+    defer a.deinit();
+    const b1 = [_]Vec2{ .{ 0, 4 }, .{ 6, 1 }, .{ 6, 1 }, .{ 0, 2 }, .{ 6, 5 }, .{ 5, 3 }, .{ 5, 5 }, .{ 1, 4 } };
+    const b2 = [_]Vec2{ .{ 0, 3 }, .{ 5, 3 }, .{ 4, 5 }, .{ 0, 0 }, .{ 3, 3 }, .{ 1, 6 } };
+    var b = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b1, &b2 }, &diag);
+    defer b.deinit();
+    var d = try boolean.boolean(testing.allocator, &.{ &a, &b }, .difference, .{}, &diag);
+    defer d.deinit();
+    var g = try offset.offset(testing.allocator, &d, 0.5, .round, 3, .{}, &diag);
+    defer g.deinit();
+    var held = try boolean.boolean(testing.allocator, &.{ &d, &g }, .intersection, .{}, &diag);
+    defer held.deinit();
+    try testing.expectApproxEqRel(try areaOf(&d), try areaOf(&held), 1e-9);
+}
