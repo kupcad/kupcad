@@ -50,9 +50,12 @@ jobs:
             runs: 2M
           # Locus, the B-Rep kernel: its body JSON reader on bytes and its 2D kernel on
           # generated sketch chains (src/locus/src/fuzz_test.zig); a chain builds up to four
-          # sheets and runs its booleans twice over for the area identities.
+          # sheets, offsets one in sixteen by an extreme, and runs its booleans twice over for
+          # the area identities, in Debug with the testing allocator's stack traces: 200K a
+          # target took 133 minutes on an M-series Mac (2026-11-09), so this is about 35 there
+          # and within the 75 or so the others take on a slower hosted runner.
           - target: locus
-            runs: 1M
+            runs: 50K
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
