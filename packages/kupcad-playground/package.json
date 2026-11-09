@@ -39,7 +39,7 @@
     "@codemirror/language": "^6.13.1",
     "@codemirror/lint": "^6.9.7",
     "@codemirror/view": "^6.43.15",
-    "@playwright/test": "^1.64.1",
+    "@playwright/test": "^1.65.0",
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@testing-library/svelte": "catalog:",
     "@types/node": "catalog:",
