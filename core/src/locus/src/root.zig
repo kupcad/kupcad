@@ -2,11 +2,12 @@
 //! use, and the `test` block that pulls in every test file. The layout and what each part
 //! may import are in docs/architecture.md §4, and checked by source_test.zig.
 
-/// Vectors, matrices, the exact predicates and the solvers.
+/// Vectors, matrices, the exact predicates, rounded intervals and the solvers.
 pub const math = struct {
     pub const vec = @import("math/vec.zig");
     pub const mat = @import("math/mat.zig");
     pub const predicates = @import("math/predicates.zig");
+    pub const interval = @import("math/interval.zig");
     pub const solve = @import("math/solve.zig");
     pub const trig = @import("math/trig.zig");
 };
@@ -90,6 +91,7 @@ test {
     _ = @import("math/vec_test.zig");
     _ = @import("math/mat_test.zig");
     _ = @import("math/predicates_test.zig");
+    _ = @import("math/interval_test.zig");
     _ = @import("math/solve_test.zig");
     _ = @import("math/trig_test.zig");
     _ = @import("tolerance_test.zig");
