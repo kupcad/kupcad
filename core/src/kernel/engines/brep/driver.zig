@@ -122,7 +122,12 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
         try bodies.append(allocator, &solidOf(h.ptr).body);
     }
     if (bodies.items.len == 0) return error.NoGeometry;
-    return locus.io.step_write.write(allocator, bodies.items);
+    const written = try locus.io.step_write.writeReported(allocator, bodies.items);
+    errdefer allocator.free(written.text);
+    // The writer's report (counts, the exchange error bound) is the trace's last file
+    const options: locus.Options = .{ .trace = trace_sink };
+    try locus.io.trace.data(allocator, &options, "export_step", "report", written.report);
+    return written.text;
 }
 
 /// Whether any face of the solid lies on a curved surface. The hull is built from the

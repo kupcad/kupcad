@@ -10,7 +10,8 @@ test "B-Rep trace: a script's transforms leave a numbered body file per phase, e
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);
     const phases = try brep_trace.run(testing.allocator, testing.io, "cube(1).translate(1, 0, 0).mirror(0, 0, 1)", .none, tmp.dir, &diag);
-    try testing.expectEqual(@as(usize, 6), phases);
+    // Two transforms of three phases each, then the STEP writer's report
+    try testing.expectEqual(@as(usize, 7), phases);
     try testing.expect(diag.message == null);
     // The arguments of each operation come first, for a replay
     const args = try tmp.dir.readFileAlloc(testing.io, "001-transform-arguments.json", testing.allocator, .limited(1 << 20));

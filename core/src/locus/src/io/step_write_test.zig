@@ -246,3 +246,44 @@ test "step: a face on a B-spline surface, and a rational curve's weights" {
     try testing.expectEqual(@as(usize, 0), count(wedge_text, "=B_SPLINE_CURVE_WITH_KNOTS("));
 }
 
+
+test "step: the report counts what was written and bounds what a reader may find off" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box = try primitives.box(testing.allocator, tol, 2, 3, 4, false, &diag);
+    defer box.deinit();
+    const written = try step_write.writeReported(testing.allocator, &.{&box});
+    defer testing.allocator.free(written.text);
+    const r = written.report;
+    try testing.expectEqual(@as(u32, 1), r.solids);
+    try testing.expectEqual(@as(u32, 1), r.shells);
+    try testing.expectEqual(@as(u32, 6), r.faces);
+    try testing.expectEqual(@as(u32, 12), r.edges);
+    try testing.expectEqual(@as(u32, 8), r.vertices);
+    try testing.expectEqual(@as(u32, 0), r.degenerate_edges);
+    try testing.expectEqual(@as(u32, 0), r.bspline_curves);
+    try testing.expectEqual(@as(u32, 0), r.bspline_surfaces);
+    try testing.expectEqual(@as(u64, written.text.len), r.bytes);
+    // Entities are numbered 1..entities, every one present
+    try testing.expectEqual(@as(usize, r.entities), count(written.text, "\n#") + 1);
+    // An exact box: the bound is the reader's rounding of its largest coordinate alone
+    try testing.expect(r.error_bound > 0 and r.error_bound < 1e-13);
+    try testing.expectEqual(64.0 * std.math.floatEps(f64) * 4.0, r.error_bound);
+    // The header says the same
+    try testing.expect(count(written.text, "'1 solids, 1 shells, 6 faces, 12 edges, 8 vertices, error bound ") == 1);
+    // `write` is the text alone
+    const text = try step_write.write(testing.allocator, &.{&box});
+    defer testing.allocator.free(text);
+    try testing.expectEqualStrings(written.text, text);
+    // A sphere: its poles are degenerate edges, not written; a gap recorded on a vertex
+    // joins the bound
+    var sphere = try primitives.sphere(testing.allocator, tol, 3, &diag);
+    defer sphere.deinit();
+    sphere.vertex(types.VertexIndex.of(0)).gap = 1e-6;
+    const spherical = try step_write.writeReported(testing.allocator, &.{&sphere});
+    defer testing.allocator.free(spherical.text);
+    try testing.expect(spherical.report.degenerate_edges > 0);
+    try testing.expectEqual(spherical.report.faces, count(spherical.text, "=ADVANCED_FACE("));
+    try testing.expect(spherical.report.error_bound >= 1e-6);
+    try testing.expect(spherical.report.error_bound < 1.1e-6);
+}

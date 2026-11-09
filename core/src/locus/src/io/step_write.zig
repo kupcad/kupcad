@@ -8,6 +8,14 @@
 //! curve or surface is written with its knots run into values and multiplicities, rational
 //! ones as the complex entity with their weights; a swept surface names its generator. A
 //! sheet body has no solid to write and is refused.
+//!
+//! `writeReported` returns the text with a `Report`: what was written (solids, shells,
+//! faces, edges, vertices, the degenerate edges STEP has no entity for, the free-form
+//! curves and surfaces written as B-splines, entities, bytes) and an **exchange error
+//! bound**, what a reader may find the geometry off by: the largest gap recorded on a
+//! vertex or edge, plus the frames' departure from orthonormal, plus 64 ulp of the largest
+//! coordinate (research/opengeometry.md §2). The counts and the bound go into the file's
+//! `FILE_DESCRIPTION` too, so a reader can compare them with what it finds.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -33,11 +41,35 @@ pub const Error = error{
 
 /// The entity ids of the header; bodies start after them.
 const HEADER_ENTITIES: u32 = 16;
+/// The rounding share of a coordinate the error bound allows a reader: 64 ulp.
+const READER_ULPS: f64 = 64.0 * std.math.floatEps(f64);
+
+/// What a STEP file holds and how far its geometry may be off (the module doc).
+pub const Report = struct {
+    solids: u32 = 0,
+    shells: u32 = 0,
+    faces: u32 = 0,
+    edges: u32 = 0,
+    vertices: u32 = 0,
+    /// Poles and apices: points, which STEP's loops close over; not written.
+    degenerate_edges: u32 = 0,
+    bspline_curves: u32 = 0,
+    bspline_surfaces: u32 = 0,
+    entities: u32 = 0,
+    bytes: u64 = 0,
+    /// The largest gap, plus the frames' departure from orthonormal, plus 64 ulp of the
+    /// largest coordinate, over every body.
+    error_bound: f64 = 0,
+};
+
+/// A written file with its report.
+pub const Written = struct { text: []u8, report: Report };
 
 const Writer = struct {
     allocator: std.mem.Allocator,
     out: std.Io.Writer.Allocating,
     next: u32 = HEADER_ENTITIES,
+    report: Report = .{},
 
     fn init(allocator: std.mem.Allocator) Writer {
         return .{ .allocator = allocator, .out = .init(allocator) };
@@ -85,20 +117,38 @@ fn real(v: f64) Real {
 
 /// The STEP file of `bodies`, each a solid, the caller's to free.
 pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]u8 {
+    const written = try writeReported(allocator, bodies);
+    return written.text;
+}
+
+/// The STEP file of `bodies`, each a solid, with its report; the text is the caller's to
+/// free. The bodies' entities are written first and the header, which describes them,
+/// composed after (an entity's id does not depend on its place in the file).
+pub fn writeReported(allocator: std.mem.Allocator, bodies: []const *const Body) Error!Written {
     if (bodies.len == 0) return error.NotSolid;
     for (bodies) |b| if (b.kind != .solid or b.isEmpty()) return error.NotSolid;
     var w = Writer.init(allocator);
-    errdefer w.out.deinit();
+    defer w.out.deinit();
     // Every solid's id comes first, so the representation can list them: one per outer
     // shell of each body
     var n_solids: u32 = 0;
     for (bodies) |b| n_solids += @intCast(outerShells(b));
     const first_solid = w.next + 1;
     w.next += n_solids;
-    w.out.writer.print(
+    var solid_id = first_solid;
+    for (bodies) |b| {
+        try writeBody(&w, b, solid_id);
+        solid_id += @intCast(outerShells(b));
+        w.report.error_bound = @max(w.report.error_bound, exchangeErrorBound(b));
+    }
+    w.report.entities = w.next;
+    const r = &w.report;
+    var file: std.Io.Writer.Allocating = .init(allocator);
+    errdefer file.deinit();
+    file.writer.print(
         \\ISO-10303-21;
         \\HEADER;
-        \\FILE_DESCRIPTION(('KupCAD B-Rep export'),'2;1');
+        \\FILE_DESCRIPTION(('KupCAD B-Rep export','{d} solids, {d} shells, {d} faces, {d} edges, {d} vertices, error bound {e}'),'2;1');
         \\FILE_NAME('kupcad_export.step','','','','','','');
         \\FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 1 1 1 1 }}'));
         \\ENDSEC;
@@ -113,11 +163,11 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
         \\#8=PRODUCT_CONTEXT('',#2,'mechanical');
         \\#9=PRODUCT_DEFINITION_CONTEXT('part definition',#2,'design');
         \\#10=ADVANCED_BREP_SHAPE_REPRESENTATION('',(
-    , .{}) catch return error.OutOfMemory;
+    , .{ r.solids, r.shells, r.faces, r.edges, r.vertices, r.error_bound }) catch return error.OutOfMemory;
     for (0..n_solids) |i| {
-        w.out.writer.print("{s}#{d}", .{ if (i > 0) "," else "", first_solid + @as(u32, @intCast(i)) }) catch return error.OutOfMemory;
+        file.writer.print("{s}#{d}", .{ if (i > 0) "," else "", first_solid + @as(u32, @intCast(i)) }) catch return error.OutOfMemory;
     }
-    w.out.writer.print(
+    file.writer.print(
         \\),#12);
         \\#12=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#13)) GLOBAL_UNIT_ASSIGNED_CONTEXT((#14,#15,#16)) REPRESENTATION_CONTEXT('Context #1','3D Context with UNITS and UNCERTAINTY'));
         \\#13=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({f}),#14,'distance_accuracy_value','confusion accuracy');
@@ -126,13 +176,49 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
         \\#16=(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT());
         \\
     , .{real(bodies[0].tol.zone)}) catch return error.OutOfMemory;
-    var solid_id = first_solid;
-    for (bodies) |b| {
-        try writeBody(&w, b, solid_id);
-        solid_id += @intCast(outerShells(b));
+    file.writer.writeAll(w.out.written()) catch return error.OutOfMemory;
+    file.writer.writeAll("ENDSEC;\nEND-ISO-10303-21;\n") catch return error.OutOfMemory;
+    const text = file.toOwnedSlice() catch return error.OutOfMemory;
+    w.report.bytes = text.len;
+    return .{ .text = text, .report = w.report };
+}
+
+/// How far a reader may find the body's geometry off: the largest gap of a vertex or
+/// edge, plus the largest departure of a surface's or circle's frame from orthonormal
+/// (a reader rebuilds the frame from the directions as written), plus 64 ulp of the
+/// largest coordinate (what it may round them by).
+fn exchangeErrorBound(body: *const Body) f64 {
+    var gap: f64 = 0;
+    var magnitude: f64 = 0;
+    for (body.vertices.items) |v| {
+        if (v.tombstone) continue;
+        gap = @max(gap, v.gap);
+        for (body.geometry.point(v.point)) |x| magnitude = @max(magnitude, @abs(x));
     }
-    w.out.writer.writeAll("ENDSEC;\nEND-ISO-10303-21;\n") catch return error.OutOfMemory;
-    return w.out.toOwnedSlice() catch return error.OutOfMemory;
+    for (body.edges.items) |e| {
+        if (!e.flags.tombstone) gap = @max(gap, e.gap);
+    }
+    var skew: f64 = 0;
+    const g = &body.geometry;
+    for (g.planes.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.cylinders.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.cones.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.spheres.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.tori.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.revolutions.items) |s| skew = @max(skew, frameSkew(s.frame));
+    for (g.circles.items) |c| skew = @max(skew, axesSkew(c.x, c.y));
+    for (g.ellipses.items) |e| skew = @max(skew, axesSkew(e.x, e.y));
+    return gap + skew + READER_ULPS * magnitude;
+}
+
+/// How far a frame is from orthonormal: the worst of its axes' lengths off 1 and their
+/// dot products off 0.
+fn frameSkew(frame: geometry.Frame) f64 {
+    return @max(axesSkew(frame.x, frame.z), @max(axesSkew(frame.x, frame.y), axesSkew(frame.y, frame.z)));
+}
+
+fn axesSkew(a: Vec3, b: Vec3) f64 {
+    return @max(@abs(vec.dot(a, b)), @max(@abs(vec.length(a) - 1.0), @abs(vec.length(b) - 1.0)));
 }
 
 /// The outer shells of a body, each written as a solid.
@@ -152,6 +238,7 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
         if (v.tombstone) continue;
         const p = try w.point(body.geometry.point(v.point));
         vertex_ids[i] = try w.emit("VERTEX_POINT('',#{d})", .{p});
+        w.report.vertices += 1;
     }
     // Edges once, each with its curve
     const edge_ids = try allocator.alloc(u32, body.edges.items.len);
@@ -159,9 +246,14 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
     for (body.edges.items, 0..) |e, i| {
         // A degenerate edge (a pole, an apex) is a point: STEP has no entity for it and
         // readers close the loop over it (what OCCT writes)
-        if (e.flags.tombstone or e.flags.degenerate) continue;
+        if (e.flags.tombstone) continue;
+        if (e.flags.degenerate) {
+            w.report.degenerate_edges += 1;
+            continue;
+        }
         const curve_id = try writeCurve(w, body.geometry.curve(e.curve));
         edge_ids[i] = try w.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ vertex_ids[@backingInt(e.start)], vertex_ids[@backingInt(e.end)], curve_id });
+        w.report.edges += 1;
     }
     // Faces: their loops of oriented edges, their surface, their bounds
     var face_ids = std.ArrayList(u32).empty;
@@ -204,15 +296,18 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
             for (bound_ids.items, 0..) |id, k| w.out.writer.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
             w.out.writer.print("),#{d},.{s}.);\n", .{ written.id, if (sense) "T" else "F" }) catch return error.OutOfMemory;
             try face_ids.append(allocator, face_id);
+            w.report.faces += 1;
         }
         w.next += 1;
         const shell_id = w.next;
         w.out.writer.print("#{d}=CLOSED_SHELL('',(", .{shell_id}) catch return error.OutOfMemory;
         for (face_ids.items, 0..) |id, k| w.out.writer.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
         w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
+        w.report.shells += 1;
         if (body.shell(s).kind != .outer) continue;
         w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_id }) catch return error.OutOfMemory;
         solid_id += 1;
+        w.report.solids += 1;
     }
     if (solid_id == first_solid_id) return error.NotSolid;
 }
@@ -233,7 +328,10 @@ fn writeCurve(w: *Writer, c: curves.Curve) Error!u32 {
             const p = try w.placement(e.c, e.normal(), e.x);
             return w.emit("ELLIPSE('',#{d},{f},{f})", .{ p, real(e.a), real(e.b) });
         },
-        .nurbs => |n| return writeBSplineCurve(w, n),
+        .nurbs => |n| {
+            w.report.bspline_curves += 1;
+            return writeBSplineCurve(w, n);
+        },
     }
 }
 
@@ -435,6 +533,9 @@ fn writeSurface(w: *Writer, s: surfaces.Surface) Error!WrittenSurface {
             const axis = try w.emit("AXIS1_PLACEMENT('',#{d},#{d})", .{ o, z });
             return .{ .id = try w.emit("SURFACE_OF_REVOLUTION('',#{d},#{d})", .{ curve_id, axis }), .flipped = false };
         },
-        .nurbs => |n| return .{ .id = try writeBSplineSurface(w, n), .flipped = false },
+        .nurbs => |n| {
+            w.report.bspline_surfaces += 1;
+            return .{ .id = try writeBSplineSurface(w, n), .flipped = false };
+        },
     }
 }

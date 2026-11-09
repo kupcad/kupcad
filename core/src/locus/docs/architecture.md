@@ -673,8 +673,15 @@ validated by KupCAD's `check:3mf`-style job with an external reader. Numbers are
 at full `f64` precision (the shortest text that reads back to the same double, Zig's
 `{d}`), never rounded: the present writer prints radii with six decimals, which is a
 0.1 µm error on every circle and makes a "lossless" export lossy. The file's
-`UNCERTAINTY_MEASURE_WITH_UNIT` is the body's `zone`. STEP export is what
-KupCAD's users need first, on wasm too, and is why the writer is in M1. A body JSON format
+`UNCERTAINTY_MEASURE_WITH_UNIT` is the body's `zone`. The writer returns a **report**
+beside the text (`writeReported`, 2026-11-09, research/opengeometry.md §2): the counts
+of solids, shells, faces, edges, vertices, degenerate edges left out, B-spline curves and
+surfaces, entities and bytes, and an exchange error bound (the largest recorded gap, plus
+the frames' departure from orthonormal, plus 64 ulp of the largest coordinate), the same
+counts and bound written into the file's `FILE_DESCRIPTION` so a reader can compare them
+with what it finds (`check:step` does); the driver sends the report to the trace as the
+export's one phase. STEP export is what KupCAD's users need first, on wasm too, and is
+why the writer is in M1. A body JSON format
 that is a straight dump of the arenas (usd-brep's `BrepArray` layout: per-table arrays,
 counts, first-is-outer) replaces the fixture format and is the debugging snapshot. STEP
 reading is scheduled only once the kernel is in good shape (after M7): it is the one place
@@ -926,10 +933,14 @@ hashing a mesh; the determinism test compares it; two bodies built from the same
 on different machines must hash alike.
 
 **Scale guard.** `f64` carries about 16 significant digits; a `zone` of 1e-5 mm on a model
-1e9 mm across is below the representable spacing of its coordinates and every predicate
-of tier 2 degrades. An operation checks `zone ≥ extent · 1e-12` (one digit of margin) and
-otherwise returns `error.InvalidInput` naming the model size; the fix is the host's
-(scale the model or raise the tolerance), as SMLib's decade table implies.
+whose coordinates reach 1e9 mm is below their representable spacing and every predicate
+of tier 2 degrades. The rule is a ratio, `zone ≥ magnitude · 1e-12` with the magnitude the
+largest coordinate of the body's vertices (about 64 ulp, with a digit of margin): a part a
+kilometre from the origin passes at `zone = 1e-5` and fails at `1e-8`. The checker applies
+it at its geometric level, so every built, moved or loaded body is caught with both numbers
+in the finding (`too_large_for_tolerance`, 2026-11-09, research/opengeometry.md §1), and
+`input.scale` applies it to sizes before anything is built; the fix is the host's (scale
+the model or raise the tolerance), as SMLib's decade table implies.
 
 **Trace.** Every operation can be run with `options.trace` set to a sink (`Trace`: a
 context and a `write(context, operation, phase, body_json)` function), which receives the

@@ -12,10 +12,16 @@ const body_json = @import("body_json.zig");
 /// "arguments": `args` is plain data std.json writes (numbers, arrays, enums as their
 /// names, structs of them), the inputs that are not bodies (the bodies are the phases').
 pub fn arguments(allocator: std.mem.Allocator, options: *const diagnostics.Options, operation: []const u8, args: anytype) error{OutOfMemory}!void {
+    return data(allocator, options, operation, "arguments", args);
+}
+
+/// Sends plain data (as `arguments` takes it) to the sink of `options`, if any, as the
+/// phase `name` of `operation`: an operation's arguments, a writer's report.
+pub fn data(allocator: std.mem.Allocator, options: *const diagnostics.Options, operation: []const u8, name: []const u8, value: anytype) error{OutOfMemory}!void {
     const sink = options.trace orelse return;
-    const text = std.json.Stringify.valueAlloc(allocator, args, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+    const text = std.json.Stringify.valueAlloc(allocator, value, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
     defer allocator.free(text);
-    sink.write(sink.context, operation, "arguments", text);
+    sink.write(sink.context, operation, name, text);
 }
 
 /// Sends `body` to the sink of `options`, if any, as the state after `phase` of `operation`.
