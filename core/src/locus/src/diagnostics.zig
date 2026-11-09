@@ -329,14 +329,18 @@ pub const input = struct {
         if (!tol.isValid()) return diag.fail(error.InvalidInput, .{ .code = .bad_tolerance, .entity = .{ .kind = .argument }, .label = "tolerance", .measured = tol.zone, .threshold = tol.xsect });
     }
 
-    /// The scale guard (§12): `f64` carries about 16 digits, so a zone below the model's
-    /// extent times 1e-12 is under the spacing of its coordinates.
-    pub fn scale(diag: *Diagnostics, extent: f64, tol: Tolerance) Error!void {
-        if (!(tol.zone >= extent * SCALE_GUARD)) return diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .entity = .{ .kind = .body }, .label = "the model", .measured = extent, .threshold = tol.zone / SCALE_GUARD });
+    /// The scale guard on an argument (§12): `f64` carries about 16 digits, so a zone
+    /// below the largest coordinate times 1e-12 is under the spacing of the coordinates.
+    /// The checker applies the same rule to every body at its geometric level
+    /// (`too_large_for_tolerance` on the body), so a built, loaded or moved body is caught
+    /// there; this is for sizes and offsets before anything is built.
+    pub fn scale(diag: *Diagnostics, magnitude: f64, tol: Tolerance) Error!void {
+        if (!(tol.zone >= magnitude * SCALE_GUARD)) return diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .entity = .{ .kind = .body }, .label = "the model", .measured = magnitude, .threshold = tol.zone / SCALE_GUARD });
     }
 };
 
-/// The least `zone / extent` an operation accepts: one digit of margin over `f64`'s.
+/// The least `zone / magnitude` a body may have (the magnitude its largest coordinate):
+/// about 64 ulp of the coordinate, with a digit of margin over `f64`'s spacing.
 pub const SCALE_GUARD: f64 = 1e-12;
 
 /// `error.LimitExceeded` with a finding, for a loop that reached its bound.

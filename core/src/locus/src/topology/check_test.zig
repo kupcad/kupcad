@@ -277,6 +277,23 @@ test "orientation and geometric rules" {
         b.tol = Tolerance.fromZone(0.6);
         try expectRule(&b, .geometric, .edge_too_short);
     }
+    // Coordinates too large for the zone: the unit tetrahedron under a zone of 1e-13,
+    // below its coordinates' spacing times the guard's margin; and the same body moved
+    // a thousand kilometres out, where a zone of 1e-5 is a ten-thousandth of the spacing
+    {
+        var b = try tetrahedron(testing.allocator);
+        defer b.deinit();
+        b.tol = Tolerance.fromZone(1e-13);
+        try expectRule(&b, .geometric, .too_large_for_tolerance);
+    }
+    {
+        var b = try tetrahedron(testing.allocator);
+        defer b.deinit();
+        for (b.geometry.points.items) |*p| p[0] += 1e9;
+        for (b.geometry.planes.items) |*plane| plane.frame.origin[0] += 1e9;
+        for (b.geometry.lines.items) |*line| line.o[0] += 1e9;
+        try expectRule(&b, .geometric, .too_large_for_tolerance);
+    }
     // A gap past the zone
     {
         var b = try tetrahedron(testing.allocator);

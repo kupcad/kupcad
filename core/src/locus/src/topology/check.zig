@@ -343,6 +343,15 @@ const Checker = struct {
     fn geometric(self: *Checker) Error!void {
         const b = self.body;
         const tol = b.tol;
+        // The scale guard (architecture §12): the zone must stay above the spacing of the
+        // coordinates, measured by the largest one of the vertices (the surfaces pass
+        // through them)
+        var magnitude: f64 = 0;
+        for (b.vertices.items) |v| {
+            if (v.tombstone) continue;
+            for (b.geometry.point(v.point)) |x| magnitude = @max(magnitude, @abs(x));
+        }
+        if (!(tol.zone >= magnitude * diagnostics.SCALE_GUARD)) try self.add(.too_large_for_tolerance, .{ .kind = .body }, magnitude, tol.zone / diagnostics.SCALE_GUARD);
         for (b.edges.items, 0..) |e, i| {
             if (e.flags.tombstone) continue;
             const curve = b.geometry.curve(e.curve);
