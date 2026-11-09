@@ -11,6 +11,11 @@ minimumReleaseAge: 4320
 updateConfig:
   ignoreDependencies:
     - '@types/vscode'
+# parse5-parser-stream 8.1 (jsdom 31's) calls what parse5 8.1 added, but asks for parse5 ^8.0.0,
+# so pnpm gave it the 8.0.1 another package (vsce) had locked, and every jsdom test failed on
+# `tokenizer.flushCharacters is not a function`. Remove once its range asks for 8.1.
+overrides:
+  parse5-parser-stream>parse5: ^8.1.0
 # The versions the packages share: a package's dev dependency on one is `catalog:`. A peer
 # range stays the package's own, what a host may bring.
 catalog:

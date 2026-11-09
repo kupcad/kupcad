@@ -31,6 +31,9 @@ catalogs:
       specifier: ^5.1.0
       version: 5.1.0
 
+overrides:
+  parse5-parser-stream>parse5: ^8.1.0
+
 importers:
 
   .:
@@ -4086,7 +4089,7 @@ snapshots:
 
   parse5-parser-stream@8.1.0:
     dependencies:
-      parse5: 8.0.1
+      parse5: 8.1.0
 
   parse5@8.0.1:
     dependencies:
