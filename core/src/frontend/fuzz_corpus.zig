@@ -71,6 +71,9 @@ pub const CORPUS = [_][]const u8{
     // The nightly fuzzer's find of 2026-11-04: a comment ending in two carriage returns, which
     // formatted to a CRLF line and read back without one of them
     "A\xcd\xb6#`\r\r",
+    // The nightly fuzzer's find of 2026-11-09: a call with no name on a call with none of its
+    // own arguments, which lost its `()` (`A.ٳ` then `()` read back as one call)
+    "A.\xd9\xb3()()",
     // Paths: open 2D geometry, joined, closed and stroked
     "p = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])\n[p.named(\"edge\"), p.close, p.stroke(2, cap: :square).extrude(1), arc(r: 5, start: [0, 0], to: [8, 0], large: true).rotate(45)]",
     // Quoted symbols, read as the string in the same quotes: escapes, interpolation

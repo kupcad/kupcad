@@ -1304,7 +1304,7 @@ pub const Formatter = struct {
             root = mc.receiver;
         }
         std.mem.reverse(ast.NodeIndex, links.items);
-        if (links.items.len == 0) return self.formatCallTail(tree, node_idx);
+        if (links.items.len == 0) return self.formatCallTail(tree, node_idx, false);
 
         const Chain = struct {
             tree: *const ast.Tree,
@@ -1315,7 +1315,7 @@ pub const Formatter = struct {
 
             fn flat(c: @This(), f: *Formatter) Error!void {
                 try f.formatOperand(c.tree, c.root, .call);
-                for (c.links) |link| try f.formatLink(c.tree, link);
+                for (c.links, 0..) |link, i| try f.formatLink(c.tree, link, calledNext(c.tree, c.links, i));
             }
 
             fn broken(c: @This(), f: *Formatter) Error!void {
@@ -1330,7 +1330,7 @@ pub const Formatter = struct {
                     const unnamed = c.tree.methodCall(c.tree.getNode(link).?).method_name == .none;
                     const joins = unnamed or if (c.author_lines) link_line == prev_line else i == 0 and isBareName(c.tree, c.root);
                     if (joins) {
-                        try f.formatLink(c.tree, link);
+                        try f.formatLink(c.tree, link, calledNext(c.tree, c.links, i));
                         prev_line = f.lastLine(c.tree, link);
                         continue;
                     }
@@ -1338,7 +1338,7 @@ pub const Formatter = struct {
                     // A comment between the calls stays there, and one after a call on its line.
                     try f.flushCommentsBefore(link_line, prev_line, false);
                     try f.writeIndent();
-                    try f.formatLink(c.tree, link);
+                    try f.formatLink(c.tree, link, calledNext(c.tree, c.links, i));
                     prev_line = f.lastLine(c.tree, link);
                     try f.flushTrailingComments(link_line, prev_line);
                 }
@@ -1369,25 +1369,35 @@ pub const Formatter = struct {
         return false;
     }
 
-    /// `.name(args) block` of a call on a receiver.
-    fn formatLink(self: *Formatter, tree: *const ast.Tree, link: ast.NodeIndex) Error!void {
+    /// Whether the call after `links[i]` in a chain has no name (`(f)(2)`): it is called with
+    /// `()` straight after it, so its own `()` must stay to tell the two calls apart.
+    fn calledNext(tree: *const ast.Tree, links: []const ast.NodeIndex, i: usize) bool {
+        if (i + 1 >= links.len) return false;
+        return tree.methodCall(tree.getNode(links[i + 1]).?).method_name == .none;
+    }
+
+    /// `.name(args) block` of a call on a receiver; `called` keeps its `()` with no arguments
+    /// (calledNext).
+    fn formatLink(self: *Formatter, tree: *const ast.Tree, link: ast.NodeIndex, called: bool) Error!void {
         const mc = tree.methodCall(tree.getNode(link).?);
         // A call on an expression with no name, `(f)(2)`, has no dot: it fails when it runs
         // (a lambda takes .call), but formatting keeps the script as written. `(f).(2)`
         // didn't parse.
         if (mc.method_name != .none) try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
-        try self.formatCallTail(tree, link);
+        try self.formatCallTail(tree, link, called);
     }
 
-    /// A call's name, arguments and block (its receiver is printed by the caller).
-    fn formatCallTail(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
+    /// A call's name, arguments and block (its receiver is printed by the caller). A call of
+    /// no arguments on a receiver drops its `()` (`part.volume`), unless `called`: `A.b()()`
+    /// printed `A.b()` reads back as one call.
+    fn formatCallTail(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex, called: bool) Error!void {
         const node = tree.getNode(node_idx).?;
         const mc = tree.methodCall(node);
         try self.out.appendSlice(self.allocator, tree.getString(mc.method_name));
         const args = tree.getNamedArgs(mc.args);
         if (args.len > 0) {
             try self.formatArgs(tree, args, if (mc.end_token != 0) mc.end_token else null);
-        } else if ((mc.receiver == .none or mc.method_name == .none) and mc.block == .none) {
+        } else if ((mc.receiver == .none or mc.method_name == .none or called) and mc.block == .none) {
             try self.out.appendSlice(self.allocator, "()");
         }
         if (mc.block != .none) {

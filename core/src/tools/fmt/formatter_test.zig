@@ -1133,6 +1133,13 @@ test "Formatter: a call on an expression with no name keeps its form" {
     try expectStableFormat("(1) (2)", "(1)(2)\n");
     try expectStableFormat("x = (a + b)()", "x = (a + b)()\n");
     try expectStableFormat("y = (a + b)(1, 2).first", "y = (a + b)(1, 2).first\n");
+    // A call of no arguments keeps its `()` when one with no name follows: `A.b()()` was
+    // printed `A.b()`, one call, which the formatter refused (found by the nightly fuzzer)
+    try expectStableFormat("A.b()()", "A.b()()\n");
+    try expectStableFormat("A.b()()()", "A.b()()()\n");
+    try expectStableFormat("x = list.first()(2).size", "x = list.first()(2).size\n");
+    // Without one following, they are dropped as before
+    try expectStableFormat("A.b().c()", "A.b.c\n");
 }
 
 test "Formatter: a multiple assignment to one name keeps its comma" {
