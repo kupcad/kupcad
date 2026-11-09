@@ -35,7 +35,7 @@ Issues = "https://github.com/kupcad/kupcad/issues"
 [dependency-groups]
 # Pinned, so the lint and the tests are the same on every machine and run. hatchling too, so
 # mypy checks the build hook against it
-dev = ["build==1.6.1", "hatchling==1.33.0", "mypy==2.4.1", "pytest==9.2.0", "ruff==0.17.3"]
+dev = ["build==1.6.1", "hatchling==1.33.0", "mypy==2.4.1", "pytest==9.2.0", "ruff==0.17.4"]
 
 [tool.hatch.version]
 path = "src/kupcad/_version.py"
