@@ -16,6 +16,15 @@
 //!
 //! Costs: the certain cases are a few multiplications; the adaptive stages run only near
 //! degeneracy, and the last (exact) stage of `incircle` is a few thousand operations.
+//!
+//! The second half of the file holds the **radical predicates** the 2D overlay's circles
+//! need (`inCircle`, `lineCircleDiscriminant`, `lineCircleCrossing`, `compareArcX`,
+//! `compareArcXWithLine`; research/li-chen-egc.md §2, D26). Each expression there has
+//! bounded depth and `f64` leaves, so its sign is exact without big numbers or root
+//! bounds: a floating evaluation carrying an error bound (`Approx`, forward error analysis)
+//! decides the easy cases, and otherwise the same formula runs on expansions (`Exact`),
+//! with square roots removed by squaring once the sign of what they are added to is known
+//! (`signPlusSqrt`). Each formula is written once, generic over the number type.
 
 const std = @import("std");
 
@@ -39,6 +48,26 @@ const O3D_ERR_BOUND_C: f64 = (26.0 + 288.0 * EPSILON) * EPSILON * EPSILON;
 const ICC_ERR_BOUND_A: f64 = (10.0 + 96.0 * EPSILON) * EPSILON;
 const ICC_ERR_BOUND_B: f64 = (4.0 + 48.0 * EPSILON) * EPSILON;
 const ICC_ERR_BOUND_C: f64 = (44.0 + 576.0 * EPSILON) * EPSILON * EPSILON;
+
+/// The absolute error of one rounded operation, as a share of its rounded result:
+/// `|fl(x) − x| ≤ ε|x| ≤ ε|fl(x)| / (1 − ε)`.
+const ROUNDING: f64 = EPSILON * (1.0 + 2.0 * EPSILON);
+/// What an `Approx` error bound is multiplied by to cover the roundings of computing the
+/// bound itself (at most a dozen operations, each within `ε`).
+const ERR_INFLATE: f64 = 1.0 + 16.0 * EPSILON;
+// The expansion capacities of the radical predicates' exact paths: the bound on the
+// components of each formula's longest expression (a difference of two doubles has two,
+// a product of expansions of `m` and `n` at most `2mn`, a sum `m + n`).
+/// `r² − |p − c|²`: 2 + 16.
+const IN_CIRCLE_CAP: usize = 18;
+/// `(b − a)·(d − c)` and the cross product alike: two products of 8.
+const DOT_CAP: usize = 16;
+/// `r²·|d|² − (f × d)²`: 2·2·16 + 2·16·16.
+const DISCRIMINANT_CAP: usize = 576;
+/// `4e²b₁ − (e² + b₁ − b₂)²` of `compareArcX`: 2·(2·8·10) + 2·28·28.
+const COMPARE_ARC_CAP: usize = 1888;
+/// `h²B − A²` of `compareArcXWithLine`: 2·8·10 + 2·16·16.
+const ARC_LINE_CAP: usize = 672;
 
 /// A sum or product as the rounded result `hi` and the exact remainder `lo`: `hi + lo` is
 /// the exact value.
@@ -826,4 +855,308 @@ fn thirdOrder(fin: *Accumulator(1152), t: *const TailCross, tail: f64, twice: f6
     const temp32b = Expansion(32).sum(temp16a.slice(), temp16b.slice());
     const temp64 = Expansion(64).sum(temp32a.slice(), temp32b.slice());
     fin.add(temp64.slice());
+}
+
+// ---------------------------------------------------------------------------------------
+// Radical predicates: the overlay's circles (research/li-chen-egc.md §2, D26)
+
+/// Which crossing of a horizontal line with a circle: `east` is `cx + √…`, `west` is
+/// `cx − √…`.
+pub const Side = enum { west, east };
+
+/// Which crossing of a segment with a circle along the segment: `first` has the lesser
+/// parameter (the `−√` root), `second` the greater.
+pub const Root = enum { first, second };
+
+/// Where a crossing's parameter lies against the segment `[0, 1]`.
+pub const Place = enum { before, start, inside, end, after };
+
+/// A floating-point value with a bound on its absolute error, carried through the
+/// operations by forward error analysis: the filter of the radical predicates. A sign is
+/// certain when the value's magnitude exceeds the bound (or the bound is zero).
+const Approx = struct {
+    v: f64,
+    err: f64,
+
+    fn of(x: f64) Approx {
+        return .{ .v = x, .err = 0 };
+    }
+
+    fn diff(a: f64, b: f64) Approx {
+        const v = a - b;
+        return .{ .v = v, .err = ROUNDING * @abs(v) * ERR_INFLATE };
+    }
+
+    fn add(a: Approx, b: Approx) Approx {
+        const v = a.v + b.v;
+        return .{ .v = v, .err = (a.err + b.err + ROUNDING * @abs(v)) * ERR_INFLATE };
+    }
+
+    fn sub(a: Approx, b: Approx) Approx {
+        return a.add(.{ .v = -b.v, .err = b.err });
+    }
+
+    fn mul(a: Approx, b: Approx) Approx {
+        const v = a.v * b.v;
+        return .{ .v = v, .err = (@abs(a.v) * b.err + @abs(b.v) * a.err + a.err * b.err + ROUNDING * @abs(v)) * ERR_INFLATE };
+    }
+
+    fn square(a: Approx) Approx {
+        return a.mul(a);
+    }
+
+    /// `a / b`, when `b` is certainly not zero.
+    fn div(a: Approx, b: Approx) ?Approx {
+        if (!(@abs(b.v) > b.err)) return null;
+        const v = a.v / b.v;
+        const least = @abs(b.v) - b.err;
+        const err = ((@abs(a.v) * b.err + @abs(b.v) * a.err) / (@abs(b.v) * least) + ROUNDING * @abs(v)) * ERR_INFLATE;
+        return .{ .v = v, .err = err };
+    }
+
+    /// `√a`, when `a`'s sign is certain; a negative `a` counts as zero (its square root is
+    /// taken as the circle's nearest point, as the callers mean it).
+    fn sqrt(a: Approx) ?Approx {
+        const s = a.sign() orelse return null;
+        if (s <= 0) return .{ .v = 0, .err = 0 };
+        const v = @sqrt(a.v);
+        // The true root lies between the roots of the bounds; three more roundings
+        const width = @sqrt(a.v + a.err) - @sqrt(a.v - a.err);
+        return .{ .v = v, .err = (width + 4.0 * ROUNDING * v) * ERR_INFLATE };
+    }
+
+    fn signed(a: Approx, s: f64) Approx {
+        return .{ .v = s * a.v, .err = a.err };
+    }
+
+    /// The sign, when certain.
+    fn sign(a: Approx) ?f64 {
+        if (@abs(a.v) > a.err) return if (a.v > 0) 1 else -1;
+        if (a.err == 0) return 0;
+        return null;
+    }
+};
+
+/// The exact arithmetic a radical predicate falls back to: expansions of up to `capacity`
+/// components, with sums (`expansionSum`) and products (`scaleExpansion` per component of
+/// one factor, summed). The capacity is the bound on the predicate's longest expression,
+/// asserted at each operation.
+fn Exact(comptime capacity: usize) type {
+    return struct {
+        e: Expansion(capacity),
+
+        const Self = @This();
+
+        fn of(x: f64) Self {
+            return .{ .e = Expansion(capacity).one(x) };
+        }
+
+        fn diff(a: f64, b: f64) Self {
+            const d = twoDiff(a, b);
+            var self: Self = .{ .e = .{ .len = 2 } };
+            self.e.items[0] = d.lo;
+            self.e.items[1] = d.hi;
+            return self;
+        }
+
+        fn add(a: Self, b: Self) Self {
+            std.debug.assert(a.e.len + b.e.len <= capacity);
+            var r: Self = .{ .e = .{} };
+            r.e.len = expansionSum(a.e.slice(), b.e.slice(), &r.e.items);
+            return r;
+        }
+
+        fn neg(a: Self) Self {
+            var r = a;
+            for (r.e.items[0..r.e.len]) |*x| x.* = -x.*;
+            return r;
+        }
+
+        fn sub(a: Self, b: Self) Self {
+            return a.add(b.neg());
+        }
+
+        fn mul(a: Self, b: Self) Self {
+            std.debug.assert(2 * a.e.len * b.e.len <= capacity);
+            var acc = Accumulator(capacity).init(Expansion(capacity).scaled(a.e.slice(), b.e.items[0]));
+            var scaled: Expansion(capacity) = .{};
+            for (b.e.items[1..b.e.len]) |component| {
+                scaled.len = scaleExpansion(a.e.slice(), component, &scaled.items);
+                acc.add(scaled.slice());
+            }
+            return .{ .e = acc.buffers[acc.current] };
+        }
+
+        fn square(a: Self) Self {
+            return a.mul(a);
+        }
+
+        /// The sign: that of the last (largest) component.
+        fn sign(a: Self) f64 {
+            return signOf(a.e.last());
+        }
+    };
+}
+
+fn signOf(x: f64) f64 {
+    if (x > 0) return 1;
+    if (x < 0) return -1;
+    return 0;
+}
+
+fn sideSign(side: Side) f64 {
+    return if (side == .east) 1 else -1;
+}
+
+// The formulas, each written once over a number type `N` (`Approx` or an `Exact`).
+
+/// `(b − a)·(d − c)`.
+fn dotOfDiffs(comptime N: type, a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) N {
+    return N.diff(b[0], a[0]).mul(N.diff(d[0], c[0])).add(N.diff(b[1], a[1]).mul(N.diff(d[1], c[1])));
+}
+
+/// `(b − a) × (d − c)`.
+fn crossOfDiffs(comptime N: type, a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) N {
+    return N.diff(b[0], a[0]).mul(N.diff(d[1], c[1])).sub(N.diff(b[1], a[1]).mul(N.diff(d[0], c[0])));
+}
+
+/// `r² − |p − c|²`.
+fn inCircleIn(comptime N: type, c: [2]f64, r: f64, p: [2]f64) N {
+    return N.of(r).square().sub(dotOfDiffs(N, c, p, c, p));
+}
+
+/// `r²·|d|² − (f × d)²` with `d = b − a`, `f = a − c`: a quarter of the discriminant of
+/// the line's parameter on the circle, by Lagrange's identity (the line is at distance
+/// `|f × d| / |d|` from the centre).
+fn discriminantIn(comptime N: type, a: [2]f64, b: [2]f64, c: [2]f64, r: f64) N {
+    const dd = dotOfDiffs(N, a, b, a, b);
+    const fd = crossOfDiffs(N, c, a, a, b);
+    return N.of(r).square().mul(dd).sub(fd.square());
+}
+
+/// `r² − (y − cy)²`: the square of the half-chord of the circle at height `y`.
+fn radicandIn(comptime N: type, c: [2]f64, r: f64, y: f64) N {
+    return N.of(r).square().sub(N.diff(y, c[1]).square());
+}
+
+/// The sign of `a + s·√b` for exact `a` and `b` and `s = ±1`; a negative `b` counts as
+/// zero. Squaring removes the root once the sign of `a` says which side wins.
+fn signPlusSqrt(a: anytype, s: f64, b: @TypeOf(a)) f64 {
+    if (b.sign() <= 0) return a.sign();
+    const sa = a.sign();
+    if (s > 0) {
+        if (sa >= 0) return 1;
+        return b.sub(a.square()).sign();
+    }
+    if (sa <= 0) return -1;
+    return a.square().sub(b).sign();
+}
+
+/// Positive when `p` lies inside the circle of centre `c` and radius `r`, negative when
+/// outside, zero when on it: the sign of `r² − |p − c|²`, exact.
+pub fn inCircle(c: [2]f64, r: f64, p: [2]f64) f64 {
+    if (inCircleIn(Approx, c, r, p).sign()) |s| return s;
+    return inCircleIn(Exact(IN_CIRCLE_CAP), c, r, p).sign();
+}
+
+/// Positive when the line through `a` and `b` crosses the circle of centre `c` and radius
+/// `r` twice, zero when it is tangent, negative when it misses: the sign of the
+/// discriminant of the crossing's parameter, exact. `a` and `b` must differ.
+pub fn lineCircleDiscriminant(a: [2]f64, b: [2]f64, c: [2]f64, r: f64) f64 {
+    if (discriminantIn(Approx, a, b, c, r).sign()) |s| return s;
+    return discriminantIn(Exact(DISCRIMINANT_CAP), a, b, c, r).sign();
+}
+
+/// The sign of `(b − a)·(d − c)`, exact.
+fn dotSign(a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) f64 {
+    if (dotOfDiffs(Approx, a, b, c, d).sign()) |s| return s;
+    return dotOfDiffs(Exact(DOT_CAP), a, b, c, d).sign();
+}
+
+/// Where the crossing `root` of the segment from `a` to `b` with the circle of centre `c`
+/// and radius `r` lies along the segment, exact; `null` when the line misses the circle or
+/// `a` and `b` coincide. The parameter is `t = (−f·d ± √Δ) / |d|²` with `d = b − a`,
+/// `f = a − c`; its sign and its sign against 1 come from the signs of `−f·d`, of
+/// `(b − c)·d`, of the discriminant and of `r² − |a − c|²`, `r² − |b − c|²`, since
+/// `Δ − (f·d)² = |d|²(r² − |f|²)` (and the same with `b − c`).
+pub fn lineCircleCrossing(a: [2]f64, b: [2]f64, c: [2]f64, r: f64, root: Root) ?Place {
+    if (a[0] == b[0] and a[1] == b[1]) return null;
+    const disc = lineCircleDiscriminant(a, b, c, r);
+    if (disc < 0) return null;
+    // `−f·d = (c − a)·(b − a)`, `g·d = (b − c)·(b − a)`
+    const fd = dotSign(a, c, a, b);
+    const gd = dotSign(c, b, a, b);
+    const a_in = inCircle(c, r, a);
+    const b_in = inCircle(c, r, b);
+    // The sign of `t`, then of `1 − t`
+    const t_sign: f64 = switch (root) {
+        .first => if (fd > 0 and a_in < 0) 1 else if ((fd > 0 and a_in == 0) or (fd == 0 and disc == 0)) 0 else -1,
+        .second => if (fd > 0 or (fd == 0 and disc > 0) or (fd < 0 and a_in > 0)) 1 else if ((fd == 0 and disc == 0) or (fd < 0 and a_in == 0)) 0 else -1,
+    };
+    if (t_sign < 0) return .before;
+    if (t_sign == 0) return .start;
+    const rest_sign: f64 = switch (root) {
+        .first => if (gd > 0 or (gd == 0 and disc > 0) or (gd < 0 and b_in > 0)) 1 else if ((gd == 0 and disc == 0) or (gd < 0 and b_in == 0)) 0 else -1,
+        .second => if (gd > 0 and b_in < 0) 1 else if ((gd > 0 and b_in == 0) or (gd == 0 and disc == 0)) 0 else -1,
+    };
+    if (rest_sign < 0) return .after;
+    if (rest_sign == 0) return .end;
+    return .inside;
+}
+
+/// The `x` of the `side` crossing of the circle with the horizontal line at `y`, with its
+/// error, when the filter can say.
+fn arcXApprox(c: [2]f64, r: f64, side: Side, y: f64) ?Approx {
+    const root = radicandIn(Approx, c, r, y).sqrt() orelse return null;
+    return Approx.of(c[0]).add(root.signed(sideSign(side)));
+}
+
+/// The sign of `x₁ − x₂`, where `xᵢ = cxᵢ ± √(rᵢ² − (y − cyᵢ)²)` is the `sideᵢ` crossing
+/// of circle `i` with the horizontal line at height `y`, exact; a radicand below zero
+/// counts as zero (the circle's nearest point to that height). Two square roots: the sign
+/// of `e + s₁√b₁` is found first, and when the second root pulls the other way the two are
+/// compared squared, `(e + s₁√b₁)² − b₂ = (e² + b₁ − b₂) + s₁·sign(e)·√(4e²b₁)`.
+pub fn compareArcX(c1: [2]f64, r1: f64, side1: Side, c2: [2]f64, r2: f64, side2: Side, y: f64) f64 {
+    if (arcXApprox(c1, r1, side1, y)) |x1| if (arcXApprox(c2, r2, side2, y)) |x2| if (x1.sub(x2).sign()) |s| return s;
+    const N = Exact(COMPARE_ARC_CAP);
+    const e = N.diff(c1[0], c2[0]);
+    const b1 = radicandIn(N, c1, r1, y);
+    const b2 = radicandIn(N, c2, r2, y);
+    const s1 = sideSign(side1);
+    const s2 = -sideSign(side2);
+    const left = signPlusSqrt(e, s1, b1);
+    const right: f64 = if (b2.sign() > 0) s2 else 0;
+    if (left == 0) return right;
+    if (right == 0 or right == left) return left;
+    // The two pull against each other: compare them squared. A first radicand at or
+    // below zero counted as zero above, so it is zero here too
+    const e2 = e.square();
+    const se = e.sign();
+    const compared = if (b1.sign() <= 0 or se == 0)
+        e2.add(if (b1.sign() > 0) b1 else N.of(0)).sub(b2).sign()
+    else
+        signPlusSqrt(e2.add(b1).sub(b2), s1 * se, N.of(4).mul(e2.mul(b1)));
+    if (compared > 0) return left;
+    if (compared < 0) return right;
+    return 0;
+}
+
+/// The sign of `x_arc − x_line` at height `y`: the `side` crossing of the circle against
+/// the line through `a` and `b` (`ay ≠ by`, else `null`), exact. Multiplied through by
+/// `h = by − ay`: `h(cx − ax) − (y − ay)(bx − ax) + s·h·√B`, with `s·h·√B = s·sign(h)·√(h²B)`.
+pub fn compareArcXWithLine(c: [2]f64, r: f64, side: Side, y: f64, a: [2]f64, b: [2]f64) ?f64 {
+    if (a[1] == b[1]) return null;
+    const s = sideSign(side);
+    filter: {
+        const x_arc = arcXApprox(c, r, side, y) orelse break :filter;
+        const along = Approx.diff(y, a[1]).mul(Approx.diff(b[0], a[0])).div(Approx.diff(b[1], a[1])) orelse break :filter;
+        const x_line = Approx.of(a[0]).add(along);
+        if (x_arc.sub(x_line).sign()) |sign| return sign;
+    }
+    const N = Exact(ARC_LINE_CAP);
+    const h = N.diff(b[1], a[1]);
+    const sh = h.sign();
+    const lhs = h.mul(N.diff(c[0], a[0])).sub(N.diff(y, a[1]).mul(N.diff(b[0], a[0])));
+    const radicand = h.square().mul(radicandIn(N, c, r, y));
+    return sh * signPlusSqrt(lhs, s * sh, radicand);
 }
