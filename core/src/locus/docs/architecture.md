@@ -449,10 +449,19 @@ hash-map order; parallel work is merged in index order. A test builds each examp
 and with `Parallel` serial and threaded and compares the serialized bodies byte for byte
 (as KupCAD's `determinism_test.zig` does for Manifold).
 
-Arcs in the 2D overlay are the one place the exact tier is not available (an arc–arc
-intersection is irrational). Arc endpoints and intersection points are constructed, welded
-and then treated as exact vertices; the sweep orders only straight chords between welded
-points plus the arcs' extreme points, which keeps every combinatorial decision on points.
+Arcs in the 2D overlay are where the exact tier is thinnest (an arc–arc or line–arc
+intersection is irrational). Arc endpoints and intersection points are constructed,
+welded and then treated as exact vertices; the order of half-edges about a vertex is
+decided by `orient2d` on points sampled a hundred zones along each curve, and nesting by
+the exact ray rule with its ties told by the same samples. The decisions that still
+compare a square root with a threshold (a tangency's discriminant, a crossing's parameter
+against its segment, which of two arc crossings a ray meets first) can be made exact
+without big numbers: every such expression has bounded depth and `f64` leaves, so
+squaring removes the roots and Shewchuk expansions evaluate the polynomial
+(`backups/locus-plan/research/li-chen-egc.md` §2; M0's exact radical predicates and M2's
+follow-ups). What exactness cannot do is put an arc's welded ends on its circle; those
+reconciliations (an arc piece within the zone of its chord is its chord, every vertex
+within the zone of an edge cuts it) are the welding's, not the predicates'.
 
 ---
 
