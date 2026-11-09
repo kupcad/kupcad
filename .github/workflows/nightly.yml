@@ -121,14 +121,20 @@ jobs:
         with:
           zig-version-file: .tool-versions
 
-      - name: Setup `wasmtime`
-        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
       - name: Run the tests
         working-directory: core
         run: zig build test -Doptimize=fast --summary line
 
-      - name: Run the wasm tests
+      # Installed once the tests that don't need it have run, and the wasm tests run only where
+      # it was: a download that failed (GitHub answering 504) skips them, the job failing on the
+      # download, not on a missing wasmtime
+      - name: Setup `wasmtime`
+        id: wasmtime
         if: ${{ !cancelled() }}
+        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
+
+      - name: Run the wasm tests
+        if: ${{ !cancelled() && steps.wasmtime.outcome == 'success' }}
         working-directory: core
         run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=fast --summary line
 
@@ -150,19 +156,26 @@ jobs:
         with:
           zig-version-file: .tool-versions
 
-      - name: Setup `wasmtime`
-        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
       - name: Run the tests
         working-directory: core
         run: zig build test -Doptimize=debug -Dgc-stress --summary line
 
+      # Installed once the tests that don't need it have run, and the wasm tests run only where
+      # it was: a download that failed (GitHub answering 504) skips them, the job failing on the
+      # download, not on a missing wasmtime
+      - name: Setup `wasmtime`
+        id: wasmtime
+        if: ${{ !cancelled() }}
+        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
+
       - name: Run the wasm tests (32-bit pointers)
+        if: ${{ !cancelled() && steps.wasmtime.outcome == 'success' }}
         working-directory: core
         run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dgc-stress --summary line
 
       # The threads build (shared memory, atomics) runs only here: its no-op std::mutex
       # (src/wasm_stubs.h) relies on Manifold staying serial in it.
       - name: Run the wasm tests (threads build)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.wasmtime.outcome == 'success' }}
         working-directory: core
         run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary line
