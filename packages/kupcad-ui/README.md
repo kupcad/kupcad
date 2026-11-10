@@ -168,8 +168,9 @@ webview and the desktop app to the language server.
   `actions` snippet (a host's own buttons, the Export menu), the Panel button, and a `toggles`
   snippet after it (a host's toggles of its own panes beside the pane, the Parameters button;
   `.kc-control` with `aria-expanded` gives one the Panel button's look). Below, a status
-  line from `status` (`runStatusOf(header)` makes it of a frame's header: Running…, then Ready or
-  Failed, with the run's time and its warnings) over the run's problems from `problems`
+  line from `status` (`runStatusOf(header)` makes it of a frame's header: Running…, by a turning
+  ring, still where the system asks for less motion, then Ready or Failed, with the run's time and
+  its warnings) over the run's problems from `problems`
   (`problemsOf(header)`: why it failed, then its warnings), a few lines high; one with a line,
   clicked, goes to `onproblem`, for the host to show the script there.
   By the pointer a tooltip says what is under it: the part, its copies, volume and size (the

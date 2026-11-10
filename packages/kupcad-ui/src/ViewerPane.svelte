@@ -748,6 +748,24 @@
   .dot.failed {
     background: var(--kc-error);
   }
+  /* Running, a ring that turns; a still one where the person asks for less motion */
+  .dot.running {
+    box-sizing: border-box;
+    background: none;
+    border: 1.5px solid var(--kc-muted);
+    border-top-color: transparent;
+    animation: turn 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.running {
+      animation: none;
+    }
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(1turn);
+    }
+  }
   .problems {
     list-style: none;
     margin: 0;

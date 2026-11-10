@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DELAY_MS, Runner } from './runner.js';
+import { BUSY_MS, DELAY_MS, Runner } from './runner.js';
 
 /** @import { Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
 /** @import { PreviewOptions } from '@kupcad/wasm/types' */
@@ -40,6 +40,7 @@ function handlersOf() {
       onpreview: (/** @type {Preview} */ preview, /** @type {string} */ source) =>
         got.push(['preview', source]),
       onerror: (/** @type {unknown} */ error) => got.push(['error', String(error)]),
+      onbusy: (/** @type {boolean} */ busy) => got.push(['busy', busy]),
     },
   };
 }
@@ -122,5 +123,85 @@ describe('Runner', () => {
     runner.run('cube(1)', {}, { now: true });
     calls[0].fail(new Error('the worker stopped'));
     await vi.waitFor(() => expect(got).toEqual([['error', 'Error: the worker stopped']]));
+  });
+
+  it('says nothing of a run that ends before BUSY_MS', async () => {
+    const { calls, kupcad } = standIn();
+    const { got, handlers } = handlersOf();
+    const runner = new Runner(kupcad, handlers);
+    runner.run('cube(1)', {}, { now: true });
+    vi.advanceTimersByTime(BUSY_MS - 1);
+    // Settled with no time passing (vi.waitFor would pass it)
+    calls[0].settle([]);
+    await vi.advanceTimersByTimeAsync(0);
+    calls[1].settle(previewOf('cube(1)'));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(BUSY_MS);
+    expect(got).toEqual([
+      ['findings', 'cube(1)', 0],
+      ['preview', 'cube(1)'],
+    ]);
+  });
+
+  it('says a run is under way once it goes on for BUSY_MS, and that it is over after what it gave', async () => {
+    const { calls, kupcad } = standIn();
+    const { got, handlers } = handlersOf();
+    const runner = new Runner(kupcad, handlers, { busyMs: 50 });
+    runner.run('cube(1)', {}, { now: true });
+    vi.advanceTimersByTime(49);
+    expect(got).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(got).toEqual([['busy', true]]);
+    calls[0].settle([]);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    calls[1].settle(previewOf('cube(1)'));
+    await vi.waitFor(() => expect(got).toHaveLength(4));
+    expect(got.slice(1)).toEqual([
+      ['findings', 'cube(1)', 0],
+      ['preview', 'cube(1)'],
+      ['busy', false],
+    ]);
+  });
+
+  it('counts a run stopped for the next as one under way with it', async () => {
+    const { calls, kupcad } = standIn();
+    const { got, handlers } = handlersOf();
+    const runner = new Runner(kupcad, handlers);
+    runner.run('cube(1)', {}, { now: true });
+    vi.advanceTimersByTime(BUSY_MS - 1);
+    runner.run('cube(2)', {}, { now: true });
+    vi.advanceTimersByTime(1);
+    expect(got).toEqual([['busy', true]]);
+    // The stopped run's end isn't the runs'
+    await vi.waitFor(() => expect(calls[0].signal.aborted).toBe(true));
+    await Promise.resolve();
+    expect(got).toEqual([['busy', true]]);
+    calls[1].settle([]);
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    calls[2].settle(previewOf('cube(2)'));
+    await vi.waitFor(() => expect(got.at(-1)).toEqual(['busy', false]));
+    expect(got.filter(([what]) => what === 'busy')).toHaveLength(2);
+  });
+
+  it('says the runs are over when a call fails, or they are stopped', async () => {
+    const { calls, kupcad } = standIn();
+    const { got, handlers } = handlersOf();
+    const runner = new Runner(kupcad, handlers);
+    runner.run('cube(1)', {}, { now: true });
+    vi.advanceTimersByTime(BUSY_MS);
+    calls[0].fail(new Error('the worker stopped'));
+    await vi.waitFor(() => expect(got).toHaveLength(3));
+    expect(got).toEqual([
+      ['busy', true],
+      ['error', 'Error: the worker stopped'],
+      ['busy', false],
+    ]);
+    runner.run('cube(2)', {}, { now: true });
+    vi.advanceTimersByTime(BUSY_MS);
+    runner.stop();
+    expect(got.slice(3)).toEqual([
+      ['busy', true],
+      ['busy', false],
+    ]);
   });
 });

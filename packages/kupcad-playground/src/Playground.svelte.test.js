@@ -8,6 +8,7 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/ui';
 import Playground from './Playground.svelte';
+import { BUSY_MS } from './runner.js';
 
 /** How long a run may take here: the pause after an edit, then the real core's. */
 const RUN_MS = 5000;
@@ -53,6 +54,17 @@ const undo = (view) => fireEvent.keyDown(view.contentDOM, { key: 'z', ctrlKey: t
 
 /** The status line's words. */
 const statusText = () => screen.queryByRole('status')?.textContent?.replace(/\s+/g, ' ').trim();
+
+/** The status line's ring, turning while a run goes on. */
+const ring = () => document.querySelector('[role="status"] .dot.running');
+
+/** A promise a test resolves when it wants (ES2023 has no Promise.withResolvers). */
+function gate() {
+  /** @type {((value?: unknown) => void) | undefined} */
+  let open;
+  const promise = new Promise((done) => (open = done));
+  return { promise, resolve: () => open?.() };
+}
 
 /**
  * The parts listed beside the model, by their names (not the lines that name them).
@@ -408,5 +420,73 @@ describe('Playground', () => {
         "The STEP wasn't made: no B-Rep model to write",
       ),
     );
+  });
+});
+
+describe('Playground, while a run goes on', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** No time passing while it waits (vi.waitFor passes its interval's under fake timers). */
+  const quickly = { timeout: RUN_MS, interval: 0 };
+
+  /**
+   * The playground on `source`, run once to Ready, then on fake timers, the previews after that
+   * held until the test lets them go; the status line's words, each time they changed since.
+   * @param {string} source
+   */
+  async function held(source) {
+    const { kupcad, component } = await playground(source);
+    await vi.waitFor(() => expect(statusText()).toMatch(/^Ready/), RUN_MS);
+    const preview = kupcad.preview.bind(kupcad);
+    const released = gate();
+    vi.spyOn(kupcad, 'preview').mockImplementation((...args) =>
+      released.promise.then(() => preview(...args)),
+    );
+    /** @type {(string | undefined)[]} */
+    const said = [];
+    new MutationObserver(() => said.push(statusText())).observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+    vi.useFakeTimers();
+    return { component, said, release: released.resolve };
+  }
+
+  it('says nothing new of a run that ends before BUSY_MS', async () => {
+    const { component, said, release } = await held('cube(10)\n');
+    const ran = consoleLines().length;
+    component.run();
+    vi.advanceTimersByTime(BUSY_MS - 1);
+    release();
+    await vi.waitFor(() => expect(consoleLines()).toHaveLength(ran + 1), quickly);
+    vi.advanceTimersByTime(BUSY_MS);
+    await tick();
+    expect(statusText()).toMatch(/^Ready · \d+ ms$/);
+    expect(said).not.toContain('Running…');
+    expect(ring()).toBeNull();
+  });
+
+  it('says a run is running once it goes on for BUSY_MS, then how it went', async () => {
+    const { component, release } = await held('cube(10)\n');
+    component.run();
+    vi.advanceTimersByTime(BUSY_MS);
+    await tick();
+    expect(statusText()).toBe('Running…');
+    expect(ring()).not.toBeNull();
+    release();
+    await vi.waitFor(() => expect(statusText()).toMatch(/^Ready · \d+ ms$/), quickly);
+    expect(ring()).toBeNull();
+  });
+
+  it('says a run that goes on and fails failed', async () => {
+    const { component, release } = await held('cube(10)\n');
+    component.load('raise "boom"\n');
+    vi.advanceTimersByTime(BUSY_MS);
+    await tick();
+    expect(statusText()).toBe('Running…');
+    release();
+    await vi.waitFor(() => expect(statusText()).toMatch(/^Failed · \d+ ms$/), quickly);
+    expect(ring()).toBeNull();
   });
 });

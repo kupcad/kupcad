@@ -43,7 +43,7 @@
 
   /** @import { Editor as EditorClass, EditorLanguage } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-  /** @import { ConsoleLine, Problem, Settings, ShortcutGroup } from '@kupcad/ui' */
+  /** @import { ConsoleLine, RunStatus, Settings, ShortcutGroup } from '@kupcad/ui' */
   /** @import { Snippet } from 'svelte' */
   /** @import { ViewerOptions } from '@kupcad/ui/viewer/types' */
   /** @import { KupcadApi, PreviewOptions, WorkerWasmSource } from '@kupcad/wasm/types' */
@@ -95,6 +95,8 @@
   const KEYS = { editor: 'playground.editor', ...paneKeys('playground') };
   /** The least the model is given, however wide the editor is made. */
   const MIN_VIEW = 320;
+  /** @type {RunStatus} */
+  const RUNNING = { state: 'running' };
   const id = $props.id();
   // As the settings have them; a size dragged is the pane's own until the drag is done
   let editorWidth = $derived(sizeSetting(settings, KEYS.editor, 460));
@@ -130,6 +132,8 @@
   /** What went wrong outside a run: a call that failed, an export. */
   let notice = $state('');
   let consoleLines = $state(/** @type {ConsoleLine[]} */ ([]));
+  /** A run has been under way a while (runner.js's BUSY_MS): the status says it's running. */
+  let busy = $state(false);
   /** @type {KupcadApi | null} */
   let core = null;
   /** @type {Runner | null} */
@@ -137,7 +141,9 @@
 
   const header = $derived(ran?.preview.header ?? null);
   // None to say with nothing to run yet: a page that starts empty (a host with no file open)
-  const status = $derived(runs && (ran || value !== '') ? runStatusOf(header) : null);
+  const status = $derived(
+    runs && (ran || value !== '') ? (busy ? RUNNING : runStatusOf(header)) : null,
+  );
   const problems = $derived(problemsOf(header));
   // Marked where they are in the script as it is: a run of another (older) script marks nothing
   const marks = $derived(marksOf(findings, ran?.source === value ? problems : []));
@@ -161,6 +167,7 @@
           consoleLines = appendLines(consoleLines, linesOfRun(preview.header, name));
         },
         onerror: (error) => (notice = errorText(error)),
+        onbusy: (next) => (busy = next),
       },
       { delayMs: runDelayMs },
     );

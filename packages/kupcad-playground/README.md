@@ -41,7 +41,10 @@ browser IDE embed; it keeps nothing of the page's.
   that starts empty runs nothing, and says nothing of a run, until something is typed). A run under
   way when the next starts is stopped (the worker drops or ends its call), so what is shown is the
   last script's. A run is `check` first, whose findings the editor marks at once, then the preview:
-  the model, how the run went, its parameters.
+  the model, how the run went, its parameters. A run still going after a moment (`BUSY_MS`, 300)
+  shows in the status line as Running…, by a turning ring (a still one where the system asks for
+  less motion), until it says how it went; a quicker one goes from one result to the next with
+  nothing in between, so the line doesn't flicker as the person types.
 * **What the editor marks** (`marks.js`): `check`'s findings, and the places the run named (why
   it failed, a warning on a line); not the run's error where `check` found errors already (a
   script that doesn't parse fails the run for the same reason). Findings of a script changed
@@ -92,7 +95,8 @@ pnpm test:browser   # the smoke test: the page built, in headless Chromium
 The runner's timing against a stand-in for the core, the marks, the downloads, and the component
 on the real core (`@kupcad/wasm`'s `testCore`) under jsdom: the model shown, the findings and the
 run's error marked, a problem clicked revealing its line, an edit and a value running again, a
-script loaded in place of the one shown, an export downloaded and one refused. In a browser, with the real worker, the smoke test
+script loaded in place of the one shown, an export downloaded and one refused, Running… shown for
+a run that goes on and never for a quick one (fake timers). In a browser, with the real worker, the smoke test
 (`smoke/playground.spec.js`): the page built (`vite build`, the worker an ES module as a site's
 build makes it) and served, the example run to Ready, its parts and parameters shown, `param`
 highlighted as a function, and a script that raises saying so.
