@@ -1,6 +1,6 @@
 {
   "name": "kupcad",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "KupCAD, code-CAD in a Ruby-like language: the kupcad command (build, run, watch, check, fmt, the language server), the native build for this system.",
   "keywords": [
     "3d",
