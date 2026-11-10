@@ -11,14 +11,15 @@ import { PROTOCOL_VERSION } from '@kupcad/protocol';
  * its viewport is up at `port` (none for null), and answers every other request with null; with `answers`
  * false, it answers nothing (`answers` may be set on what it returns, for the processes started
  * after). Each process it starts is kept, with the messages it was sent; one killed ends, as the
- * native side says a process a signal ended did (code null).
+ * native side says a process a signal ended did (code null). `tell` sends the app a message of the
+ * process's own, as the real one tells its build's progress.
  */
 export function fakeServer({
   port = /** @type {number | null} */ (9001),
   protocolVersion = PROTOCOL_VERSION,
   answers = true,
 } = {}) {
-  /** @type {{ origin: string, memoryLimit: number, on: ProcessEvents, received: any[], killed: boolean }[]} */
+  /** @type {{ origin: string, memoryLimit: number, on: ProcessEvents, received: any[], killed: boolean, tell: (message: object) => void }[]} */
   const processes = [];
   const fake = { spawn, processes, answers };
   /**
@@ -31,11 +32,18 @@ export function fakeServer({
     const reader = new MessageReader((error) => {
       throw error;
     });
-    const process = { origin, memoryLimit, on, received: /** @type {any[]} */ ([]), killed: false };
-    processes.push(process);
     /** @param {object} message */
     const send = (message) =>
       queueMicrotask(() => on.stdout(frameMessage(JSON.stringify(message))));
+    const process = {
+      origin,
+      memoryLimit,
+      on,
+      received: /** @type {any[]} */ ([]),
+      killed: false,
+      tell: send,
+    };
+    processes.push(process);
     return {
       write: async (/** @type {Uint8Array} */ bytes) => {
         for (const text of reader.push(bytes)) {

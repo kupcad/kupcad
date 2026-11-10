@@ -56,7 +56,7 @@ const undo = (view) => fireEvent.keyDown(view.contentDOM, { key: 'z', ctrlKey: t
 const statusText = () => screen.queryByRole('status')?.textContent?.replace(/\s+/g, ' ').trim();
 
 /** The status line's ring, turning while a run goes on. */
-const ring = () => document.querySelector('[role="status"] .dot.running');
+const ring = () => document.querySelector('[role="status"] .kc-spinner');
 
 /** A promise a test resolves when it wants (ES2023 has no Promise.withResolvers). */
 function gate() {

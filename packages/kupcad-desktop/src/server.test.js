@@ -5,7 +5,7 @@ import { LanguageServer, RESTART_MS } from './server.js';
 
 /** A server on `fake`, with what it told the app, and a clock the test moves. */
 function serverOn(fake = fakeServer(), memoryLimit = () => 8) {
-  const events = { viewport: vi.fn(), state: vi.fn(), log: vi.fn() };
+  const events = { viewport: vi.fn(), state: vi.fn(), log: vi.fn(), progress: vi.fn() };
   /** @type {(() => void)[]} */
   const timers = [];
   /** @type {number[]} */
@@ -29,6 +29,29 @@ function serverOn(fake = fakeServer(), memoryLimit = () => 8) {
   });
   return { server, events, fake, timers, waits };
 }
+
+/**
+ * What the server says of a build: its token asked for (a request), then its begin.
+ * @param {string} token
+ * @param {string} title
+ */
+const begun = (token, title) => [
+  {
+    jsonrpc: '2.0',
+    id: `ask-${token}`,
+    method: 'window/workDoneProgress/create',
+    params: { token },
+  },
+  { jsonrpc: '2.0', method: '$/progress', params: { token, value: { kind: 'begin', title } } },
+];
+/** @param {string} token */
+const ended = (token) => ({
+  jsonrpc: '2.0',
+  method: '$/progress',
+  params: { token, value: { kind: 'end' } },
+});
+/** The titles the app was told, in order. @param {import('vitest').Mock} progress */
+const told = (progress) => progress.mock.calls.map(([title]) => title);
 
 describe('the language server', () => {
   it("starts kupcad lsp for the page's origin, and the client initializes over its stdio", async () => {
@@ -233,5 +256,43 @@ describe('the language server', () => {
     expect(fake.processes[0].killed).toBe(true);
     expect(events.state).not.toHaveBeenCalled();
     await expect(server.preview('file:///w/part.kup')).rejects.toThrow(/isn't running/);
+  });
+
+  describe("tells the server's long work", () => {
+    it('saying it takes it, its token granted, from begin to end, the newest of several shown', async () => {
+      const { server, events, fake } = serverOn();
+      await server.start();
+      const [process] = fake.processes;
+      expect(process.received[0].params.capabilities.window).toMatchObject({
+        workDoneProgress: true,
+      });
+      for (const message of [...begun('1', 'Building a.kup'), ...begun('2', 'Building b.kup')]) {
+        process.tell(message);
+      }
+      await vi.waitFor(() =>
+        expect(told(events.progress)).toEqual(['Building a.kup', 'Building b.kup']),
+      );
+      expect(process.received).toContainEqual({ jsonrpc: '2.0', id: 'ask-1', result: null });
+      expect(process.received).toContainEqual({ jsonrpc: '2.0', id: 'ask-2', result: null });
+      process.tell(ended('2'));
+      await vi.waitFor(() => expect(events.progress).toHaveBeenCalledTimes(3));
+      process.tell(ended('1'));
+      await vi.waitFor(() => expect(events.progress).toHaveBeenCalledTimes(4));
+      expect(told(events.progress).slice(2)).toEqual(['Building a.kup', null]);
+    });
+
+    it('as over when the server ends or is restarted, whose ends never come', async () => {
+      const { server, events, fake, timers } = serverOn();
+      await server.start();
+      for (const message of begun('1', 'Building part.kup')) fake.processes[0].tell(message);
+      await vi.waitFor(() => expect(told(events.progress)).toEqual(['Building part.kup']));
+      await server.restart();
+      expect(told(events.progress)).toEqual(['Building part.kup', null]);
+      for (const message of begun('1', 'Building part.kup')) fake.processes[1].tell(message);
+      await vi.waitFor(() => expect(events.progress).toHaveBeenCalledTimes(3));
+      fake.processes[1].on.exit(1);
+      expect(told(events.progress)).toEqual(['Building part.kup', null, 'Building part.kup', null]);
+      expect(timers).toHaveLength(1);
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   languageServerClient,
   MessageReader,
   streamTransport,
+  workDoneProgress,
 } from './language-server.js';
 
 /** @import { ByteStream } from './language-server.js' */
@@ -137,6 +138,119 @@ describe('streamTransport', () => {
     // A stream that isn't LSP's is the host's to hear of
     fromServer(new TextEncoder().encode('Content-Type: x\r\n\r\n'));
     expect(onError).toHaveBeenCalledWith(expect.any(FramingError));
+  });
+});
+
+describe("streamTransport, the server's request for a progress token", () => {
+  it('answers it itself, and passes on all else, a message naming it included', () => {
+    /** @type {string[]} */
+    const written = [];
+    /** @type {((chunk: Uint8Array) => void) | null} */
+    let reading = null;
+    const transport = streamTransport(
+      {
+        write: (bytes) => written.push(decoder.decode(bytes)),
+        read: (onChunk) => void (reading = onChunk),
+      },
+      unframed,
+    );
+    /** @param {Uint8Array} chunk the server sends */
+    const fromServer = (chunk) => reading?.(chunk);
+    const handler = vi.fn();
+    transport.subscribe(handler);
+    const create = {
+      jsonrpc: '2.0',
+      id: 'kupcad-1',
+      method: 'window/workDoneProgress/create',
+      params: { token: 'kupcad-build-1' },
+    };
+    const logged = {
+      jsonrpc: '2.0',
+      method: 'window/logMessage',
+      params: { type: 4, message: 'window/workDoneProgress/create sent' },
+    };
+    fromServer(concat([create, logged].map((message) => frameMessage(JSON.stringify(message)))));
+    expect(written).toEqual([
+      decoder.decode(frameMessage('{"jsonrpc":"2.0","id":"kupcad-1","result":null}')),
+    ]);
+    expect(handler.mock.calls.map(([message]) => JSON.parse(message))).toEqual([logged]);
+  });
+});
+
+/**
+ * `$/progress`'s params.
+ * @param {string | number} token
+ * @param {{ kind: string, title?: string, message?: string }} value
+ */
+const progress = (token, value) => ({ token, value });
+const begin = (/** @type {string} */ title) => ({ kind: 'begin', title, cancellable: false });
+const END = { kind: 'end' };
+
+describe('workDoneProgress', () => {
+  it('tells the newest work begun and not ended, each ended on its own end, then none', () => {
+    const onprogress = vi.fn();
+    const handle = workDoneProgress({ onprogress }).notificationHandlers['$/progress'];
+    const client = languageServerClient({ rootUri: 'file:///work' });
+    handle(client, progress('a', begin('Building a.kup')));
+    handle(client, progress(2, begin('Building b.kup')));
+    handle(client, progress('a', END));
+    // An end of none begun, or a report, changes nothing
+    handle(client, progress('c', END));
+    handle(client, progress(2, { kind: 'report', message: 'half' }));
+    handle(client, progress(2, END));
+    expect(onprogress.mock.calls.map(([title]) => title)).toEqual([
+      'Building a.kup',
+      'Building b.kup',
+      'Building b.kup',
+      null,
+    ]);
+  });
+
+  it('drops all the work begun when cleared, its ends never to come', () => {
+    const onprogress = vi.fn();
+    const progressed = workDoneProgress({ onprogress });
+    progressed.clear();
+    expect(onprogress).not.toHaveBeenCalled();
+    const client = languageServerClient({ rootUri: 'file:///work' });
+    progressed.notificationHandlers['$/progress'](client, progress('a', begin('Building a.kup')));
+    progressed.clear();
+    expect(onprogress.mock.calls.map(([title]) => title)).toEqual(['Building a.kup', null]);
+  });
+
+  it("is said to be taken, and follows the server's progress through a client", async () => {
+    /** @type {any[]} */
+    const received = [];
+    const stream = serverStream((message, send) => {
+      received.push(message);
+      if (message.method !== 'initialize') return;
+      send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } });
+      if (!message.params.capabilities.window?.workDoneProgress) return;
+      const token = 'kupcad-build-1';
+      send({
+        jsonrpc: '2.0',
+        id: 'kupcad-1',
+        method: 'window/workDoneProgress/create',
+        params: { token },
+      });
+      send({
+        jsonrpc: '2.0',
+        method: '$/progress',
+        params: progress(token, begin('Building part.kup')),
+      });
+      send({ jsonrpc: '2.0', method: '$/progress', params: progress(token, END) });
+    });
+    const onprogress = vi.fn();
+    const client = languageServerClient({
+      rootUri: 'file:///work',
+      extensions: [workDoneProgress({ onprogress })],
+    });
+    client.connect(streamTransport(stream, unframed));
+    await client.initializing;
+    await vi.waitFor(() => expect(onprogress).toHaveBeenCalledTimes(2));
+    expect(onprogress.mock.calls.map(([title]) => title)).toEqual(['Building part.kup', null]);
+    // The token was granted, not refused as a method the client hasn't
+    expect(received).toContainEqual({ jsonrpc: '2.0', id: 'kupcad-1', result: null });
+    expect(received.some((message) => message.error)).toBe(false);
   });
 });
 

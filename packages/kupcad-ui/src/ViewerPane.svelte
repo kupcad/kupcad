@@ -466,7 +466,11 @@
     <div class="line">
       {#if status}
         <div class="status" role="status">
-          <span class="dot {status.state}"></span>
+          {#if status.state === 'running'}
+            <span class="kc-spinner"></span>
+          {:else}
+            <span class="dot {status.state}"></span>
+          {/if}
           {statusText}
         </div>
       {/if}
@@ -747,24 +751,6 @@
   }
   .dot.failed {
     background: var(--kc-error);
-  }
-  /* Running, a ring that turns; a still one where the person asks for less motion */
-  .dot.running {
-    box-sizing: border-box;
-    background: none;
-    border: 1.5px solid var(--kc-muted);
-    border-top-color: transparent;
-    animation: turn 0.8s linear infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot.running {
-      animation: none;
-    }
-  }
-  @keyframes turn {
-    to {
-      transform: rotate(1turn);
-    }
   }
   .problems {
     list-style: none;

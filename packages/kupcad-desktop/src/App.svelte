@@ -126,6 +126,8 @@
   let status = $state('');
   /** The file an export under way writes, by its name, for the bar to say with its Cancel. */
   let exporting = $state(/** @type {string | null} */ (null));
+  /** What the server said it is doing (`Building part.kup`, a build past a moment), for the bar. */
+  let building = $state(/** @type {string | null} */ (null));
 
   /** Whether the files show beside the editor: none before a folder is opened. */
   let showsFiles = $state(true);
@@ -264,6 +266,9 @@
         },
         log: (text) => {
           if (ours()) preview.log(text);
+        },
+        progress: (title) => {
+          if (ours()) building = title;
         },
       },
       () => memoryLimit,
@@ -757,6 +762,8 @@
         <span class="status" role="status">
           {#if exporting}
             Exporting {exporting}…
+          {:else if building}
+            <span class="kc-spinner"></span> {building}…
           {:else if status}
             {status}
           {:else if !running}
@@ -986,6 +993,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .status .kc-spinner {
+    margin-right: 2px;
   }
   .body {
     display: flex;

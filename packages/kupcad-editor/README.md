@@ -56,7 +56,7 @@ const manifest = new Editor(element, { value: text, language: 'json', label: 'ku
   stdout. `streamTransport(stream, onError)` frames each message as LSP frames them on stdio
   (`Content-Length`, then the JSON) and reads the server's frames back however its chunks are
   cut (`MessageReader`); a stream that isn't framed so is `onError`'s, the messages before the
-  fault read and reading started over with the next chunk. `languageServerClient({ rootUri, notifications })` is the client with
+  fault read and reading started over with the next chunk. `languageServerClient({ rootUri, notifications, extensions })` is the client with
   every feature the package has, a server's own notifications (`kupcad/viewportReady`) handled
   by the host. An editor given `languageServer: { client, uri }` opens its script on the server
   (`kupcad`, its language) and takes the server's diagnostics, completion (in place of the
@@ -64,7 +64,14 @@ const manifest = new Editor(element, { value: text, language: 'json', label: 'ku
   renaming and definitions; its host gives it no findings then. The server's documentation (a
   hover's, a completion's, a signature's) keeps only the HTML Markdown writes (`sanitize.js`):
   any other element shows its text alone, so a script's text the server repeats can't restyle
-  the page or draw a form on it, and a link its text too.
+  the page or draw a form on it, and a link its text too. The server's long work (a preview's
+  build past a moment, LSP's work-done progress) is a host's to show: `workDoneProgress({
+  onprogress })`, given in `extensions`, says the client takes it and calls `onprogress` with
+  the newest work begun and not ended (`Building part.kup`), or null once none is; its
+  `clear()` drops them all, for a server that ended, whose ends never come. The token the
+  server asks for first (`window/workDoneProgress/create`) is granted by `streamTransport`
+  itself: `@codemirror/lsp-client` refuses every request of a server's, and has no handlers for
+  them yet.
 
   ```js
   const client = languageServerClient({ rootUri: 'file:///work' });

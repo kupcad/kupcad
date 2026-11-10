@@ -608,6 +608,39 @@ describe('an export', () => {
   });
 });
 
+/** The bar's turning ring, while the server builds. */
+const spinner = () => document.querySelector('.bar [role="status"] .kc-spinner');
+
+describe("the server's build", () => {
+  it('says the build that goes on, with the turning ring, until it ends or the server does', async () => {
+    const window = windowOn();
+    await openFolder();
+    const process = window.fake.processes[0];
+    const token = 'kupcad-build-1';
+    /** @param {object} value */
+    const progress = (value) =>
+      process.tell({ jsonrpc: '2.0', method: '$/progress', params: { token, value } });
+    process.tell({
+      jsonrpc: '2.0',
+      id: 'kupcad-1',
+      method: 'window/workDoneProgress/create',
+      params: { token },
+    });
+    progress({ kind: 'begin', title: 'Building part.kup', cancellable: false });
+    await vi.waitFor(() => expect(bar()).toBe('Building part.kup…'));
+    expect(spinner()).not.toBeNull();
+    progress({ kind: 'end' });
+    await vi.waitFor(() => expect(bar()).toBe(''));
+    expect(spinner()).toBeNull();
+    // One whose end never comes, the server gone
+    progress({ kind: 'begin', title: 'Building part.kup', cancellable: false });
+    await vi.waitFor(() => expect(bar()).toBe('Building part.kup…'));
+    process.on.exit(1);
+    await vi.waitFor(() => expect(spinner()).toBeNull());
+    expect(bar()).not.toMatch(/Building/);
+  });
+});
+
 describe('the strip', () => {
   it('shows or hides the files, the script kept, and shows them for a folder opened', async () => {
     windowOn();

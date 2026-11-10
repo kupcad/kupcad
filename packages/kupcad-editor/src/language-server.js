@@ -6,8 +6,10 @@
 import { LSPClient, languageServerExtensions } from '@codemirror/lsp-client';
 import { sanitizeHTML } from './sanitize.js';
 
-/** @import { Transport } from '@codemirror/lsp-client' */
+/** @import { LSPClientExtension, Transport } from '@codemirror/lsp-client' */
 
+/** The server asks for a token for the progress of its long work (lsp_progress.zig). */
+const CREATE_PROGRESS = 'window/workDoneProgress/create';
 const HEADER_END = new TextEncoder().encode('\r\n\r\n');
 const CONTENT_LENGTH = /^content-length:\s*(\d+)\s*$/im;
 /** A header block longer than this is no LSP header: the stream isn't the server's. */
@@ -124,6 +126,10 @@ function indexOf(bytes, needle, from) {
 /**
  * The client's transport over `stream`: each message framed on the way out, the frames read
  * back into messages on the way in. A stream that isn't framed as LSP frames is `onError`'s.
+ * The server's `window/workDoneProgress/create` is answered here, and not passed on: the
+ * client (@codemirror/lsp-client 6.3.0) answers every request of the server's with
+ * MethodNotFound and takes no handlers for them, and a token refused may not be used. Remove
+ * this once it takes them: the answer belongs with workDoneProgress's handlers.
  * @param {ByteStream} stream
  * @param {(error: FramingError) => void} onError
  * @returns {Transport}
@@ -132,21 +138,80 @@ export function streamTransport(stream, onError) {
   /** @type {Set<(message: string) => void>} */
   const handlers = new Set();
   const reader = new MessageReader(onError);
+  /** @param {string} message */
+  const send = (message) => stream.write(frameMessage(message));
   stream.read((chunk) => {
-    for (const message of reader.push(chunk)) for (const handler of handlers) handler(message);
+    for (const message of reader.push(chunk)) {
+      const id = progressRequestId(message);
+      if (id !== undefined) send(JSON.stringify({ jsonrpc: '2.0', id, result: null }));
+      else for (const handler of handlers) handler(message);
+    }
   });
   return {
-    send: (message) => stream.write(frameMessage(message)),
+    send,
     subscribe: (handler) => void handlers.add(handler),
     unsubscribe: (handler) => void handlers.delete(handler),
   };
 }
 
 /**
+ * The id of `message` if it is the server's `window/workDoneProgress/create`.
+ * @param {string} message
+ * @returns {string | number | undefined}
+ */
+function progressRequestId(message) {
+  // Read whole only when it may be one: the rest are the client's to read
+  if (!message.includes(CREATE_PROGRESS)) return undefined;
+  const value = JSON.parse(message);
+  return value.method === CREATE_PROGRESS && 'id' in value ? value.id : undefined;
+}
+
+/**
+ * The server's long work as it tells it (`$/progress`), for a host to show: an extension of the
+ * client's that says it takes it (`window.workDoneProgress`). `onprogress` is given the title
+ * of the work under way (`Building part.kup`), the newest where several are, or null once all
+ * have ended; `clear()` drops them all, for a server that ended or was disconnected, whose
+ * ends won't come.
+ * @param {{ onprogress: (title: string | null) => void }} options
+ */
+export function workDoneProgress({ onprogress }) {
+  /** The work begun and not ended, by token, the newest last. @type {Map<string | number, string>} */
+  const open = new Map();
+  const told = () => onprogress([...open.values()].at(-1) ?? null);
+  return {
+    clientCapabilities: { window: { workDoneProgress: true } },
+    notificationHandlers: {
+      /**
+       * @param {LSPClient} _client
+       * @param {{ token: string | number, value: { kind: string, title?: string } }} params
+       */
+      '$/progress': (_client, { token, value }) => {
+        if (value.kind === 'begin') {
+          // Begun again, it is the newest
+          open.delete(token);
+          open.set(token, value.title ?? '');
+          told();
+        } else if (value.kind === 'end' && open.delete(token)) told();
+        return true;
+      },
+    },
+    clear() {
+      if (open.size === 0) return;
+      open.clear();
+      told();
+    },
+  };
+}
+
+/** @typedef {ReturnType<typeof workDoneProgress>} WorkDoneProgress */
+
+/**
  * @typedef {object} LanguageServerOptions
  * @property {string} rootUri the folder the server reads the scripts' imports from
  * @property {Record<string, (client: LSPClient, params: any) => boolean>} [notifications] the
  *   server's notifications of its own (`kupcad/viewportReady`), by method
+ * @property {LSPClientExtension[]} [extensions] the host's own, besides the editor's
+ *   (workDoneProgress)
  */
 
 /**
@@ -156,10 +221,10 @@ export function streamTransport(stream, onError) {
  * @param {LanguageServerOptions} options
  * @returns {LSPClient}
  */
-export function languageServerClient({ rootUri, notifications = {} }) {
+export function languageServerClient({ rootUri, notifications = {}, extensions = [] }) {
   return new LSPClient({
     rootUri,
-    extensions: languageServerExtensions(),
+    extensions: [...languageServerExtensions(), ...extensions],
     notificationHandlers: notifications,
     sanitizeHTML,
   });

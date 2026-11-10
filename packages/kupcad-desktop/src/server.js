@@ -5,9 +5,10 @@
 // (`--memory-limit`). A server that ends is started again, a little later each time, and the
 // client reconnects to it, opening the scripts the editors hold on it again. Its starts, restarts
 // and stops run one after another, as the VS Code extension's do: a restart asked while it was
-// starting failed the start, and a stop left the server being started running.
+// starting failed the start, and a stop left the server being started running. Its long work
+// (a preview's build past a moment) it tells as LSP's work-done progress, which the app shows.
 
-import { languageServerClient, streamTransport } from '@kupcad/editor';
+import { languageServerClient, streamTransport, workDoneProgress } from '@kupcad/editor';
 import {
   DEFAULT_MEMORY_LIMIT_GB,
   isCompatible,
@@ -19,7 +20,7 @@ import {
 } from '@kupcad/protocol';
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-/** @import { LSPClient } from '@kupcad/editor' */
+/** @import { LSPClient, WorkDoneProgress } from '@kupcad/editor' */
 /** @import { ParamValues, ViewportReady } from '@kupcad/protocol/types' */
 
 /** The first wait before starting a server that ended again, and the longest, in milliseconds. */
@@ -55,6 +56,9 @@ const STOPPED_EARLY = 'kupcad lsp was stopped before it was up';
  *   null while there is none the app can read
  * @property {(running: boolean) => void} state it started, or it ended
  * @property {(text: string) => void} log
+ * @property {(title: string | null) => void} [progress] the work it said it is doing
+ *   (`Building part.kup`), the newest where there are several; null once none is, it ended, or
+ *   it was stopped
  */
 
 /**
@@ -105,6 +109,8 @@ export class LanguageServer {
   #memoryLimit;
   /** @type {typeof setTimeout} */
   #later;
+  /** The work the server said it is doing, which a server gone won't end. @type {WorkDoneProgress} */
+  #progress;
   /** @type {ServerProcess | null} */
   #process = null;
   #wait = RESTART_MS.first;
@@ -131,8 +137,10 @@ export class LanguageServer {
     this.#memoryLimit = memoryLimit;
     this.#spawn = spawn;
     this.#later = setTimeout;
+    this.#progress = workDoneProgress({ onprogress: (title) => this.#on.progress?.(title) });
     this.client = languageServerClient({
       rootUri,
+      extensions: [this.#progress],
       notifications: {
         ...notifications,
         [VIEWPORT_READY_NOTIFICATION]: (_client, /** @type {ViewportReady} */ ready) => {
@@ -220,6 +228,7 @@ export class LanguageServer {
     if (!process) return;
     this.#process = null;
     this.client.disconnect();
+    this.#progress.clear();
     this.#on.viewport(null);
     this.#on.state(false);
     await process.kill();
@@ -307,6 +316,7 @@ export class LanguageServer {
     if (process !== this.#process) return;
     this.#process = null;
     this.client.disconnect();
+    this.#progress.clear();
     this.#on.viewport(null);
     this.#on.state(false);
     if (this.#stopped) return;

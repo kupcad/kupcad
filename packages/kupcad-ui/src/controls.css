@@ -181,3 +181,29 @@ button.kc-control.kc-primary:hover:not(:disabled) {
 .kc-check:checked::before {
   visibility: visible;
 }
+
+/*
+  Work under way (a run, a build): a small ring that turns, by a status line's words; a still
+  one where the person asks for less motion.
+*/
+.kc-spinner {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--kc-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: kc-turn 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kc-spinner {
+    animation: none;
+  }
+}
+@keyframes kc-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}

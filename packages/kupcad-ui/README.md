@@ -169,7 +169,7 @@ webview and the desktop app to the language server.
   snippet after it (a host's toggles of its own panes beside the pane, the Parameters button;
   `.kc-control` with `aria-expanded` gives one the Panel button's look). Below, a status
   line from `status` (`runStatusOf(header)` makes it of a frame's header: Running…, by a turning
-  ring, still where the system asks for less motion, then Ready or Failed, with the run's time and
+  ring (`.kc-spinner`, controls.css's), still where the system asks for less motion, then Ready or Failed, with the run's time and
   its warnings) over the run's problems from `problems`
   (`problemsOf(header)`: why it failed, then its warnings), a few lines high; one with a line,
   clicked, goes to `onproblem`, for the host to show the script there.
@@ -286,6 +286,8 @@ webview and the desktop app to the language server.
   A range input is a `.kc-range` and a checkbox a `.kc-check`, drawn the same in each browser
   and webview: a range's track is filled to its thumb by its `--kc-range-fill`, which a host
   sets from its value with `fillOf(value, min, max)` (WebKit and Blink fill none themselves).
+  Work under way beside a status line's words is a `.kc-spinner`, a small ring that turns (still
+  where the system asks for less motion): the pane's Running…, the desktop app's build.
 
 ## Tests
 

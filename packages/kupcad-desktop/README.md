@@ -182,6 +182,11 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   admits the page by its origin, `tauri://localhost` (`http://tauri.localhost` on Windows), and
   no other page; Vite's (under `tauri dev`) in a debug build alone, as a released app would
   admit any other project's dev server on that port.
+  A preview's build that goes on past a moment (400 ms, the server's) shows in the bar, after
+  the script's name, as `Building part.kup…` with a turning ring (`@kupcad/editor`'s
+  `workDoneProgress`), the newest where several overlap, until the server says it ended (done,
+  failed, or given up for an edit) or the server ends or restarts; an export under way is said
+  first.
 * **The preview's host** (`src/host.js`): `@kupcad/protocol`'s preview host over the app's
   services, so what the panel asks is done in the page, as the VS Code extension's panel does it.
   The panel's values go to the server (`kupcad.setParams`) and are kept for the script, given
@@ -239,13 +244,15 @@ recent folders as the settings keep them; the preview's host (what the panel is 
 export with its values and its formats, saved first, one at a time, cancelled, a screenshot, a
 refused message); the language
 server's lifecycle on a stand-in server (its handshake through the framing, the viewport's URL,
-the commands, restarts, one under a new memory limit, a server that ends before it is up or
+the commands, its long work told (its token granted, overlapping builds, none left once it
+ends or restarts), restarts, one under a new memory limit, a server that ends before it is up or
 doesn't start again, starts, restarts and stops asked while another runs); the
 settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
 and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
 question on closing, a place in a library the tree leaves out shown, an export saving the
 script first once asked, said in the bar as it runs
-and once done, and cancelled from it, a restart under a new memory limit asked while the
+and once done, and cancelled from it, the server's long build said in the bar until it ends
+or the server does, a restart under a new memory limit asked while the
 server starts, the tree's folders closed and opened, none of it kept, the folder listed
 again as it changes and no longer once another is opened; a script the disk changed followed,
 or held with the person's changes for them to choose, a save asking before it writes over the
