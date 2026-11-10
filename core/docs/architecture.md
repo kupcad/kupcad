@@ -29,14 +29,14 @@ Each directory of `src/` is a layer, and imports only the layers below it. `src/
 
 | Directory | What it holds | May import, besides itself |
 |---|---|---|
-| `core/` | What every layer shares, and the passes over it that need nothing else: values (`value.zig`), the AST, tokens and what reads as a name (`identifier.zig`), the resolver and the parent map, the geometry handles, engine settings, limits, errors, materials, paths and curves (Béziers, B-splines), placements and the vector math. | the `locus` module's `Resolution` |
+| `core/` | What every layer shares, and the passes over it that need nothing else: values (`value.zig`), the AST, tokens and what reads as a name (`identifier.zig`), the resolver and the parent map, the geometry handles, engine settings, limits, errors, materials, paths and curves (Béziers, B-splines), placements and the vector math, and `Progress` (`progress.zig`), what long work tells a host showing its progress. | the `locus` module's `Resolution` |
 | `frontend/` | Source to a parsed `Document`: the lexer, the parser, `Document`, and `Workspace` (a session's modules). | `core/` |
 | `vfs/` | The file systems a VM and the package manager read and write through: the disk, memory, the language server's read-only layers, and `Vfs.none`. | `core/` |
 | `bindings/` | The C interfaces of Manifold, Draco, HarfBuzz and SheenBidi. | `core/` |
 | `kernel/` | The geometry engines behind one interface (`kernel.zig`): the Manifold driver and the B-Rep driver over Locus. | `core/`, `bindings/`, the `locus` module |
 | `vm/` | Running bytecode: the VM, the GC, chunks and their verifier, the geometry graph (`dag.zig`) with its evaluator and verifier, the profiler. | `core/`, `kernel/`, `vfs/` |
 | `compiler/` | A Document to bytecode. | `core/`, `frontend/`, `vm/`, `stdlib/manifest.zig` (the intrinsics) |
-| `stdlib/` | The built-ins: the manifest, the classes, the methods, the primitives, parameters, JSON, and files read and written. | `core/`, `vm/`, `kernel/`, `compiler/`, `exporters/` |
+| `stdlib/` | The built-ins: the manifest, the classes, the methods, the primitives, parameters, JSON, and files read and written. | `core/`, `vm/`, `kernel/`, `compiler/`, `exporters/`, `log.zig` (what a script prints goes to stderr through it) |
 | `exporters/` | A model as a file. The writers (`3d/`, `2d/`) take kernel handles and plain data; `export.zig`, `model.zig` and `parts.zig` evaluate a VM's model for them and raise its errors. | `core/`, `kernel/`, `bindings/`, `vm/`; the writers only `core/`, `kernel/`, `bindings/` (Draco), `zip.zig` and `names.zig`, and `2d/sketch_curves.zig` the graph (`vm/dag.zig`) too |
 | `pkg/` | The package manager. | `core/`, `vfs/`, `log.zig` |
 | `tools/` | What reads source without running it (the formatter, the linter, the doc extractor, the dev dumps), and the benchmark. | `core/`, `frontend/`, `kernel/`, `stdlib/`, `vm/`, `compiler/` |

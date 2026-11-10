@@ -145,6 +145,7 @@ test {
     _ = @import("cli/lsp_hints_test.zig");
     _ = @import("cli/fmt_test.zig");
     _ = @import("cli/walker_test.zig");
+    _ = @import("cli/progress_test.zig");
 
     // Kernels
     _ = @import("kernel/kernel_test.zig");

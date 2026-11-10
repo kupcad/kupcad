@@ -12,6 +12,7 @@ const chunk = @import("../vm/chunk.zig");
 const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
+const progress = @import("progress.zig");
 
 const log = std.log.scoped(.debugger);
 
@@ -392,6 +393,9 @@ const Terminal = struct {
 };
 
 pub fn debuggerLoop(vm: *VM) void {
+    // The prompt has the terminal: the progress line would be drawn over it
+    progress.pause();
+    defer progress.unpause();
     var terminal: Terminal = .{};
     defer terminal.history.deinit(vm.allocator);
     // Streaming, as log.printStderr writes: stderr may be a file it appends to

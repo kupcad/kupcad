@@ -20,7 +20,7 @@ const RULES = [_]Rule{
     .{ .path = "kernel/", .may_import = &.{ "kernel/", "core/", "bindings/" } },
     .{ .path = "vm/", .may_import = &.{ "vm/", "core/", "kernel/", "vfs/" } },
     .{ .path = "compiler/", .may_import = &.{ "compiler/", "core/", "frontend/", "vm/", "stdlib/manifest.zig" } },
-    .{ .path = "stdlib/", .may_import = &.{ "stdlib/", "core/", "vm/", "kernel/", "compiler/", "exporters/" } },
+    .{ .path = "stdlib/", .may_import = &.{ "stdlib/", "core/", "vm/", "kernel/", "compiler/", "exporters/", "log.zig" } },
     .{ .path = "exporters/", .may_import = &.{ "exporters/", "core/", "kernel/", "bindings/", "vm/" } },
     // The format writers take kernel handles and plain data; export.zig, model.zig and
     // parts.zig evaluate a VM's model for them

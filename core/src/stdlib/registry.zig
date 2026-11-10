@@ -19,9 +19,12 @@ const map_class_mod = @import("classes/map.zig");
 const random_class_mod = @import("classes/random.zig");
 const kernel = @import("../kernel/kernel.zig");
 const module_compiler = @import("../compiler/module_compiler.zig");
+const log = @import("../log.zig");
 
+/// What the script prints goes to stderr through log.zig, as every other print there does,
+/// so the CLI's progress line comes off first instead of the two garbling each other.
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
-    std.Io.File.stderr().writeStreamingAll(vm.io, message) catch return;
+    log.writeStderr(vm.io, message);
 }
 
 /// What a preview's run prints is kept in its report, for its frame (the console beside the
