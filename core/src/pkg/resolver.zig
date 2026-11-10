@@ -29,6 +29,7 @@ const validate = @import("validate.zig");
 const limits = @import("limits.zig");
 const string_map = @import("string_map.zig");
 const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
+const Progress = @import("../core/progress.zig").Progress;
 
 /// Hex chars of the content integrity used as the pseudo-commit of http/local archives.
 const CONTENT_COMMIT_LEN = 40;
@@ -37,6 +38,8 @@ const STORE_FOLDER = ".store";
 const STORE_DIR = PACKAGE_DIR ++ "/" ++ STORE_FOLDER;
 /// The folder of a package's files in its store folder (`<id>-<commit>/pkg`).
 const FILES_FOLDER = "pkg";
+/// Room for a step's name: "Downloading " and an alias (validate.zig keeps it short).
+const STEP_NAME_BYTES = 32 + limits.MAX_ALIAS_LEN;
 
 const log = std.log.scoped(.pkg);
 
@@ -69,6 +72,8 @@ pub const Resolver = struct {
     /// One HTTP client for every package: the connections are pooled and the system's
     /// root certificates are loaded once (a client per package loaded them per package).
     fetcher: Fetcher,
+    /// Where each package's resolving and download is told, as a step named after its alias.
+    progress: Progress = .none,
 
     // Concurrency Primitives
     mutex: std.Io.Mutex = .init,
@@ -107,6 +112,8 @@ pub const Resolver = struct {
         var alias_it = self.manifest.dependencies.keyIterator();
         while (alias_it.next()) |alias| try validate.validateAlias(alias.*);
 
+        // Downloads are told where the rest is, set before the workers share the fetcher
+        self.fetcher.progress = self.progress;
         // From the first spawn on, an error (out of memory) still waits for the group.
         errdefer self.group.cancel(self.io);
         var manifest_it = self.manifest.dependencies.iterator();
@@ -203,7 +210,7 @@ pub const Resolver = struct {
             }
         }
 
-        if (first_visit) try self.installPackage(parsed, pkg_id, pinned_commit, pinned_integrity);
+        if (first_visit) try self.installPackage(parsed, alias, pkg_id, pinned_commit, pinned_integrity);
 
         // Assign the resolved package as a dependency to the parent module
         if (parent_id) |pid| {
@@ -221,10 +228,15 @@ pub const Resolver = struct {
     fn installPackage(
         self: *Resolver,
         parsed: provider.ParsedPackage,
+        alias: []const u8,
         pkg_id: []const u8,
         pinned_commit: ?[]const u8,
         pinned_integrity: ?[]const u8,
     ) !void {
+        var resolving_buf: [STEP_NAME_BYTES]u8 = undefined;
+        const resolving = stepName(&resolving_buf, "Resolving", alias);
+        self.progress.step(resolving, null);
+        defer self.progress.done(resolving);
         // 1. Commit: pinned by the lockfile, resolved via the provider API, or (for
         //    http/local archives without commits) derived from the content below.
         var commit_sha: ?[]const u8 = null;
@@ -247,7 +259,7 @@ pub const Resolver = struct {
             defer self.mutex.unlock(self.io);
             cached = try self.store.getPackageFiles(self.allocator, pkg_id, c);
         }
-        var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(parsed, commit_sha);
+        var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(parsed, alias, commit_sha);
         defer archive.deinit(self.allocator);
         const files = &archive.files;
 
@@ -309,17 +321,19 @@ pub const Resolver = struct {
         if (manifest_hash) |h| try self.spawnTransitiveDependencies(pkg_id, h);
     }
 
-    fn downloadPackage(self: *Resolver, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !cafs_mod.Archive {
+    fn downloadPackage(self: *Resolver, parsed: provider.ParsedPackage, alias: []const u8, commit_sha: ?[]const u8) !cafs_mod.Archive {
+        var downloading_buf: [STEP_NAME_BYTES]u8 = undefined;
+        const downloading = stepName(&downloading_buf, "Downloading", alias);
         switch (parsed.provider) {
             .github, .gitlab, .gitea => {
                 const archive_url = try git_host.of(parsed.provider).?.archive_url(self.allocator, parsed, commit_sha.?);
                 defer self.allocator.free(archive_url);
-                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
+                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout(), downloading);
             },
             .http => {
                 const archive_url = try HttpProvider.formatArchiveUrl(self.allocator, parsed, "");
                 defer self.allocator.free(archive_url);
-                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
+                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout(), downloading);
             },
             .local => {
                 const path = try LocalProvider.formatArchiveUrl(self.allocator, self.io, parsed, self.project_dir);
@@ -327,6 +341,11 @@ pub const Resolver = struct {
                 return self.fetcher.openLocalArchive(path, self.cafs);
             },
         }
+    }
+
+    /// `verb` and the package's `alias` as a step's name, in `buf`: "Downloading screws".
+    fn stepName(buf: *[STEP_NAME_BYTES]u8, verb: []const u8, alias: []const u8) []const u8 {
+        return std.fmt.bufPrint(buf, "{s} {s}", .{ verb, alias }) catch verb;
     }
 
     /// Reads kupcad.json out of the Content Addressable filesystem to find child dependencies.

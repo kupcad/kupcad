@@ -19,6 +19,7 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const Reporter = @import("reporter.zig").Reporter;
 const validate = @import("../pkg/validate.zig");
 const limits = @import("../pkg/limits.zig");
+const progress = @import("progress.zig");
 
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
@@ -212,8 +213,15 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
     var resolver = Resolver.init(allocator, init.io, cafs, store, &manifest, &lockfile, ".");
     defer resolver.deinit();
 
+    // A spinner while the packages resolve, each package's step as it goes and a bar of
+    // its bytes as it downloads
+    progress.start(.forProcess(init), "", .{});
+    progress.stage("Installing packages", .{});
+    resolver.progress = progress.core();
     // Any resolution/verification failure aborts before kupcad.lock is rewritten.
-    resolver.resolve() catch |err| {
+    const resolved = resolver.resolve();
+    progress.stop();
+    resolved catch |err| {
         log_helpers.printStderr(init.io, "Error: install failed: {s}\n", .{@errorName(err)});
         return .failure;
     };

@@ -4,6 +4,7 @@
 const std = @import("std");
 const fs = @import("fs.zig");
 const Reporter = @import("reporter.zig").Reporter;
+const progress = @import("progress.zig");
 
 /// Generic file processor callback.
 pub const ProcessFileFn = *const fn (io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void;
@@ -11,11 +12,28 @@ pub const ProcessFileFn = *const fn (io: std.Io, allocator: std.mem.Allocator, f
 /// Calls `processFn` for every `.kup` file under `paths` (files or directories). Hidden
 /// directories (`.git`, `.kupcad` with the installed packages) are skipped on the way: a
 /// walk used to descend into them, so `fmt --write .` rewrote the dependencies. A hidden
-/// path named outright is still processed.
+/// path named outright is still processed. The files are found first and then processed,
+/// so the progress line (progress.zig) counts them done of all.
 /// Returns how many paths or files could not be read; they are reported through
 /// `reporter` (the command's own output) and skipped, so one bad path doesn't hide
 /// results for the rest, but callers must still fail.
 pub fn walkPaths(reporter: Reporter, allocator: std.mem.Allocator, paths: []const []const u8, context: ?*anyopaque, processFn: ProcessFileFn) !usize {
+    var files: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (files.items) |file| allocator.free(file);
+        files.deinit(allocator);
+    }
+    var unreadable = try findFiles(reporter, allocator, paths, &files);
+    for (files.items, 0..) |file, done| {
+        progress.amount(done, files.items.len, .files);
+        if (!try readAndProcess(reporter, allocator, file, context, processFn)) unreadable += 1;
+    }
+    return unreadable;
+}
+
+/// Appends the path of every `.kup` file under `paths` to `files` (owned), in the order
+/// walked; returns how many paths couldn't be read, reported.
+fn findFiles(reporter: Reporter, allocator: std.mem.Allocator, paths: []const []const u8, files: *std.ArrayList([]const u8)) !usize {
     const io = reporter.io;
     const cwd = std.Io.Dir.cwd();
     var unreadable: usize = 0;
@@ -30,14 +48,12 @@ pub fn walkPaths(reporter: Reporter, allocator: std.mem.Allocator, paths: []cons
 
             while (try dir_walker.next(io)) |entry| {
                 if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".kup") and !underHiddenDir(entry.path)) {
-                    const full_path = try std.fs.path.join(allocator, &.{ path, entry.path });
-                    defer allocator.free(full_path);
-                    if (!try readAndProcess(reporter, allocator, full_path, context, processFn)) unreadable += 1;
+                    try appendOwned(allocator, files, try std.fs.path.join(allocator, &.{ path, entry.path }));
                 }
             }
         } else |err| {
             if (err == error.NotDir) {
-                if (!try readAndProcess(reporter, allocator, path, context, processFn)) unreadable += 1;
+                try appendOwned(allocator, files, try allocator.dupe(u8, path));
             } else {
                 reportUnreadable(reporter, path, err);
                 unreadable += 1;
@@ -45,6 +61,11 @@ pub fn walkPaths(reporter: Reporter, allocator: std.mem.Allocator, paths: []cons
         }
     }
     return unreadable;
+}
+
+fn appendOwned(allocator: std.mem.Allocator, files: *std.ArrayList([]const u8), path: []const u8) !void {
+    errdefer allocator.free(path);
+    try files.append(allocator, path);
 }
 
 /// Whether a path relative to the walked directory has a hidden directory among its parents.

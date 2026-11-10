@@ -22,6 +22,7 @@ const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const script_options = @import("script_options.zig");
 const ScriptOptions = script_options.ScriptOptions;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
+const progress = @import("progress.zig");
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -75,6 +76,10 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, environ: *const std
     var disk = NativeVfs.init(reporter.io, root.dir);
     var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
     defer session.deinit();
+    progress.start(reporter, "Building {s}", .{std.fs.path.basename(options.input_path)});
+    defer progress.stop();
+    session.vm.progress = progress.core();
+    progress.stage("running the script", .{});
     if (!try runScript(allocator, &session, &root, &options, &options.exports, reporter)) return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }

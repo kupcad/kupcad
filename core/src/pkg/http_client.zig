@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const validate = @import("validate.zig");
+const core_progress = @import("../core/progress.zig");
 
 pub const DEFAULT_USER_AGENT = "KupCAD/" ++ @import("build_info").version;
 /// Most redirects one request follows (a GitHub archive link takes one).
@@ -118,11 +119,21 @@ pub fn redirectAllowed(from: std.Uri, to: std.Uri) bool {
 /// `Counted`, which counts it here.
 pub const Received = std.atomic.Value(u64);
 
-/// A reader of `in` that counts what it reads in `received`, for `watched`.
+/// A reader of `in` that counts what it reads in `received`, for `watched`, and tells it as
+/// the step `told` names, if one does.
 pub const Counted = struct {
     in: *std.Io.Reader,
     received: *Received,
     interface: std.Io.Reader,
+    told: ?Told = null,
+
+    /// Where a body's download is told: the step `name` of `progress`, of `total` bytes when
+    /// the response gave its Content-Length.
+    pub const Told = struct {
+        progress: core_progress.Progress,
+        name: []const u8,
+        total: ?u64 = null,
+    };
 
     pub fn init(in: *std.Io.Reader, received: *Received) Counted {
         return .{ .in = in, .received = received, .interface = .{
@@ -136,15 +147,21 @@ pub const Counted = struct {
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *Counted = @fieldParentPtr("interface", r);
         const n = try self.in.stream(w, limit);
-        _ = self.received.fetchAdd(n, .monotonic);
+        self.count(n);
         return n;
     }
 
     fn discard(r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
         const self: *Counted = @fieldParentPtr("interface", r);
         const n = try self.in.discard(limit);
-        _ = self.received.fetchAdd(n, .monotonic);
+        self.count(n);
         return n;
+    }
+
+    fn count(self: *Counted, n: usize) void {
+        const received = self.received.fetchAdd(n, .monotonic) + n;
+        const told = self.told orelse return;
+        told.progress.step(told.name, .{ .done = received, .total = told.total, .unit = .bytes });
     }
 };
 

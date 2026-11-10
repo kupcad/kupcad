@@ -32,6 +32,7 @@ const owned_keys = @import("../core/owned_keys.zig");
 const run_report = @import("run_report.zig");
 const RunReport = run_report.RunReport;
 const Text = @import("text.zig").Text;
+const Progress = @import("../core/progress.zig").Progress;
 
 const log = std.log.scoped(.vm);
 
@@ -256,6 +257,10 @@ pub const VM = struct {
     /// where no one is at a terminal to answer it, such as the LSP, whose stdin and stdout
     /// carry the protocol: there `debugger()` does nothing.
     debugger_handler: ?*const fn (vm: *VM) void = null,
+    /// Where the evaluator tells it is evaluating geometry, for a host that shows the run's
+    /// progress (the CLI's progress line); no one by default. Kept apart from `host`, which
+    /// each module's run sets again.
+    progress: Progress = .none,
 
     globals: std.StringHashMapUnmanaged(value.Value),
     /// The generation of the global tables' layout (`globals`, `shadowed_builtins`, the

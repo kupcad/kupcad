@@ -17,6 +17,7 @@ const ScriptOptions = script_options.ScriptOptions;
 const Args = @import("args.zig").Args;
 pub const Outcome = @import("outcome.zig").Outcome;
 const Reporter = @import("reporter.zig").Reporter;
+const progress = @import("progress.zig");
 
 pub const USAGE =
     \\Usage: kupcad run <file.kup> [options]
@@ -48,5 +49,8 @@ pub fn run(allocator: std.mem.Allocator, args: anytype, environ: *const std.proc
     var disk = NativeVfs.init(reporter.io, root.dir);
     var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
     defer session.deinit();
+    progress.start(reporter, "Running {s}", .{std.fs.path.basename(input_path)});
+    defer progress.stop();
+    session.vm.progress = progress.core();
     return if (try build_cmd.runScript(allocator, &session, &root, &options, null, reporter)) .success else .failure;
 }

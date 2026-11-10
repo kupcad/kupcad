@@ -30,6 +30,10 @@ const ModuleId = workspace.ModuleId;
 
 const log = std.log.scoped(.session);
 
+/// What a module's parse and compile tell the VM's Progress (the run's own step is the
+/// host's, and geometry the evaluator's).
+pub const COMPILING_STEP = "compiling";
+
 pub const SessionNode = struct {
     verified_at: u64 = 0,
     changed_at: u64 = 0,
@@ -470,6 +474,8 @@ pub const ScriptSession = struct {
         // output) leaves it to run next time, its source the same as its last output's or not
         node.must_run = true;
 
+        self.vm.progress.step(COMPILING_STEP, null);
+        errdefer self.vm.progress.done(COMPILING_STEP);
         var doc = api.Document.parse(self.allocator, mod.source) catch |err| {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });
             return err;
@@ -504,6 +510,7 @@ pub const ScriptSession = struct {
             try self.setFailure(mod_id, &.{diagnostic});
             return error.CompileError;
         };
+        self.vm.progress.done(COMPILING_STEP);
 
         self.vm.resetRunOutput();
         var clock = Stopwatch.start(self.vm.io);

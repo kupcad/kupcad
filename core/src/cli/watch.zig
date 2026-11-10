@@ -20,6 +20,7 @@ const script_options = @import("script_options.zig");
 const ScriptOptions = script_options.ScriptOptions;
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
+const progress = @import("progress.zig");
 
 pub const USAGE =
     \\Usage: kupcad watch <file.kup> [options]
@@ -94,16 +95,27 @@ pub const EventPrinter = struct {
     fn onEvent(ptr: *anyopaque, event: watcher_mod.Event) void {
         const self: *EventPrinter = @ptrCast(@alignCast(ptr));
         switch (event) {
+            // The progress line shows while a build runs, as under kupcad build, and nothing
+            // while the watch waits
+            .building => {
+                progress.start(self.reporter, "Building {s}", .{std.fs.path.basename(self.root.input)});
+                self.session.vm.progress = progress.core();
+                progress.stage("running the script", .{});
+            },
             .changed => |path| self.reporter.err("Changed: {s}\n", .{path}),
             .built => {
+                defer progress.stop();
                 self.reporter.err("Built {s}\n", .{self.root.input});
                 // A file that can't be written is reported, and the next build tries again
                 if (self.exports) |exports| _ = exports.write(self.allocator, &self.session.vm, self.root.input, self.reporter) catch |err| {
                     self.reporter.err("Could not write the model: {s}\n", .{@errorName(err)});
                 };
             },
-            .failed => |failed| build_cmd.reportEvaluationFailure(self.allocator, self.session, failed, self.root, self.reporter) catch |err| {
-                self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root.input, @errorName(err) });
+            .failed => |failed| {
+                progress.stop();
+                build_cmd.reportEvaluationFailure(self.allocator, self.session, failed, self.root, self.reporter) catch |err| {
+                    self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root.input, @errorName(err) });
+                };
             },
             .reload_failed => |r| self.reporter.err("Could not reload '{s}': {s}\n", .{ r.path, @errorName(r.err) }),
         }

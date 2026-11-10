@@ -132,5 +132,5 @@ test "Fetcher: an archive whose host stops sending is abandoned" {
     defer fetcher.deinit();
     fetcher.stall = .fromMilliseconds(100);
     var url_buf: [64]u8 = undefined;
-    try testing.expectError(error.DownloadStalled, fetcher.downloadArchive(try server.url(&url_buf, "/p.tar.gz"), &cafs, .flat));
+    try testing.expectError(error.DownloadStalled, fetcher.downloadArchive(try server.url(&url_buf, "/p.tar.gz"), &cafs, .flat, "Downloading p"));
 }

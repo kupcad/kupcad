@@ -21,6 +21,7 @@ const CommandSetup = @import("options.zig").CommandSetup(struct {
 });
 const output = @import("check_output.zig");
 const fs = @import("fs.zig");
+const progress = @import("progress.zig");
 
 pub const USAGE =
     \\Usage: kupcad check [--fix] [--format text|json|sarif] [--max-warnings <n>]
@@ -93,8 +94,12 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // A path that can't be read is an error, not "0 files, no issues". The count is added
     // after the walk: processFile updates `totals` itself, and `totals.errors += walk()`
     // would read the old count first and overwrite those updates.
+    progress.start(reporter, "Checking", .{});
+    defer progress.stop();
     const unreadable = try walker.walkPaths(reporter, allocator, setup.options.paths.items, &totals, processFile);
     totals.errors += unreadable;
+    // Off before the summary
+    progress.stop();
 
     const too_many_warnings = if (max_warnings) |max| totals.warnings > max else false;
     const outcome: Outcome = if (totals.errors > 0 or too_many_warnings) .failure else .success;

@@ -11,6 +11,7 @@ const limits = @import("../limits.zig");
 const validate = @import("../validate.zig");
 const semver = @import("../semver.zig");
 const git_host = @import("git_host.zig");
+const Progress = @import("../../core/progress.zig").Progress;
 
 /// Read buffer for the size-limited archive stream.
 const ARCHIVE_READ_BUFFER_LEN = 64 * 1024;
@@ -23,6 +24,8 @@ pub const Fetcher = struct {
     stall: std.Io.Duration = http_client.STALL_TIMEOUT,
     /// The most a request may take in all, however steadily it receives.
     total: std.Io.Duration = http_client.TOTAL_TIMEOUT,
+    /// Where an archive's download is told, as the step its caller names.
+    progress: Progress = .none,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Fetcher {
         const client = std.http.Client{ .allocator = allocator, .io = io };
@@ -154,18 +157,23 @@ pub const Fetcher = struct {
         return allocator.dupe(u8, sha_val.string);
     }
 
-    pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
-        return http_client.watched(self.io, self.stall, self.total, readArchive, .{ self, url_str, cafs, layout });
+    /// Downloads the archive at `url_str` into `cafs`, told as the step `step` (its bytes
+    /// as they come, of the Content-Length when the host gives one).
+    pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout, step: []const u8) !cafs_mod.Archive {
+        return http_client.watched(self.io, self.stall, self.total, readArchive, .{ self, url_str, cafs, layout, step });
     }
 
-    fn readArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout, received: *http_client.Received) !cafs_mod.Archive {
+    fn readArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout, step: []const u8, received: *http_client.Received) !cafs_mod.Archive {
         const get = try self.allocator.create(http_client.Get);
         defer self.allocator.destroy(get);
+        self.progress.step(step, null);
+        defer self.progress.done(step);
         var response = try get.send(&self.client, url_str);
         defer get.deinit();
         try checkStatus(response.head.status);
 
         var body: http_client.Counted = .init(response.reader(&.{}), received);
+        body.told = .{ .progress = self.progress, .name = step, .total = response.head.content_length };
         return extractLimited(self.allocator, &body.interface, cafs, layout);
     }
 

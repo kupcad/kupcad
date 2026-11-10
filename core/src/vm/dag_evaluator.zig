@@ -13,6 +13,8 @@ const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const loft_mod = @import("../core/loft.zig");
 
+/// What the evaluator tells the VM's Progress while it runs, the geometry kernel's time.
+pub const EVALUATING_STEP = "evaluating geometry";
 /// A shape whose sizes or points the kernel can't compute with (kernel.MAX_COORDINATE).
 const OUT_OF_RANGE_FMT = "{s}: a coordinate reaches past {e} mm from the origin, the most the geometry kernel computes with";
 
@@ -334,6 +336,8 @@ pub const EvaluationFrameStack = struct {
 };
 
 fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHandle {
+    vm.progress.step(EVALUATING_STEP, null);
+    defer vm.progress.done(EVALUATING_STEP);
     var v_stack = IntermediateStack.init(vm.allocator);
     // Only evaluator-owned entries are destroyed on error; see StackEntry.
     errdefer v_stack.destructOwned();

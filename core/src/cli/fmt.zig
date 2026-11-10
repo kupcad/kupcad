@@ -7,6 +7,7 @@ const api = @import("../api.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const walker = @import("walker.zig");
 const fs = @import("fs.zig");
+const progress = @import("progress.zig");
 const Reporter = @import("reporter.zig").Reporter;
 const plural = @import("reporter.zig").plural;
 pub const Outcome = @import("outcome.zig").Outcome;
@@ -99,9 +100,13 @@ const Run = struct {
 /// failure if a file can't be formatted, or with `.check` if one isn't formatted.
 pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, settings: *Settings, mode: Mode, reporter: Reporter) !Outcome {
     var state: Run = .{ .settings = settings, .mode = mode, .reporter = reporter };
+    progress.start(reporter, "{s}", .{if (mode == .check) "Checking formatting" else "Formatting"});
+    defer progress.stop();
     // Added after the walk: processFile updates `state.failed` itself (see check.zig).
     const unreadable = try walker.walkPaths(reporter, allocator, paths, &state, processFile);
     state.failed += unreadable;
+    // Off before the summary
+    progress.stop();
     if (mode == .check and state.unformatted > 0) {
         reporter.err("{d} {s} formatting; run kupcad fmt --write to fix {s}.\n", .{ state.unformatted, plural(state.unformatted, "file needs", "files need"), plural(state.unformatted, "it", "them") });
     }

@@ -293,6 +293,28 @@ test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for th
     try testing.expect(std.mem.find(u8, forced.stderr, "\x1b[31m1 error") != null);
 }
 
+test "kupcad: a build running past the progress line's delay writes no progress into pipes" {
+    // The line is for a person at a terminal: a host or a log reading a pipe gets the
+    // script's output and the result alone, CLICOLOR_FORCE or not (that is about colours)
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "slow.kup", .data = "puts \"start\"\ni = 0\nwhile i < 1_000_000\n  i += 1\nend\nputs \"end\"\ncube(1)\n" });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("CLICOLOR_FORCE", "1");
+    const run = try kupcadIn(sb.path, &.{ "build", "slow.kup", "-o", "slow.stl" }, &env);
+    defer run.deinit();
+    errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+    try testing.expectEqual(@as(u8, 0), run.code);
+    try testing.expect(std.mem.find(u8, run.stderr, "start\nend\n") != null);
+    // Neither a frame (its clear, its carriage return) nor a spinner's dot, on either stream
+    for ([_][]const u8{ run.stdout, run.stderr }) |text| {
+        try testing.expect(std.mem.find(u8, text, "\x1b[2K") == null);
+        try testing.expect(std.mem.findScalar(u8, text, '\r') == null);
+        try testing.expect(std.mem.find(u8, text, "Building") == null);
+    }
+}
+
 test "kupcad: check names each finding's rule, at the level .kupcad.json gives it" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "unused.kup" }, .code = 0, .contains = "Unused variable 'x'. Prefix with '_' if intentional. [unused-variable]" },

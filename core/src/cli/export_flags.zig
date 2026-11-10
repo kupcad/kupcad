@@ -13,6 +13,7 @@ const naming = @import("../exporters/names.zig");
 const geom = @import("../core/geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
 const Reporter = @import("reporter.zig").Reporter;
+const progress = @import("progress.zig");
 const Taken = @import("param_flags.zig").Taken;
 
 /// Formats an export can write; the tag names are what `--format` accepts.
@@ -239,6 +240,7 @@ pub const ExportFlags = struct {
         defer if (mtl_path) |p| allocator.free(p);
 
         const exporting = self.exportOptions(output.format, if (mtl_path) |p| std.fs.path.basename(p) else null);
+        progress.stage("writing {s}", .{std.fs.path.basename(path)});
         const bytes = api.exportModelFromVm(allocator, vm, output.format, exporting) catch |err| {
             try reportExportFailure(allocator, vm, reporter, err, path);
             return false;
@@ -255,6 +257,7 @@ pub const ExportFlags = struct {
     /// reported, when the model can't be written.
     fn writeSplit(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, dir: []const u8, reporter: Reporter) !bool {
         const exporting = self.exportOptions(self.split_format, if (self.use_mtl) SPLIT_MTL_NAME else null);
+        progress.stage("writing the parts to {s}", .{dir});
         const files = api.exportPartsFromVm(allocator, vm, self.split_format, exporting) catch |err| {
             try reportExportFailure(allocator, vm, reporter, err, dir);
             return false;
@@ -392,6 +395,7 @@ fn reportWriteFailure(reporter: Reporter, path: []const u8, err: anyerror) bool 
 /// can't be made. A part the script can read about (a B-Rep one has no volume yet) was
 /// raised by the VM.
 fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: Reporter) !bool {
+    progress.stage("writing the parts list", .{});
     const parts = api.billOfMaterials(allocator, vm) catch |err| {
         reporter.err("Parts list failed: {}\n", .{err});
         reporter.fail(.{ .kind = "export", .message = @errorName(err), .file = path });

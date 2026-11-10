@@ -16,6 +16,8 @@ pub const MAX_WATCHED_FILE_SIZE = @import("../core/limits.zig").MAX_SOURCE_BYTES
 /// What a watcher tells its host. (It logged at info level, which release builds hide,
 /// and a failed build after a change printed no diagnostics at all.)
 pub const Event = union(enum) {
+    /// A build begins (the first, or after a change); `built` or `failed` ends it.
+    building,
     /// A watched file changed on disk.
     changed: []const u8,
     /// Every module built.
@@ -77,6 +79,7 @@ pub const Watcher = struct {
     /// Builds (or rebuilds) the workspace and reports how it went; false when it failed.
     /// Either way, the data files the runs read are watched from here on.
     pub fn evaluate(self: *Watcher) bool {
+        self.listener.notify(.building);
         const ok = if (self.build()) true else |err| blk: {
             self.listener.notify(.{ .failed = err });
             break :blk false;

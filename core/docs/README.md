@@ -719,6 +719,8 @@ Every command explains itself with `--help` (or `-h`), wherever it appears: `kup
 
 Output is coloured only on a terminal: piped or redirected output is plain text. `NO_COLOR=1` turns colours off everywhere and `CLICOLOR_FORCE=1` keeps them when redirected ([no-color.org](https://no-color.org)).
 
+While `build`, `run`, `watch` (a rebuild), `check`, `fmt` and `pkg add`/`install` work, a progress line on stderr says how far they are: a spinner with the stage and the time so far when how long is unknown (`⠹ Building part.kup · evaluating geometry 1.8s`: compiling, running the script, evaluating geometry, writing each file), a bar when the work is counted (`[=========>          ] 46% Checking 23/49 files`, `[====>               ] 21% Downloading screws 1.2/5.6 MB`, a download whose size the server gives). It shows after 0.2 s, so a fast command prints nothing; it comes off before anything else is printed (what a script prints stays whole) and when the command ends, and stays off while the debugger prompts. It shows only on an interactive terminal: never when stderr is piped or redirected, in CI (`CI` set), with `TERM=dumb` or with `--errors json`; `KUPCAD_NO_PROGRESS=1` turns it off. A Windows console without the UTF-8 code page gets an ASCII spinner (`|/-\`).
+
 ### Linting (`kupcad check`)
 
 Every finding names the rule that made it: `part.kup:3:1: W: Unused variable 'x'. Prefix with '_' if intentional. [unused-variable]`. `kupcad check --help` lists the rules:

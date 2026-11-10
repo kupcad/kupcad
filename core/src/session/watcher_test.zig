@@ -10,9 +10,11 @@ const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 /// filesystem's timestamp granularity (no sleeps needed).
 const MTIME_BUMP_NS: i96 = std.time.ns_per_s;
 
-/// Records what the watcher reports.
+/// Records what the watcher reports: the events after each build's `building`, which are
+/// counted on their own (what happened is what the tests read).
 const Recorder = struct {
     events: std.ArrayList(std.meta.Tag(watcher_mod.Event)) = .empty,
+    builds: usize = 0,
     failed_module_path: ?[]const u8 = null,
     session: *ScriptSession,
 
@@ -22,6 +24,10 @@ const Recorder = struct {
 
     fn onEvent(ptr: *anyopaque, event: watcher_mod.Event) void {
         const self: *Recorder = @ptrCast(@alignCast(ptr));
+        if (event == .building) {
+            self.builds += 1;
+            return;
+        }
         self.events.append(testing.allocator, event) catch @panic("OOM");
         if (event == .failed) if (self.session.failure) |failure| {
             self.failed_module_path = self.session.workspace.modules.items[@backingInt(failure.module)].path;
@@ -118,6 +124,8 @@ test "Daemon Watcher: re-reads and re-evaluates the file after a modification" {
     try testing.expectEqualStrings("x = cube(20)\n", fx.session.workspace.modules.items[0].source);
     try testing.expectApproxEqAbs(@as(f64, 20 * 20 * 20), fx.rootVolume(root), 1e-6);
     try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .built, .changed, .built }, recorder.events.items);
+    // Each build is announced before it runs, for a host to show it running
+    try testing.expectEqual(@as(usize, 2), recorder.builds);
     try testing.expect(!try watcher.poll()); // nothing changed since
 }
 
@@ -237,6 +245,8 @@ test "Daemon Watcher: an edit to a JSON file the script reads rebuilds it" {
     try testing.expect(try watcher.poll());
     try testing.expectApproxEqAbs(@as(f64, 8000), fx.rootVolume(root), 1e-6);
     try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .built, .changed, .built }, recorder.events.items);
+    // Each build is announced before it runs, for a host to show it running
+    try testing.expectEqual(@as(usize, 2), recorder.builds);
     try testing.expect(!try watcher.poll()); // nothing changed since
 }
 
