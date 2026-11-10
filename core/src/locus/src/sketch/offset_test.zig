@@ -328,3 +328,42 @@ test "offset: a shrunk sheet lies within its sheet where the nesting ray passes 
     defer both.deinit();
     try testing.expectApproxEqRel(try areaOf(&s), try areaOf(&both), 1e-9);
 }
+
+test "offset: pieces smaller than the shrink are gone (the fuzzer's chain whose band line was tangent to a join)" {
+    // A union of two three-ring sheets shrunk by a half leaves three pieces under a unit
+    // across; shrunk by one and a half they are gone. A band line of the second shrink was
+    // tangent to a join's circle: floating point said it missed, the arc's end was within
+    // the zone of the line, and the cut there bent the line's piece across the arc with
+    // no vertex at the crossing (overlay_test.zig has the geometry alone); the result was
+    // eleven faces of area three, outside the sheet
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const a1 = [_]Vec2{ .{ 0, 3 }, .{ 6, 3 }, .{ 1, 5 }, .{ 0, 2 }, .{ 0, 6 } };
+    const a2 = [_]Vec2{ .{ 2, 5 }, .{ 6, 1 }, .{ 5, 5 }, .{ 5, 0 }, .{ 3, 3 }, .{ 1, 3 } };
+    const a3 = [_]Vec2{ .{ 1, 6 }, .{ 3, 5 }, .{ 4, 2 }, .{ 1, 5 }, .{ 1, 0 }, .{ 5, 4 }, .{ 0, 0 } };
+    var a = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &a1, &a2, &a3 }, &diag);
+    defer a.deinit();
+    const b1 = [_]Vec2{ .{ 3, 2 }, .{ 0, 2 }, .{ 4, 4 }, .{ 5, 3 }, .{ 0, 1 }, .{ 6, 4 }, .{ 4, 0 }, .{ 3, 6 } };
+    const b2 = [_]Vec2{ .{ 2, 6 }, .{ 0, 5 }, .{ 3, 1 }, .{ 0, 4 }, .{ 0, 1 }, .{ 0, 2 }, .{ 5, 4 }, .{ 0, 4 } };
+    const b3 = [_]Vec2{ .{ 0, 2 }, .{ 0, 5 }, .{ 3, 0 }, .{ 4, 0 }, .{ 1, 0 }, .{ 4, 6 }, .{ 2, 3 }, .{ 6, 0 } };
+    var b = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &b1, &b2, &b3 }, &diag);
+    defer b.deinit();
+    var u = try boolean.boolean(testing.allocator, &.{ &a, &b }, .@"union", .{}, &diag);
+    defer u.deinit();
+    var s1 = try offset.offset(testing.allocator, &u, -0.5, .round, 4, .{}, &diag);
+    defer s1.deinit();
+    try testing.expectEqual(@as(usize, 3), s1.counts().faces);
+    try testing.expect(try areaOf(&s1) < 0.3);
+    var s2 = try offset.offset(testing.allocator, &s1, -1.5, .round, 4, .{}, &diag);
+    defer s2.deinit();
+    try testing.expect(s2.isEmpty());
+    // The one piece with arcs, alone, the same
+    var window = try primitives.polygon(testing.allocator, tol, &.{ .{ 4, 1.5 }, .{ 4.7, 1.5 }, .{ 4.7, 2.4 }, .{ 4, 2.4 } }, &diag);
+    defer window.deinit();
+    var piece = try boolean.boolean(testing.allocator, &.{ &s1, &window }, .intersection, .{}, &diag);
+    defer piece.deinit();
+    try testing.expectEqual(@as(usize, 1), piece.counts().faces);
+    var gone = try offset.offset(testing.allocator, &piece, -1.5, .round, 4, .{}, &diag);
+    defer gone.deinit();
+    try testing.expect(gone.isEmpty());
+}

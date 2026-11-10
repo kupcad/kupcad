@@ -512,7 +512,10 @@ is closed form for lines against quadrics and planes, and subdivision plus Newto
 
 `imprint(face, curves_in_uv) → new faces` computes the arrangement of the face's loops
 with the given pcurves in the face's UV box by map overlay (BKOS §2.3–2.4): split at
-intersections, splice the half-edges into the cyclic order around each vertex with
+intersections and at every vertex within the zone of an edge, then split the pieces again
+until a pass splits nothing (a split at a vertex moves an edge's piece within the zone,
+which near a tangency moves its crossings by up to `√(2·r·zone)`; the nightly fuzzer
+2026-11-10), splice the half-edges into the cyclic order around each vertex with
 `orient2d`, collect cycles, classify each by its leftmost-lowest vertex, link holes to
 containers, label the resulting regions. The output is new loops and faces on the same
 surface sharing edges exactly where the input curves lay. It is the only place faces are

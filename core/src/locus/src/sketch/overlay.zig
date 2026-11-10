@@ -31,6 +31,9 @@ pub const Error = error{ OutOfMemory, TooMany, OutOfRange };
 pub const MAX_INPUTS: usize = 1 << 16;
 /// Edges meeting at one vertex at most.
 const MAX_DEGREE: usize = 1 << 16;
+/// Passes of cutting at most (`cutAll`): two in practice, the second finding what the
+/// first pass's cuts moved.
+const MAX_CUT_PASSES: usize = 8;
 /// How far past an arc's end an angle may be and still count as on it, in radians.
 const SPAN_SLACK: f64 = 1e-9;
 /// How far along its curve a half-edge is sampled for the order about its origin, in
@@ -275,8 +278,38 @@ pub const Overlay = struct {
 
     /// Every intersection and every vertex on an edge becomes a cut; the given edges are
     /// split at their cuts into the arrangement's edges, sub-edges between one vertex pair
-    /// on one curve merged with their contributions summed.
+    /// on one curve merged with their contributions summed. Then the pieces are cut again,
+    /// until a pass cuts nothing: a cut at a vertex within the zone of an edge moves the
+    /// edge's piece to run through the vertex, and near a tangency that moves the piece's
+    /// crossings by up to `√(2·r·zone)`, hundreds of zones (the fuzzer, 2026-11-10: a band
+    /// line tangent to a join's circle, which floating point said it missed, cut at the
+    /// arc's end within its zone, then crossing the arc with no vertex there; the map was
+    /// not planar). A pass that cuts nothing leaves the pieces as they are, so the map's
+    /// edges meet only at vertices.
     fn cutAll(self: *Overlay) Error!void {
+        var pass: usize = 1;
+        while (try self.cutPass() > 0) : (pass += 1) {
+            if (pass == MAX_CUT_PASSES) return error.TooMany;
+            try self.piecesAsGiven();
+        }
+    }
+
+    /// The arrangement's edges as the given edges again, one per contribution, for a
+    /// further pass of cutting; the arrangement's edges cleared.
+    fn piecesAsGiven(self: *Overlay) Error!void {
+        self.given.clearRetainingCapacity();
+        for (self.edges.items) |e| {
+            for (self.contributions.items[e.first_contribution..][0..e.contributions]) |c| {
+                const arc: ?Arc = if (e.arc) |arc| .{ .c = arc.c, .r = arc.r, .ccw = if (c.along) arc.ccw else !arc.ccw } else null;
+                try self.given.append(self.allocator, .{ .a = if (c.along) e.a else e.b, .b = if (c.along) e.b else e.a, .arc = arc, .input = c.input });
+            }
+        }
+        self.edges.clearRetainingCapacity();
+        self.contributions.clearRetainingCapacity();
+    }
+
+    /// One pass of `cutAll` over the given edges; how many cuts it made.
+    fn cutPass(self: *Overlay) Error!usize {
         const allocator = self.allocator;
         var cuts = std.ArrayList(Cut).empty;
         defer cuts.deinit(allocator);
@@ -345,6 +378,7 @@ pub const Overlay = struct {
             if (e.contributions == 0) e.first_contribution = @intCast(i);
             e.contributions += 1;
         }
+        return cuts.items.len;
     }
 
     fn byMinX(boxes: []const Box, i: u32, j: u32) bool {

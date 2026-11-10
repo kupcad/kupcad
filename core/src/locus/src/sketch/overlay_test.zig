@@ -27,6 +27,35 @@ fn circle(o: *Overlay, c: Vec2, r: f64) !void {
     try o.addEdge(.{ .a = west, .b = east, .arc = .{ .c = c, .r = r, .ccw = true } });
 }
 
+/// The arrangement is a planar map whose labels are consistent: Euler's formula over its
+/// vertices, edges and bounded faces, and across every edge the windings differ by what
+/// the inputs contributed to it.
+fn expectPlanar(o: *const Overlay) !void {
+    var used = try testing.allocator.alloc(bool, o.points.items.len);
+    defer testing.allocator.free(used);
+    @memset(used, false);
+    for (o.edges.items) |e| {
+        used[e.a] = true;
+        used[e.b] = true;
+    }
+    var vertices: i64 = 0;
+    for (used) |u| vertices += @intFromBool(u);
+    try testing.expectEqual(@as(i64, 2), vertices - @as(i64, @intCast(o.edges.items.len)) + @as(i64, @intCast(o.faces.items.len)) + 1);
+    for (o.edges.items, 0..) |e, ei| {
+        const left = o.leftOf(@intCast(2 * ei));
+        const right = o.leftOf(@intCast(2 * ei + 1));
+        for (0..o.inputs) |input| {
+            var want: i32 = 0;
+            for (o.contributions.items[e.first_contribution..][0..e.contributions]) |c| {
+                if (c.input == input) want += if (c.along) 1 else -1;
+            }
+            const wl: i32 = if (left == overlay.UNBOUNDED) 0 else o.windingOf(left, @intCast(input));
+            const wr: i32 = if (right == overlay.UNBOUNDED) 0 else o.windingOf(right, @intCast(input));
+            try testing.expectEqual(want, wl - wr);
+        }
+    }
+}
+
 /// The faces with the given windings for inputs 0 and 1, and their total area.
 fn areaWhere(o: *const Overlay, w0: i32, w1: ?i32) struct { faces: usize, area: f64 } {
     var faces: usize = 0;
@@ -266,4 +295,39 @@ test "overlay: a hole is nested by the ray from its leftmost vertex, through a v
         const holes = o.holesOf(@intCast(i)).len;
         if (area > 30) try testing.expectEqual(@as(usize, 2), holes) else try testing.expectEqual(@as(usize, 0), holes);
     }
+}
+
+test "overlay: a line just missing an arc's circle, within the zone of the arc's end, is cut again on its pieces" {
+    // The fuzzer's find of 2026-11-10: a band line of an offset was tangent to a join's
+    // circle, floating point said it missed, and the arc's end lay within the zone of the
+    // line. Cut at that end, the line's piece ran through it and so crossed the arc a few
+    // hundred zones on, with no vertex there: the map was not planar and nothing was
+    // labelled right. Here a sector of the unit circle up to 89.75°, and a quad whose
+    // near side is the line at distance 1 + 1e-9 along 89.6°: the sector's end is 3.4e-6
+    // from that line, the line misses the circle by 1e-9
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    const end_angle = 89.75 * PI / 180.0;
+    const tangent_angle = 89.6 * PI / 180.0;
+    const end = Vec2{ @cos(end_angle), @sin(end_angle) };
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 1, 0 }, .b = end, .arc = .{ .c = .{ 0, 0 }, .r = 1, .ccw = true } });
+    try o.addEdge(.{ .a = end, .b = .{ 0, 0 } });
+    try o.addEdge(.{ .a = .{ 0, 0 }, .b = .{ 1, 0 } });
+    const n = Vec2{ @cos(tangent_angle), @sin(tangent_angle) };
+    const u = Vec2{ -n[1], n[0] };
+    const foot = vec.scale2(n, 1 + 1e-9);
+    const a = vec.addScaled2(foot, u, 0.5);
+    const b = vec.addScaled2(foot, u, -0.5);
+    _ = try o.addInput();
+    try polygon(&o, &.{ a, b, vec.addScaled2(b, n, 0.5), vec.addScaled2(a, n, 0.5) });
+    try o.run();
+    try expectPlanar(&o);
+    // The sector and the quad do not overlap; the line through the welded end takes a
+    // sliver's worth of area from the sector, within the zone along its length
+    const sector = areaWhere(&o, 1, 0);
+    const quad = areaWhere(&o, 0, 1);
+    try testing.expectApproxEqAbs(end_angle / 2.0, sector.area, 1e-5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), quad.area, 1e-5);
+    try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces);
 }
