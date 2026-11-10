@@ -23,6 +23,7 @@ const manifest = @import("../stdlib/manifest.zig");
 const value = @import("../core/value.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const lsp_preview = @import("lsp_preview.zig");
+const lsp_progress = @import("lsp_progress.zig");
 const Preview = lsp_preview.Preview;
 const SessionPreview = lsp_preview.SessionPreview;
 const freeFiles = lsp_preview.freeFiles;
@@ -281,6 +282,10 @@ pub const Handler = struct {
     /// The editor can be asked to watch files, by paths relative to a folder
     /// (`workspace.didChangeWatchedFiles` with dynamic registration and relative patterns).
     can_watch_files: bool = false,
+    /// The editor shows the progress of work the server starts (`window.workDoneProgress`):
+    /// a preview's build that runs past `progress_delay` (lsp_progress.zig).
+    shows_progress: bool = false,
+    progress_delay: std.Io.Duration = lsp_progress.DELAY,
     /// The data files the editor watches for the preview (owned, sorted; watchFilesRead).
     watched_files: [][]u8 = &.{},
     /// What each module's last run warned of, by its path (owned): a warning is shown in the
@@ -390,7 +395,13 @@ pub const Handler = struct {
         // None watching: whoever connects next lacks the frame
         if (viewport == null) self.frame_owed = true;
         const want: lsp_preview.Want = if (viewport == null) .none else if (self.frame_owed) .any else .new;
-        switch (self.preview.evaluate(self.allocator, target, want)) {
+        var report: lsp_progress.Report = .{ .io = self.io, .transport = self.transport, .allocator = self.allocator };
+        self.startProgress(&report, target);
+        const outcome = self.preview.evaluate(self.allocator, target, want);
+        // Ended however the build ended (a cancel by an edit too), before anything else is
+        // written to the editor
+        report.finish();
+        switch (outcome) {
             .frame => |bytes| {
                 defer self.allocator.free(bytes);
                 self.sendFrame(viewport.?, bytes);
@@ -408,6 +419,20 @@ pub const Handler = struct {
         }
         self.watchFilesRead();
         self.showRunWarnings();
+    }
+
+    /// Tells the editor of the build of `target` through `report` once it has run
+    /// `progress_delay`, if the editor shows such progress.
+    fn startProgress(self: *Handler, report: *lsp_progress.Report, target: lsp_preview.Target) void {
+        if (!self.shows_progress) return;
+        self.last_request += 1;
+        var id_buf: [32]u8 = undefined;
+        var token_buf: [48]u8 = undefined;
+        var title_buf: [256]u8 = undefined;
+        const id = std.fmt.bufPrint(&id_buf, REQUEST_ID_PREFIX ++ "{d}", .{self.last_request}) catch unreachable;
+        const token = std.fmt.bufPrint(&token_buf, REQUEST_ID_PREFIX ++ "build/{d}", .{self.last_request}) catch unreachable;
+        const title = std.fmt.bufPrint(&title_buf, "Building {s}", .{std.fs.path.basename(target.module_path)}) catch "Building";
+        report.start(self.progress_delay, id, token, title);
     }
 
     /// Shows what the runs warned of on the open documents they are in: a document whose
@@ -625,6 +650,7 @@ pub const Handler = struct {
         if (request.capabilities.workspace) |workspace| if (workspace.didChangeWatchedFiles) |watched| {
             self.can_watch_files = (watched.dynamicRegistration orelse false) and (watched.relativePatternSupport orelse false);
         };
+        if (request.capabilities.window) |window| self.shows_progress = window.workDoneProgress orelse false;
 
         const server_capabilities = serverCapabilities(self.offset_encoding);
         if (builtin.mode == .debug) {

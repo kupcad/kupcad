@@ -28,6 +28,10 @@ const MAIN_URI = "file:///work/main.kup";
 const WATCHING_EDITOR: lsp.types.ClientCapabilities = .{ .workspace = .{
     .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = true },
 } };
+/// An editor that shows the progress of work the server starts.
+const PROGRESS_EDITOR: lsp.types.ClientCapabilities = .{ .window = .{ .workDoneProgress = true } };
+/// A run that ends only when it is stopped (or at the interactive instruction limit).
+const ENDLESS = "n = 0\nwhile true\n  n += 1\nend\n";
 const READS_SIZE = "import size from \"./size.json\"\ncube(size[:side])\n";
 
 /// Collects what the server writes; reading ends the stream (the handler is called directly).
@@ -36,6 +40,9 @@ const Outbox = struct {
     messages: std.ArrayList([]u8) = .empty,
     /// Whether the editor has gone: a write fails as one to a closed pipe does.
     broken: bool = false,
+    /// Set when the server says a build's progress began: the edit an editor would send,
+    /// which stops the build (written on the task that tells of the build).
+    cancel_on_begin: ?*std.atomic.Value(bool) = null,
 
     fn read(_: *lsp.Transport, _: std.Io, _: std.mem.Allocator) lsp.Transport.ReadError![]u8 {
         return error.EndOfStream;
@@ -46,6 +53,20 @@ const Outbox = struct {
         if (self.broken) return error.BrokenPipe;
         const copy = testing.allocator.dupe(u8, json) catch @panic("OOM");
         self.messages.append(testing.allocator, copy) catch @panic("OOM");
+        if (self.cancel_on_begin) |cancel| if (std.mem.find(u8, json, "\"kind\":\"begin\"") != null) cancel.store(true, .release);
+    }
+
+    /// The method of each message from the `from`th on, and for `$/progress` its kind
+    /// (`$/progress begin`), in `arena`.
+    fn methodsFrom(self: *const Outbox, arena: std.mem.Allocator, from: usize) ![]const []const u8 {
+        var methods: std.ArrayList([]const u8) = .empty;
+        for (self.messages.items[from..]) |json| {
+            const message = try std.json.parseFromSliceLeaky(struct { method: ?[]const u8 = null, params: ?struct { value: ?struct { kind: []const u8 } = null } = null }, arena, json, .{ .ignore_unknown_fields = true });
+            const method = message.method orelse "(response)";
+            const kind = if (message.params) |p| if (p.value) |v| v.kind else null else null;
+            try methods.append(arena, if (kind) |k| try std.fmt.allocPrint(arena, "{s} {s}", .{ method, k }) else method);
+        }
+        return methods.items;
     }
 
     fn deinit(self: *Outbox) void {
@@ -1133,5 +1154,61 @@ test "LSP: the viewport's port comes from KUPCAD_VIEWPORT_PORT, a value that is 
     for ([_][]const u8{ "90o1", "70000", "-1" }) |bad| {
         try environ.put(VIEWPORT_PORT_ENV, bad);
         try testing.expectEqual(DEFAULT_VIEWPORT_PORT, preferredViewportPort(&environ));
+    }
+}
+
+test "LSP: a build that runs past the delay is shown as work-done progress, ended when it stops" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = PROGRESS_EDITOR, .rootUri = "file:///work" });
+    server.handler.progress_delay = .fromMilliseconds(0);
+    server.preview.session.vm.mute_errors = true;
+    // The build never ends of itself: the edit an editor sends stops it, once it shows
+    server.outbox.cancel_on_begin = server.handler.preview.cancelToken();
+    try server.open(URI, ENDLESS);
+    const before = server.outbox.messages.items.len;
+    server.settle();
+    // Cancelled by the edit, it runs again once the editor is quiet
+    try testing.expect(server.handler.preview_pending);
+    const arena = server.arena.allocator();
+    const methods = try server.outbox.methodsFrom(arena, before);
+    try testing.expectEqual(@as(usize, 3), methods.len);
+    try testing.expectEqualStrings("window/workDoneProgress/create", methods[0]);
+    try testing.expectEqualStrings("$/progress begin", methods[1]);
+    try testing.expectEqualStrings("$/progress end", methods[2]);
+    // Titled after the document, under the token the create asked for
+    const create = server.outbox.messages.items[before];
+    const begin = server.outbox.messages.items[before + 1];
+    try testing.expect(std.mem.find(u8, create, "\"token\":\"kupcad/build/") != null);
+    try testing.expect(std.mem.find(u8, begin, "\"title\":\"Building part.kup\"") != null);
+    const token_at = std.mem.find(u8, begin, "kupcad/build/").?;
+    const token = begin[token_at..][0..std.mem.findScalar(u8, begin[token_at..], '"').?];
+    try testing.expect(std.mem.find(u8, create, token) != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), token) != null);
+    // The editor's answer to the create is one of the server's own requests: nothing to say
+    server.handler.onResponse(arena, .{ .id = .{ .string = "kupcad/1" }, .result_or_error = .{ .result = null } });
+}
+
+test "LSP: a build that ends within the delay, or for an editor without progress, tells nothing" {
+    for ([_]struct { editor: lsp.types.ClientCapabilities, delay: std.Io.Duration }{
+        // Ended before the delay: the status bar would only flicker
+        .{ .editor = PROGRESS_EDITOR, .delay = .fromSeconds(3600) },
+        // Past it, but the editor doesn't show progress
+        .{ .editor = .{}, .delay = .fromMilliseconds(0) },
+    }) |case| {
+        var server: Server = undefined;
+        try server.init();
+        defer server.deinit();
+        _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = case.editor, .rootUri = "file:///work" });
+        server.handler.progress_delay = case.delay;
+        try server.open(URI, "cube(1)\n");
+        const before = server.outbox.messages.items.len;
+        server.settle();
+        for (server.outbox.messages.items[before..]) |json| {
+            errdefer std.debug.print("sent: {s}\n", .{json});
+            try testing.expect(std.mem.find(u8, json, "workDoneProgress") == null);
+            try testing.expect(std.mem.find(u8, json, "$/progress") == null);
+        }
     }
 }
