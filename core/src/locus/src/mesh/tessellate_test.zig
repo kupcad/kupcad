@@ -1,7 +1,8 @@
-//! The planar tessellation on a box, a slab with a hole, a cylinder's caps, a sphere (all
-//! curved), a sketch with a hole, a mirrored body, and twice over: every mesh welded (each
-//! edge of a closed planar body once each way, `CHECK_EDGE_PAIRS`), its triangles turned
-//! outward (positive signed volume), its area and volume the exact ones.
+//! The tessellation of a box, a slab with a hole, a cylinder, a sphere, a cone, a torus,
+//! a sketch with a hole, a mirrored body, and twice over: every mesh welded (each edge of
+//! a closed body once each way, `CHECK_EDGE_PAIRS`), its triangles turned outward
+//! (positive signed volume), its area and volume the exact ones for flat faces and
+//! within the chords' share of them for curved ones; the edges' polylines.
 
 const std = @import("std");
 const testing = std.testing;
@@ -140,7 +141,7 @@ test "tessellate: a sketch with a hole is a sheet of n + 2h − 2 triangles faci
     }
 }
 
-test "tessellate: a cylinder's caps are polygons on the circle's grid, its side waits for M3" {
+test "tessellate: a cylinder's caps are polygons on the circle's grid and its sides the quads between, closed, the mesh engine's vertices" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var cyl = try primitives.cylinder(testing.allocator, tol, 2, 5, false, &diag);
@@ -148,29 +149,30 @@ test "tessellate: a cylinder's caps are polygons on the circle's grid, its side 
     const n: u32 = 16;
     var mesh = try meshOf(&cyl, .{ .segments = n });
     defer mesh.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 2), countStatus(mesh, .ok));
-    try testing.expectEqual(@as(usize, 2), countStatus(mesh, .curved_later));
-    // Each cap: the grid's 16 points (the two half-circles meet on it), 14 triangles
-    try testing.expectEqual(@as(usize, 2 * (n - 2)), mesh.triangles.len);
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+    // The grid's 16 points on each circle and no other: what Manifold's cylinder has
+    try testing.expectEqual(@as(usize, 2 * n), mesh.positions.len);
+    // Each cap 14 triangles, each half side 16 (the quads between the grids split)
+    try testing.expectEqual(@as(usize, 2 * (n - 2) + 2 * n), mesh.triangles.len);
+    try expectEdgePairs(mesh);
     try expectNoDegenerate(mesh);
     const polygon_area = 0.5 * @as(f64, n) * 4 * @sin(2 * PI / @as(f64, n));
-    try testing.expectApproxEqRel(2 * polygon_area, area(mesh), 1e-9);
-    // Every cap point is on its circle: the grid points are evaluated on the curve
-    for (mesh.faces) |f| {
-        if (f.status != .ok) continue;
-        for (mesh.of(f)) |t| for (t) |v| {
-            const p = mesh.positions[v];
-            try testing.expectApproxEqAbs(@as(f64, 2), @sqrt(p[0] * p[0] + p[1] * p[1]), 1e-12);
-        };
+    try testing.expectApproxEqRel(polygon_area * 5, signedVolume(mesh), 1e-9);
+    // Every point is on its circle: the grid points are evaluated on the curve
+    for (mesh.positions) |p| try testing.expectApproxEqAbs(@as(f64, 2), @sqrt(p[0] * p[0] + p[1] * p[1]), 1e-12);
+    // The edges' polylines: the circles' halves run through the grid, the seams are
+    // two vertices and smooth (g1), so a viewer draws no seam
+    var seams: usize = 0;
+    for (mesh.edges) |e| {
+        const ids = mesh.verticesOf(e);
+        if (e.regularity == .g1) {
+            seams += 1;
+            try testing.expectEqual(@as(usize, 2), ids.len);
+        } else {
+            try testing.expectEqual(@as(usize, n / 2 + 1), ids.len);
+        }
     }
-    // The caps face away from each other
-    var up: usize = 0;
-    var down: usize = 0;
-    for (mesh.triangles) |t| {
-        const nrm = vec.cross(vec.sub(mesh.positions[t[1]], mesh.positions[t[0]]), vec.sub(mesh.positions[t[2]], mesh.positions[t[0]]));
-        if (nrm[2] > 0) up += 1 else down += 1;
-    }
-    try testing.expectEqual(up, down);
+    try testing.expectEqual(@as(usize, 2), seams);
 }
 
 test "tessellate: an odd segment count gives the circle's grid plus the half-circles' meeting point" {
@@ -187,16 +189,111 @@ test "tessellate: an odd segment count gives the circle's grid plus the half-cir
     try testing.expectEqual(@as(usize, 2 * (2 + 3)), total);
 }
 
-test "tessellate: a sphere's faces are all curved, so the mesh has no triangles yet, and nothing fails" {
+test "tessellate: a sphere is a closed latitude-longitude mesh facing out, its poles fans, within the chords of the exact ball" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var ball = try primitives.sphere(testing.allocator, tol, 3, &diag);
     defer ball.deinit();
-    var mesh = try meshOf(&ball, .{});
+    for ([_]tolerance.Resolution{ .{ .segments = 8 }, .{}, .{ .segments = 64 } }) |resolution| {
+        var mesh = try meshOf(&ball, resolution);
+        defer mesh.deinit(testing.allocator);
+        try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+        try testing.expectEqual(@as(usize, 0), diag.warnings());
+        try expectEdgePairs(mesh);
+        try expectNoDegenerate(mesh);
+        // Every vertex on the sphere; every triangle facing out from the centre
+        for (mesh.positions) |p| try testing.expectApproxEqAbs(@as(f64, 3), vec.length(p), 1e-12);
+        for (mesh.triangles) |t| {
+            const a = mesh.positions[t[0]];
+            const nrm = vec.cross(vec.sub(mesh.positions[t[1]], a), vec.sub(mesh.positions[t[2]], a));
+            try testing.expect(vec.dot(nrm, a) > 0);
+        }
+        // The inscribed mesh's volume and area are under the ball's, within the chords'
+        // share: a few percent at 8 segments, under a per mille at 64
+        const n: f64 = @floatFromInt(resolution.segmentsFor(3));
+        const share = 1 - @cos(PI / n) * @cos(PI / n);
+        const volume = signedVolume(mesh);
+        const exact_volume = 4.0 / 3.0 * PI * 27;
+        try testing.expect(volume < exact_volume and volume > exact_volume * (1 - 3 * share));
+        const total = area(mesh);
+        try testing.expect(total < 4 * PI * 9 and total > 4 * PI * 9 * (1 - 3 * share));
+    }
+    // At 16 a turn: two poles and 7 parallels of 16, the latitude-longitude grid
+    var grid = try meshOf(&ball, .{ .segments = 16 });
+    defer grid.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2 + 7 * 16), grid.positions.len);
+    try testing.expectEqual(@as(usize, 2 * 16 + 6 * 16 * 2), grid.triangles.len);
+}
+
+test "tessellate: a cone's side fans to its apex, a frustum's joins two grids, closed and facing out" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var cone = try primitives.cone(testing.allocator, tol, 3, 0, 4, false, &diag);
+    defer cone.deinit();
+    var mesh = try meshOf(&cone, .{ .segments = 12 });
     defer mesh.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 0), mesh.triangles.len);
-    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .curved_later));
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+    try expectEdgePairs(mesh);
+    try expectNoDegenerate(mesh);
+    // The base's 12 grid points and the apex
+    try testing.expectEqual(@as(usize, 13), mesh.positions.len);
+    const base_area = 0.5 * 12 * 9 * @sin(2 * PI / 12.0);
+    try testing.expectApproxEqRel(base_area * 4 / 3, signedVolume(mesh), 1e-9);
+    // A frustum of radii 3 and 1: the two circles have grids of their own (3 by angle,
+    // 1 by length at the default resolution), joined across the side
+    var frustum = try primitives.cone(testing.allocator, tol, 3, 1, 4, false, &diag);
+    defer frustum.deinit();
+    var side = try meshOf(&frustum, .{});
+    defer side.deinit(testing.allocator);
+    try testing.expectEqual(side.faces.len, countStatus(side, .ok));
+    try expectEdgePairs(side);
+    try expectNoDegenerate(side);
+    const exact = PI * 4.0 / 3.0 * (9 + 3 + 1);
+    const volume = signedVolume(side);
+    try testing.expect(volume < exact and volume > 0.9 * exact);
+}
+
+test "tessellate: a torus is a closed grid of its ring and tube circles, facing out, within the chords of the exact one" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var ring = try primitives.torus(testing.allocator, tol, 5, 1, &diag);
+    defer ring.deinit();
+    var mesh = try meshOf(&ring, .{ .segments = 16 });
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
     try testing.expectEqual(@as(usize, 0), diag.warnings());
+    try expectEdgePairs(mesh);
+    try expectNoDegenerate(mesh);
+    try testing.expectEqual(@as(usize, 16 * 16), mesh.positions.len);
+    try testing.expectEqual(@as(usize, 2 * 16 * 16), mesh.triangles.len);
+    // Every vertex on the torus: its distance from the ring's circle is the minor radius
+    for (mesh.positions) |p| {
+        const rho = @sqrt(p[0] * p[0] + p[1] * p[1]);
+        try testing.expectApproxEqAbs(@as(f64, 1), @sqrt((rho - 5) * (rho - 5) + p[2] * p[2]), 1e-12);
+    }
+    const exact = 2 * PI * PI * 5;
+    const share = 1 - @cos(PI / 16.0) * @cos(PI / 16.0);
+    const volume = signedVolume(mesh);
+    try testing.expect(volume < exact and volume > exact * (1 - 3 * share));
+}
+
+test "tessellate: the edges' polylines of a box are its twelve edges, two vertices each, creases" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box = try primitives.box(testing.allocator, tol, 2, 3, 4, false, &diag);
+    defer box.deinit();
+    var mesh = try meshOf(&box, .{});
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 12), mesh.edges.len);
+    try testing.expectEqual(@as(usize, 24), mesh.edge_vertices.len);
+    for (mesh.edges, 0..) |e, i| {
+        try testing.expectEqual(@as(usize, i), @backingInt(e.edge));
+        try testing.expectEqual(@as(u32, 2), e.count);
+        try testing.expectEqual(@import("../topology/types.zig").Regularity.c0, e.regularity);
+        const ids = mesh.verticesOf(e);
+        try testing.expectEqual(@as(u32, @intCast(@backingInt(box.edge(e.edge).start))), ids[0]);
+        try testing.expectEqual(@as(u32, @intCast(@backingInt(box.edge(e.edge).end))), ids[1]);
+    }
 }
 
 test "tessellate: a mirrored box keeps its triangles facing out" {

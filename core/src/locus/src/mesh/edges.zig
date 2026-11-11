@@ -31,16 +31,24 @@ const TWO_PI: f64 = 2 * std.math.pi;
 pub const MAX_DOUBLINGS: u8 = 8;
 
 /// The polylines of a body's edges: edge `e` runs through `points[starts[e]..starts[e + 1]]`
-/// from its `t0` end to its `t1` end, the vertices' own points at the ends; a tombstoned
-/// edge has no points, a degenerate one its one point.
+/// from its `t0` end to its `t1` end, the vertices' own points at the ends, each point's
+/// parameter on the edge's curve in `params` (the ends' `t0` and `t1`); a tombstoned edge
+/// has no points, a degenerate one its one point.
 pub const EdgePoints = struct {
     points: []Vec3,
+    params: []f64,
     starts: []u32,
 
     pub fn deinit(self: *EdgePoints, allocator: std.mem.Allocator) void {
         allocator.free(self.points);
+        allocator.free(self.params);
         allocator.free(self.starts);
         self.* = undefined;
+    }
+
+    pub fn paramsOf(self: EdgePoints, e: types.EdgeIndex) []const f64 {
+        const i = @backingInt(e);
+        return self.params[self.starts[i]..self.starts[i + 1]];
     }
 
     pub fn of(self: EdgePoints, e: types.EdgeIndex) []const Vec3 {
@@ -91,6 +99,8 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
     try matchCusps(allocator, body, interior);
     var points: std.ArrayList(Vec3) = .empty;
     errdefer points.deinit(allocator);
+    var params: std.ArrayList(f64) = .empty;
+    errdefer params.deinit(allocator);
     const starts = try allocator.alloc(u32, n_edges + 1);
     errdefer allocator.free(starts);
     for (body.edges.items, 0..) |e, i| {
@@ -98,15 +108,23 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
         if (e.flags.tombstone) continue;
         if (e.flags.degenerate) {
             try points.append(allocator, body.point(e.start));
+            try params.append(allocator, e.t0);
             continue;
         }
         try points.append(allocator, body.point(e.start));
+        try params.append(allocator, e.t0);
         std.mem.sort(Interior, interior[i].items, {}, Interior.lessThan);
-        for (interior[i].items) |between| try points.append(allocator, between.p);
+        for (interior[i].items) |between| {
+            try points.append(allocator, between.p);
+            try params.append(allocator, between.t);
+        }
         try points.append(allocator, body.point(e.end));
+        try params.append(allocator, e.t1);
     }
     starts[n_edges] = @intCast(points.items.len);
-    return .{ .points = try points.toOwnedSlice(allocator), .starts = starts };
+    const owned_points = try points.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_points);
+    return .{ .points = owned_points, .params = try params.toOwnedSlice(allocator), .starts = starts };
 }
 
 /// A point of an edge's polyline between its ends, at the curve's parameter `t`.

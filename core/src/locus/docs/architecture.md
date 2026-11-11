@@ -627,23 +627,42 @@ flatter arc also takes a point at each tangent coordinate the tighter arc's poin
 (`edges.matchCusps`, 2026-11-11), so both polylines interpolate ordered depths and cannot
 cross. A sketch arc across its circle's seam is two edges from the start (§7.5, D7).
 
-Per face: the loops' pcurves become a
-UV polygon with holes, scaled to be near-isometric (on a cylinder `u` is radians and `v`
-millimetres; without the scaling every triangle is a sliver); triangulated by monotone
+Per face: the loops' pcurves, evaluated at the edge points' parameters, become a
+UV polygon with holes (a plane's by projection; a degenerate edge, a pole or an apex, its
+pcurve's start, so the ring runs along the pole line), scaled to be near-isometric by the
+surface's derivative lengths at the middle of its UV box (on a cylinder `u` is radians and
+`v` millimetres; without the scaling every triangle is a sliver); triangulated by monotone
 partition (BKOS ch. 3, deterministic, holes native), then Lawson flips to a constrained
-Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped) and, for curved
-surfaces, interior points added until the chordal deviation is within `Resolution`
-(later); mapped to 3D through the surface; degenerate edges yield one point. Output:
+Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped). A curved face
+(cylinder, cone, sphere, torus; 2026-11-11) then gets interior points: the tensor grid of
+its boundary's distinct `u` and `v` values and of the resolution's own parameter lines
+around each circular direction (the grid a full circle of that direction's largest radius
+gets, from angle 0: the edges' own grid, so a boundary along a circle adds no line), each
+candidate inside the polygon and no nearer a ring's edge than a merge tolerance (two edges'
+ends agree only to rounding: a seam's end parameter against a circle's pcurve height put
+candidates two ulps inside the frustum's top edge, as slivers), inserted into the CDT
+(BKOS §9.3: a point in a triangle splits it in three, on a side both triangles in two,
+then Lawson flips) and mapped through the surface; a triangle with two corners at one
+mesh vertex (along a pole line) is dropped. A cylinder's side gets no interior point and
+has the mesh engine's vertices; a hemisphere a latitude-longitude grid with pole fans; a
+cone's side a fan to its apex. A face on an `extrusion` or `revolution` surface is
+`.curved_later` until free-form edges are discretized. Output:
 positions, normals, triangles (`f64` inside Locus; the adapter narrows to KupCAD's
 `f32`), per-face triangle ranges so KupCAD can colour parts and map a hovered triangle to
-its face, **per-edge polylines with the edge's id and regularity** so the viewer draws the
-model's true edges (today it infers feature edges from mesh dihedral angles and misses or
-invents some) and draws none of the `g1` ones, and a status per face: a face that fails
-to triangulate is reported and left out, and the rest of the mesh is still delivered (a
-viewer wants the part it can draw; a boolean, by contrast, fails whole). Tests assert
-`CHECK_EDGE_PAIRS` (every edge once forward and once backward), exact counts for a box,
-outward normals on a sphere, no degenerate triangles, and the mesh's area against the
-exact surface area within the chordal error.
+its face, **per-edge polylines with the edge's id and regularity** (`Mesh.edges`,
+`edge_vertices`) so the viewer can draw the model's true edges (today it infers feature
+edges from mesh dihedral angles and misses or invents some) and none of the `g1` ones (the
+KupCAD protocol does not carry them yet), and a status per face with why: a face that
+fails to triangulate is reported `.failed` with the finding's code, filled leniently (a fan
+of its outer loop, so the picture has no hole), and the rest of the mesh is still
+delivered (a viewer wants the part it can draw; a boolean, by contrast, fails whole).
+Tests assert `CHECK_EDGE_PAIRS` (every edge once forward and once backward), exact
+counts for a box, a cylinder, a cone and a torus, outward normals on a sphere, no
+degenerate triangles, and the mesh's volume and area against the exact ones within the
+chords' share; the fuzz chains extrude their sheet and hold its mesh to the same. The
+driver's `getMesh` and `numTris` build the mesh at the part's resolution (`supports(.mesh)`
+since 2026-11-11); a face left for later refuses the whole mesh, so no export writes a
+hole.
 
 ### 7.8 Local operations (later)
 

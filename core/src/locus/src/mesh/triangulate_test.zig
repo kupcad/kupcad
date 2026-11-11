@@ -267,3 +267,99 @@ test "triangulate: allocation failure anywhere leaves nothing allocated" {
         }
     }.run, .{polygon});
 }
+
+/// `triangulateWith(polygon, extra)`: `used` of the extra points are inserted (each at
+/// three triangles at least, adding two), the rest left out; the triangles are
+/// counter-clockwise, cover the polygon exactly, hold each ring edge once and are
+/// Delaunay across every other edge.
+fn expectInserted(points: []const Vec2, starts: []const u32, extra: []const Vec2, used: usize) !void {
+    const polygon: Polygon = .{ .points = points, .starts = starts };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const triangles = try triangulate.triangulateWith(testing.allocator, polygon, extra, &diag);
+    defer testing.allocator.free(triangles);
+    const all = try testing.allocator.alloc(Vec2, points.len + extra.len);
+    defer testing.allocator.free(all);
+    @memcpy(all[0..points.len], points);
+    @memcpy(all[points.len..], extra);
+    try testing.expectEqual(points.len + 2 * (polygon.rings() - 1) - 2 + 2 * used, triangles.len);
+    const degree = try testing.allocator.alloc(usize, all.len);
+    defer testing.allocator.free(degree);
+    @memset(degree, 0);
+    var area: f64 = 0;
+    var edges: std.AutoHashMapUnmanaged(u64, u32) = .empty;
+    defer edges.deinit(testing.allocator);
+    for (triangles) |t| {
+        const turn = predicates.orient2d(all[t[0]], all[t[1]], all[t[2]]);
+        try testing.expect(turn > 0);
+        area += turn / 2;
+        for (0..3) |i| {
+            degree[t[i]] += 1;
+            const entry = try edges.getOrPut(testing.allocator, edgeKey(t[i], t[(i + 1) % 3]));
+            if (!entry.found_existing) entry.value_ptr.* = 0;
+            entry.value_ptr.* += 1;
+        }
+    }
+    try testing.expectApproxEqRel(polygonArea(polygon), area, CLOSE);
+    var inserted: usize = 0;
+    for (degree[points.len..]) |d| {
+        if (d > 0) inserted += 1;
+        try testing.expect(d == 0 or d >= 3);
+    }
+    try testing.expectEqual(used, inserted);
+    for (0..polygon.rings()) |r| {
+        const first = polygon.starts[r];
+        const last = polygon.starts[r + 1] - 1;
+        for (first..last + 1) |i| {
+            const j: u32 = if (i == last) first else @intCast(i + 1);
+            try testing.expectEqual(@as(?u32, 1), edges.get(edgeKey(@intCast(i), j)));
+        }
+    }
+    for (triangles, 0..) |t, ti| {
+        for (triangles[ti + 1 ..]) |s| {
+            for (0..3) |i| for (0..3) |j| {
+                const p = t[i];
+                const q = t[(i + 1) % 3];
+                if (s[j] != q or s[(j + 1) % 3] != p) continue;
+                if (p < points.len and q < points.len and isRingEdge(polygon, p, q)) continue;
+                try testing.expect(predicates.incircle(all[p], all[q], all[t[(i + 2) % 3]], all[s[(j + 2) % 3]]) <= 0);
+            };
+        }
+    }
+}
+
+test "triangulateWith: a point inside a triangle splits it in three, one on a diagonal splits both sides, the rest are left out" {
+    const square = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    try expectInserted(&square, &.{ 0, 4 }, &.{.{ 3, 6 }}, 1);
+    // The base triangulation's diagonal runs from (0, 0) to (10, 10) or the other way:
+    // the centre is on either
+    try expectInserted(&square, &.{ 0, 4 }, &.{.{ 5, 5 }}, 1);
+    try expectInserted(&square, &.{ 0, 4 }, &.{ .{ 5, 5 }, .{ 2, 2 }, .{ 8, 2 } }, 3);
+    // Outside, on a ring's edge, at a vertex, not finite
+    try expectInserted(&square, &.{ 0, 4 }, &.{ .{ 15, 5 }, .{ 5, 0 }, .{ 0, 0 }, .{ 10, 10 } }, 0);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.InvalidInput, triangulate.triangulateWith(testing.allocator, .{ .points = &square, .starts = &.{ 0, 4 } }, &.{.{ std.math.nan(f64), 1 }}, &diag));
+}
+
+test "triangulateWith: a grid of points in a square is a Delaunay grid; points in a hole are left out" {
+    const square = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    var grid: [25]Vec2 = undefined;
+    for (0..5) |i| for (0..5) |j| {
+        grid[i * 5 + j] = .{ 1.5 + 1.75 * @as(f64, @floatFromInt(i)), 1.5 + 1.75 * @as(f64, @floatFromInt(j)) };
+    };
+    try expectInserted(&square, &.{ 0, 4 }, &grid, 25);
+    const pierced = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } };
+    try expectInserted(&pierced, &.{ 0, 4, 8 }, &.{ .{ 5, 5 }, .{ 4.5, 5.5 }, .{ 2, 2 }, .{ 8, 8 } }, 2);
+}
+
+test "triangulateWith: random points in a square are inserted in any order and the result is Delaunay" {
+    const square = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    var prng = std.Random.DefaultPrng.init(0x7e55);
+    const random = prng.random();
+    for (0..20) |_| {
+        var extra: [40]Vec2 = undefined;
+        for (&extra) |*p| p.* = .{ random.float(f64) * 10, random.float(f64) * 10 };
+        try expectInserted(&square, &.{ 0, 4 }, &extra, extra.len);
+    }
+}

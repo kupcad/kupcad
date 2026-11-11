@@ -113,11 +113,14 @@ test "STL: several parts are written as their union, from the kernel's handles a
     try testing.expectEqual([3]f64{ 20, 20, 20 }, max);
 }
 
-test "STL: an engine that can't tessellate yet is an error, not an empty file" {
+test "STL: a B-Rep cube is twelve triangles, as the mesh engine's (since M3)" {
     const kernel = @import("../../kernel/kernel.zig");
     const part = kernel.cube(&.{ .engine = .brep_native }, 10, 10, 10, false) orelse return error.KernelFailed;
     defer kernel.destruct(part);
-    try testing.expectError(error.EngineCannotTessellate, stl.buildStlBuffer(testing.allocator, part));
+    const bytes = try stl.buildStlBuffer(testing.allocator, part);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), bytes.len);
+    try testing.expectEqual(@as(u32, 12), std.mem.readInt(u32, bytes[80..84], .little));
 }
 
 test "STL: an empty solid is an error, not a file with no triangles" {

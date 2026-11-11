@@ -27,8 +27,8 @@ test "Kernel Dispatcher: routes primitives to the requested engine" {
         // The returned handle is tagged with, and usable by, the requested engine.
         try testing.expectEqual(engine, handle.engine);
         try testing.expectEqual(@as(usize, 8), kernel.numVerts(handle));
-        // The triangle count is the mesh's, so only a mesh engine has one.
-        try testing.expectEqual(@as(?usize, if (engine == .manifold) 12 else null), kernel.numTris(handle));
+        // The triangle count is the mesh's: the B-Rep engine builds its mesh for it
+        try testing.expectEqual(@as(?usize, 12), kernel.numTris(handle));
     }
 }
 

@@ -712,76 +712,267 @@ const Graph = struct {
     }
 };
 
-/// Lawson's flips (BKOS §9.3): an edge of two triangles is illegal when the fourth point
-/// lies strictly inside the circumcircle of the other three; flipping it strictly
-/// increases the sorted angle vector, so the walk ends in the constrained Delaunay
-/// triangulation. The polygon's own edges are never flipped. Two passages through one
-/// point are two vertices here too, so an edge between them and a triangle's edge to
-/// one of them never pair up: the edge stays, as a constraint would.
-fn delaunay(allocator: std.mem.Allocator, polygon: Polygon, triangles: [][3]u32) Error!void {
-    const points = polygon.points;
-    var constrained: std.AutoHashMapUnmanaged(u64, void) = .empty;
-    defer constrained.deinit(allocator);
-    try constrained.ensureTotalCapacity(allocator, @intCast(points.len));
-    for (0..polygon.rings()) |r| {
-        const first = polygon.starts[r];
-        const last = polygon.starts[r + 1] - 1;
-        for (first..last + 1) |i| constrained.putAssumeCapacity(edgeKey(@intCast(i), if (i == last) first else @intCast(i + 1)), {});
-    }
-    // The neighbour across each side, as a packed (triangle, side)
-    const adjacent = try allocator.alloc([SIDES]u32, triangles.len);
-    defer allocator.free(adjacent);
-    @memset(adjacent, .{ NONE, NONE, NONE });
-    var seen: std.AutoHashMapUnmanaged(u64, u32) = .empty;
-    defer seen.deinit(allocator);
-    try seen.ensureTotalCapacity(allocator, @intCast(3 * triangles.len));
-    var pending: std.ArrayList(u32) = .empty;
-    defer pending.deinit(allocator);
-    for (triangles, 0..) |t, ti| {
-        for (0..SIDES) |i| {
-            const key = edgeKey(t[i], t[(i + 1) % SIDES]);
-            const here = pack(@intCast(ti), @intCast(i));
-            if (seen.fetchRemove(key)) |other| {
-                adjacent[ti][i] = other.value;
-                adjacent[unpackTriangle(other.value)][unpackSide(other.value)] = here;
-                if (!constrained.contains(key)) try pending.append(allocator, here);
-            } else {
-                seen.putAssumeCapacity(key, here);
-            }
+/// The constrained Delaunay triangulation of `polygon` with the points `extra` inside it
+/// added (Steiner points: a curved face's interior grid): the rings' triangulation, then
+/// each point put into the triangle holding it (split in three; on a side, the two
+/// triangles there split in two each) and the edges about it flipped legal, the rings'
+/// edges never. A point outside the polygon, on a ring's edge or at a point already there
+/// is left out. The indices are the polygon's points, then `extra` in order; a point left
+/// out appears in no triangle.
+pub fn triangulateWith(allocator: std.mem.Allocator, polygon: Polygon, extra: []const Vec2, diag: *Diagnostics) Error![][3]u32 {
+    const base = try triangulate(allocator, polygon, diag);
+    if (extra.len == 0) return base;
+    defer allocator.free(base);
+    if (polygon.points.len + extra.len > MAX_POINTS) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the polygon's points", .measured = @floatFromInt(polygon.points.len + extra.len), .threshold = @floatFromInt(MAX_POINTS) });
+    const points = try allocator.alloc(Vec2, polygon.points.len + extra.len);
+    defer allocator.free(points);
+    @memcpy(points[0..polygon.points.len], polygon.points);
+    @memcpy(points[polygon.points.len..], extra);
+    var mesh = try Triangulation.init(allocator, points, polygon, base);
+    defer mesh.deinit(allocator);
+    var last: u32 = 0;
+    for (extra, polygon.points.len..) |q, index| {
+        if (!vec.isFinite2(q)) return diag.fail(error.InvalidInput, .{ .code = .not_finite, .label = "a point to insert" });
+        switch (mesh.locate(q, last) orelse continue) {
+            .inside => |t| {
+                last = t;
+                try mesh.insert(allocator, t, @intCast(index));
+            },
+            .on_side => |at| {
+                last = at.triangle;
+                try mesh.insertOnSide(allocator, at.triangle, at.side, @intCast(index));
+            },
         }
     }
-    while (pending.pop()) |here| {
-        const t = unpackTriangle(here);
-        const i = unpackSide(here);
-        const across = adjacent[t][i];
-        if (across == NONE) continue;
+    return mesh.triangles.toOwnedSlice(allocator);
+}
+
+/// Lawson's flips (BKOS §9.3): an edge of two triangles is illegal when the fourth point
+/// lies strictly inside the circumcircle of the other three; flipping it strictly
+/// increases the sorted angle vector (Lemma 9.4), so the flips end in the constrained
+/// Delaunay triangulation. The polygon's own edges are never flipped. Two passages
+/// through one point are two indices at one place, whose circle tests are zero.
+fn delaunay(allocator: std.mem.Allocator, polygon: Polygon, triangles: [][3]u32) Error!void {
+    var mesh = try Triangulation.init(allocator, polygon.points, polygon, triangles);
+    defer mesh.deinit(allocator);
+    for (0..mesh.triangles.items.len) |ti| {
+        for (0..SIDES) |i| {
+            const t = mesh.triangles.items[ti];
+            if (mesh.adjacent.items[ti][i] != NONE and !mesh.constrained.contains(edgeKey(t[i], t[(i + 1) % SIDES]))) try mesh.pending.append(allocator, pack(@intCast(ti), @intCast(i)));
+        }
+    }
+    try mesh.legalize(allocator);
+    @memcpy(triangles, mesh.triangles.items);
+}
+
+/// A triangulation with its adjacency (the neighbour across each side, packed as
+/// `(triangle, side)`), the rings' edges that may not be flipped, and the sides waiting
+/// for their legality check.
+const Triangulation = struct {
+    points: []const Vec2,
+    triangles: std.ArrayList([3]u32),
+    adjacent: std.ArrayList([SIDES]u32),
+    constrained: std.AutoHashMapUnmanaged(u64, void),
+    pending: std.ArrayList(u32),
+
+    fn init(allocator: std.mem.Allocator, points: []const Vec2, polygon: Polygon, triangles: []const [3]u32) Error!Triangulation {
+        var self: Triangulation = .{ .points = points, .triangles = .empty, .adjacent = .empty, .constrained = .empty, .pending = .empty };
+        errdefer self.deinit(allocator);
+        try self.triangles.appendSlice(allocator, triangles);
+        try self.constrained.ensureTotalCapacity(allocator, @intCast(polygon.points.len));
+        for (0..polygon.rings()) |r| {
+            const first = polygon.starts[r];
+            const last = polygon.starts[r + 1] - 1;
+            for (first..last + 1) |i| self.constrained.putAssumeCapacity(edgeKey(@intCast(i), if (i == last) first else @intCast(i + 1)), {});
+        }
+        try self.adjacent.appendNTimes(allocator, .{ NONE, NONE, NONE }, triangles.len);
+        var seen: std.AutoHashMapUnmanaged(u64, u32) = .empty;
+        defer seen.deinit(allocator);
+        try seen.ensureTotalCapacity(allocator, @intCast(3 * triangles.len));
+        for (triangles, 0..) |t, ti| {
+            for (0..SIDES) |i| {
+                const key = edgeKey(t[i], t[(i + 1) % SIDES]);
+                const here = pack(@intCast(ti), @intCast(i));
+                if (seen.fetchRemove(key)) |other| {
+                    self.adjacent.items[ti][i] = other.value;
+                    self.adjacent.items[unpackTriangle(other.value)][unpackSide(other.value)] = here;
+                } else {
+                    seen.putAssumeCapacity(key, here);
+                }
+            }
+        }
+        return self;
+    }
+
+    fn deinit(self: *Triangulation, allocator: std.mem.Allocator) void {
+        self.triangles.deinit(allocator);
+        self.adjacent.deinit(allocator);
+        self.constrained.deinit(allocator);
+        self.pending.deinit(allocator);
+    }
+
+    const Found = union(enum) {
+        inside: u32,
+        /// On a side that is not a ring's edge, so the triangles both sides of it split.
+        on_side: struct { triangle: u32, side: u32 },
+    };
+
+    /// Where `q` goes, or null (outside the polygon, on a ring's edge, at a point already
+    /// there): a walk from `from` towards it, crossing the side `q` is beyond, and where
+    /// the walk reaches a border (a hole, the outside) or runs long every triangle is tried.
+    fn locate(self: *const Triangulation, q: Vec2, from: u32) ?Found {
+        var t = from;
+        var steps: usize = 0;
+        while (steps <= self.triangles.items.len) : (steps += 1) {
+            switch (self.classify(t, q)) {
+                .beyond => |side| {
+                    const across = self.adjacent.items[t][side];
+                    if (across == NONE) break;
+                    t = unpackTriangle(across);
+                },
+                else => |place| return self.found(t, place),
+            }
+        }
+        for (0..self.triangles.items.len) |ti| {
+            switch (self.classify(@intCast(ti), q)) {
+                .beyond => {},
+                else => |place| return self.found(@intCast(ti), place),
+            }
+        }
+        return null;
+    }
+
+    fn found(self: *const Triangulation, t: u32, place: Place) ?Found {
+        return switch (place) {
+            .inside => .{ .inside = t },
+            .on_side => |i| if (self.adjacent.items[t][i] == NONE or self.constrained.contains(edgeKey(self.triangles.items[t][i], self.triangles.items[t][(i + 1) % SIDES]))) null else .{ .on_side = .{ .triangle = t, .side = i } },
+            .at_vertex, .beyond => null,
+        };
+    }
+
+    const Place = union(enum) { inside, on_side: u32, at_vertex, beyond: u32 };
+
+    /// Where `q` lies against triangle `t`: strictly inside, on one side (within the
+    /// triangle's span of it), at a vertex, or beyond a side (the first one it is right of).
+    fn classify(self: *const Triangulation, t: u32, q: Vec2) Place {
+        const tri = self.triangles.items[t];
+        var on: ?u32 = null;
+        var zeros: usize = 0;
+        for (0..SIDES) |i| {
+            const side = predicates.orient2d(self.points[tri[i]], self.points[tri[(i + 1) % SIDES]], q);
+            if (side < 0) return .{ .beyond = @intCast(i) };
+            if (side == 0) {
+                zeros += 1;
+                on = @intCast(i);
+            }
+        }
+        return switch (zeros) {
+            0 => .inside,
+            1 => .{ .on_side = on.? },
+            else => .at_vertex,
+        };
+    }
+
+    /// Point `index` on side `i` of triangle `t` (not a ring's edge, so a triangle lies
+    /// across it) splits both triangles in two; the four outer sides are then made legal.
+    fn insertOnSide(self: *Triangulation, allocator: std.mem.Allocator, t: u32, i: u32, index: u32) Error!void {
+        const across = self.adjacent.items[t][i];
         const n = unpackTriangle(across);
         const j = unpackSide(across);
-        const p = triangles[t][i];
-        const q = triangles[t][(i + 1) % SIDES];
-        const r = triangles[t][(i + 2) % SIDES];
-        const d = triangles[n][(j + 2) % SIDES];
-        if (constrained.contains(edgeKey(p, q))) continue;
-        if (predicates.incircle(points[p], points[q], points[r], points[d]) <= 0) continue;
-        // The quadrilateral p d q r is convex: the diagonal p q becomes d r
-        const a = adjacent[t][(i + 1) % SIDES]; // across q r
-        const b = adjacent[t][(i + 2) % SIDES]; // across r p
-        const c = adjacent[n][(j + 1) % SIDES]; // across p d
-        const e = adjacent[n][(j + 2) % SIDES]; // across d q
-        triangles[t] = .{ p, d, r };
-        triangles[n] = .{ d, q, r };
-        adjacent[t] = .{ c, pack(n, 2), b };
-        adjacent[n] = .{ e, a, pack(t, 1) };
-        if (a != NONE) adjacent[unpackTriangle(a)][unpackSide(a)] = pack(n, 1);
-        if (b != NONE) adjacent[unpackTriangle(b)][unpackSide(b)] = pack(t, 2);
-        if (c != NONE) adjacent[unpackTriangle(c)][unpackSide(c)] = pack(t, 0);
-        if (e != NONE) adjacent[unpackTriangle(e)][unpackSide(e)] = pack(n, 0);
-        try pending.append(allocator, pack(t, 0));
-        try pending.append(allocator, pack(t, 2));
-        try pending.append(allocator, pack(n, 0));
-        try pending.append(allocator, pack(n, 1));
+        // t as (a, b, c) with the point on a b; n as (b, a, d)
+        const a = self.triangles.items[t][i];
+        const b = self.triangles.items[t][(i + 1) % SIDES];
+        const c = self.triangles.items[t][(i + 2) % SIDES];
+        const d = self.triangles.items[n][(j + 2) % SIDES];
+        const across_bc = self.adjacent.items[t][(i + 1) % SIDES];
+        const across_ca = self.adjacent.items[t][(i + 2) % SIDES];
+        const across_ad = self.adjacent.items[n][(j + 1) % SIDES];
+        const across_db = self.adjacent.items[n][(j + 2) % SIDES];
+        const t2: u32 = @intCast(self.triangles.items.len);
+        const n2 = t2 + 1;
+        // t: (a, p, c); t2: (p, b, c); n: (b, p, d); n2: (p, a, d)
+        self.triangles.items[t] = .{ a, index, c };
+        try self.triangles.append(allocator, .{ index, b, c });
+        self.triangles.items[n] = .{ b, index, d };
+        try self.triangles.append(allocator, .{ index, a, d });
+        self.adjacent.items[t] = .{ pack(n2, 0), pack(t2, 2), across_ca };
+        try self.adjacent.append(allocator, .{ pack(n, 0), across_bc, pack(t, 1) });
+        self.adjacent.items[n] = .{ pack(t2, 0), pack(n2, 2), across_db };
+        try self.adjacent.append(allocator, .{ pack(t, 0), across_ad, pack(n, 1) });
+        self.relink(across_bc, pack(t2, 1));
+        self.relink(across_ad, pack(n2, 1));
+        try self.pending.append(allocator, pack(t, 2));
+        try self.pending.append(allocator, pack(t2, 1));
+        try self.pending.append(allocator, pack(n, 2));
+        try self.pending.append(allocator, pack(n2, 1));
+        try self.legalize(allocator);
     }
-}
+
+    /// Makes the triangle across `side` (if any) point back at `here`.
+    fn relink(self: *Triangulation, side: u32, here: u32) void {
+        if (side != NONE) self.adjacent.items[unpackTriangle(side)][unpackSide(side)] = here;
+    }
+
+    /// Point `index` (strictly inside triangle `t`) splits it in three; the three outer
+    /// sides are then made legal.
+    fn insert(self: *Triangulation, allocator: std.mem.Allocator, t: u32, index: u32) Error!void {
+        const tri = self.triangles.items[t];
+        const adj = self.adjacent.items[t];
+        const n1: u32 = @intCast(self.triangles.items.len);
+        const n2 = n1 + 1;
+        // t: (a, b, P); n1: (b, c, P); n2: (c, a, P); side i of (v0, v1, v2) is v_i v_i+1
+        self.triangles.items[t] = .{ tri[0], tri[1], index };
+        try self.triangles.append(allocator, .{ tri[1], tri[2], index });
+        try self.triangles.append(allocator, .{ tri[2], tri[0], index });
+        self.adjacent.items[t] = .{ adj[0], pack(n1, 2), pack(n2, 1) };
+        try self.adjacent.append(allocator, .{ adj[1], pack(n2, 2), pack(t, 1) });
+        try self.adjacent.append(allocator, .{ adj[2], pack(t, 2), pack(n1, 1) });
+        if (adj[1] != NONE) self.adjacent.items[unpackTriangle(adj[1])][unpackSide(adj[1])] = pack(n1, 0);
+        if (adj[2] != NONE) self.adjacent.items[unpackTriangle(adj[2])][unpackSide(adj[2])] = pack(n2, 0);
+        try self.pending.append(allocator, pack(t, 0));
+        try self.pending.append(allocator, pack(n1, 0));
+        try self.pending.append(allocator, pack(n2, 0));
+        try self.legalize(allocator);
+    }
+
+    /// Flips every pending side that is illegal, the flips' new sides pending in turn.
+    fn legalize(self: *Triangulation, allocator: std.mem.Allocator) Error!void {
+        const points = self.points;
+        const triangles = self.triangles.items;
+        const adjacent = self.adjacent.items;
+        while (self.pending.pop()) |here| {
+            const t = unpackTriangle(here);
+            const i = unpackSide(here);
+            const across = adjacent[t][i];
+            if (across == NONE) continue;
+            const n = unpackTriangle(across);
+            const j = unpackSide(across);
+            const p = triangles[t][i];
+            const q = triangles[t][(i + 1) % SIDES];
+            const r = triangles[t][(i + 2) % SIDES];
+            const d = triangles[n][(j + 2) % SIDES];
+            if (self.constrained.contains(edgeKey(p, q))) continue;
+            if (predicates.incircle(points[p], points[q], points[r], points[d]) <= 0) continue;
+            // The quadrilateral p d q r is convex: the diagonal p q becomes d r
+            const a = adjacent[t][(i + 1) % SIDES]; // across q r
+            const b = adjacent[t][(i + 2) % SIDES]; // across r p
+            const c = adjacent[n][(j + 1) % SIDES]; // across p d
+            const e = adjacent[n][(j + 2) % SIDES]; // across d q
+            triangles[t] = .{ p, d, r };
+            triangles[n] = .{ d, q, r };
+            adjacent[t] = .{ c, pack(n, 2), b };
+            adjacent[n] = .{ e, a, pack(t, 1) };
+            if (a != NONE) adjacent[unpackTriangle(a)][unpackSide(a)] = pack(n, 1);
+            if (b != NONE) adjacent[unpackTriangle(b)][unpackSide(b)] = pack(t, 2);
+            if (c != NONE) adjacent[unpackTriangle(c)][unpackSide(c)] = pack(t, 0);
+            if (e != NONE) adjacent[unpackTriangle(e)][unpackSide(e)] = pack(n, 0);
+            try self.pending.append(allocator, pack(t, 0));
+            try self.pending.append(allocator, pack(t, 2));
+            try self.pending.append(allocator, pack(n, 0));
+            try self.pending.append(allocator, pack(n, 1));
+        }
+    }
+};
 
 fn pack(triangle: u32, side: u32) u32 {
     return triangle * SIDES + side;

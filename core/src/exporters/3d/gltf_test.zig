@@ -375,7 +375,7 @@ test "GLTF: the scene is in metres and Y-up, as glTF defines" {
     });
 }
 
-test "GLTF: a part the engine can't tessellate is an error, not left out of the model" {
+test "GLTF: a B-Rep part is meshed beside a mesh-engine one, the same cube in each (since M3)" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -385,7 +385,17 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
     const parts = [_]MeshPart{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
-    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb));
+    const bytes = try gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb);
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    try expectValidLayout(&glb);
+    try std.testing.expectEqual(@as(usize, 2), glb.array("meshes").len);
+    // Both cubes: eight vertices (the B-Rep mesh welded by construction), twelve triangles
+    for (glb.array("accessors")) |accessor| {
+        const count = int(accessor.object.get("count").?);
+        try std.testing.expect(count == 8 or count == 36);
+    }
 }
 
 /// The bytes of buffer view `index`.

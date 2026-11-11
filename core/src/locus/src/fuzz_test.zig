@@ -23,6 +23,7 @@ const query = @import("sketch/query.zig");
 const hull = @import("sketch/hull.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
+const sweep = @import("construct/sweep.zig");
 const edges = @import("mesh/edges.zig");
 const Vec2 = vec.Vec2;
 const Diagnostics = diagnostics.Diagnostics;
@@ -149,7 +150,7 @@ const Log = struct {
     }
 };
 
-const Op = enum { boolean, offset, hull, queries };
+const Op = enum { boolean, offset, hull, extrude, queries };
 
 fn runChain(smith: anytype) !Outcome {
     var log: Log = .{};
@@ -200,6 +201,11 @@ fn runChain(smith: anytype) !Outcome {
                 try testing.expect(try query.isConvex(&result, &diag));
                 current.deinit();
                 current = result;
+            },
+            .extrude => {
+                const height: f64 = @floatFromInt(smith.valueRangeAtMost(u8, 1, GRID));
+                try log.add("  extrude {d}\n", .{height});
+                try expectSolidMesh(&current, height, &diag);
             },
             .queries => {
                 const p: Vec2 = .{ @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)), @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)) };
@@ -324,6 +330,55 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     try testing.expect(@abs(m.area - covered) <= bound);
     try testing.expect(@abs(m.area - polygon_area) <= bound);
     for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+}
+
+/// The sheet extruded by `height` is a solid whose mesh is closed (every directed edge
+/// once each way), has no degenerate triangle, every face meshed, and whose volume is the
+/// exact one within the chords' share (the sides' quads run between the caps' chords); a
+/// refusal of the extrusion is clean.
+fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !void {
+    var solid = sweep.extrude(testing.allocator, sheet_body, .{ 0, 0, height }, .{}, diag) catch |err| {
+        _ = try clean(err);
+        return;
+    };
+    defer solid.deinit();
+    var report = try check.run(testing.allocator, &solid, .global);
+    defer report.deinit(testing.allocator);
+    if (!report.ok()) {
+        std.debug.print("the checker on the extrusion: {f}\n", .{report.first().?});
+        return error.ResultNotValid;
+    }
+    var mesh = try tessellate.tessellate(testing.allocator, &solid, .{}, .{}, diag);
+    defer mesh.deinit(testing.allocator);
+    errdefer {
+        std.debug.print("the solid's mesh: {d} vertices, {d} triangles; faces:", .{ mesh.positions.len, mesh.triangles.len });
+        for (mesh.faces) |range| std.debug.print(" {s}", .{@tagName(range.status)});
+        std.debug.print("\n{f}\n", .{diag});
+    }
+    for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+    var directed: std.AutoHashMapUnmanaged([2]u32, void) = .empty;
+    defer directed.deinit(testing.allocator);
+    var volume: f64 = 0;
+    for (mesh.triangles) |t| {
+        try testing.expect(t[0] != t[1] and t[1] != t[2] and t[0] != t[2]);
+        const a = mesh.positions[t[0]];
+        const b = mesh.positions[t[1]];
+        const c = mesh.positions[t[2]];
+        try testing.expect(vec.lengthSq(vec.cross(vec.sub(b, a), vec.sub(c, a))) > 0);
+        volume += vec.dot(a, vec.cross(b, c)) / 6;
+        for (0..3) |i| {
+            const entry = try directed.getOrPut(testing.allocator, .{ t[i], t[(i + 1) % 3] });
+            try testing.expect(!entry.found_existing);
+        }
+    }
+    var it = directed.keyIterator();
+    while (it.next()) |edge| try testing.expect(directed.contains(.{ edge[1], edge[0] }));
+    // The exact volume within the chords' share (the mesh may have refined an arc's
+    // chords where they would cross a neighbour, so it is held to the base grid's bound)
+    // and the welded vertices' slack, as the sheet's area is (expectSound)
+    const exact = (try mass.mass(&solid, .{}, diag)).volume;
+    const bound = (try chordBound(sheet_body, diag) + try weldingSlack(sheet_body, diag) + AREA_CLOSE * @max(exact / height, 1)) * height;
+    try testing.expectApproxEqAbs(exact, volume, bound);
 }
 
 /// The area the chords of the body's arcs can miss: each arc's segments times the

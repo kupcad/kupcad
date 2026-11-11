@@ -389,12 +389,50 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     try std.testing.expect(driver.driver.queryFacesFn(std.testing.allocator, cube, .{ 0, 0, 1 }, 0.01) == null);
     try std.testing.expect(!driver.supports(.boolean));
     try std.testing.expect(driver.driver.problemFn(cube) == null);
-    // The mesh of a B-Rep part is empty until tessellation lands: a viewer draws nothing
-    const mesh = driver.driver.getMeshFn(std.testing.allocator, cube) orelse return error.KernelFailed;
+}
+
+test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh engine's circle grid, closed; a swept face refused" {
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    const box_mesh = driver.driver.getMeshFn(std.testing.allocator, cube) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(box_mesh.vert_props);
+    defer std.testing.allocator.free(box_mesh.tri_verts);
+    try std.testing.expectEqual(@as(usize, 3), box_mesh.num_prop);
+    try std.testing.expectEqual(@as(usize, 8 * 3), box_mesh.vert_props.len);
+    try std.testing.expectEqual(@as(usize, 12 * 3), box_mesh.tri_verts.len);
+    try std.testing.expectEqual(@as(?usize, 12), driver.driver.numTrisFn(cube));
+    // A cylinder of radius 5: 16 segments at the default resolution (by length), the
+    // `segments:` given ignored as the exact engine does; two circles of 16 vertices
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 15, false, 32) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    const n = TEST_CONFIG.segmentsFor(5);
+    try std.testing.expectEqual(@as(u32, 16), n);
+    const mesh = driver.driver.getMeshFn(std.testing.allocator, cyl) orelse return error.KernelFailed;
     defer std.testing.allocator.free(mesh.vert_props);
     defer std.testing.allocator.free(mesh.tri_verts);
-    try std.testing.expectEqual(@as(usize, 0), mesh.tri_verts.len);
-    try std.testing.expect(driver.driver.numTrisFn(cube) == null);
+    try std.testing.expectEqual(@as(usize, 2 * n * 3), mesh.vert_props.len);
+    try std.testing.expectEqual(@as(usize, (4 * n - 4) * 3), mesh.tri_verts.len);
+    try std.testing.expectEqual(@as(?usize, 4 * n - 4), driver.driver.numTrisFn(cyl));
+    // Closed: every directed edge once each way
+    var directed: std.AutoHashMapUnmanaged([2]u32, void) = .empty;
+    defer directed.deinit(std.testing.allocator);
+    var i: usize = 0;
+    while (i < mesh.tri_verts.len) : (i += 3) {
+        for (0..3) |k| {
+            const entry = try directed.getOrPut(std.testing.allocator, .{ mesh.tri_verts[i + k], mesh.tri_verts[i + (k + 1) % 3] });
+            try std.testing.expect(!entry.found_existing);
+        }
+    }
+    var it = directed.keyIterator();
+    while (it.next()) |edge| try std.testing.expect(directed.contains(.{ edge[1], edge[0] }));
+    // Every vertex on the cylinder, in single precision
+    var v: usize = 0;
+    while (v < mesh.vert_props.len) : (v += 3) {
+        const x = mesh.vert_props[v];
+        const y = mesh.vert_props[v + 1];
+        try std.testing.expectApproxEqAbs(@as(f32, 5), @sqrt(x * x + y * y), 1e-5);
+    }
+    try std.testing.expect(driver.supports(.mesh));
 }
 
 test "BRep Driver: solids keep the tolerance they were built under, and pass it on" {

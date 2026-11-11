@@ -331,6 +331,45 @@ fn boxOn(engine: geom.EngineType, source: []const u8) !geom.BoundingBox {
     return kernel.boundingBox(handle) orelse error.NoBounds;
 }
 
+/// The vertex and triangle counts of the mesh of what `source` builds on `engine`.
+fn meshCountsOn(engine: geom.EngineType, source: []const u8) ![2]usize {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var script: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer script.deinit();
+    try script.writer.print("{s}r = {s}", .{ if (engine == .brep_native) BREP_CONFIG else "", source });
+    try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+    const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+    try testing.expectEqual(engine, handle.engine);
+    const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.NoMesh;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+    return .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 };
+}
+
+test "parity: a cylinder's and a cone's meshes have the vertices and triangles on both engines (the circle grid), a cube's and a rounded cube's too" {
+    for ([_][]const u8{
+        "cube(10)",
+        "cylinder(r: 5, h: 15)",
+        // A corner radius whose circle gets 8 segments, a multiple of four: each quarter
+        // arc then has the same grid points on both engines
+        "cube(10, round_r: 2.5).translate(1, 2, 3)",
+        // Not here: `segments:` is the mesh engine's drawing override, which the exact
+        // engine ignores for the resolution's grid, as documented; the mesh engine cuts
+        // both caps of a frustum with the larger one's count and each corner of a rounded
+        // square with a share of its circle's count, where Locus cuts every circle on the
+        // grid its own radius gets and an arc onto that grid (the documented rule), so
+        // `cylinder(r1:, r2:)` and `round_r: 2` (7 a turn) agree in volume (above) but
+        // not in counts
+    }) |source| {
+        errdefer std.debug.print("source: {s}\n", .{source});
+        const mesh_engine = try meshCountsOn(.manifold, source);
+        const brep = try meshCountsOn(.brep_native, source);
+        try testing.expectEqual(mesh_engine[0], brep[0]);
+        try testing.expectEqual(mesh_engine[1], brep[1]);
+    }
+}
+
 /// The kernel's volume of what `source` builds on `engine`.
 fn volumeOn(engine: geom.EngineType, source: []const u8) !f64 {
     var vm = try support.initVm();

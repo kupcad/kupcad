@@ -1243,7 +1243,7 @@ test "Stdlib: a solid's center of mass, its mass from its density, and whether t
         .{ .src = "p = cube(10).material(density: 2).named(\"plate\")\nr = assemble(name: \"k\", parts: [p, p.translate(20, 0, 0), cube(5).material(density: 8).named(\"weight\")]).mass", .expected = .{ .num = 5 } },
         .{ .src = comptime rescued("cube(10).mass"), .expected = .{ .str = "ValueError: mass: the Solid has no density; give it one with material(density:), in g/cm³" } },
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(10).named(\"plate\")]).mass"), .expected = .{ .str = "ValueError: mass: part 'plate' has no density; give it one with material(density:), in g/cm³" } },
-        .{ .src = comptime rescued("CAD.config(engine: :brep)\ncube(1).center_of_mass"), .expected = .{ .str = brepLacks(.mesh) } },
+        .{ .src = "CAD.config(engine: :brep)\nr = cube(1).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0.5, 0.5, 0.5 } } }, // meshed since M3
     });
 }
 
@@ -2379,12 +2379,12 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).contains?([5, 5])"), .expected = "no error" }, // exact since M2
         .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = brepLacks(.ray_cast) },
         .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
-        .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = brepLacks(.mesh) }, // was a bare EngineCannotTessellate
-        .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = brepLacks(.mesh) },
-        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
-        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
-        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
-        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = "no error" }, // meshed since M3
+        .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = "no error" },
+        .{ .src = comptime rescued("sphere(r: 4).export_stl(\"ball.stl\")"), .expected = "no error" },
+        .{ .src = comptime rescued("cylinder(r: 3, h: 2).export_3mf(\"disc.3mf\")"), .expected = "no error" },
         .{ .src = comptime rescued("square(10).export_svg(\"s.svg\")"), .expected = "no error" }, // its outline read exactly since M2
         .{ .src = comptime rescued("cube(10).export_dxf(\"c.dxf\")"), .expected = brepLacks(.project) },
         // What it has keeps working.
