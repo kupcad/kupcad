@@ -230,7 +230,9 @@ fn matchCusps(allocator: std.mem.Allocator, body: *const Body, interior: []std.A
 
 /// A circle edge as it leaves one of its ends: the unit tangent there pointing along the
 /// edge away from that end's vertex, the unit direction from the vertex to the centre,
-/// and how far along the tangent the edge's other end lies.
+/// and how far along the tangent the edge runs as a graph over it (`r·sin` of its sweep,
+/// a quarter turn at most: an arc longer than that curls back, and its far end, behind
+/// the tangent, says nothing of how far it reaches).
 const Leaving = struct { along: Vec3, inward: Vec3, circle: curves.Circle, reach: f64 };
 
 fn leaving(body: *const Body, end: End) Leaving {
@@ -241,8 +243,8 @@ fn leaving(body: *const Body, end: End) Leaving {
     var along = vec.add(vec.scale(circle.x, -@sin(t)), vec.scale(circle.y, @cos(t)));
     if (!end.at_start) along = vec.scale(along, -1);
     const v = body.point(if (end.at_start) e.start else e.end);
-    const far = body.point(if (end.at_start) e.end else e.start);
-    return .{ .along = along, .inward = vec.scale(vec.sub(circle.c, v), 1.0 / circle.r), .circle = circle, .reach = vec.dot(vec.sub(far, v), along) };
+    const sweep = @min(e.t1 - e.t0, std.math.pi / 2.0);
+    return .{ .along = along, .inward = vec.scale(vec.sub(circle.c, v), 1.0 / circle.r), .circle = circle, .reach = circle.r * @sin(sweep) };
 }
 
 fn matchCusp(allocator: std.mem.Allocator, body: *const Body, interior: []std.ArrayList(Interior), first: End, second: End, tol: Tolerance) Error!void {

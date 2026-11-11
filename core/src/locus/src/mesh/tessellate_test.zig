@@ -538,3 +538,44 @@ test "tessellate: a budget bounds a provisional mesh by edge, face and body, clo
     try expectNoDegenerate(coarse);
     for (coarse.positions) |p| try testing.expectApproxEqAbs(@as(f64, 2), @sqrt(p[0] * p[0] + p[1] * p[1]), 1e-12);
 }
+
+test "tessellate: two long arcs tangent at a cusp, each sweeping past a quarter turn, are matched there (fuzz find)" {
+    // A fuzz sheet of 2026-11-11 (found unread then, by the exit code): arcs about (2, 2),
+    // radius √5, and about (2.25, 2.5), radius √5·1.25, both ending at (1, 0) where the
+    // circles are internally tangent, each sweeping some 243°. The cusp matcher measured
+    // the flatter arc's reach by its far end's place along the tangent, behind the
+    // tangent for an arc past a quarter turn, and matched nothing; the face's chords
+    // crossed at every doubling
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const Arc = primitives.OutlineArc;
+    // Built as the fuzzer built it: the ring with its two coincident arcs, which cancel
+    const P = struct { p: Vec2, bulge: ?f64, ccw: bool };
+    const points = [_]P{
+        .{ .p = .{ 4, 1 }, .bulge = -1, .ccw = false },
+        .{ .p = .{ 3, 1 }, .bulge = 1, .ccw = true },
+        .{ .p = .{ 4, 1 }, .bulge = -1, .ccw = true },
+        .{ .p = .{ 1, 0 }, .bulge = 0.5, .ccw = false },
+        .{ .p = .{ 5, 3 }, .bulge = null, .ccw = false },
+    };
+    var outline: [points.len]primitives.OutlineEdge = undefined;
+    for (points, 0..) |r, k| {
+        const a = r.p;
+        const b = points[(k + 1) % points.len].p;
+        outline[k] = .{ .a = a, .b = b };
+        if (r.bulge) |bulge| {
+            const half = vec.scale2(vec.sub2(b, a), 0.5);
+            const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+            outline[k].arc = Arc{ .c = c, .r = vec.distance2(a, c), .ccw = r.ccw };
+        }
+    }
+    var sheet = try primitives.outlines(testing.allocator, tol, &.{&outline}, &diag);
+    defer sheet.deinit();
+    const exact = (try mass.mass(&sheet, .{}, &diag)).area;
+    for ([_]tolerance.Resolution{ .{}, .{ .segments = 8 }, .{ .segments = 64 } }) |resolution| {
+        var mesh = try meshOf(&sheet, resolution);
+        defer mesh.deinit(testing.allocator);
+        for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        try testing.expectApproxEqRel(exact, area(mesh), 0.05);
+    }
+}
