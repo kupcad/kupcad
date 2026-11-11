@@ -24,6 +24,11 @@ const hull = @import("sketch/hull.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
 const sweep = @import("construct/sweep.zig");
+const solid_query = struct {
+    const FaceIndex = @import("query/index.zig").FaceIndex;
+    const raycast = @import("query/raycast.zig");
+    const point_in_body = @import("query/point_in_body.zig");
+};
 const edges = @import("mesh/edges.zig");
 const chords = @import("mesh/chords.zig");
 const curves = @import("geometry/curves.zig");
@@ -43,6 +48,8 @@ const MAX_RINGS = 3;
 const MIN_POINTS = 3;
 const MAX_POINTS = 8;
 const MAX_OPS = 4;
+/// Rays of each kind (vertical, horizontal) cast at every extruded fuzz solid.
+const QUERY_RAYS = 4;
 /// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps, or, one chain in
 /// EXTREME_ONE_IN, a value a script would never write (a parameter sweep inside the
 /// chains, beside sketch/parameters_test.zig's table on fixed sheets).
@@ -461,6 +468,57 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
     const exact = (try mass.mass(&solid, .{}, diag)).volume;
     const bound = (try chordBound(sheet_body, diag) + try weldingSlack(sheet_body, diag) + AREA_CLOSE * @max(exact / height, 1)) * height;
     try testing.expectApproxEqAbs(exact, volume, bound);
+    try expectQueries(&solid, height, diag);
+}
+
+/// Rays across the solid (vertical ones over a skewed grid, horizontal ones at mid
+/// height), each from outside: their crossings, in order, keep the running count of
+/// entries less exits at 0 or 1 and end at 0 (a manifold solid is entered before it is
+/// left), and at the ray's midpoint the count is the midpoint's containment (when the
+/// midpoint is off the boundary); a refusal of a classification is clean.
+fn expectQueries(solid: *const Body, height: f64, diag: *Diagnostics) !void {
+    var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
+    defer index.deinit(testing.allocator);
+    // Over the solid's own box (a hull's or an offset's arcs reach past the grid), from
+    // outside it to outside it
+    const box = index.box;
+    const span = box.size();
+    var rays: [2 * QUERY_RAYS]struct { o: vec.Vec3, e: vec.Vec3 } = undefined;
+    for (0..QUERY_RAYS) |i| {
+        const k: f64 = @floatFromInt(i);
+        const x = box.min[0] + (k + 0.37) / QUERY_RAYS * span[0];
+        const y = box.min[1] + (k * 0.61 + 0.29) / QUERY_RAYS * span[1];
+        rays[i] = .{ .o = .{ x, y, -1 }, .e = .{ x, y, height + 1 } };
+        rays[QUERY_RAYS + i] = .{ .o = .{ box.min[0] - 1, y, height * 0.43 }, .e = .{ box.max[0] + 1, y + 0.17, height * 0.43 } };
+    }
+    for (rays) |ray| {
+        const hits = solid_query.raycast.cast(testing.allocator, solid, &index, ray.o, ray.e, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        defer testing.allocator.free(hits);
+        errdefer {
+            std.debug.print("ray {any} → {any}:", .{ ray.o, ray.e });
+            for (hits) |h| std.debug.print(" ({d}, {d})", .{ h.t, h.crossing });
+            std.debug.print("\n", .{});
+        }
+        const mid_t = vec.distance(ray.o, ray.e) / 2;
+        var count: i32 = 0;
+        var at_mid: ?i32 = null;
+        for (hits) |h| {
+            if (at_mid == null and h.t > mid_t) at_mid = count;
+            count += h.crossing;
+            try testing.expect(count == 0 or count == 1);
+        }
+        try testing.expectEqual(@as(i32, 0), count);
+        const mid = vec.lerp(ray.o, ray.e, 0.5);
+        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, mid, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        if (place == .boundary) continue;
+        try testing.expectEqual(@as(i32, @intFromBool(place == .inside)), at_mid orelse 0);
+    }
 }
 
 /// The area the chords of the body's arcs can miss: each arc's segments times the

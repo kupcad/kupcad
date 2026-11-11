@@ -384,9 +384,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     try std.testing.expect(driver.driver.sliceFn(cube, 5) == null);
     try std.testing.expect(driver.driver.projectFn(cube) == null);
     try std.testing.expect(driver.driver.trimByPlaneFn(cube, 0, 0, 1, 5) == null);
-    try std.testing.expect(driver.driver.containsPointFn(std.testing.allocator, cube, &TEST_CONFIG, .{ 1, 1, 1 }) == null);
-    try std.testing.expect(driver.driver.rayCastFn(std.testing.allocator, cube, .{ 5, 5, -5 }, .{ 5, 5, 15 }) == null);
-    try std.testing.expect(driver.driver.queryFacesFn(std.testing.allocator, cube, .{ 0, 0, 1 }, 0.01) == null);
     try std.testing.expect(!driver.supports(.boolean));
     try std.testing.expect(driver.driver.problemFn(cube) == null);
 }
@@ -433,6 +430,37 @@ test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh e
         try std.testing.expectApproxEqAbs(@as(f32, 5), @sqrt(x * x + y * y), 1e-5);
     }
     try std.testing.expect(driver.supports(.mesh));
+}
+
+test "Driver: a solid's containment, ray cast, gap and top face, from its kept face index and mesh" {
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    try std.testing.expectEqual(@as(?bool, true), driver.driver.containsPointFn(std.testing.allocator, cube, &TEST_CONFIG, .{ 1, 1, 1 }));
+    try std.testing.expectEqual(@as(?bool, true), driver.driver.containsPointFn(std.testing.allocator, cube, &TEST_CONFIG, .{ 10, 5, 5 }));
+    try std.testing.expectEqual(@as(?bool, false), driver.driver.containsPointFn(std.testing.allocator, cube, &TEST_CONFIG, .{ 11, 5, 5 }));
+    const hits = driver.driver.rayCastFn(std.testing.allocator, cube, .{ 5, 5, -5 }, .{ 5, 5, 15 }) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(hits);
+    try std.testing.expectEqual(@as(usize, 2), hits.len);
+    try std.testing.expectEqual(@as(f64, 5), hits[0].distance);
+    try std.testing.expectEqual(@as(i32, 1), hits[0].crossing);
+    try std.testing.expectEqual([3]f64{ 0, 0, -1 }, hits[0].normal);
+    try std.testing.expectEqual(@as(f64, 15), hits[1].distance);
+    try std.testing.expectEqual(@as(i32, -1), hits[1].crossing);
+    const top = driver.driver.queryFacesFn(std.testing.allocator, cube, .{ 0, 0, 1 }, 1e-5) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(top);
+    try std.testing.expectEqual([3]f64{ 0, 0, 1 }, top[0].normal);
+    for ([3]f64{ 5, 5, 10 }, top[0].centroid) |want, got| try std.testing.expectApproxEqAbs(want, got, 1e-12);
+    // A cylinder of radius 2 at the default resolution (7 segments): its exact gap to the
+    // cube's face, not its polygon's
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 2, 2, 5, false, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    const moved = driver.driver.translateFn(cyl, 15, 5, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(moved);
+    try std.testing.expectApproxEqAbs(@as(f64, 3), driver.driver.minGapFn(cube, moved, 100), 1e-7);
+    try std.testing.expectEqual(@as(f64, 2), driver.driver.minGapFn(cube, moved, 2));
+    // Asked twice, answered from the kept index: the same
+    try std.testing.expectEqual(@as(?bool, true), driver.driver.containsPointFn(std.testing.allocator, cyl, &TEST_CONFIG, .{ 0, 0, 1 }));
+    try std.testing.expectEqual(@as(?bool, false), driver.driver.containsPointFn(std.testing.allocator, cyl, &TEST_CONFIG, .{ 1.9, 1.9, 1 }));
 }
 
 test "Driver: a preview mesh is bounded for a large part and marked, the part's own for a small one, and the meshes are kept" {

@@ -9,6 +9,7 @@ pub const math = struct {
     pub const predicates = @import("math/predicates.zig");
     pub const interval = @import("math/interval.zig");
     pub const solve = @import("math/solve.zig");
+    pub const poly = @import("math/poly.zig");
     pub const trig = @import("math/trig.zig");
 };
 pub const tolerance = @import("tolerance.zig");
@@ -74,6 +75,16 @@ pub const measure = struct {
     pub const mass = @import("measure/mass.zig");
 };
 /// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.
+pub const query = struct {
+    pub const index = @import("query/index.zig");
+    pub const FaceIndex = index.FaceIndex;
+    pub const in_face = @import("query/in_face.zig");
+    pub const point_in_body = @import("query/point_in_body.zig");
+    pub const raycast = @import("query/raycast.zig");
+    pub const distance = @import("query/distance.zig");
+    pub const faces = @import("query/faces.zig");
+};
+
 pub const io = struct {
     pub const body_json = @import("io/body_json.zig");
     pub const step_write = @import("io/step_write.zig");
@@ -122,6 +133,10 @@ test {
     _ = @import("mesh/triangulate_test.zig");
     _ = @import("mesh/tessellate_test.zig");
     _ = @import("mesh/chords_test.zig");
+    _ = @import("math/poly_test.zig");
+    _ = @import("query/raycast_test.zig");
+    _ = @import("query/distance_test.zig");
+    _ = @import("query/faces_test.zig");
     _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");

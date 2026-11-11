@@ -121,6 +121,32 @@ pub const Bvh = struct {
         }
     }
 
+    /// Calls `visit(ctx, item)` for every item whose box the segment `origin + t·dir`,
+    /// `t` in `[lo, hi]`, meets (the slab test, RTCD §5.3.3); `visit` returns false to stop.
+    pub fn querySegment(self: *const Bvh, origin: Vec3, dir: Vec3, lo: f64, hi: f64, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32) bool) void {
+        if (self.nodes.len == 0) return;
+        var stack: [MAX_DEPTH + 2]u32 = undefined;
+        var top: usize = 1;
+        stack[0] = 0;
+        while (top > 0) {
+            top -= 1;
+            const index = stack[top];
+            const node = self.nodes[index];
+            if (!segmentMeetsBox(node.box, origin, dir, lo, hi)) continue;
+            if (node.isLeaf()) {
+                var i = node.right;
+                while (i < node.right + node.count) : (i += 1) {
+                    const item = self.items[i];
+                    if (segmentMeetsBox(self.boxes[item], origin, dir, lo, hi) and !visit(ctx, item)) return;
+                }
+            } else {
+                stack[top] = node.right;
+                stack[top + 1] = index + 1;
+                top += 2;
+            }
+        }
+    }
+
     /// The pairs of items of two trees whose boxes overlap, through `visit(ctx, a, b)`,
     /// descending the larger node first (RTCD §6.4).
     pub fn queryPairs(self: *const Bvh, other: *const Bvh, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32, u32) bool) void {
@@ -166,6 +192,29 @@ pub const Bvh = struct {
         return self.items.len;
     }
 };
+
+/// Whether the segment `origin + t·dir`, `t` in `[lo, hi]`, meets `box` (closed): the
+/// parameter range left after clipping by each axis's slab is not empty. A direction
+/// component of zero keeps the range when the origin is within the slab, empties it else.
+pub fn segmentMeetsBox(box: Box3, origin: Vec3, dir: Vec3, lo: f64, hi: f64) bool {
+    if (box.isEmpty()) return false;
+    var t0 = lo;
+    var t1 = hi;
+    for (0..3) |axis| {
+        if (dir[axis] == 0) {
+            if (origin[axis] < box.min[axis] or origin[axis] > box.max[axis]) return false;
+            continue;
+        }
+        const inv = 1.0 / dir[axis];
+        var near = (box.min[axis] - origin[axis]) * inv;
+        var far = (box.max[axis] - origin[axis]) * inv;
+        if (near > far) std.mem.swap(f64, &near, &far);
+        t0 = @max(t0, near);
+        t1 = @min(t1, far);
+        if (t0 > t1) return false;
+    }
+    return true;
+}
 
 /// Moves the items whose box centre is below `split` on `axis` to the front; returns how
 /// many.

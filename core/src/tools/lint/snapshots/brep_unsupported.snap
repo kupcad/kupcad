@@ -4,7 +4,6 @@
 41:9 W [brep-unsupported] offset: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
 43:10 W [brep-unsupported] shell: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
 45:1 W [unused-variable] Unused variable 'inside'. Prefix with '_' if intentional.
-45:10 W [brep-unsupported] contains?: the brep engine can't test whether a point is inside a solid (contains?) yet, so this fails when the script runs
 46:1 W [unused-variable] Unused variable 'drawn'. Prefix with '_' if intentional.
 --- after --fix (2 fixed) ---
 plate = cube(10).translate(5, 0, 0) # Manifold: fine
@@ -51,7 +50,7 @@ grown = box.offset(1)               # a solid's offset is a Minkowski sum
 outline = profile.offset(-0.5)      # a sketch's is the kernel's offset
 hollow = box.shell(1)               # so is a solid's shell, and a sketch's
 ring = profile.shell(0.5)
-_inside = box.contains?([1, 1, 1])   # a point in a solid is not a point in a sketch
+_inside = box.contains?([1, 1, 1])   # a solid's containment, exact on B-Rep as a sketch's: nothing to report
 _drawn = profile.contains?([1, 1])
 
 # A class of the script's own may name its methods like the kernel's: nothing to report.

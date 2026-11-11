@@ -370,6 +370,65 @@ test "parity: a cylinder's and a cone's meshes have the vertices and triangles o
     }
 }
 
+/// The Number or the Array of Numbers `expression` evaluates to on `engine`, after
+/// `setup` (statements building the shapes).
+fn numbersOn(engine: geom.EngineType, setup: []const u8, expression: []const u8, out: []f64) ![]f64 {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var script: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer script.deinit();
+    try script.writer.print("{s}{s}\nr = {s}", .{ if (engine == .brep_native) BREP_CONFIG else "", setup, expression });
+    try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    if (!r.isArray()) {
+        out[0] = numberOf(r);
+        return out[0..1];
+    }
+    const items = r.asArray().items.items;
+    for (items, 0..) |item, i| out[i] = numberOf(item);
+    return out[0..items.len];
+}
+
+/// A Number as itself, a Boolean as 1 or 0.
+fn numberOf(v: anytype) f64 {
+    if (v.isBool()) return if (v.asBool()) 1 else 0;
+    return v.asNumber();
+}
+
+test "parity: contains?, ray_cast and min_gap agree on both engines, curved parts within the chordal bound" {
+    const setup =
+        \\b = cube(10)
+        \\c = cylinder(r: 5, h: 10).translate(x: 30)
+        \\s = sphere(r: 4).translate(y: 30)
+        \\far = cube(2).translate(x: 60)
+    ;
+    // The cylinder's polygon at 16 a turn reaches 5·cos(π/16) = 4.904 between its corners
+    const bound = 5 * (1 - @cos(std.math.pi / 16.0)) + 4 * (1 - @cos(std.math.pi / 13.0));
+    const cases = [_]struct { expr: []const u8, slack: f64 }{
+        .{ .expr = "[b.contains?([5, 5, 5]), b.contains?([10, 5, 5]), b.contains?([11, 5, 5]), b.contains?([-0.5, 5, 5])]", .slack = 0 },
+        .{ .expr = "[c.contains?([30, 0, 5]), c.contains?([34.8, 0, 5]), c.contains?([35.5, 0, 5]), c.contains?([33.6, 3.6, 5])]", .slack = 0 },
+        .{ .expr = "[s.contains?([0, 30, 0]), s.contains?([0, 30, 3.8]), s.contains?([0, 30, 4.5])]", .slack = 0 },
+        // Through the box and the cylinder along x at y = 5 (the cylinder's axis level is
+        // y = 0, so at y = 0: in at x = 25 and out at 35, its polygon's corners on the axis)
+        .{ .expr = "b.ray_cast([-10, 5, 5], [50, 5, 5]).map { |h| [h[\"distance\"], h[\"crossing\"]] }.flatten", .slack = 0 },
+        .{ .expr = "c.ray_cast([10, 0, 5], [50, 0, 5]).map { |h| [h[\"distance\"], h[\"crossing\"]] }.flatten", .slack = 0 },
+        .{ .expr = "s.ray_cast([0, 30, -10], [0, 30, 10]).map { |h| h[\"crossing\"] }", .slack = 0 },
+        .{ .expr = "b.min_gap(far)", .slack = 1e-9 },
+        .{ .expr = "b.min_gap(c)", .slack = bound },
+        .{ .expr = "s.min_gap(c)", .slack = bound },
+        .{ .expr = "b.min_gap(far, 10)", .slack = 0 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("expression: {s}\n", .{case.expr});
+        var mesh_buf: [32]f64 = undefined;
+        var brep_buf: [32]f64 = undefined;
+        const mesh_engine = try numbersOn(.manifold, setup, case.expr, &mesh_buf);
+        const brep = try numbersOn(.brep_native, setup, case.expr, &brep_buf);
+        try testing.expectEqual(mesh_engine.len, brep.len);
+        for (mesh_engine, brep) |m, x| try testing.expectApproxEqAbs(m, x, case.slack + 1e-9);
+    }
+}
+
 /// The kernel's volume of what `source` builds on `engine`.
 fn volumeOn(engine: geom.EngineType, source: []const u8) !f64 {
     var vm = try support.initVm();

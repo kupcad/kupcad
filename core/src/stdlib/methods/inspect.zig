@@ -154,13 +154,20 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const other_handle = try vm.ensureConcrete(args[0]);
     try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0
     try vm.requireFeature(handle.engine, .min_gap);
-    if (search_length) |length| return arguments.measured(vm, kernel.minGap(handle, other_handle, length), "min_gap");
+    if (search_length) |length| return gapValue(vm, kernel.minGap(handle, other_handle, length));
     try vm.requireFeature(handle.engine, .bounding_box);
     // Infinity to an empty one: there is nothing in it to be near (its box has none)
     if (kernel.isEmpty(handle) or kernel.isEmpty(other_handle)) return value.Value.initNumber(std.math.inf(f64));
     const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
-    return arguments.measured(vm, fullGap(handle, other_handle, box_a, box_b), "min_gap");
+    return gapValue(vm, fullGap(handle, other_handle, box_a, box_b));
+}
+
+/// A gap the kernel measured; NaN is its failure to measure (a B-Rep part it can't mesh),
+/// not an overflow.
+fn gapValue(vm: *VM, gap: f64) !value.Value {
+    if (std.math.isNan(gap)) return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
+    return arguments.measured(vm, gap, "min_gap");
 }
 
 /// The gap between two solids, however far apart (`min_gap` without a search length):
@@ -180,7 +187,7 @@ fn fullGap(a: geom.GeometryHandle, b: geom.GeometryHandle, box_a: geom.BoundingB
     var search = @min(diagonal, @max(2 * @sqrt(box_gap_sq), diagonal * FIRST_GAP_SEARCH_FRACTION));
     while (true) : (search = @min(2 * search, diagonal)) {
         const gap = kernel.minGap(a, b, search);
-        if (gap < search or search == diagonal) return gap;
+        if (std.math.isNan(gap) or gap < search or search == diagonal) return gap;
     }
 }
 

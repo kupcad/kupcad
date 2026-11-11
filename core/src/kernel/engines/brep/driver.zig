@@ -86,6 +86,9 @@ pub const BrepSolid = struct {
     /// The preview mesh under `PREVIEW_BUDGET`, when a preview asked before any export did
     /// and the budget cut it short (else `mesh` serves the preview too).
     preview: ?locus.mesh.tessellate.Mesh = null,
+    /// The faces' boxes and BVH the queries descend (`contains?`, `ray_cast`, the viewer's
+    /// ray at every pointer move), once asked for.
+    index: ?locus.query.FaceIndex = null,
 
     /// Takes `body` into a new handle; on failure the body is freed.
     pub fn create(body: Body, settings: Settings) !*BrepSolid {
@@ -101,6 +104,7 @@ pub const BrepSolid = struct {
     pub fn destroy(self: *BrepSolid) void {
         if (self.mesh) |*m| m.deinit(backend_allocator);
         if (self.preview) |*m| m.deinit(backend_allocator);
+        if (self.index) |*i| i.deinit(backend_allocator);
         self.body.deinit();
         backend_allocator.destroy(self);
     }
@@ -171,11 +175,12 @@ pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
 /// straight-edged sketches), outlines, containment and convexity, extrusions (no twist or
 /// taper) and revolutions (of a sketch on one side of the axis), their volume, area, genus
 /// and box (a sketch's area and box too), hulls of flat-faced solids, every rigid move,
-/// uniform scale and mirror, and STEP export. Everything else is refused before the driver runs
+/// uniform scale and mirror, meshes, a solid's point containment, ray casts, gaps and
+/// faces by direction, and STEP export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces => true,
         .boolean,
         .loft,
         .curved_hull,
@@ -186,10 +191,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .slice,
         .project,
         .decompose,
-        .contains_point,
-        .ray_cast,
-        .min_gap,
-        .faces,
         .materials,
         .empty,
         => false,
@@ -752,35 +753,99 @@ fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
     return .{ .min = .{ box.min[0], box.min[1] }, .max = .{ box.max[0], box.max[1] } };
 }
 
+/// The face the solid's planar faces facing `direction` make farthest along it, as the
+/// mesh engine answers: every face whose plane lies within `tol` of the farthest is one
+/// face, its centroid their areas' centroid (each face's exact, Locus `query.faces`), its
+/// normal the direction; null when no planar face faces that way.
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tol: f64) ?[]geom.FaceHandle {
-    _ = allocator;
-    _ = handle;
-    _ = direction;
-    _ = tol;
-    return null;
+    const src = solidOf(handle.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const found = locus.query.faces.byDirection(backend_allocator, &src.body, direction, &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    defer backend_allocator.free(found);
+    if (found.len == 0) return null;
+    var area: f64 = 0;
+    var weighted: [3]f64 = .{ 0, 0, 0 };
+    for (found) |m| {
+        if (m.depth < found[0].depth - tol) break;
+        area += m.area;
+        for (0..3) |k| weighted[k] += m.centroid[k] * m.area;
+    }
+    const faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
+    faces[0] = .{ .index = @backingInt(found[0].face), .normal = found[0].normal, .centroid = .{ weighted[0] / area, weighted[1] / area, weighted[2] / area } };
+    return faces;
 }
 
+/// Whether `pt` is in the solid, its boundary within the zone it was built under
+/// included (Locus `query.point_in_body`); null, the reason remembered, when no ray
+/// could decide.
 fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const engine_config.EngineConfig, pt: [3]f64) ?bool {
-    _ = allocator;
-    _ = a;
-    _ = config;
-    _ = pt;
-    return null;
+    _ = config; // the solid keeps the tolerance it was built under, which the VM's settings for it are
+    const src = solidOf(a.ptr);
+    const index = indexOf(src) orelse return null;
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.query.point_in_body.contains(allocator, &src.body, index, pt, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
 }
 
-fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    _ = a;
-    _ = b;
-    _ = sl;
-    return 0;
+/// The gap between two solids' exact boundaries below `search_length` (that length
+/// otherwise; 0 where they touch), searched on their kept meshes and polished on their
+/// faces (Locus `query.distance`); NaN, the reason remembered, when it can't be told.
+fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {
+    if (a.engine != .brep_native or b.engine != .brep_native) return 0.0;
+    const sa = solidOf(a.ptr);
+    const sb = solidOf(b.ptr);
+    const mesh_a = fullMesh(sa) orelse return std.math.nan(f64);
+    const mesh_b = fullMesh(sb) orelse return std.math.nan(f64);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.query.distance.minGap(
+        backend_allocator,
+        .{ .body = &sa.body, .mesh = mesh_a, .resolution = sa.settings.resolution },
+        .{ .body = &sb.body, .mesh = mesh_b, .resolution = sb.settings.resolution },
+        search_length,
+        sa.options(),
+        &diag,
+    ) catch {
+        remember(&diag);
+        return std.math.nan(f64);
+    };
 }
 
+/// The crossings of the segment from `o` to `e` with the solid's boundary, nearest first
+/// (Locus `query.raycast`), in `alloc`; null, the reason remembered, on a failure.
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    _ = alloc;
-    _ = a;
-    _ = o;
-    _ = e;
-    return null;
+    const src = solidOf(a.ptr);
+    const index = indexOf(src) orelse return null;
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const found = locus.query.raycast.cast(backend_allocator, &src.body, index, o, e, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    defer backend_allocator.free(found);
+    const hits = alloc.alloc(geom.RayHit, found.len) catch return null;
+    for (found, hits) |h, *out| out.* = .{ .distance = h.t, .position = h.point, .normal = h.normal, .crossing = h.crossing };
+    return hits;
+}
+
+/// The solid's face index, built on the first ask and kept.
+fn indexOf(src: *BrepSolid) ?*const locus.query.FaceIndex {
+    if (src.index == null) {
+        var diag = locus.Diagnostics.init(backend_allocator);
+        defer diag.deinit();
+        src.index = locus.query.FaceIndex.build(backend_allocator, &src.body, &diag) catch {
+            remember(&diag);
+            return null;
+        };
+    }
+    return &src.index.?;
 }
 
 /// The solid's mesh at the resolution it was built under (Locus `tessellate`: its edges

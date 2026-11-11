@@ -2375,10 +2375,10 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).bbox"), .expected = "no error" }, // was all zeros
         .{ .src = comptime rescued("cube(10).center"), .expected = "no error" },
         .{ .src = comptime rescued("square(10).bbox"), .expected = "no error" },
-        .{ .src = comptime rescued("cube(10).contains?([1, 1, 1])"), .expected = brepLacks(.contains_point) },
+        .{ .src = comptime rescued("cube(10).contains?([1, 1, 1])"), .expected = "no error" }, // exact since M3
         .{ .src = comptime rescued("square(10).contains?([5, 5])"), .expected = "no error" }, // exact since M2
-        .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = brepLacks(.ray_cast) },
-        .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
+        .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = "no error" }, // exact since M3
+        .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = "no error" }, // exact since M3
         .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = "no error" }, // meshed since M3
         .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = "no error" },
         .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = "no error" },
@@ -2897,10 +2897,11 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
     try expectScripts(&.{
         .{ .src = rescued("square(10).contains?([5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
         .{ .src = rescued("cube(10).contains?([5, 5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
-        // The B-Rep engine answers for a sketch (exactly), not for a solid yet
+        // The B-Rep engine answers for a sketch and (since M3) for a solid, exactly
         .{ .src = "CAD.config(engine: :brep)\nr = square(10).contains?([5, 5])", .expected = .{ .boolean = true } },
         .{ .src = "CAD.config(engine: :brep)\nr = (square(10) - square(4).translate(3, 3)).contains?([5, 5])", .expected = .{ .boolean = false } },
-        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("cube(10).contains?([5, 5, 5])"), .expected = .{ .str = "NotImplementedError: the brep engine can't test whether a point is inside a solid (contains?) yet; build this part with engine: :manifold" } },
+        .{ .src = "CAD.config(engine: :brep)\nr = cube(10).contains?([5, 5, 5])", .expected = .{ .boolean = true } },
+        .{ .src = "CAD.config(engine: :brep)\nr = cylinder(r: 5, h: 10).contains?([3.6, 3.6, 5])", .expected = .{ .boolean = false } },
     });
 }
 

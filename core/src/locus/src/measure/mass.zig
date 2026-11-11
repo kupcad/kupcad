@@ -33,7 +33,7 @@ const AGREEMENT: f64 = 1e-11;
 /// How deep a triangle is split in four before its estimate is taken as it is.
 const MAX_SPLITS: u32 = 10;
 /// Gauss–Legendre points along a free-form edge, per span of the curve's parameter.
-const EDGE_SPANS: usize = 8;
+pub const EDGE_SPANS: usize = 8;
 
 /// What a body measures: its volume (0 for a sheet), its area (a sheet's is its faces'),
 /// and what the quadrature's two rules still differed by, a bound on their error.
@@ -284,14 +284,14 @@ const Quadrature = struct {
     }
 };
 
-const Gauss = struct { nodes: []const f64, weights: []const f64 };
+pub const Gauss = struct { nodes: []const f64, weights: []const f64 };
 
 /// Gauss–Legendre rules on [−1, 1].
 const GAUSS_5 = Gauss{
     .nodes = &.{ -0.9061798459386640, -0.5384693101056831, 0.0, 0.5384693101056831, 0.9061798459386640 },
     .weights = &.{ 0.2369268850561891, 0.4786286704993665, 0.5688888888888889, 0.4786286704993665, 0.2369268850561891 },
 };
-const GAUSS_10 = Gauss{
+pub const GAUSS_10 = Gauss{
     .nodes = &.{ -0.9739065285171717, -0.8650633666889845, -0.6794095682990244, -0.4333953941292472, -0.1488743389816312, 0.1488743389816312, 0.4333953941292472, 0.6794095682990244, 0.8650633666889845, 0.9739065285171717 },
     .weights = &.{ 0.0666713443086881, 0.1494513491505806, 0.2190863625159820, 0.2692667193099963, 0.2955242247147529, 0.2955242247147529, 0.2692667193099963, 0.2190863625159820, 0.1494513491505806, 0.0666713443086881 },
 };

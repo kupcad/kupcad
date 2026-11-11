@@ -42,7 +42,7 @@ grown = box.offset(1)               # a solid's offset is a Minkowski sum
 outline = profile.offset(-0.5)      # a sketch's is the kernel's offset
 hollow = box.shell(1)               # so is a solid's shell, and a sketch's
 ring = profile.shell(0.5)
-inside = box.contains?([1, 1, 1])   # a point in a solid is not a point in a sketch
+inside = box.contains?([1, 1, 1])   # a solid's containment, exact on B-Rep as a sketch's: nothing to report
 drawn = profile.contains?([1, 1])
 
 # A class of the script's own may name its methods like the kernel's: nothing to report.

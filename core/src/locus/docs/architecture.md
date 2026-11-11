@@ -609,6 +609,47 @@ each face's surface (closed form for quadrics) and keeps hits inside the face's 
 `min_gap` is a BVH-guided closest-point search over face pairs; `faces(direction, tol)`
 returns faces by normal and centroid with their tags.
 
+As built (`query/`, 2026-11-11). `index.zig`: each live face's box grown by the zone and a
+BVH over them, built once per body and kept by the host beside its mesh (the driver's
+`BrepSolid.index`); `Bvh.querySegment` descends it by slab tests. `in_face.zig`, the one
+primitive every query stands on: a point of a face's surface is on the face's boundary
+when within the zone of an edge (in space, on the exact curves: `nearestOnEdge`), else
+inside when the face's loops wind about its UV, the winding being the angle each coedge's
+image sweeps about the point (its pcurve; on a plane its curve projected; on a curved face
+without one its curve projected onto the surface), a piece halved until it subtends under
+a quarter radian and its halves agree, so no polyline of the boundary stands in for it and
+lines, circles, ellipses and NURBS are one case; periodic parameters are moved by whole
+periods into the face's box. `raycast.zig`: the candidates are the meetings of the line
+with every face's surface whose box the segment meets, in closed form for planes,
+cylinders, cones, spheres and tori (`math/poly.zig`: the roots of the implicit equation
+along the line, degree 1, 2 or 4, by derivative isolation and bisection, the parameter
+measured from the line's point nearest the centre, axis or apex so the coefficients
+don't cancel; a critical point within the zone of the surface is a tangency), by
+Levenberg–Marquardt and then Newton on `S(u, v) = O + t·d` from a 16 × 16 grid of seeds for
+extrusion, revolution and NURBS surfaces (sampled: a grazing pair between seeds may be
+missed); kept when in the face or on its boundary. Candidates within the zone of one
+another are one place; a place that is one candidate strictly inside its face, not
+tangent, crosses by the sign of its normal; any other (edge, vertex, tangency) is decided
+by classifying the points halfway to its neighbours, the difference being the crossing, no
+difference a touch reported as an entry and an exit at one distance (as the mesh engine
+reports a grazed corner). `point_in_body.zig`: outside the body's box is outside; within the
+zone of a face (its foot in the face) or of an edge is the boundary; else a ray from the
+point to its foot on one of the six nearest faces (along that face's normal, met squarely),
+then along a table of twelve skewed directions, the nearest meeting deciding when it is
+clean, a ray meeting nothing being outside, and a refusal with a finding when every ray met
+an edge or a tangency first. `distance.zig`: branch and bound over the two meshes'
+triangle BVHs (RTCD's triangle and segment distances) keeps every face pair within the
+meshes' deviation (twice `chordBow` of the longest triangle side, per mesh) of the
+nearest, and each is polished on the exact faces by alternating projection (a face's
+nearest point is its surface's foot when that is in the face, else its edges' nearest),
+so the gap is the exact geometry's; within the zone it is 0. `faces.zig`: the planar faces
+facing a direction within `tol.angle`, farthest first, each with its exact area and area
+centroid by Green's theorem over its loops (Gauss–Legendre per edge) and its tag; the
+driver merges the faces at the farthest plane into one handle, as the mesh engine does.
+The fuzz chains cast vertical and horizontal rays at every extruded solid: the running
+count of crossings stays 0 or 1 and ends 0, and at the ray's midpoint it is the
+midpoint's containment.
+
 ### 7.7 Tessellation
 
 Edges first (SMLib `SmTess`, SolveSpace `triangulate.cpp`, OCCT `BRepMesh`): every edge is
