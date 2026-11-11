@@ -364,7 +364,9 @@ test "outlines: a rounded rectangle, a stadium, a circle as two arcs and a major
     };
     var slot = try primitives.outlines(testing.allocator, tol, &.{&stadium}, &diag);
     defer slot.deinit();
-    try expectCounts(&slot, 4, 4, 1, 1);
+    // The right arc crosses its circle's seam (the point to +x of the centre), so it is
+    // two edges meeting there: no edge's range leaves its circle's period (D7)
+    try expectCounts(&slot, 5, 5, 1, 1);
     try expectValid(&slot);
     try testing.expectApproxEqRel(8 + PI, try areaOf(&slot), 1e-12);
     // A full circle as two arcs: the circle primitive's area and counts
@@ -408,7 +410,7 @@ test "outlines: a rounded rectangle, a stadium, a circle as two arcs and a major
     };
     var framed = try primitives.outlines(testing.allocator, tol, &.{ &frame, &stadium }, &diag);
     defer framed.deinit();
-    try expectCounts(&framed, 8, 8, 1, 2);
+    try expectCounts(&framed, 9, 9, 1, 2);
     try expectValid(&framed);
     try testing.expectApproxEqRel(14 * 12 - (8 + PI), try areaOf(&framed), 1e-12);
     // Refusals: an edge ending off the next one's start, an arc's end off its circle, a

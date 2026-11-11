@@ -617,7 +617,12 @@ exactly `Resolution.segmentsFor(r)` equal segments starting at angle 0, and an a
 the segments of that same grid it covers, rounded outward: the very polygon KupCAD's mesh
 engine builds for the same circle. That is the kernel-parity rule (every parameter means
 the same on both engines): a cylinder tessellated by Locus has the vertices Manifold's
-cylinder has, so the parity tests' bounding boxes and the viewer's picture agree.
+cylinder has, so the parity tests' bounding boxes and the viewer's picture agree. Two arcs
+tangent at a vertex and curving the same way bound a cusp, where chords of the two cross
+however fine the grids (the flatter arc's chord dips under the tighter arc); there the
+flatter arc also takes a point at each tangent coordinate the tighter arc's points have
+(`edges.matchCusps`, 2026-11-11), so both polylines interpolate ordered depths and cannot
+cross. A sketch arc across its circle's seam is two edges from the start (§7.5, D7).
 
 Per face: the loops' pcurves become a
 UV polygon with holes, scaled to be near-isometric (on a cylinder `u` is radians and `v`

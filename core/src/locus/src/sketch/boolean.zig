@@ -179,20 +179,33 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     const vertex_of = try allocator.alloc(types.VertexIndex, o.points.items.len);
     defer allocator.free(vertex_of);
     @memset(vertex_of, .none);
-    const specs = try allocator.alloc(sew.EdgeSpec, n_pieces);
+    // An arc piece across its circle's seam is two edges (`edgeSpecs`)
+    const specs = try allocator.alloc(sew.EdgeSpec, 2 * n_pieces);
     defer allocator.free(specs);
+    const spec_starts = try allocator.alloc(u32, n_cycles + 1);
+    defer allocator.free(spec_starts);
+    var seams: std.AutoHashMapUnmanaged(u32, types.VertexIndex) = .empty;
+    defer seams.deinit(allocator);
     const areas = try allocator.alloc(f64, n_cycles);
     defer allocator.free(areas);
+    var si: u32 = 0;
     for (0..n_cycles) |ci| {
+        spec_starts[ci] = si;
         var area: f64 = 0;
-        for (pieces[piece_starts[ci]..piece_starts[ci + 1]], piece_starts[ci]..) |piece, k| {
+        for (pieces[piece_starts[ci]..piece_starts[ci + 1]]) |piece| {
             if (vertex_of[piece.a] == .none) vertex_of[piece.a] = try b.vertex(o.points.items[piece.a]);
             if (vertex_of[piece.b] == .none) vertex_of[piece.b] = try b.vertex(o.points.items[piece.b]);
-            specs[k] = try edgeSpec(&b, o, piece, vertex_of[piece.a], vertex_of[piece.b]);
+            var two: [2]sew.EdgeSpec = undefined;
+            const made = try edgeSpecs(&b, o, piece, vertex_of[piece.a], vertex_of[piece.b], &seams, &two);
+            for (two[0..made]) |spec| {
+                specs[si] = spec;
+                si += 1;
+            }
             area += areaTerm(o, piece);
         }
         areas[ci] = area / 2.0;
     }
+    spec_starts[n_cycles] = si;
     // Each hole's face: the outer cycle it lies in (`nestCycles`); the region is on
     // every piece's left and nothing is known beyond it
     const segments = try allocator.alloc(overlay_mod.Segment, n_pieces);
@@ -224,13 +237,13 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     for (0..n_cycles) |oi| {
         if (areas[oi] <= 0) continue;
         const first = li;
-        loops[li] = .{ .edges = specs[piece_starts[oi]..piece_starts[oi + 1]] };
+        loops[li] = .{ .edges = specs[spec_starts[oi]..spec_starts[oi + 1]] };
         li += 1;
         var box = geometry.Box2.empty;
         growBox(&box, o, pieces[piece_starts[oi]..piece_starts[oi + 1]]);
         for (0..n_cycles) |hi| {
             if (owner[hi] != oi) continue;
-            loops[li] = .{ .edges = specs[piece_starts[hi]..piece_starts[hi + 1]] };
+            loops[li] = .{ .edges = specs[spec_starts[hi]..spec_starts[hi + 1]] };
             li += 1;
         }
         face_specs[fi] = .{ .surface = plane, .loops = loops[first..li], .uv_box = box };
@@ -287,27 +300,55 @@ fn continues(o: *const Overlay, prev: Piece, next: Piece, tol: Tolerance) bool {
     return vec.dot2(vec.sub2(b, a), vec.sub2(c, b)) > 0;
 }
 
-/// A piece as an edge specification of the new sheet: a line through its ends, or its
-/// circle interned with the angles of its ends as the range, run the way the piece does.
-fn edgeSpec(b: *Builder, o: *const Overlay, piece: Piece, start: types.VertexIndex, end: types.VertexIndex) Error!sew.EdgeSpec {
-    const arc = piece.arc orelse return b.straight(start, end);
+/// A piece as edge specifications of the new sheet, into `out`: a line through its ends,
+/// or its circle interned with the angles of its ends as the range, run the way the piece
+/// does. An arc across its circle's seam (the parameter's start, the point to +x of the
+/// centre) is two edges meeting at a vertex there (one per circle, `seams`), so that no
+/// edge's range leaves its circle's period and no face swept from it is periodic (D7); an
+/// end within the zone of the seam is taken as on it. Returns how many were written.
+fn edgeSpecs(b: *Builder, o: *const Overlay, piece: Piece, start: types.VertexIndex, end: types.VertexIndex, seams: *std.AutoHashMapUnmanaged(u32, types.VertexIndex), out: *[2]sew.EdgeSpec) Error!usize {
+    const arc = piece.arc orelse {
+        out[0] = try b.straight(start, end);
+        return 1;
+    };
     const circle = curves.Circle{ .c = .{ arc.c[0], arc.c[1], 0 }, .x = vec.X3, .y = vec.Y3, .r = arc.r };
     const ref = b.interner.circle(b.allocator, &b.body.geometry, circle) catch |e| return b.fail(e);
     const range = rangeOf(o, piece);
-    return .{ .start = start, .end = end, .curve = ref, .t0 = range[0], .t1 = range[1], .forward = arc.ccw };
+    var from = range[0];
+    var to = range[1];
+    const slack = b.body.tol.zone / arc.r;
+    if (from >= geometry.TWO_PI - slack) {
+        from = 0;
+        to -= geometry.TWO_PI;
+    }
+    if (to <= geometry.TWO_PI + slack) {
+        out[0] = .{ .start = start, .end = end, .curve = ref, .t0 = from, .t1 = @min(to, geometry.TWO_PI), .forward = arc.ccw };
+        return 1;
+    }
+    const gop = try seams.getOrPut(b.allocator, @as(u32, ref.index));
+    if (!gop.found_existing) gop.value_ptr.* = try b.vertex(.{ arc.c[0] + arc.r, arc.c[1], 0 });
+    const seam = gop.value_ptr.*;
+    if (arc.ccw) {
+        out[0] = .{ .start = start, .end = seam, .curve = ref, .t0 = from, .t1 = geometry.TWO_PI, .forward = true };
+        out[1] = .{ .start = seam, .end = end, .curve = ref, .t0 = 0, .t1 = to - geometry.TWO_PI, .forward = true };
+    } else {
+        out[0] = .{ .start = start, .end = seam, .curve = ref, .t0 = 0, .t1 = to - geometry.TWO_PI, .forward = false };
+        out[1] = .{ .start = seam, .end = end, .curve = ref, .t0 = from, .t1 = geometry.TWO_PI, .forward = false };
+    }
+    return 2;
 }
 
 /// The circle's parameter range an arc piece covers, counter-clockwise from the end the
-/// arc starts from that way round.
+/// arc starts from that way round: the start in `[0, 2π)`, the end past it by the sweep.
 fn rangeOf(o: *const Overlay, piece: Piece) [2]f64 {
     const arc = piece.arc.?;
     const pa = o.point(piece.a);
     const pb = o.point(piece.b);
-    const ta = trig.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]);
-    const tb = trig.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]);
+    const ta = @mod(trig.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]), geometry.TWO_PI);
+    const tb = @mod(trig.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]), geometry.TWO_PI);
     const from = if (arc.ccw) ta else tb;
     var to = if (arc.ccw) tb else ta;
-    if (to <= from + ANGLE_SLACK) to += 2 * std.math.pi;
+    if (to <= from + ANGLE_SLACK) to += geometry.TWO_PI;
     return .{ from, to };
 }
 

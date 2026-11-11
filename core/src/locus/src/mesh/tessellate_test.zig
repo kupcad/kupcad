@@ -262,3 +262,31 @@ test "tessellate: a cancel flag set before the call is error.Canceled" {
     var flag = std.atomic.Value(bool).init(true);
     try testing.expectError(error.Canceled, tessellate.tessellate(testing.allocator, &box, .{}, .{ .cancel = &flag }, &diag));
 }
+
+test "tessellate: a crescent of two circles tangent at a point is simple at every resolution (a cusp)" {
+    // The outer disc of radius 2.5 about (0, −1.5) less the inner disc of radius 2 about
+    // (0, −1), tangent at (0, 1): a crescent whose two arcs meet at the cusp. Their
+    // chords crossed near it however fine the grids; the flatter arc now takes points
+    // at the tighter arc's tangent coordinates (edges.matchCusps). Area 2.25π
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const Arc = primitives.OutlineArc;
+    const outer = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 1 }, .b = .{ 0, -4 }, .arc = Arc{ .c = .{ 0, -1.5 }, .r = 2.5, .ccw = true } },
+        .{ .a = .{ 0, -4 }, .b = .{ 0, 1 }, .arc = Arc{ .c = .{ 0, -1.5 }, .r = 2.5, .ccw = true } },
+    };
+    const inner = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 1 }, .b = .{ 0, -3 }, .arc = Arc{ .c = .{ 0, -1 }, .r = 2, .ccw = true } },
+        .{ .a = .{ 0, -3 }, .b = .{ 0, 1 }, .arc = Arc{ .c = .{ 0, -1 }, .r = 2, .ccw = true } },
+    };
+    var crescent = try primitives.outlines(testing.allocator, tol, &.{ &outer, &inner }, &diag);
+    defer crescent.deinit();
+    for ([_]tolerance.Resolution{ .{}, .{ .segments = 8 }, .{ .segments = 64 } }) |resolution| {
+        var mesh = try meshOf(&crescent, resolution);
+        defer mesh.deinit(testing.allocator);
+        for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        try testing.expect(mesh.triangles.len > 0);
+        // Within the chords' share of the area: a few percent at the coarsest
+        try testing.expectApproxEqRel(2.25 * PI, area(mesh), 0.05);
+    }
+}

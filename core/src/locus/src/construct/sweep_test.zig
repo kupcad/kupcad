@@ -331,3 +331,28 @@ test "revolve: a partial turn has caps, a long one is split, a negative one turn
     try testing.expectError(error.InvalidInput, sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 0, .{}, &diag));
 }
 
+
+test "extrude: a sheet whose arc crosses its circle's seam sweeps two cylinder faces, not a periodic one" {
+    // A stadium from outlines: its right arc runs from −90° through 0° to 90° about
+    // (4, 1), split at the seam into two edges, so the extrusion has two side faces
+    // there, each within its cylinder's period (the fuzzer's and the case rig's closed
+    // paths, 2026-11-11)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const Arc = primitives.OutlineArc;
+    const stadium = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 0 }, .b = .{ 4, 0 } },
+        .{ .a = .{ 4, 0 }, .b = .{ 4, 2 }, .arc = Arc{ .c = .{ 4, 1 }, .r = 1, .ccw = true } },
+        .{ .a = .{ 4, 2 }, .b = .{ 0, 2 } },
+        .{ .a = .{ 0, 2 }, .b = .{ 0, 0 }, .arc = Arc{ .c = .{ 0, 1 }, .r = 1, .ccw = true } },
+    };
+    var sheet = try primitives.outlines(testing.allocator, tol, &.{&stadium}, &diag);
+    defer sheet.deinit();
+    var solid = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 2 }, .{}, &diag);
+    defer solid.deinit();
+    try expectValid(&solid);
+    // Two caps and five sides
+    try std.testing.expectEqual(@as(usize, 7), solid.counts().faces);
+    const m = try @import("../measure/mass.zig").mass(&solid, .{}, &diag);
+    try std.testing.expectApproxEqRel((8 + std.math.pi) * 2, m.volume, 1e-9);
+}
