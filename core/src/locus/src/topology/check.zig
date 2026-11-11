@@ -1,8 +1,9 @@
 //! The checker (docs/architecture.md §9.1): `run(body, level)` is a pure function giving
 //! the findings, in the order of the rules, stopping at the first structural failure so no
 //! geometric rule reads a corrupt graph. Level 0: structural; 1: and orientation and
-//! geometric; 2 (later): and the global rules. Every test ends with it; every operation's
-//! result passes it or the operation fails with the finding.
+//! geometric; 2: and the global rules (holes inside their outer loops, the pcurve rules
+//! at nine samples, redundant topology as warnings). Every test ends with it; every
+//! operation's result passes it or the operation fails with the finding.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -507,6 +508,71 @@ const Checker = struct {
         return trusted;
     }
 
+    /// OpenGeometry's two pcurve rules (research/opengeometry.md §6): every coedge's
+    /// pcurve, at `PCURVE_SAMPLES` parameters from the edge's start to its end, lifts onto
+    /// the edge's curve within `approx` (plus the edge's gap) and lies in its face's UV box
+    /// within the zone over the surface's metric there; and consecutive coedges of a loop
+    /// join in UV within that slack, a period apart counting as joined. A coedge without
+    /// a pcurve (on a plane) takes no part.
+    fn pcurveRules(self: *Checker) Error!void {
+        const b = self.body;
+        const tol = b.tol;
+        for (b.faces.items, 0..) |face, fi| {
+            if (face.flags.tombstone) continue;
+            const surface = b.geometry.surface(face.surface);
+            const periods: [2]?f64 = .{ if (surface.domainU().periodic) surface.domainU().span() else null, if (surface.domainV().periodic) surface.domainV().span() else null };
+            var loops = traverse.Loops.init(b, FaceIndex.of(fi));
+            while (loops.next() catch return) |l| {
+                var previous_end: ?Vec2 = null;
+                var first: ?struct { coedge: CoedgeIndex, uv: Vec2 } = null;
+                var it = traverse.Coedges.init(b, l);
+                while (it.next() catch return) |c| {
+                    const coedge = b.coedge(c);
+                    if (coedge.pcurve.isNone()) {
+                        previous_end = null;
+                        continue;
+                    }
+                    const e = b.edge(coedge.edge);
+                    const curve = b.geometry.curve(e.curve);
+                    const pc = b.geometry.pcurve(coedge.pcurve);
+                    const from = if (coedge.same_sense) e.t0 else e.t1;
+                    const to = if (coedge.same_sense) e.t1 else e.t0;
+                    var start_uv: Vec2 = undefined;
+                    var end_uv: Vec2 = undefined;
+                    var k: usize = 0;
+                    while (k < PCURVE_SAMPLES) : (k += 1) {
+                        const t = from + (to - from) * @as(f64, @floatFromInt(k)) / (PCURVE_SAMPLES - 1);
+                        const uv = pc.eval(t);
+                        if (k == 0) start_uv = uv;
+                        if (k == PCURVE_SAMPLES - 1) end_uv = uv;
+                        const p = curve.eval(t);
+                        const dl = vec.distance(surface.eval(uv[0], uv[1]), p);
+                        if (dl > tol.approx + e.gap) {
+                            try self.add(.pcurve_off_edge, .of(.coedge, @backingInt(c)), dl, tol.approx + e.gap);
+                            break;
+                        }
+                        const out = outsideBox(face.uv_box, uv, uvSlack(surface, uv, tol.zone));
+                        if (out > 1) {
+                            try self.add(.pcurve_outside_box, .of(.coedge, @backingInt(c)), out * tol.zone, tol.zone);
+                            break;
+                        }
+                    }
+                    if (previous_end) |prev| {
+                        const gap = uvGap(prev, start_uv, uvSlack(surface, start_uv, tol.zone), periods);
+                        if (gap > 1) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(c)), gap * tol.zone, tol.zone);
+                    }
+                    if (first == null) first = .{ .coedge = c, .uv = start_uv };
+                    previous_end = end_uv;
+                }
+                // Round the loop: the last pcurve's end to the first's start
+                if (previous_end) |prev| if (first) |f| {
+                    const gap = uvGap(prev, f.uv, uvSlack(surface, f.uv, tol.zone), periods);
+                    if (gap > 1) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(f.coedge)), gap * tol.zone, tol.zone);
+                };
+            }
+        }
+    }
+
     /// No two vertices within the zone of each other: sorted along x, each against the
     /// ones that follow within the zone.
     fn verticesApart(self: *Checker) Error!void {
@@ -536,12 +602,14 @@ const Checker = struct {
 
     /// What needs the whole face or shell: a hole loop lies inside its face's outer loop
     /// and in no other hole (by a point of it against the sampled UV polygons, even-odd);
-    /// and, as warnings, topology that a simplification could remove: an edge whose two
-    /// faces are one face, or lie on one surface the same way (never across a seam, which
-    /// D7 keeps). The rules that need an intersector (faces of a shell meeting only along
-    /// shared edges, voids inside the outer shell) wait for it.
+    /// the pcurve rules (`pcurveRules`); and, as warnings, topology that a simplification
+    /// could remove: an edge whose two faces are one face, or lie on one surface the same
+    /// way (never across a seam, which D7 keeps). The rules that need an intersector
+    /// (faces of a shell meeting only along shared edges, voids inside the outer shell)
+    /// wait for it.
     fn global(self: *Checker) Error!void {
         const b = self.body;
+        try self.pcurveRules();
         var uv = std.ArrayList(Vec2).empty;
         defer uv.deinit(self.allocator);
         var xyz = std.ArrayList(Vec3).empty;
@@ -592,6 +660,45 @@ const Checker = struct {
 
 /// Points per coedge of a loop's sampled polygon.
 const LOOP_SAMPLES: usize = 4;
+/// Samples per pcurve of the level-2 pcurve rules, the ends among them (OpenGeometry's
+/// nine, research/opengeometry.md §6): a fixed count keeps the check linear.
+const PCURVE_SAMPLES: usize = 9;
+
+/// The parameter a move of `distance` is worth in each direction of `surface` at `uv`:
+/// the distance over the surface's metric there (the derivative's length); unbounded
+/// where the metric vanishes (at a pole any `u` is the same point).
+fn uvSlack(surface: anytype, uv: Vec2, distance: f64) Vec2 {
+    const s = surface.sample(uv[0], uv[1]);
+    const du = vec.length(s.du);
+    const dv = vec.length(s.dv);
+    return .{ if (du > 0) distance / du else std.math.inf(f64), if (dv > 0) distance / dv else std.math.inf(f64) };
+}
+
+/// How far `uv` lies outside `box`, as a share of `slack` in the worse direction (at
+/// most 1 inside).
+fn outsideBox(box: geometry.Box2, uv: Vec2, slack: Vec2) f64 {
+    var worst: f64 = 0;
+    for (0..2) |k| {
+        const out = @max(box.min[k] - uv[k], uv[k] - box.max[k]);
+        if (out > 0) worst = @max(worst, out / slack[k]);
+    }
+    return worst;
+}
+
+/// The gap between two UV points as a share of `slack` in the worse direction, a period
+/// apart counting as together in a periodic direction.
+fn uvGap(a: Vec2, b: Vec2, slack: Vec2, periods: [2]?f64) f64 {
+    var worst: f64 = 0;
+    for (0..2) |k| {
+        var d = @abs(a[k] - b[k]);
+        if (periods[k]) |period| {
+            d = @mod(d, period);
+            d = @min(d, period - d);
+        }
+        worst = @max(worst, d / slack[k]);
+    }
+    return worst;
+}
 
 /// Twice the signed area of a polygon in UV: positive counter-clockwise.
 fn shoelace(points: []const Vec2) f64 {

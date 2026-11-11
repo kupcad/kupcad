@@ -408,3 +408,70 @@ test "global rules: a hole outside its outer loop; two faces on one plane are a 
     try testing.expectEqual(@as(usize, 0), r3.warnings());
 }
 
+test "global rules: the pcurves of every curved primitive and of a rounded extrusion lie in their boxes and join; a box too small and a pcurve astray are named" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const primitives = @import("../construct/primitives.zig");
+    const sweep = @import("../construct/sweep.zig");
+    var cylinder = try primitives.cylinder(testing.allocator, tol, 3, 5, false, &diag);
+    defer cylinder.deinit();
+    var cone = try primitives.cone(testing.allocator, tol, 3, 1, 5, false, &diag);
+    defer cone.deinit();
+    var sphere = try primitives.sphere(testing.allocator, tol, 3, &diag);
+    defer sphere.deinit();
+    var torus = try primitives.torus(testing.allocator, tol, 5, 1, &diag);
+    defer torus.deinit();
+    const Arc = primitives.OutlineArc;
+    const stadium = [_]primitives.OutlineEdge{
+        .{ .a = .{ -2, -1 }, .b = .{ 2, -1 } },
+        .{ .a = .{ 2, -1 }, .b = .{ 2, 1 }, .arc = Arc{ .c = .{ 2, 0 }, .r = 1, .ccw = true } },
+        .{ .a = .{ 2, 1 }, .b = .{ -2, 1 } },
+        .{ .a = .{ -2, 1 }, .b = .{ -2, -1 }, .arc = Arc{ .c = .{ -2, 0 }, .r = 1, .ccw = true } },
+    };
+    var slot = try primitives.outlines(testing.allocator, tol, &.{&stadium}, &diag);
+    defer slot.deinit();
+    var slab = try sweep.extrude(testing.allocator, &slot, .{ 0, 0, 2 }, .{}, &diag);
+    defer slab.deinit();
+    // The stadium on the positive side of an axis along y through (−5, 0, 0)
+    var ring = sweep.revolve(testing.allocator, &slot, .{ -5, 0, 0 }, .{ 0, 1, 0 }, std.math.pi, .{}, &diag) catch |err| {
+        std.debug.print("revolve: {s} {f}\n", .{ @errorName(err), diag });
+        return err;
+    };
+    defer ring.deinit();
+    for ([_]*const Body{ &cylinder, &cone, &sphere, &torus, &slab, &ring }) |body| {
+        var report = try check.run(testing.allocator, body, .global);
+        defer report.deinit(testing.allocator);
+        if (report.first()) |f| std.debug.print("checker: {f}\n", .{f});
+        try testing.expect(report.ok());
+    }
+
+    // The cylinder's first side face given a UV box of a quarter turn: its pcurves leave
+    // it (a level-1 rule still holds: the box is inside the domain, without wrap)
+    {
+        var small = try cylinder.clone(testing.allocator);
+        defer small.deinit();
+        for (small.faces.items) |*f| {
+            if (f.surface.kind != .cylinder) continue;
+            f.uv_box.max[0] = f.uv_box.min[0] + std.math.pi / 2.0;
+            break;
+        }
+        var geometric = try check.run(testing.allocator, &small, .geometric);
+        defer geometric.deinit(testing.allocator);
+        try testing.expect(geometric.ok());
+        try expectRule(&small, .global, .pcurve_outside_box);
+    }
+    // The bottom circle's pcurve moved up by 1.2 zones: within the lift's slack once the
+    // edges and vertices carry a gap of a zone (level 1 holds), but a zone and a fifth
+    // from the seams' pcurves it should meet (level 2 names the coedge after it)
+    {
+        var astray = try cylinder.clone(testing.allocator);
+        defer astray.deinit();
+        astray.geometry.lines2.items[0].o[1] += 1.2 * tol.zone;
+        for (astray.edges.items) |*e| e.gap = tol.zone;
+        for (astray.vertices.items) |*v| v.gap = tol.zone;
+        var geometric = try check.run(testing.allocator, &astray, .geometric);
+        defer geometric.deinit(testing.allocator);
+        try testing.expect(geometric.ok());
+        try expectRule(&astray, .global, .pcurves_disjoint);
+    }
+}

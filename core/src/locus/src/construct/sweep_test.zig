@@ -9,6 +9,7 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const Diagnostics = @import("../diagnostics.zig").Diagnostics;
 const Body = @import("../topology/body.zig").Body;
 const check = @import("../topology/check.zig");
+const mass = @import("../measure/mass.zig");
 const primitives = @import("primitives.zig");
 const sweep = @import("sweep.zig");
 const bbox = @import("../measure/bbox.zig");
@@ -355,4 +356,52 @@ test "extrude: a sheet whose arc crosses its circle's seam sweeps two cylinder f
     try std.testing.expectEqual(@as(usize, 7), solid.counts().faces);
     const m = try @import("../measure/mass.zig").mass(&solid, .{}, &diag);
     try std.testing.expectApproxEqRel((8 + std.math.pi) * 2, m.volume, 1e-9);
+}
+
+test "revolve: a profile arc across its torus's seam is split there and the ring is valid, its volume Pappus's" {
+    // A 2 by 1 rectangle with a round top: the arc from (1, 1) to (-1, 1) about (0, 0.5),
+    // radius √1.25, runs from 0.4636 to π − 0.4636 and so across π/2; turned about an
+    // axis along x through (0, -5, 0), the radial direction is +y and the torus's seam is
+    // at the arc's top, inside it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const r = @sqrt(1.25);
+    const Arc = primitives.OutlineArc;
+    const outline = [_]primitives.OutlineEdge{
+        .{ .a = .{ -1, 0 }, .b = .{ 1, 0 } },
+        .{ .a = .{ 1, 0 }, .b = .{ 1, 1 } },
+        .{ .a = .{ 1, 1 }, .b = .{ -1, 1 }, .arc = Arc{ .c = .{ 0, 0.5 }, .r = r, .ccw = true } },
+        .{ .a = .{ -1, 1 }, .b = .{ -1, 0 } },
+    };
+    var sheet = try primitives.outlines(testing.allocator, tol, &.{&outline}, &diag);
+    defer sheet.deinit();
+    try testing.expectEqual(@as(usize, 4), sheet.counts().edges);
+    // (The radial direction is the axis crossed with the sheet's normal, +y for −x and
+    // +z, so the axis runs along −x to keep the profile on the radial side)
+    var ring = try sweep.revolve(testing.allocator, &sheet, .{ 0, -5, 0 }, vec.neg(vec.X3), 2 * std.math.pi, .{}, &diag);
+    defer ring.deinit();
+    var report = try check.run(testing.allocator, &ring, .global);
+    defer report.deinit(testing.allocator);
+    if (report.first()) |f| std.debug.print("checker: {f}\n", .{f});
+    try testing.expect(report.ok());
+    // Two torus faces per half turn: the arc was split at the seam
+    var tori: usize = 0;
+    for (ring.faces.items) |f| tori += @intFromBool(!f.flags.tombstone and f.surface.kind == .torus);
+    try testing.expectEqual(@as(usize, 4), tori);
+    // Pappus: the profile's area times the circle its centroid runs (the rectangle and
+    // the circular segment over the chord y = 1)
+    const half: f64 = 0.5;
+    const theta = 2 * (std.math.pi / 2.0 - std.math.atan2(half, 1.0));
+    const segment = r * r / 2.0 * (theta - @sin(theta));
+    const segment_centroid = 0.5 + 4 * r * std.math.pow(f64, @sin(theta / 2), 3) / (3 * (theta - @sin(theta)));
+    const area = 2 + segment;
+    const centroid_y = (2 * 0.5 + segment * segment_centroid) / area;
+    const m = try mass.mass(&ring, .{}, &diag);
+    try testing.expectApproxEqRel(2 * std.math.pi * (centroid_y + 5) * area, m.volume, 1e-9);
+    // About an axis along y, the seam at the arc's ends: nothing split, the same validity
+    var about_y = try sweep.revolve(testing.allocator, &sheet, .{ -5, 0, 0 }, vec.Y3, std.math.pi, .{}, &diag);
+    defer about_y.deinit();
+    var r2 = try check.run(testing.allocator, &about_y, .global);
+    defer r2.deinit(testing.allocator);
+    try testing.expect(r2.ok());
 }

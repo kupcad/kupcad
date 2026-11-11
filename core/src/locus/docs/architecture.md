@@ -786,7 +786,17 @@ other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ 
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs); hole loops inside their outer loop and not inside
 each other; the point at infinity is outside every outer shell; void shells inside the
-outer shell and not inside each other.
+outer shell and not inside each other; and OpenGeometry's two pcurve rules
+(research/opengeometry.md §6, 2026-11-11): every coedge's pcurve, at nine parameters from
+the edge's start to its end, lifts onto the edge's curve within `approx` and lies in its
+face's UV box within the zone over the surface's metric there (`pcurve_outside_box`; no
+slack limit where the metric vanishes, at a pole), and consecutive coedges of a loop join
+in UV within that slack, a period apart counting as joined (`pcurves_disjoint`). The first
+run of these rules over the primitives and a revolved stadium found `revolve` giving a
+torus face a `v` range below the domain, and its two spans of one arc disagreeing on the
+direction of `v` (the tangent of a turned copy against the profile's frame): the profile's
+arcs are now split at the torus's seam first (D7) and the direction read from the
+generator at angle 0.
 
 One negative fixture per rule lives in `test/corpus/invalid/`.
 

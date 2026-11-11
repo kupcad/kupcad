@@ -154,22 +154,26 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
 /// the other way; a full turn at ±2π): a solid. The sheet must lie on one side of the
 /// axis; a point on it is allowed (an apex, a pole), an edge along it too (it sweeps
 /// nothing). The input is untouched.
-pub fn revolve(allocator: std.mem.Allocator, sheet: *const Body, origin: Vec3, axis: Vec3, angle: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
+pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, axis: Vec3, angle: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
     for (origin) |c| try diagnostics.input.finite(diag, "the axis origin", c);
     for (axis) |c| try diagnostics.input.finite(diag, "the axis", c);
     try diagnostics.input.finite(diag, "the angle", angle);
     try options.checkCancel();
     try trace.arguments(allocator, &options, "revolve", .{ .origin = origin, .axis = axis, .angle = angle });
-    if (sheet.kind != .sheet or sheet.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
-    const tol = options.tolerance orelse sheet.tol;
+    if (input.kind != .sheet or input.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
+    const tol = options.tolerance orelse input.tol;
     const z = vec.normalized(axis) orelse return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's length" });
     if (!(@abs(angle) > tol.param)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the angle", .measured = @abs(angle) });
     const turn = Turn.of(angle, tol);
+    const frame = try profileFrame(input, origin, z, tol, diag);
 
+    // The profile with every arc across its torus's seam split there (D7)
+    var profile = try splitAtTorusSeams(allocator, input, frame, tol, diag);
+    defer profile.deinit();
+    const sheet = &profile;
     const counts = try countSheet(sheet, diag);
     const sides = counts.coedges * turn.spans();
     if (sides > options.limits.faces_per_body) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the profile's edges", .measured = @floatFromInt(sides), .threshold = @floatFromInt(options.limits.faces_per_body) });
-    const frame = try profileFrame(sheet, origin, z, tol, diag);
 
     var b = try Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
@@ -394,6 +398,33 @@ const ProfileFrame = struct {
     }
 };
 
+/// A copy of the profile in which every arc that crosses the seam of the torus it will
+/// sweep (the point of its circle farthest from the axis, where the torus's `v` is 0) is
+/// split at that point, so no swept face's UV box wraps or leaves the domain (D7); an arc
+/// about a centre on the axis sweeps a sphere, whose `v` runs from pole to pole with no
+/// seam in reach.
+fn splitAtTorusSeams(allocator: std.mem.Allocator, input: *const Body, frame: ProfileFrame, tol: Tolerance, diag: *Diagnostics) Error!Body {
+    const euler = @import("../topology/euler.zig");
+    var profile = input.clone(allocator) catch return diag.fail(error.OutOfMemory, .{ .code = .limit_exceeded, .label = "the profile's copy" });
+    errdefer profile.deinit();
+    const n_edges = profile.edges.items.len;
+    for (0..n_edges) |i| {
+        const e = profile.edge(types.EdgeIndex.of(i));
+        if (e.flags.tombstone or e.flags.degenerate) continue;
+        const circle = switch (profile.geometry.curve(e.curve)) {
+            .circle => |c| c,
+            else => continue,
+        };
+        if (frame.place(circle.c).radius <= tol.zone) continue;
+        const seam_point = vec.addScaled(circle.c, frame.r_dir, circle.r);
+        const t = circle.project(seam_point);
+        if (!(t > e.t0 + tol.param and t < e.t1 - tol.param)) continue;
+        const point = profile.geometry.addPoint(allocator, circle.eval(t)) catch return diag.fail(error.OutOfMemory, .{ .code = .limit_exceeded, .label = "the profile's copy" });
+        _ = euler.mevSplitEdge(&profile, e.coedge, t, point) catch return corrupt(diag);
+    }
+    return profile;
+}
+
 /// The profile's frame, every face checked on one plane through the axis, and every edge
 /// checked on the radial side of it.
 fn profileFrame(sheet: *const Body, origin: Vec3, z: Vec3, tol: Tolerance, diag: *Diagnostics) Error!ProfileFrame {
@@ -522,12 +553,23 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
                 surface = b.interner.torus(b.allocator, g, .{ .frame = base, .major = centre.radius, .minor = c.r }) catch |e| return b.fail(e);
             }
             v_a = trig.atan2(r.place_a.axial - centre.axial, r.place_a.radius - centre.radius);
-            const t_a = if (r.low.forward) r.low.t0 else r.low.t1;
+            // Which way v runs along the arc, from the generator at the profile's own
+            // place (angle 0), where the direction of growing v lies in the profile's
+            // frame; a copy at another angle has its tangent turned out of it, and the
+            // sign of the dot with it depended on the span (the two spans of one arc then
+            // disagreed and the sewing refused the edge they share)
+            const t_a = if (r.base.forward) r.base.t0 else r.base.t1;
             const along_v = vec.add(vec.scale(frame.r_dir, -@sin(v_a)), vec.scale(frame.z, @cos(v_a)));
-            const turned = g.curve(r.low.curve);
-            const direction: f64 = if (vec.dot(turned.d1(t_a), along_v) > 0) 1 else -1;
-            const extent = r.low.t1 - r.low.t0;
-            v_b = v_a + direction * (if (r.low.forward) extent else -extent);
+            const base_curve = g.curve(r.base.curve);
+            const direction: f64 = if (vec.dot(base_curve.d1(t_a), along_v) > 0) 1 else -1;
+            const extent = r.base.t1 - r.base.t0;
+            v_b = v_a + direction * (if (r.base.forward) extent else -extent);
+            // A torus's v runs from 0 at the seam: an arc ending there from below is a
+            // turn further on (its seam crossings were split, so it is all on one side)
+            if (centre.radius > tol.zone and @min(v_a, v_b) < -tol.param) {
+                v_a += geometry.TWO_PI;
+                v_b += geometry.TWO_PI;
+            }
         },
         else => {
             // From the generator at angle 0, so the surface's u is the absolute angle
