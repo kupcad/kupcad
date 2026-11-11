@@ -156,9 +156,10 @@ test "DXF: a half circle is a bulge of 1, a rounded corner a bulge of its angle,
 }
 
 test "DXF: a B-Rep sketch is drawn as the mesh engine's, its circle a CIRCLE and its arcs bulges" {
-    // The B-Rep engine reads its outlines exactly, its arcs' chords ending on the circle, so
-    // the drawing turns them back into the same entities
-    const source = "[square(10, 5), circle(r: 5).translate(x: 20)]";
+    // The B-Rep engine keeps its arcs exact and the drawing writes them as they are, the
+    // same entities the mesh engine's chords are turned back into (the second circle's
+    // resolution count is odd: its half-turn vertex is no chord's point)
+    const source = "[square(10, 5), circle(r: 5).translate(x: 20), circle(r: 3.5).translate(x: 40)]";
     const mesh = try exportDxf(source);
     defer testing.allocator.free(mesh);
     const brep = try exportDxf("CAD.config(engine: :brep)\n" ++ source);

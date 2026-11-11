@@ -57,6 +57,71 @@ test "contours: a square is its corners, a circle its segments at the resolution
     try testing.expect(area < 0);
 }
 
+test "outlines: a circle is two exact half turns, a hole's arcs run clockwise, a stadium's lines are lines" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var disc = try primitives.circle(testing.allocator, tol, 2, &diag);
+    defer disc.deinit();
+    var rim = try query.outlines(testing.allocator, &disc, .{ .segments = 64 }, &diag);
+    defer rim.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), rim.count());
+    try testing.expectEqual(@as(usize, 2), rim.contour(0).len);
+    for (rim.arcsOf(0)) |arc| {
+        try testing.expect(arc.?.ccw);
+        try testing.expectEqual(@as(f64, PI), arc.?.angle);
+        try testing.expectEqual(@as(f64, 2), arc.?.r);
+        try testing.expectEqual(Vec2{ 0, 0 }, arc.?.c);
+    }
+
+    var sq = try primitives.square(testing.allocator, tol, 8, 6, false, &diag);
+    defer sq.deinit();
+    var small = try primitives.circle(testing.allocator, tol, 1, &diag);
+    defer small.deinit();
+    var hole = try transform.transform(testing.allocator, &small, &mat.Affine.translate(.{ 2, 1.5, 0 }), .{}, &diag);
+    defer hole.deinit();
+    var pierced = try boolean.boolean(testing.allocator, &.{ &sq, &hole }, .difference, .{}, &diag);
+    defer pierced.deinit();
+    var both = try query.outlines(testing.allocator, &pierced, .{}, &diag);
+    defer both.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), both.count());
+    try testing.expectEqual(@as(usize, 4), both.contour(0).len);
+    for (both.arcsOf(0)) |arc| try testing.expectEqual(@as(?query.OutlineArc, null), arc);
+    try testing.expectEqual(@as(usize, 2), both.contour(1).len);
+    for (both.arcsOf(1)) |arc| {
+        try testing.expect(!arc.?.ccw);
+        try testing.expectEqual(@as(f64, PI), arc.?.angle);
+        try testing.expectEqual(Vec2{ 2, 1.5 }, arc.?.c);
+    }
+
+    // A stadium (a 4 by 2 rectangle with half-discs at its ends): the half-disc an arc
+    // crossing its circle's seam was split at it, so the arcs' angles sum to a turn
+    const stadium = [_]primitives.OutlineEdge{
+        .{ .a = .{ -2, -1 }, .b = .{ 2, -1 } },
+        .{ .a = .{ 2, -1 }, .b = .{ 2, 1 }, .arc = .{ .c = .{ 2, 0 }, .r = 1, .ccw = true } },
+        .{ .a = .{ 2, 1 }, .b = .{ -2, 1 } },
+        .{ .a = .{ -2, 1 }, .b = .{ -2, -1 }, .arc = .{ .c = .{ -2, 0 }, .r = 1, .ccw = true } },
+    };
+    var slot = try primitives.outlines(testing.allocator, tol, &.{&stadium}, &diag);
+    defer slot.deinit();
+    var ring = try query.outlines(testing.allocator, &slot, .{}, &diag);
+    defer ring.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), ring.count());
+    var lines: usize = 0;
+    var swept: f64 = 0;
+    for (ring.arcsOf(0)) |maybe| {
+        if (maybe) |arc| {
+            try testing.expect(arc.ccw);
+            swept += arc.angle;
+        } else lines += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), lines);
+    try testing.expectApproxEqAbs(2 * PI, swept, 1e-12);
+    // The same loop as chords has the grid's points along the arcs
+    var chorded = try query.contours(testing.allocator, &slot, .{ .segments = 8 }, &diag);
+    defer chorded.deinit(testing.allocator);
+    try testing.expect(chorded.contour(0).len > ring.contour(0).len);
+}
+
 test "contains: inside, outside, in a hole, and on an outline within the tolerance" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();

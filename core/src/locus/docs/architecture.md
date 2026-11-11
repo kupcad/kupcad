@@ -591,8 +591,11 @@ the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector,
 about a centre the offset passes) and each opening corner's join (round, miter, bevel,
 square) a simple region the overlay counts as a second input (D25); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
 are left out of the hull's boundary; documented, and the driver refuses a sketch with arcs
-as `curved_hull`, D24, until the hull keeps its arcs); contours output closed polylines at a
-`Resolution` for SVG/DXF; measures (area by Green's theorem on lines and arcs) are exact.
+as `curved_hull`, D24, until the hull keeps its arcs); `query.contours` outputs closed polylines at a
+`Resolution` (the mesh engine's polygon: lofts, sweeps) and `query.outlines` the same loops with
+their arcs exact (`OutlineArc`: centre, radius, way round, sweep from the edge's range), what the
+drawing exporters write as SVG arcs and DXF bulges with no chord matching; measures (area by
+Green's theorem on lines and arcs) are exact.
 
 ### 7.6 Measures and queries
 

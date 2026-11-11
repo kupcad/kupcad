@@ -228,6 +228,7 @@ pub const driver = struct {
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
     pub const crossSectionContoursFn = crossSectionContoursImpl;
+    pub const crossSectionOutlinesFn = crossSectionOutlinesImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;
@@ -708,6 +709,21 @@ fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.
     defer diag.deinit();
     const contours = locus.sketch.query.contours(allocator, &src.body, src.settings.resolution, &diag) catch return null;
     return .{ .points = contours.points, .starts = contours.starts };
+}
+
+/// The sketch's loops with their arcs exact: a drawing's lines and arcs.
+fn crossSectionOutlinesImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
+    const src = solidOf(handle.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    var outlines = locus.sketch.query.outlines(allocator, &src.body, src.settings.resolution, &diag) catch return null;
+    defer allocator.free(outlines.arcs);
+    const arcs = allocator.alloc(?geom.ContourArc, outlines.arcs.len) catch {
+        outlines.deinit(allocator);
+        return null;
+    };
+    for (outlines.arcs, arcs) |from, *to| to.* = if (from) |arc| .{ .center = arc.c, .radius = arc.r, .ccw = arc.ccw, .angle = arc.angle } else null;
+    return .{ .points = outlines.points, .starts = outlines.starts, .arcs = arcs };
 }
 
 /// Whether the sketch is one convex outline, its arcs bulging out.

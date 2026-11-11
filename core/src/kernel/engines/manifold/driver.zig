@@ -836,6 +836,7 @@ pub const driver = struct {
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
     pub const crossSectionContoursFn = crossSectionContoursImpl;
+    pub const crossSectionOutlinesFn = crossSectionContoursImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;

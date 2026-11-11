@@ -47,9 +47,22 @@ pub const Rect2D = struct {
 /// A sketch's outlines as closed polylines: `points` holds every contour's vertices in turn
 /// and `starts` where each begins, with the end after the last (one more entry than
 /// contours). Outer contours run counter-clockwise, holes clockwise.
+/// An edge of a contour that an engine keeps as an arc: from the edge's first point to its
+/// next along the circle about `center`, counter-clockwise when `ccw`, over `angle` radians.
+pub const ContourArc = struct {
+    center: [2]f64,
+    radius: f64,
+    ccw: bool,
+    angle: f64,
+};
+
 pub const Contours = struct {
     points: [][2]f64,
     starts: []u32,
+    /// Per edge (from point `i` to the next of its contour), the arc it runs along, when the
+    /// engine keeps arcs (`kernel.crossSectionOutlines` on the B-Rep engine); empty when
+    /// every edge is a chord.
+    arcs: []?ContourArc = &.{},
 
     pub fn count(self: Contours) usize {
         return self.starts.len - 1;
@@ -59,9 +72,16 @@ pub const Contours = struct {
         return self.points[self.starts[i]..self.starts[i + 1]];
     }
 
+    /// The arcs of contour `i`'s edges; empty when the engine keeps none.
+    pub fn arcsOf(self: Contours, i: usize) []const ?ContourArc {
+        if (self.arcs.len == 0) return &.{};
+        return self.arcs[self.starts[i]..self.starts[i + 1]];
+    }
+
     pub fn deinit(self: Contours, allocator: std.mem.Allocator) void {
         allocator.free(self.points);
         allocator.free(self.starts);
+        allocator.free(self.arcs);
     }
 };
 

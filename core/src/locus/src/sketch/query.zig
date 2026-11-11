@@ -1,5 +1,6 @@
 //! What a sketch answers (docs/architecture.md §7.5): its outlines as closed polylines at a
-//! `Resolution` (what SVG and DXF are made of), whether a point is in it (on its outline
+//! `Resolution` (the mesh engine's polygon: lofts and sweeps), or with their arcs kept exact
+//! (what SVG and DXF are made of), whether a point is in it (on its outline
 //! within a tolerance counts), and whether it is one convex outline. Its area and box are
 //! the measures every body has.
 
@@ -44,12 +45,67 @@ pub const Contours = struct {
 /// gets at `resolution` (`mesh/edges.zig`: the mesh engine's polygon), a line kept whole.
 /// Owned by `allocator`.
 pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.Resolution, diag: *Diagnostics) Error!Contours {
+    const out = try walk(allocator, sheet, resolution, false, diag);
+    allocator.free(out.arcs);
+    return .{ .points = out.points, .starts = out.starts };
+}
+
+/// An arc of an outline, exact: the edge from a point of the outline to the next runs
+/// along the circle about `c` of radius `r`, counter-clockwise when `ccw`, over `angle`
+/// radians (a half turn is exactly π: the edge's own range).
+pub const OutlineArc = struct {
+    c: Vec2,
+    r: f64,
+    ccw: bool,
+    angle: f64,
+};
+
+/// `Contours` whose arcs are kept: `arcs[i]` is the arc the edge from point `i` to the
+/// next of its contour runs along, null for a line's edge.
+pub const Outlines = struct {
+    points: []Vec2,
+    starts: []u32,
+    arcs: []?OutlineArc,
+
+    pub fn deinit(self: *Outlines, allocator: std.mem.Allocator) void {
+        allocator.free(self.points);
+        allocator.free(self.starts);
+        allocator.free(self.arcs);
+        self.* = undefined;
+    }
+
+    pub fn count(self: Outlines) usize {
+        return self.starts.len - 1;
+    }
+
+    pub fn contour(self: Outlines, i: usize) []const Vec2 {
+        return self.points[self.starts[i]..self.starts[i + 1]];
+    }
+
+    pub fn arcsOf(self: Outlines, i: usize) []const ?OutlineArc {
+        return self.arcs[self.starts[i]..self.starts[i + 1]];
+    }
+};
+
+/// The sketch's loops with their arcs exact (what a drawing writes: SVG's arcs, DXF's
+/// bulges), a line an edge of its own, any other curve's edge its polyline at
+/// `resolution` as in `contours`. Owned by `allocator`.
+pub fn outlines(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.Resolution, diag: *Diagnostics) Error!Outlines {
+    return walk(allocator, sheet, resolution, true, diag);
+}
+
+/// The loops of `sheet` in order, each coedge's points the coedge's way with its last left
+/// to the next coedge; an arc's edge is its two ends with the arc when `keep_arcs`, its
+/// chords on the circle grid otherwise.
+fn walk(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.Resolution, keep_arcs: bool, diag: *Diagnostics) Error!Outlines {
     // The edges' polylines are the mesh's (mesh/edges.zig): a circle's grid from angle 0,
     // so a contour is the outline the tessellation has, and the mesh engine's polygon
     var edge_points = try edges.discretize(allocator, sheet, resolution, diag);
     defer edge_points.deinit(allocator);
     var points = std.ArrayList(Vec2).empty;
     defer points.deinit(allocator);
+    var arcs = std.ArrayList(?OutlineArc).empty;
+    defer arcs.deinit(allocator);
     var starts = std.ArrayList(u32).empty;
     defer starts.deinit(allocator);
     var shells = traverse.Shells.init(sheet);
@@ -62,11 +118,22 @@ pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: to
                 var it = traverse.Coedges.init(sheet, l);
                 while (it.next() catch return corrupt(diag)) |c| {
                     const coedge = sheet.coedge(c);
+                    const e = sheet.edge(coedge.edge);
+                    const arc: ?OutlineArc = if (keep_arcs) switch (sheet.geometry.curve(e.curve)) {
+                        .circle => |circle| .{ .c = flat(circle.c), .r = circle.r, .ccw = (circle.normal()[2] > 0) == coedge.same_sense, .angle = e.t1 - e.t0 },
+                        else => null,
+                    } else null;
+                    if (arc != null) {
+                        try points.append(allocator, flat(sheet.point(sheet.coedgeStart(c))));
+                        try arcs.append(allocator, arc);
+                        continue;
+                    }
                     const pts = edge_points.of(coedge.edge);
                     // The edge's points the coedge's way, its last left to the next coedge
                     for (0..pts.len - 1) |step| {
                         const k = if (coedge.same_sense) step else pts.len - 1 - step;
                         try points.append(allocator, flat(pts[k]));
+                        try arcs.append(allocator, null);
                     }
                 }
             }
@@ -75,7 +142,9 @@ pub fn contours(allocator: std.mem.Allocator, sheet: *const Body, resolution: to
     try starts.append(allocator, @intCast(points.items.len));
     const owned_points = try points.toOwnedSlice(allocator);
     errdefer allocator.free(owned_points);
-    return .{ .points = owned_points, .starts = try starts.toOwnedSlice(allocator) };
+    const owned_starts = try starts.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_starts);
+    return .{ .points = owned_points, .starts = owned_starts, .arcs = try arcs.toOwnedSlice(allocator) };
 }
 
 /// How far below a whole number a share of segments may fall and still round down.

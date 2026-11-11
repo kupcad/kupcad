@@ -192,13 +192,14 @@ fn pathShapeOf(allocator: std.mem.Allocator, vm: *const VM, path_val: value.Valu
 }
 
 /// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
-/// the shape's from here on, freed on failure) and `material`: the kernel's contours, with
-/// the chords of the curves the sketch's graph defines turned back into them.
+/// the shape's from here on, freed on failure) and `material`: the kernel's outlines, the
+/// arcs it keeps as they are and the chords of the curves the sketch's graph defines
+/// turned back into them.
 fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]const u8, material: ?MaterialDef) !drawing_mod.Shape {
     errdefer if (name) |n| allocator.free(n);
     const handle = try vm.ensureConcreteCrossSection(sketch);
     try vm.requireFeature(handle.engine, .sketch_contours);
-    const contours = kernel.crossSectionContours(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
+    const contours = kernel.crossSectionOutlines(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
     defer contours.deinit(allocator);
     const node = sketch.asCrossSection().dag_idx;
     var curves = try sketch_curves.collect(allocator, &vm.dag_builder, node);

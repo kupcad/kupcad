@@ -9,7 +9,8 @@
 //! the pieces of a cubic a boolean cut short: a part of a cubic isn't the cubic. A point
 //! no curve has that lies on the line between its neighbours (a slice crosses a cylinder's
 //! side triangles mid-chord; a boolean leaves one where edges met) is dropped first: it is
-//! no corner, and would cut a chord in two.
+//! no corner, and would cut a chord in two. An edge the engine itself keeps as an arc (the
+//! B-Rep engine's, `kernel.crossSectionOutlines`) is that arc, no matching needed.
 
 const std = @import("std");
 const affine2 = @import("../../core/affine2.zig");
@@ -32,11 +33,13 @@ const Piece = union(enum) {
     /// A piece of a cubic between its points `index` and `index + 1`, run from the first
     /// when `forward`.
     cubic: struct { cubic: u32, index: u32, forward: bool },
+    /// An arc the engine kept, whole.
+    arc: geom.ContourArc,
 };
 
-/// The contours of a sketch as outlines of lines, arcs and cubics, each edge between two
-/// neighbouring points (within `tolerance`) of a curve in `curves` a piece of it. Owned by
-/// `allocator`.
+/// The contours of a sketch as outlines of lines, arcs and cubics: an edge the contours
+/// carry as an arc is one, and each other edge between two neighbouring points (within
+/// `tolerance`) of a curve in `curves` is a piece of it. Owned by `allocator`.
 pub fn outlinesOf(allocator: std.mem.Allocator, contours: geom.Contours, curves: *const Curves, tolerance: f64) ![]drawing.Outline {
     var index = try PointIndex.init(allocator, curves, tolerance);
     defer index.deinit();
@@ -47,31 +50,57 @@ pub fn outlinesOf(allocator: std.mem.Allocator, contours: geom.Contours, curves:
     }
     try outlines.ensureTotalCapacity(allocator, contours.count());
     for (0..contours.count()) |ci| {
-        const points = try withoutCollinear(allocator, contours.contour(ci), &index);
-        defer allocator.free(points);
+        var kept = try withoutCollinear(allocator, contours.contour(ci), contours.arcsOf(ci), &index);
+        defer kept.deinit(allocator);
+        const points = kept.points;
         if (points.len == 0) continue;
         const pieces = try allocator.alloc(?Piece, points.len);
         defer allocator.free(pieces);
-        for (points, pieces, 0..) |p, *piece, i| piece.* = index.pieceOf(p, points[(i + 1) % points.len]);
+        for (points, pieces, 0..) |p, *piece, i| {
+            piece.* = if (kept.arcOf(i)) |arc| .{ .arc = arc } else index.pieceOf(p, points[(i + 1) % points.len]);
+        }
         outlines.appendAssumeCapacity(try outlineOf(allocator, points, pieces, curves));
     }
     return outlines.toOwnedSlice(allocator);
 }
 
+/// A contour's points kept as corners, with the arcs of their edges (empty when the
+/// contour carried none).
+const Kept = struct {
+    points: [][2]f64,
+    arcs: []?geom.ContourArc,
+
+    /// The arc of the edge from point `i` to the next, if the engine kept it.
+    fn arcOf(self: Kept, i: usize) ?geom.ContourArc {
+        return if (self.arcs.len == 0) null else self.arcs[i];
+    }
+
+    fn deinit(self: *Kept, allocator: std.mem.Allocator) void {
+        allocator.free(self.points);
+        allocator.free(self.arcs);
+    }
+};
+
 /// `contour` without the points that lie on the segment between their neighbours (within
-/// the index's tolerance of it) and are no curve's, as a closed polygon. Owned by
-/// `allocator`.
-fn withoutCollinear(allocator: std.mem.Allocator, contour: []const [2]f64, index: *const PointIndex) ![][2]f64 {
+/// the index's tolerance of it), are no curve's and end no arc of `arcs` (per edge, or
+/// none), as a closed polygon. Owned by `allocator`.
+fn withoutCollinear(allocator: std.mem.Allocator, contour: []const [2]f64, arcs: []const ?geom.ContourArc, index: *const PointIndex) !Kept {
     var kept: std.ArrayList([2]f64) = .empty;
     errdefer kept.deinit(allocator);
+    var kept_arcs: std.ArrayList(?geom.ContourArc) = .empty;
+    errdefer kept_arcs.deinit(allocator);
     const n = contour.len;
     for (contour, 0..) |p, i| {
         const before = contour[(i + n - 1) % n];
         const after = contour[(i + 1) % n];
-        if (n >= 3 and !index.has(p) and !std.meta.eql(before, after) and affine2.segmentDistanceSq(before, after, p) <= index.tolerance * index.tolerance) continue;
+        const ends_arc = arcs.len > 0 and (arcs[i] != null or arcs[(i + n - 1) % n] != null);
+        if (n >= 3 and !ends_arc and !index.has(p) and !std.meta.eql(before, after) and affine2.segmentDistanceSq(before, after, p) <= index.tolerance * index.tolerance) continue;
         try kept.append(allocator, p);
+        if (arcs.len > 0) try kept_arcs.append(allocator, arcs[i]);
     }
-    return kept.toOwnedSlice(allocator);
+    const points = try kept.toOwnedSlice(allocator);
+    errdefer allocator.free(points);
+    return .{ .points = points, .arcs = try kept_arcs.toOwnedSlice(allocator) };
 }
 
 /// `points` as an outline, the edges whose pieces lie on one circle in a row merged into
@@ -118,6 +147,7 @@ fn outlineOf(allocator: std.mem.Allocator, points: []const [2]f64, pieces: []con
                     .angle = drawing.sweep(circle.center, points[at], end, chord.ccw),
                 });
             },
+            .arc => |arc| try edges.append(allocator, .{ .to = end, .arc = .{ .center = arc.center, .radius = arc.radius }, .ccw = arc.ccw, .angle = arc.angle }),
             .cubic => |c| {
                 const cubic = curves.cubics[c.cubic];
                 if (run == cubic.points.len - 1) {
@@ -133,11 +163,12 @@ fn outlineOf(allocator: std.mem.Allocator, points: []const [2]f64, pieces: []con
 }
 
 /// Whether `next` carries on `prev`: a chord of the same circle, the same way round, or
-/// the next piece of the same cubic, the same way along.
+/// the next piece of the same cubic, the same way along. A kept arc is whole on its own.
 fn continues(prev: ?Piece, next: ?Piece) bool {
     const a = prev orelse return false;
     const b = next orelse return false;
     return switch (a) {
+        .arc => false,
         .chord => |chord| b == .chord and chord.circle == b.chord.circle and chord.ccw == b.chord.ccw,
         .cubic => |cubic| b == .cubic and cubic.cubic == b.cubic.cubic and cubic.forward == b.cubic.forward and
             (if (cubic.forward) b.cubic.index == cubic.index + 1 else cubic.index > 0 and b.cubic.index == cubic.index - 1),

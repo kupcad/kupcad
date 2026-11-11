@@ -70,7 +70,8 @@ pub const Feature = enum {
     genus,
     bounding_box,
     sketch_measure,
-    /// A sketch's outlines as polylines (crossSectionContours), what a drawing is made of.
+    /// A sketch's outlines as polylines (crossSectionContours: lofts, sweeps) and with its
+    /// arcs (crossSectionOutlines: what a drawing is made of).
     sketch_contours,
     /// Whether a point is in a sketch (Sketch#contains?), exact.
     sketch_contains,
@@ -363,6 +364,13 @@ pub inline fn crossSectionNumVerts(handle: geom.CrossSectionHandle) usize {
 /// null when the engine can't give them (supports(engine, .sketch_contours)).
 pub inline fn crossSectionContours(allocator: std.mem.Allocator, handle: geom.CrossSectionHandle) ?geom.Contours {
     return dispatch("crossSectionContoursFn", handle, .{allocator});
+}
+
+/// A sketch's outlines for a drawing: as `crossSectionContours`, but an arc the engine keeps
+/// exact (the B-Rep engine's) is one edge with its circle in `arcs`; the mesh engine's are
+/// its chords, as it was given them. Same feature.
+pub inline fn crossSectionOutlines(allocator: std.mem.Allocator, handle: geom.CrossSectionHandle) ?geom.Contours {
+    return dispatch("crossSectionOutlinesFn", handle, .{allocator});
 }
 
 /// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).
