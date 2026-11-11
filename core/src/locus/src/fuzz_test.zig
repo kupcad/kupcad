@@ -73,8 +73,6 @@ const PLAIN_RUN_SEED = 0x2d_c4a1;
 const PLAIN_RUN_CURVES = 2000;
 /// How many of the plain run's chains must reach their checks: the invariants are tested
 /// on the chains that run, so a share of refusals above this would test less than the
-/// Curves the chord target's plain run checks.
-const PLAIN_RUN_CURVES = 2000;
 /// run count says (the thesis's strict model, research/li-chen-egc.md §4). The run drew
 /// its chains from a Smith over random bytes until 2026-11-11, which takes each value as
 /// a little-endian u64 and falls back to the range's least when it is out of it, as
@@ -146,10 +144,6 @@ fn freeFormChords(_: void, smith: *Smith) anyerror!void {
 fn checkFreeFormChords(smith: anytype) anyerror!void {
     const resolution: tolerance.Resolution = if (smith.valueRangeAtMost(u8, 0, 1) == 0) .{} else .{ .segments = smith.valueRangeAtMost(u32, 3, 360) };
     var points: [10]vec.Vec4 = undefined;
-    try checkFreeFormChords(smith);
-}
-
-fn checkFreeFormChords(smith: anytype) anyerror!void {
     var knots: [24]f64 = undefined;
     var curve: curves.Curve = undefined;
     var t0: f64 = undefined;
