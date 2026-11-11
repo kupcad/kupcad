@@ -12,7 +12,11 @@ const primitives = @import("primitives.zig");
 const hull = @import("hull.zig");
 const bbox = @import("../measure/bbox.zig");
 const body_json = @import("../io/body_json.zig");
+const mass = @import("../measure/mass.zig");
+const trig = @import("../math/trig.zig");
 const Vec3 = vec.Vec3;
+const Vec2 = vec.Vec2;
+const PI = std.math.pi;
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -318,4 +322,104 @@ test "hull: a cube's corners with interior points give the cube; two cubes give 
     // Coplanar or too few points
     try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 1, 1, 0 } }, &diag));
     try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, pts.items[0..3], &diag));
+}
+
+fn areaOf(body: *const Body) !f64 {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return (try mass.mass(body, .{}, &diag)).area;
+}
+
+test "outlines: a rounded rectangle, a stadium, a circle as two arcs and a major arc, exact; refusals" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // A 4 by 2 rectangle with its corners rounded to a half, counter-clockwise from the
+    // bottom edge: area 8 − (4 − π) r²
+    const Arc = primitives.OutlineArc;
+    const rounded = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0.5, 0 }, .b = .{ 3.5, 0 } },
+        .{ .a = .{ 3.5, 0 }, .b = .{ 4, 0.5 }, .arc = Arc{ .c = .{ 3.5, 0.5 }, .r = 0.5, .ccw = true } },
+        .{ .a = .{ 4, 0.5 }, .b = .{ 4, 1.5 } },
+        .{ .a = .{ 4, 1.5 }, .b = .{ 3.5, 2 }, .arc = Arc{ .c = .{ 3.5, 1.5 }, .r = 0.5, .ccw = true } },
+        .{ .a = .{ 3.5, 2 }, .b = .{ 0.5, 2 } },
+        .{ .a = .{ 0.5, 2 }, .b = .{ 0, 1.5 }, .arc = Arc{ .c = .{ 0.5, 1.5 }, .r = 0.5, .ccw = true } },
+        .{ .a = .{ 0, 1.5 }, .b = .{ 0, 0.5 } },
+        .{ .a = .{ 0, 0.5 }, .b = .{ 0.5, 0 }, .arc = Arc{ .c = .{ 0.5, 0.5 }, .r = 0.5, .ccw = true } },
+    };
+    var rect = try primitives.outlines(testing.allocator, tol, &.{&rounded}, &diag);
+    defer rect.deinit();
+    try expectCounts(&rect, 8, 8, 1, 1);
+    try expectValid(&rect);
+    try testing.expectApproxEqRel(8 - (4 - PI) * 0.25, try areaOf(&rect), 1e-12);
+    const box = try bbox.bodyBounds(&rect);
+    try expectVec(.{ 0, 0, 0 }, box.min, 1e-12);
+    try expectVec(.{ 4, 2, 0 }, box.max, 1e-12);
+    // A stadium: a 4 by 2 rectangle with half-discs at its ends, given clockwise (the
+    // even-odd rule fills it all the same): area 8 + π
+    const stadium = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 0 }, .b = .{ 0, 2 }, .arc = Arc{ .c = .{ 0, 1 }, .r = 1, .ccw = false } },
+        .{ .a = .{ 0, 2 }, .b = .{ 4, 2 } },
+        .{ .a = .{ 4, 2 }, .b = .{ 4, 0 }, .arc = Arc{ .c = .{ 4, 1 }, .r = 1, .ccw = false } },
+        .{ .a = .{ 4, 0 }, .b = .{ 0, 0 } },
+    };
+    var slot = try primitives.outlines(testing.allocator, tol, &.{&stadium}, &diag);
+    defer slot.deinit();
+    try expectCounts(&slot, 4, 4, 1, 1);
+    try expectValid(&slot);
+    try testing.expectApproxEqRel(8 + PI, try areaOf(&slot), 1e-12);
+    // A full circle as two arcs: the circle primitive's area and counts
+    const halves = [_]primitives.OutlineEdge{
+        .{ .a = .{ 3, 0 }, .b = .{ -3, 0 }, .arc = Arc{ .c = .{ 0, 0 }, .r = 3, .ccw = true } },
+        .{ .a = .{ -3, 0 }, .b = .{ 3, 0 }, .arc = Arc{ .c = .{ 0, 0 }, .r = 3, .ccw = true } },
+    };
+    var disc = try primitives.outlines(testing.allocator, tol, &.{&halves}, &diag);
+    defer disc.deinit();
+    try expectCounts(&disc, 2, 2, 1, 1);
+    try expectValid(&disc);
+    try testing.expectApproxEqRel(9 * PI, try areaOf(&disc), 1e-12);
+    // A chord and the arc about (1, −0.5) of radius √1.25 between its ends: the minor arc
+    // (counter-clockwise, above the chord) is the segment, the major arc (clockwise, round
+    // below) is the disc less that segment: ½ r² (θ − sin θ), θ the chord's angle
+    const r2 = 1.25;
+    const theta = 2 * trig.atan2(1.0, 0.5);
+    const segment = 0.5 * r2 * (theta - @sin(theta));
+    const minor = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 0 }, .b = .{ 2, 0 } },
+        .{ .a = .{ 2, 0 }, .b = .{ 0, 0 }, .arc = Arc{ .c = .{ 1, -0.5 }, .r = @sqrt(r2), .ccw = true } },
+    };
+    var bite = try primitives.outlines(testing.allocator, tol, &.{&minor}, &diag);
+    defer bite.deinit();
+    try expectValid(&bite);
+    try testing.expectApproxEqRel(segment, try areaOf(&bite), 1e-9);
+    const major = [_]primitives.OutlineEdge{
+        .{ .a = .{ 0, 0 }, .b = .{ 2, 0 } },
+        .{ .a = .{ 2, 0 }, .b = .{ 0, 0 }, .arc = Arc{ .c = .{ 1, -0.5 }, .r = @sqrt(r2), .ccw = false } },
+    };
+    var bitten = try primitives.outlines(testing.allocator, tol, &.{&major}, &diag);
+    defer bitten.deinit();
+    try expectValid(&bitten);
+    try testing.expectApproxEqRel(PI * r2 - segment, try areaOf(&bitten), 1e-9);
+    // A hole: the stadium inside a big square
+    const frame = [_]primitives.OutlineEdge{
+        .{ .a = .{ -5, -5 }, .b = .{ 9, -5 } },
+        .{ .a = .{ 9, -5 }, .b = .{ 9, 7 } },
+        .{ .a = .{ 9, 7 }, .b = .{ -5, 7 } },
+        .{ .a = .{ -5, 7 }, .b = .{ -5, -5 } },
+    };
+    var framed = try primitives.outlines(testing.allocator, tol, &.{ &frame, &stadium }, &diag);
+    defer framed.deinit();
+    try expectCounts(&framed, 8, 8, 1, 2);
+    try expectValid(&framed);
+    try testing.expectApproxEqRel(14 * 12 - (8 + PI), try areaOf(&framed), 1e-12);
+    // Refusals: an edge ending off the next one's start, an arc's end off its circle, a
+    // radius that is not positive, outlines of no area
+    const unchained = [_]primitives.OutlineEdge{ .{ .a = .{ 0, 0 }, .b = .{ 1, 0 } }, .{ .a = .{ 2, 0 }, .b = .{ 0, 1 } }, .{ .a = .{ 0, 1 }, .b = .{ 0, 0 } } };
+    try testing.expectError(error.InvalidInput, primitives.outlines(testing.allocator, tol, &.{&unchained}, &diag));
+    const off_circle = [_]primitives.OutlineEdge{ .{ .a = .{ 0, 0 }, .b = .{ 2, 0 } }, .{ .a = .{ 2, 0 }, .b = .{ 0, 0 }, .arc = Arc{ .c = .{ 1, 0 }, .r = 0.9, .ccw = true } } };
+    try testing.expectError(error.InvalidInput, primitives.outlines(testing.allocator, tol, &.{&off_circle}, &diag));
+    const no_radius = [_]primitives.OutlineEdge{ .{ .a = .{ 0, 0 }, .b = .{ 2, 0 } }, .{ .a = .{ 2, 0 }, .b = .{ 0, 0 }, .arc = Arc{ .c = .{ 1, 0 }, .r = 0, .ccw = true } } };
+    try testing.expectError(error.InvalidInput, primitives.outlines(testing.allocator, tol, &.{&no_radius}, &diag));
+    const flat = [_]primitives.OutlineEdge{ .{ .a = .{ 0, 0 }, .b = .{ 2, 0 } }, .{ .a = .{ 2, 0 }, .b = .{ 0, 0 } } };
+    try testing.expectError(error.Degenerate, primitives.outlines(testing.allocator, tol, &.{&flat}, &diag));
+    try testing.expectError(error.InvalidInput, primitives.outlines(testing.allocator, tol, &.{}, &diag));
 }

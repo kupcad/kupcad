@@ -32,6 +32,10 @@ const tol = tolerance.Tolerance.fromZone(1e-5);
 const MAX_JSON_BYTES = 64 * 1024;
 /// The grid the rings' points lie on: integers in [0, GRID], so points coincide often.
 const GRID: i32 = 6;
+/// One ring edge in this many is an arc, bulging a share of its half-chord to either side
+/// (so arcs are tangent to, cross and nest in one another and the lines often).
+const ARC_ONE_IN = 4;
+const BULGES = [_]f64{ -1, -0.5, 0.5, 1 };
 const MAX_RINGS = 3;
 const MIN_POINTS = 3;
 const MAX_POINTS = 8;
@@ -229,26 +233,44 @@ fn clean(err: anyerror) anyerror!Outcome {
 /// error, which is no failure but checks nothing further).
 const Outcome = enum { checked, refused };
 
-/// A sheet from rings of grid points by the even-odd rule, or null when the rings make no
-/// region (a clean refusal). The rings are logged.
+/// A sheet from rings of grid points, some of their edges arcs, by the even-odd rule, or
+/// null when the rings make no region (a clean refusal). The rings are logged, an arc as
+/// its bulge after the point it leaves (`~0.5` or `~-1`, clockwise with a trailing `c`).
 fn sheet(smith: anytype, log: *Log, diag: *Diagnostics) !?Body {
     const ring_count = smith.valueRangeAtMost(u8, 1, MAX_RINGS);
-    var points: [MAX_RINGS * MAX_POINTS]Vec2 = undefined;
-    var rings: [MAX_RINGS][]const Vec2 = undefined;
+    var points: [MAX_POINTS]Vec2 = undefined;
+    var ring_edges: [MAX_RINGS * MAX_POINTS]primitives.OutlineEdge = undefined;
+    var rings: [MAX_RINGS][]const primitives.OutlineEdge = undefined;
     var used: usize = 0;
     try log.add("sheet of {d} rings:", .{ring_count});
     for (0..ring_count) |r| {
         const n = smith.valueRangeAtMost(u8, MIN_POINTS, MAX_POINTS);
         for (0..n) |k| {
-            points[used + k] = .{ @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)), @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)) };
-            try log.add(" ({d}, {d})", .{ points[used + k][0], points[used + k][1] });
+            points[k] = .{ @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)), @floatFromInt(smith.valueRangeAtMost(i32, 0, GRID)) };
         }
-        rings[r] = points[used .. used + n];
+        for (0..n) |k| {
+            const a = points[k];
+            const b = points[(k + 1) % n];
+            var edge: primitives.OutlineEdge = .{ .a = a, .b = b };
+            try log.add(" ({d}, {d})", .{ a[0], a[1] });
+            if (smith.valueRangeAtMost(u8, 1, ARC_ONE_IN) == 1 and (a[0] != b[0] or a[1] != b[1])) {
+                // The circle through both ends whose centre is a share of the half-chord
+                // off the chord's middle, to the left when the bulge is positive
+                const bulge = BULGES[smith.index(BULGES.len)];
+                const ccw = smith.valueRangeAtMost(u8, 0, 1) == 1;
+                const half = vec.scale2(vec.sub2(b, a), 0.5);
+                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+                edge.arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = ccw };
+                try log.add("~{d}{s}", .{ bulge, if (ccw) "" else "c" });
+            }
+            ring_edges[used + k] = edge;
+        }
+        rings[r] = ring_edges[used .. used + n];
         used += n;
         try log.add(";", .{});
     }
     try log.add("\n", .{});
-    return primitives.polygonsEvenOdd(testing.allocator, tol, rings[0..ring_count], diag) catch |err| {
+    return primitives.outlines(testing.allocator, tol, rings[0..ring_count], diag) catch |err| {
         _ = try clean(err);
         return null;
     };

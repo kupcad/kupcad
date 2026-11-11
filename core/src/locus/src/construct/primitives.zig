@@ -20,6 +20,7 @@ const check = @import("../topology/check.zig");
 const Interner = @import("../spatial/intern.zig").Interner;
 const sew = @import("sew.zig");
 const sketch_boolean = @import("../sketch/boolean.zig");
+const overlay = @import("../sketch/overlay.zig");
 const Body = body_mod.Body;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
@@ -477,6 +478,44 @@ pub fn polygonsEvenOdd(allocator: std.mem.Allocator, tol: Tolerance, contours: [
     errdefer sheet.deinit();
     // A region of no area is no polygon (a contour along a line, or outlines cancelling)
     if (sheet.isEmpty()) return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the polygon's area" });
+    return sheet;
+}
+
+/// An edge of an outline for `outlines`: from `a` to `b`, straight, or along the circle of
+/// `arc` (its centre and radius; counter-clockwise about the centre when `ccw`).
+pub const OutlineEdge = overlay.InputEdge;
+pub const OutlineArc = overlay.Arc;
+
+/// A sheet body on `z = 0` filled by the even-odd rule from closed outlines of lines and
+/// arcs: a closed path, a rectangle with rounded corners, a polygon with eased corners,
+/// exact. An outline's edges run head to tail, each ending within the zone of where the
+/// next starts, and an arc's ends lie on its circle within the zone; a full circle is two
+/// arcs. Which way an outline runs does not matter (the even-odd rule: an outline inside
+/// another is a hole, a self-crossing one fills both lobes). Refused with a finding when
+/// an edge is unchained, an arc's end is off its circle, a radius is not positive, or the
+/// outlines enclose no area.
+pub fn outlines(allocator: std.mem.Allocator, tol: Tolerance, contours: []const []const OutlineEdge, diag: *Diagnostics) Error!Body {
+    try diagnostics.input.nonEmpty(diag, "outlines", contours.len);
+    for (contours) |c| {
+        try diagnostics.input.nonEmpty(diag, "an outline", c.len);
+        for (c, 0..) |e, i| {
+            for ([_]f64{ e.a[0], e.a[1], e.b[0], e.b[1] }) |x| try diagnostics.input.finite(diag, "a point", x);
+            if (e.arc) |arc| {
+                try diagnostics.input.finite(diag, "an arc's centre", arc.c[0]);
+                try diagnostics.input.finite(diag, "an arc's centre", arc.c[1]);
+                try diagnostics.input.positive(diag, "an arc's radius", arc.r);
+                for ([_]Vec2{ e.a, e.b }) |p| {
+                    const off = @abs(vec.distance2(p, arc.c) - arc.r);
+                    if (off > tol.zone) return diag.fail(error.InvalidInput, .{ .code = .vertex_off_curve, .entity = .of(.edge, i), .label = "an arc's end off its circle", .measured = off, .threshold = tol.zone });
+                }
+            }
+            const gap = vec.distance2(e.b, c[(i + 1) % c.len].a);
+            if (gap > tol.zone) return diag.fail(error.InvalidInput, .{ .code = .loop_not_connected, .entity = .of(.edge, i), .label = "an outline's edge ends off the next one's start", .measured = gap, .threshold = tol.zone });
+        }
+    }
+    var sheet = try sketch_boolean.evenOddEdges(allocator, tol, contours, diag);
+    errdefer sheet.deinit();
+    if (sheet.isEmpty()) return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the outlines' area" });
     return sheet;
 }
 

@@ -83,11 +83,29 @@ pub fn evenOdd(allocator: std.mem.Allocator, tol: Tolerance, outlines: []const [
     for (outlines) |outline| {
         for (outline, 0..) |p, i| o.addEdge(.{ .a = p, .b = outline[(i + 1) % outline.len] }) catch |e| return mapError(diag, e);
     }
+    return evenOddFill(allocator, tol, &o, diag);
+}
+
+/// The region closed outlines of lines and arcs (`overlay.InputEdge`, each outline's edges
+/// head to tail) fill by the even-odd rule, as a sheet: `evenOdd` with arcs (a closed path,
+/// a rounded rectangle). An outline's direction does not matter.
+pub fn evenOddEdges(allocator: std.mem.Allocator, tol: Tolerance, outlines: []const []const overlay_mod.InputEdge, diag: *Diagnostics) Error!Body {
+    var o = Overlay.init(allocator, tol);
+    defer o.deinit();
+    _ = o.addInput() catch |e| return mapError(diag, e);
+    for (outlines) |outline| {
+        for (outline) |edge| o.addEdge(edge) catch |e| return mapError(diag, e);
+    }
+    return evenOddFill(allocator, tol, &o, diag);
+}
+
+/// The faces of the one input's overlay with an odd winding, as a sheet.
+fn evenOddFill(allocator: std.mem.Allocator, tol: Tolerance, o: *Overlay, diag: *Diagnostics) Error!Body {
     o.run() catch |e| return mapError(diag, e);
     const keep = try allocator.alloc(bool, o.faces.items.len);
     defer allocator.free(keep);
     for (keep, 0..) |*k, f| k.* = @mod(o.windingOf(@intCast(f), 0), 2) != 0;
-    return build(allocator, tol, &o, keep, diag);
+    return build(allocator, tol, o, keep, diag);
 }
 
 /// The sheet's loops as the overlay's current input: each coedge an edge from its start to
