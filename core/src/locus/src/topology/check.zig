@@ -2,8 +2,11 @@
 //! the findings, in the order of the rules, stopping at the first structural failure so no
 //! geometric rule reads a corrupt graph. Level 0: structural; 1: and orientation and
 //! geometric; 2: and the global rules (holes inside their outer loops, the pcurve rules
-//! at nine samples, redundant topology as warnings). Every test ends with it; every
-//! operation's result passes it or the operation fails with the finding.
+//! at nine samples, redundant topology and singular vertices as warnings). From level 1
+//! the report grades every shell in the vocabulary the mesh validator uses too
+//! (`condition.zig`: irregular < regular < oriented < closed, and singular vertices).
+//! Every test ends with it; every operation's result passes it or the operation fails
+//! with the finding.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -13,6 +16,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("types.zig");
 const body_mod = @import("body.zig");
 const traverse = @import("traverse.zig");
+const condition = @import("condition.zig");
 const Body = body_mod.Body;
 const Finding = diagnostics.Finding;
 const EntityRef = diagnostics.EntityRef;
@@ -32,12 +36,16 @@ pub const Rule = diagnostics.Code;
 
 pub const Level = enum(u8) { structural = 0, geometric = 1, global = 2 };
 
-/// The findings of a run; empty for a valid body.
+pub const ShellGrade = condition.ShellGrade;
+
+/// The findings of a run; empty for a valid body. From level 1, every shell's grade.
 pub const Report = struct {
     findings: std.ArrayList(Finding) = .empty,
+    shells: std.ArrayList(ShellGrade) = .empty,
 
     pub fn deinit(self: *Report, allocator: std.mem.Allocator) void {
         self.findings.deinit(allocator);
+        self.shells.deinit(allocator);
         self.* = undefined;
     }
 
@@ -321,6 +329,12 @@ const Checker = struct {
 
     fn orientation(self: *Checker) Error!void {
         const b = self.body;
+        // Every shell graded: what the edge rules below and the structural ones say in one
+        // word, and the singular vertices no edge rule sees
+        condition.ofBody(self.allocator, b, &self.report.shells) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Corrupt => return,
+        };
         // In a closed shell every edge has two coedges (the manifold condition); on a sheet
         // boundary edges have one
         var shells = traverse.Shells.init(b);
@@ -610,6 +624,12 @@ const Checker = struct {
     fn global(self: *Checker) Error!void {
         const b = self.body;
         try self.pcurveRules();
+        // A solid touching itself at a point: valid topology, worth a word (a sheet's
+        // regions touching at a corner are its own business)
+        for (self.report.shells.items) |sg| {
+            if (b.shell(sg.shell).kind == .sheet) continue;
+            if (sg.grade.first_singular) |v| try self.warn(.singular_vertex, .of(.vertex, v));
+        }
         var uv = std.ArrayList(Vec2).empty;
         defer uv.deinit(self.allocator);
         var xyz = std.ArrayList(Vec3).empty;

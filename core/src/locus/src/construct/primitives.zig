@@ -531,8 +531,10 @@ pub fn signedArea(points: []const Vec2) f64 {
 }
 
 /// A solid from triangles over `points` (each triangle's corners counter-clockwise seen
-/// from outside), coplanar triangles sharing one plane record: a closed triangulated
-/// polyhedron. Triangles that don't close a shell are `error.NotValid`.
+/// from outside), coplanar triangles sharing one plane record, a triangle facing against
+/// the record's normal taking the opposite sense (two parts touching across a plane): a
+/// closed triangulated polyhedron. Triangles that don't close a shell are
+/// `error.NotValid`.
 pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, triangles: []const [3]u32, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "points", points.len);
     try diagnostics.input.nonEmpty(diag, "triangles", triangles.len);
@@ -570,7 +572,10 @@ pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const 
             edges[f][k] = try b.straight(vertices[t[k]], vertices[t[(k + 1) % 3]]);
         }
         loops[f] = .{.{ .edges = &edges[f] }};
-        specs[f] = .{ .surface = try b.plane(frame), .loops = &loops[f], .uv_box = uv };
+        const surface = try b.plane(frame);
+        // The plane record is shared whichever way a coplanar triangle faces
+        const shared = b.body.geometry.planes.items[surface.index];
+        specs[f] = .{ .surface = surface, .same_sense = vec.dot(shared.normal(0, 0), n) > 0, .loops = &loops[f], .uv_box = uv };
     }
     // The plane a face was given has its own x; the UV box must be in that plane's frame
     for (specs) |*spec| {

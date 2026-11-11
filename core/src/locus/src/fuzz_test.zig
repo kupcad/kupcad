@@ -23,6 +23,8 @@ const query = @import("sketch/query.zig");
 const hull = @import("sketch/hull.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
+const validate = @import("mesh/validate.zig");
+const condition = @import("topology/condition.zig");
 const sweep = @import("construct/sweep.zig");
 const solid_query = struct {
     const FaceIndex = @import("query/index.zig").FaceIndex;
@@ -71,6 +73,8 @@ const PLAIN_RUN_SEED = 0x2d_c4a1;
 const PLAIN_RUN_CURVES = 2000;
 /// How many of the plain run's chains must reach their checks: the invariants are tested
 /// on the chains that run, so a share of refusals above this would test less than the
+/// Curves the chord target's plain run checks.
+const PLAIN_RUN_CURVES = 2000;
 /// run count says (the thesis's strict model, research/li-chen-egc.md §4). The run drew
 /// its chains from a Smith over random bytes until 2026-11-11, which takes each value as
 /// a little-endian u64 and falls back to the range's least when it is out of it, as
@@ -142,6 +146,10 @@ fn freeFormChords(_: void, smith: *Smith) anyerror!void {
 fn checkFreeFormChords(smith: anytype) anyerror!void {
     const resolution: tolerance.Resolution = if (smith.valueRangeAtMost(u8, 0, 1) == 0) .{} else .{ .segments = smith.valueRangeAtMost(u32, 3, 360) };
     var points: [10]vec.Vec4 = undefined;
+    try checkFreeFormChords(smith);
+}
+
+fn checkFreeFormChords(smith: anytype) anyerror!void {
     var knots: [24]f64 = undefined;
     var curve: curves.Curve = undefined;
     var t0: f64 = undefined;
@@ -451,23 +459,51 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
         std.debug.print("\n{f}\n", .{diag});
     }
     for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
-    var directed: std.AutoHashMapUnmanaged([2]u32, void) = .empty;
-    defer directed.deinit(testing.allocator);
+    // Graded in the checker's words (mesh/validate.zig) against the solid's shells: every
+    // shell closed; a body that does not touch itself (no singular vertex) has a closed
+    // mesh with no singular vertex; one that does (regions of the sheet touching at a
+    // corner make solids touching along an edge: two edges of the body, one pair of mesh
+    // vertices used four times) shows it in its mesh, as a singular vertex or an
+    // irregular edge; and every mesh is watertight, each directed side matched by as many
+    // reverses, with nothing degenerate
+    const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
+    try testing.expectEqual(@as(u32, 0), verdict.degenerate_triangles);
+    var body_singular = false;
+    for (report.shells.items) |sg| {
+        try testing.expectEqual(condition.Condition.closed, sg.grade.condition);
+        body_singular = body_singular or sg.grade.singular_vertices > 0;
+    }
+    errdefer std.debug.print("mesh {s}, {d} singular; body singular {}\n", .{ verdict.grade.condition.word(), verdict.grade.singular_vertices, body_singular });
+    // A sliver no resolution the tessellator uses resolves (a face still reporting a
+    // pruned spike) encloses nothing in the mesh: its sides may coincide there
+    var sliver = false;
+    for (mesh.faces) |range| sliver = sliver or range.spikes_pruned;
+    if (sliver) {
+        // Watertight still, checked below
+    } else if (body_singular) {
+        try testing.expect(verdict.grade.singular_vertices > 0 or verdict.grade.condition == .irregular);
+    } else {
+        try testing.expect(verdict.grade.isManifoldClosed());
+    }
+    var sides: std.AutoHashMapUnmanaged([2]u32, i32) = .empty;
+    defer sides.deinit(testing.allocator);
+    for (mesh.triangles) |t| for (0..3) |k| {
+        const a = t[k];
+        const b = t[(k + 1) % 3];
+        const entry = try sides.getOrPut(testing.allocator, .{ @min(a, b), @max(a, b) });
+        if (!entry.found_existing) entry.value_ptr.* = 0;
+        entry.value_ptr.* += if (a < b) 1 else -1;
+    };
+    var balance = sides.valueIterator();
+    while (balance.next()) |count| try testing.expectEqual(@as(i32, 0), count.*);
     var volume: f64 = 0;
     for (mesh.triangles) |t| {
-        try testing.expect(t[0] != t[1] and t[1] != t[2] and t[0] != t[2]);
         const a = mesh.positions[t[0]];
         const b = mesh.positions[t[1]];
         const c = mesh.positions[t[2]];
         try testing.expect(vec.lengthSq(vec.cross(vec.sub(b, a), vec.sub(c, a))) > 0);
         volume += vec.dot(a, vec.cross(b, c)) / 6;
-        for (0..3) |i| {
-            const entry = try directed.getOrPut(testing.allocator, .{ t[i], t[(i + 1) % 3] });
-            try testing.expect(!entry.found_existing);
-        }
     }
-    var it = directed.keyIterator();
-    while (it.next()) |edge| try testing.expect(directed.contains(.{ edge[1], edge[0] }));
     // The exact volume within the chords' share (the mesh may have refined an arc's
     // chords where they would cross a neighbour, so it is held to the base grid's bound)
     // and the welded vertices' slack, as the sheet's area is (expectSound)

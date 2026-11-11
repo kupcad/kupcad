@@ -44,6 +44,7 @@ pub const topology = struct {
     pub const tags = @import("topology/tags.zig");
     pub const euler = @import("topology/euler.zig");
     pub const check = @import("topology/check.zig");
+    pub const condition = @import("topology/condition.zig");
 };
 pub const Body = topology.Body;
 /// The 2D kernel: the overlay engine (D9), what sketch booleans and offsets are made of.
@@ -68,6 +69,7 @@ pub const mesh = struct {
     pub const edges = @import("mesh/edges.zig");
     pub const chords = @import("mesh/chords.zig");
     pub const tessellate = @import("mesh/tessellate.zig");
+    pub const validate = @import("mesh/validate.zig");
 };
 /// Measures: bounding boxes (volume, area and genus in M1).
 pub const measure = struct {
@@ -116,6 +118,7 @@ test {
     _ = @import("topology/body_test.zig");
     _ = @import("topology/euler_test.zig");
     _ = @import("topology/check_test.zig");
+    _ = @import("topology/condition_test.zig");
     _ = @import("io/body_json_test.zig");
     _ = @import("construct/primitives_test.zig");
     _ = @import("spatial/bvh_test.zig");
@@ -132,6 +135,7 @@ test {
     _ = @import("sketch/query_test.zig");
     _ = @import("mesh/triangulate_test.zig");
     _ = @import("mesh/tessellate_test.zig");
+    _ = @import("mesh/validate_test.zig");
     _ = @import("mesh/chords_test.zig");
     _ = @import("math/poly_test.zig");
     _ = @import("query/raycast_test.zig");

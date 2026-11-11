@@ -425,3 +425,22 @@ test "outlines: a rounded rectangle, a stadium, a circle as two arcs and a major
     try testing.expectError(error.Degenerate, primitives.outlines(testing.allocator, tol, &.{&flat}, &diag));
     try testing.expectError(error.InvalidInput, primitives.outlines(testing.allocator, tol, &.{}, &diag));
 }
+
+test "polyhedron: two tetrahedra meeting at a vertex, a face of each on one plane facing opposite ways" {
+    // The plane record is shared by coplanar triangles; the one facing against its
+    // normal took its sense from it and its loop ran backwards (the checker's
+    // loop_winding), found when the shell grades were tested
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const pts = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 }, .{ -1, 0, 0 }, .{ 0, -1, 0 }, .{ 0, 0, -1 } };
+    const tris = [_][3]u32{
+        .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 0, 3, 2 }, .{ 1, 2, 3 },
+        .{ 0, 4, 5 }, .{ 0, 6, 4 }, .{ 0, 5, 6 }, .{ 4, 6, 5 },
+    };
+    var pair = try primitives.polyhedron(testing.allocator, tol, &pts, &tris, &diag);
+    defer pair.deinit();
+    var report = try check.run(testing.allocator, &pair, .geometric);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    try testing.expectApproxEqAbs(@as(f64, 2.0 / 6.0), (try mass.mass(&pair, .{}, &diag)).volume, 1e-12);
+}

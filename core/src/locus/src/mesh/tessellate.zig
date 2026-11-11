@@ -81,6 +81,11 @@ pub const FaceRange = struct {
     status: Status,
     /// Why the face `.failed`; null otherwise.
     reason: ?diagnostics.Code = null,
+    /// A loop of the face had a lens thinner than its chords (an arc's polyline fallen
+    /// onto another edge's), pruned from the polygon: its arcs are refined like a failed
+    /// face's, so this stays set only past `edges.MAX_DOUBLINGS` (a sliver no resolution
+    /// the tessellator uses resolves; on a solid, the mesh there encloses nothing).
+    spikes_pruned: bool = false,
 };
 
 /// An edge's polyline as mesh vertices: `edge_vertices[first..first + count]`, from its
@@ -146,7 +151,9 @@ pub fn tessellateWithin(allocator: std.mem.Allocator, body: *const Body, resolut
         var refined = false;
         if (round < edges_mod.MAX_DOUBLINGS) {
             for (mesh.faces) |range| {
-                if (range.status == .failed and try doubleArcs(body, range.face, doublings, diag)) refined = true;
+                // A failed face, or one with a lens thinner than its chords (on a solid its
+                // two sides would collapse onto one quad): its arcs' grids doubled
+                if ((range.status == .failed or range.spikes_pruned) and try doubleArcs(body, range.face, doublings, diag)) refined = true;
             }
         }
         if (!refined) {
@@ -211,6 +218,8 @@ const Builder = struct {
     /// The current face's cap on interior points, and whether any cap cut the mesh.
     face_cap: usize = std.math.maxInt(usize),
     provisional: bool = false,
+    /// Whether the current face's rings had a spike pruned.
+    spiked: bool = false,
 
     fn deinit(self: *Builder) void {
         self.positions.deinit(self.allocator);
@@ -239,6 +248,7 @@ const Builder = struct {
         self.ring_uv.clearRetainingCapacity();
         self.ring_id.clearRetainingCapacity();
         self.starts.clearRetainingCapacity();
+        self.spiked = false;
         try self.starts.append(self.allocator, 0);
         var loops = traverse.Loops.init(body, f);
         while (loops.next() catch return corrupt(diag)) |l| {
@@ -268,8 +278,9 @@ const Builder = struct {
             // vertices, the arc's polyline fallen onto the line) is a spike of no area in
             // the polygon: pruned, its area within the chords' error. A loop that is all
             // spike at this resolution is left out
-            pruneSpikes(&self.ring_uv, &self.ring_id, ring_start);
+            if (pruneSpikes(&self.ring_uv, &self.ring_id, ring_start)) self.spiked = true;
             if (self.ring_uv.items.len - ring_start < 3) {
+                if (self.ring_uv.items.len > ring_start) self.spiked = true;
                 self.ring_uv.shrinkRetainingCapacity(ring_start);
                 self.ring_id.shrinkRetainingCapacity(ring_start);
                 continue;
@@ -506,7 +517,8 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
                 for (b.ring_uv.items) |uv| try b.scaled.append(allocator, .{ uv[0] * scale[0], uv[1] * scale[1] });
                 if (b.starts.items.len >= 2) try b.collectInterior(surface, face.uv_box, resolution, scale, diag);
             }
-            const range = try b.meshFace(f, kind, surface, scale, resolution, diag);
+            var range = try b.meshFace(f, kind, surface, scale, resolution, diag);
+            range.spikes_pruned = b.spiked;
             try b.faces.append(allocator, range);
         }
     }
@@ -660,14 +672,15 @@ fn segmentDistanceSq(a: Vec2, b: Vec2, p: Vec2) f64 {
 
 /// Removes every spike from the ring at `start`: a point whose neighbours are one mesh
 /// vertex goes with the step back, again until none is left (a spike of several steps
-/// shrinks from its tip).
-fn pruneSpikes(ring_uv: *std.ArrayList(Vec2), ring_id: *std.ArrayList(u32), start: usize) void {
+/// shrinks from its tip). Whether any was.
+fn pruneSpikes(ring_uv: *std.ArrayList(Vec2), ring_id: *std.ArrayList(u32), start: usize) bool {
+    var any = false;
     var pruned = true;
     while (pruned) {
         pruned = false;
         const ids = ring_id.items[start..];
         const n = ids.len;
-        if (n < 3) return;
+        if (n < 3) return any;
         var i: usize = 0;
         while (i < n) : (i += 1) {
             const before = ids[(i + n - 1) % n];
@@ -683,9 +696,11 @@ fn pruneSpikes(ring_uv: *std.ArrayList(Vec2), ring_id: *std.ArrayList(u32), star
             _ = ring_uv.orderedRemove(lo);
             _ = ring_id.orderedRemove(lo);
             pruned = true;
+            any = true;
             break;
         }
     }
+    return any;
 }
 
 fn corrupt(diag: *Diagnostics) Error {

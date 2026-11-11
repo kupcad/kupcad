@@ -17,6 +17,7 @@ const transform = @import("../construct/transform.zig");
 const test_bodies = @import("../construct/test_bodies.zig");
 const edges = @import("edges.zig");
 const tessellate = @import("tessellate.zig");
+const validate = @import("validate.zig");
 const boolean = @import("../sketch/boolean.zig");
 const mass = @import("../measure/mass.zig");
 const Vec2 = vec.Vec2;
@@ -55,16 +56,11 @@ fn signedVolume(mesh: Mesh) f64 {
 /// `CHECK_EDGE_PAIRS`: every directed edge of the triangles appears once, and its reverse
 /// once: the mesh is closed and consistently wound, with no vertex duplicated.
 fn expectEdgePairs(mesh: Mesh) !void {
-    var directed: std.AutoHashMapUnmanaged([2]u32, void) = .empty;
-    defer directed.deinit(testing.allocator);
-    for (mesh.triangles) |t| {
-        for (0..3) |i| {
-            const entry = try directed.getOrPut(testing.allocator, .{ t[i], t[(i + 1) % 3] });
-            try testing.expect(!entry.found_existing);
-        }
-    }
-    var it = directed.keyIterator();
-    while (it.next()) |edge| try testing.expect(directed.contains(.{ edge[1], edge[0] }));
+    // `CHECK_EDGE_PAIRS` in the checker's words: closed, no singular vertex, nothing
+    // degenerate (mesh/validate.zig)
+    const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
+    errdefer std.debug.print("mesh: {s}, {d} singular vertices, {d} degenerate triangles\n", .{ verdict.grade.condition.word(), verdict.grade.singular_vertices, verdict.degenerate_triangles });
+    try testing.expect(verdict.isManifoldClosed());
 }
 
 fn expectNoDegenerate(mesh: Mesh) !void {

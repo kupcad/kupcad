@@ -699,7 +699,10 @@ interval arithmetic in the mean-value form (`(P(t) − P(a))·n = (t − a)·P'(
 plain form cannot see the cancellation along the chord and never shrinks under the
 budget); a NURBS span's is the hull of the Bézier control points of that piece (A5.6,
 then de Casteljau), measured on the piece's two halves (an arc's apex control point stands
-twice its sagitta off the chord, the halves' once). A free-form face (an extrusion or a
+twice its sagitta off the chord, the halves' once). Every test leaves room for rounding:
+the budget less three times an a-priori bound on a point's evaluation error
+(`evalRounding`), so a curve too ill-conditioned to certify (weights decades apart) is
+refused, not certified by luck (fuzz find, 2026-11-12). A free-form face (an extrusion or a
 revolution of such a curve, a NURBS patch) gets the generator's certified chords and the
 patch's knots as its grid lines (a revolution's `u` the circle grid of its farthest
 radius), then is refined where a link's or a triangle's midpoint on the surface stands
@@ -839,7 +842,8 @@ other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ 
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs); hole loops inside their outer loop and not inside
 each other; the point at infinity is outside every outer shell; void shells inside the
-outer shell and not inside each other; and OpenGeometry's two pcurve rules
+outer shell and not inside each other; singular vertices of a solid (its faces about a
+vertex not one fan, a solid touching itself at a point) as warnings; and OpenGeometry's two pcurve rules
 (research/opengeometry.md §6, 2026-11-11): every coedge's pcurve, at nine parameters from
 the edge's start to its end, lifts onto the edge's curve within `approx` and lies in its
 face's UV box within the zone over the surface's metric there (`pcurve_outside_box`; no
@@ -850,6 +854,23 @@ torus face a `v` range below the domain, and its two spans of one arc disagreein
 direction of `v` (the tangent of a turned copy against the profile's frame): the profile's
 arcs are now split at the torus's seam first (D7) and the direction read from the
 generator at angle 0.
+
+From level 1 the report grades every shell in one vocabulary with the mesh validator
+(`topology/condition.zig`, research/truck.md §2, 2026-11-11): `irregular` (an edge on more
+than two faces, or none) < `regular` < `oriented` (the two uses of every shared edge run
+opposite) < `closed` (every edge on exactly two faces), and beside it the singular
+vertices, found over the whole body (two shells sharing a vertex record share it, which
+neither alone can see) by grouping the coedges leaving each vertex into fans (a coedge and
+the partner of the coedge before it, or that coedge itself when it is a degenerate pole or
+apex edge) and charged to every shell using the vertex. `mesh/validate.zig` grades an
+output mesh the same way by its indices (edge uses and directions, each vertex's link of
+opposite sides one chain or not) and counts degenerate triangles; `CHECK_EDGE_PAIRS` is
+`closed` with no singular vertex and nothing degenerate. (A lens thinner than its chords,
+pruned from a ring as a spike, refines the face's arcs like a crossing does, since on a
+solid its two sides would collapse onto one quad; `FaceRange.spikes_pruned` marks a face
+still pruned past the doubling limit.) The edge findings name their
+condition (`edge_coedge_count`: irregular; `partner_same_sense`: regular, not oriented;
+`open_edge_in_closed_shell`: oriented, not closed).
 
 One negative fixture per rule lives in `test/corpus/invalid/`.
 
