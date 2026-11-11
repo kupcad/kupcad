@@ -439,16 +439,15 @@ pub const Overlay = struct {
     }
 
     /// The parameter of `p` along a given edge when `p` lies inside it within the zone (a
-    /// line's fraction of its length, an arc's angle from its start), else null.
+    /// line's fraction of its length, an arc's angle from its start), else null. On an
+    /// arc, inside is told by the chord (`onArcStrictly`), never by an angle.
     fn paramOn(self: *const Overlay, g: Given, p: Vec2) ?f64 {
         const a = self.point(g.a);
         const b = self.point(g.b);
         if (g.arc) |arc| {
             if (@abs(vec.length2(vec.sub2(p, arc.c)) - arc.r) > self.tol.zone) return null;
-            const span = arcSpan(a, b, arc);
-            const t = span.offsetOf(trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse return null;
-            if (t <= 0 or t >= span.sweep) return null;
-            return t;
+            if (!onArcStrictly(a, b, arc, p)) return null;
+            return arcParam(a, b, arc, p);
         }
         const d = vec.sub2(b, a);
         const len = vec.length2(d);
@@ -483,25 +482,31 @@ pub const Overlay = struct {
         return 1;
     }
 
-    /// The crossings of a line segment and an arc, inside both.
+    /// The crossings of a line segment and an arc, inside both: whether the line meets
+    /// the circle, touches it or misses it, and where each root lies along the segment,
+    /// by the exact predicates (a touch is the one point, the foot of the centre's
+    /// perpendicular); whether the point is on the arc, by the chord. The point itself
+    /// is a construction, welded by the caller.
     fn lineArc(self: *const Overlay, line: Given, arc_edge: Given, out: *[4]Vec2) usize {
         const arc = arc_edge.arc.?;
         const a = self.point(line.a);
-        const d = vec.sub2(self.point(line.b), a);
+        const b = self.point(line.b);
+        const disc = predicates.lineCircleDiscriminant(a, b, arc.c, arc.r);
+        if (disc < 0) return 0;
+        const d = vec.sub2(b, a);
         const f = vec.sub2(a, arc.c);
         const qa = vec.dot2(d, d);
         const qb = 2 * vec.dot2(f, d);
         const qc = vec.dot2(f, f) - arc.r * arc.r;
-        const disc = qb * qb - 4 * qa * qc;
-        if (disc < 0) return 0;
-        const root = @sqrt(disc);
-        const span = arcSpan(self.point(arc_edge.a), self.point(arc_edge.b), arc);
+        const root = if (disc == 0) 0 else @sqrt(@max(qb * qb - 4 * qa * qc, 0));
+        const arc_a = self.point(arc_edge.a);
+        const arc_b = self.point(arc_edge.b);
         var n: usize = 0;
-        for ([_]f64{ (-qb - root) / (2 * qa), (-qb + root) / (2 * qa) }) |t| {
-            if (t <= 0 or t >= 1) continue;
-            const p = vec.addScaled2(a, d, t);
-            const s = span.offsetOf(trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0])) orelse continue;
-            if (s <= 0 or s >= span.sweep) continue;
+        for ([_]predicates.Root{ .first, .second }, [_]f64{ -root, root }) |which, signed| {
+            const place = predicates.lineCircleCrossing(a, b, arc.c, arc.r, which) orelse continue;
+            if (place != .inside) continue;
+            const p = vec.addScaled2(a, d, (-qb + signed) / (2 * qa));
+            if (!onArcStrictly(arc_a, arc_b, arc, p)) continue;
             if (n > 0 and vec.distance2(out[0], p) <= self.tol.zone) continue;
             out[n] = p;
             n += 1;
@@ -524,14 +529,14 @@ pub const Overlay = struct {
         const along = vec.scale2(between, 1.0 / dist);
         const across = Vec2{ -along[1], along[0] };
         const foot = vec.addScaled2(ai.c, along, x);
-        const span_i = arcSpan(self.point(gi.a), self.point(gi.b), ai);
-        const span_j = arcSpan(self.point(gj.a), self.point(gj.b), aj);
+        const a_i = self.point(gi.a);
+        const b_i = self.point(gi.b);
+        const a_j = self.point(gj.a);
+        const b_j = self.point(gj.b);
         var n: usize = 0;
         for ([_]f64{ h, -h }) |side| {
             const p = vec.addScaled2(foot, across, side);
-            const ti = span_i.offsetOf(trig.atan2(p[1] - ai.c[1], p[0] - ai.c[0])) orelse continue;
-            const tj = span_j.offsetOf(trig.atan2(p[1] - aj.c[1], p[0] - aj.c[0])) orelse continue;
-            if (ti <= 0 or ti >= span_i.sweep or tj <= 0 or tj >= span_j.sweep) continue;
+            if (!onArcStrictly(a_i, b_i, ai, p) or !onArcStrictly(a_j, b_j, aj, p)) continue;
             if (n > 0 and vec.distance2(out[0], p) <= self.tol.zone) continue;
             out[n] = p;
             n += 1;
@@ -552,10 +557,16 @@ pub const Overlay = struct {
         // An arc piece within the zone of its chord is its chord: its ends are welded
         // vertices within the zone of its circle, not on it, so a lens thinner than the
         // zone between it and a line through the same vertices has an area at the
-        // rounding level, of either sign, and is no region
+        // rounding level, of either sign, and is no region. A minor arc (its centre on
+        // the chord's far side, by the exact turn) has the sagitta `r − √(r² − chord²/4)`,
+        // within the zone when `chord² ≤ 4·zone·(2r − zone)`; a major arc's sagitta is at
+        // least its radius
         if (arc) |piece_arc| {
-            const sweep = arcSpan(self.point(a), self.point(b), piece_arc).sweep;
-            if (piece_arc.r * (1 - @cos(sweep / 2)) <= self.tol.zone) arc = null;
+            const pa = self.point(a);
+            const pb = self.point(b);
+            const zone = self.tol.zone;
+            const minor = (predicates.orient2d(pa, pb, piece_arc.c) > 0) == piece_arc.ccw;
+            if (minor and (piece_arc.r <= zone or vec.distanceSq2(pa, pb) <= 4 * zone * (2 * piece_arc.r - zone))) arc = null;
         }
         const key = EdgeKey{ .a = a, .b = b, .arc = if (arc) |piece_arc| arcKey(piece_arc) else 0 };
         try merged.ensureUnusedCapacity(self.allocator, 1);
@@ -725,7 +736,7 @@ pub const Overlay = struct {
         starts[n] = @intCast(self.cycle_halves.items.len);
         const owner = try allocator.alloc(u32, n);
         defer allocator.free(owner);
-        try nestCycles(allocator, segments, starts, areas, owner, self.tol);
+        try nestCycles(allocator, segments, starts, areas, owner);
         for (self.cycles.items, owner) |*c, within| {
             if (c.area > 0) continue;
             c.face = if (within == UNBOUNDED) UNBOUNDED else self.cycles.items[within].face;
@@ -897,6 +908,46 @@ fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
     return .{ .start = start, .sweep = sweep, .ccw = arc.ccw };
 }
 
+/// Whether `p` lies within the arc's turn from `a` to `b` about its centre, strictly
+/// between the ends' radii: for a counter-clockwise arc, within the counter-clockwise
+/// turn from the radius through `a` to the radius through `b`. Exact, by `orient2d`
+/// about the centre (D26): no angle decides, so there is no seam and no slack, and the
+/// answer for a point a little off the circle (a welded vertex within the zone of it) is
+/// the same whichever piece of the arc asks, which a test against the chord is not. A
+/// point on an end's own radius is that end, or the rounding of one.
+fn onArcStrictly(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
+    if (!arc.ccw) return onArcStrictly(b, a, .{ .c = arc.c, .r = arc.r, .ccw = true }, p);
+    const c = arc.c;
+    const turn = predicates.orient2d(c, a, b);
+    if (turn > 0) return withinMinorTurn(c, a, b, p);
+    if (turn < 0) return !withinMinorTurn(c, b, a, p) and !onRay(c, a, p) and !onRay(c, b, p);
+    // `b` on `a`'s radius or opposite it: a half circle, or (the ends welded) a full one
+    if (vec.dot2(vec.sub2(a, c), vec.sub2(b, c)) < 0) return predicates.orient2d(c, a, p) > 0;
+    return !onRay(c, a, p);
+}
+
+/// Whether `p` lies strictly within the counter-clockwise turn of less than a half turn
+/// from the radius through `a` to the radius through `b`.
+fn withinMinorTurn(c: Vec2, a: Vec2, b: Vec2, p: Vec2) bool {
+    return predicates.orient2d(c, a, p) > 0 and predicates.orient2d(c, p, b) > 0;
+}
+
+/// Whether `p` lies on the ray from `c` through `a`.
+fn onRay(c: Vec2, a: Vec2, p: Vec2) bool {
+    return predicates.orient2d(c, a, p) == 0 and vec.dot2(vec.sub2(a, c), vec.sub2(p, c)) > 0;
+}
+
+/// How far along the arc from `a` to `b` the point `p` of it lies, in radians from `a`:
+/// for ordering the cuts along an arc (a construction, never a decision: whether `p` is
+/// on the arc is `onArcStrictly`'s). A rounding past either end is that end.
+fn arcParam(a: Vec2, b: Vec2, arc: Arc, p: Vec2) f64 {
+    const span = arcSpan(a, b, arc);
+    const angle = trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0]);
+    const t = @mod(if (arc.ccw) angle - span.start else span.start - angle, 2 * std.math.pi);
+    if (t <= span.sweep) return t;
+    return if (t - span.sweep < 2 * std.math.pi - t) span.sweep else 0;
+}
+
 /// The y-monotone pieces of an arc from `a` to `b`, with the heights of their ends: the
 /// ends' own points at the arc's ends, never the circle's point at the end's angle, which
 /// may differ by a rounding (2 − 1.2e-16 is the double below 2) while the edge beyond the
@@ -917,8 +968,9 @@ const ArcPieces = struct {
         /// The ends' x, exact where an end is a vertex or an extreme.
         x0: f64,
         x1: f64,
-        /// The angle of the piece's middle: the side of the centre it lies on.
-        mid: f64,
+        /// The side of the centre the piece lies on: which crossing of its circle it is
+        /// at any height.
+        side: predicates.Side,
     };
 
     fn init(a: Vec2, b: Vec2, arc: Arc) ArcPieces {
@@ -927,12 +979,11 @@ const ArcPieces = struct {
         var n: usize = 0;
         cuts[n] = .{ .t = 0, .x = a[0], .y = a[1] };
         n += 1;
-        for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }, [_]f64{ arc.r, -arc.r }) |extreme, rise| {
-            if (span.offsetOf(extreme)) |t| {
-                if (t > 0 and t < span.sweep) {
-                    cuts[n] = .{ .t = t, .x = arc.c[0], .y = arc.c[1] + rise };
-                    n += 1;
-                }
+        for ([_]f64{ arc.r, -arc.r }) |rise| {
+            const extreme: Vec2 = .{ arc.c[0], arc.c[1] + rise };
+            if (onArcStrictly(a, b, arc, extreme)) {
+                cuts[n] = .{ .t = arcParam(a, b, arc, extreme), .x = extreme[0], .y = extreme[1] };
+                n += 1;
             }
         }
         cuts[n] = .{ .t = span.sweep, .x = b[0], .y = b[1] };
@@ -950,25 +1001,20 @@ const ArcPieces = struct {
         const c0 = self.cuts[self.at];
         const c1 = self.cuts[self.at + 1];
         self.at += 1;
-        return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .mid = self.span.start + self.sign * (c0.t + c1.t) / 2.0 };
+        const mid = self.span.start + self.sign * (c0.t + c1.t) / 2.0;
+        return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .side = if (@cos(mid) >= 0) .east else .west };
     }
 };
 
-/// Where the piece of the circle `arc` whose middle is at the angle `mid` is at height `y`.
-fn arcXAt(arc: Arc, mid: f64, y: f64) f64 {
-    const dy = y - arc.c[1];
-    const dx = @sqrt(@max(arc.r * arc.r - dy * dy, 0));
-    return if (@cos(mid) >= 0) arc.c[0] + dx else arc.c[0] - dx;
-}
-
 /// Whether the ray from `p` to +x crosses the arc an odd number of times: each y-monotone
-/// piece counted on the half-open rule as a straight edge would be.
+/// piece counted on the half-open rule as a straight edge would be, the piece's x at the
+/// height against `p`'s by the exact predicate (`p` as a circle of no radius).
 pub fn arcCrossings(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
     var pieces = ArcPieces.init(a, b, arc);
     var odd = false;
     while (pieces.next()) |piece| {
         if ((piece.y0 > p[1]) == (piece.y1 > p[1])) continue;
-        if (p[0] < arcXAt(arc, piece.mid, p[1])) odd = !odd;
+        if (predicates.compareArcX(arc.c, arc.r, piece.side, p, 0, .east, p[1]) > 0) odd = !odd;
     }
     return odd;
 }
@@ -996,8 +1042,7 @@ pub const Segment = struct {
 /// the segments up from it tie at its x, and the most clockwise of them (the tangent,
 /// then the bend) bounds the region east of it. A clockwise cycle found that way lies in
 /// the same face and reaches further left, so the owners resolve in a bounded chain.
-pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, starts: []const u32, areas: []const f64, owner: []u32, tol: Tolerance) error{OutOfMemory}!void {
-    const reach = ORDER_REACH * tol.zone;
+pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, starts: []const u32, areas: []const f64, owner: []u32) error{OutOfMemory}!void {
     const n = areas.len;
     const parent = try allocator.alloc(u32, n);
     defer allocator.free(parent);
@@ -1006,14 +1051,23 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
         parent[i] = UNBOUNDED;
         if (areas[i] > 0) continue;
         // The cycle's leftmost point: a vertex, or an arc's west extreme when the arc
-        // bulges past its ends (the cycle's own segment there is at the point's x, so
-        // the ray, which wants a crossing strictly left, passes it)
+        // bulges past its ends. The point is compared with the crossings as what it is:
+        // a vertex by its own x, an extreme as the arc's own crossing there (its x as a
+        // number is a rounding of `cx − r`, which the exact comparison would put a hair
+        // off the arc's crossing, and the cycle's own segment must be passed, never hit)
         var v = segments[starts[i]].a;
+        var v_at: Crossing = .{ .point = v[0] };
         for (segments[starts[i]..starts[i + 1]]) |s| {
-            if (lefter(s.a, v)) v = s.a;
+            if (lefter(s.a, v)) {
+                v = s.a;
+                v_at = .{ .point = v[0] };
+            }
             if (s.arc) |arc| {
                 const west: Vec2 = .{ arc.c[0] - arc.r, arc.c[1] };
-                if (arcSpan(s.a, s.b, arc).holds(std.math.pi) and lefter(west, v)) v = west;
+                if (onArcStrictly(s.a, s.b, arc, west) and lefter(west, v)) {
+                    v = west;
+                    v_at = .{ .arc = .{ .c = arc.c, .r = arc.r, .side = .west } };
+                }
             }
         }
         var best: ?Hit = null;
@@ -1022,30 +1076,28 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                 var pieces = ArcPieces.init(s.a, s.b, arc);
                 while (pieces.next()) |piece| {
                     if ((piece.y0 > v[1]) == (piece.y1 > v[1])) continue;
-                    const x = if (v[1] == piece.y0) piece.x0 else if (v[1] == piece.y1) piece.x1 else arcXAt(arc, piece.mid, v[1]);
-                    if (x >= v[0]) continue;
-                    // The direction up from the ray along the piece: to the sample a
-                    // reach along the arc from the crossing (as the order about a vertex
-                    // is told), never the tangent there: an arc tangent to a line where
-                    // the ray passes crosses it at the line's own x, and only the bend
-                    // tells which is nearer
+                    const where: Crossing = if (v[1] == piece.y0) .{ .point = piece.x0 } else if (v[1] == piece.y1) .{ .point = piece.x1 } else .{ .arc = .{ .c = arc.c, .r = arc.r, .side = piece.side } };
+                    if (compareCrossings(where, v_at, v[1]) >= 0) continue;
+                    // The tangent up from the crossing, and which way the arc bends
+                    // going up: a counter-clockwise arc turns left (west)
                     const descending = piece.y0 > piece.y1;
-                    const at: Vec2 = .{ x, v[1] };
-                    const up = if (descending)
-                        vec.sub2(sampleAlong(at, s.a, .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw }, reach), at)
-                    else
-                        vec.sub2(sampleAlong(at, s.b, arc, reach), at);
+                    const at: Vec2 = .{ crossingX(where, v[1]), v[1] };
                     const top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
-                    consider(&best, .{ .x = x, .up = up, .top = top, .cycle = if (descending) s.cycle else s.beyond });
+                    const radial = vec.sub2(at, arc.c);
+                    var up = Vec2{ -radial[1], radial[0] };
+                    if (up[1] < 0 or (up[1] == 0 and vec.dot2(up, vec.sub2(top, at)) < 0)) up = vec.scale2(up, -1);
+                    const up_ccw = if (descending) !arc.ccw else arc.ccw;
+                    const bend = if (up_ccw) -1 / arc.r else 1 / arc.r;
+                    consider(&best, .{ .at = where, .up = up, .bend = bend, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
                 }
                 continue;
             }
             if ((s.a[1] > v[1]) == (s.b[1] > v[1])) continue;
-            const x = if (v[1] == s.a[1]) s.a[0] else if (v[1] == s.b[1]) s.b[0] else s.a[0] + (v[1] - s.a[1]) * (s.b[0] - s.a[0]) / (s.b[1] - s.a[1]);
-            if (x >= v[0]) continue;
+            const where: Crossing = if (v[1] == s.a[1]) .{ .point = s.a[0] } else if (v[1] == s.b[1]) .{ .point = s.b[0] } else .{ .line = .{ .a = s.a, .b = s.b } };
+            if (compareCrossings(where, v_at, v[1]) >= 0) continue;
             const descending = s.a[1] > s.b[1];
             const up = if (descending) vec.sub2(s.a, s.b) else vec.sub2(s.b, s.a);
-            consider(&best, .{ .x = x, .up = up, .top = if (descending) s.a else s.b, .cycle = if (descending) s.cycle else s.beyond });
+            consider(&best, .{ .at = where, .up = up, .bend = 0, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
         }
         if (best) |hit| parent[i] = hit.cycle;
     }
@@ -1066,35 +1118,83 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
     }
 }
 
+/// Where a segment crosses the ray's height, as the exact predicates compare it
+/// (`compareCrossings`): a vertex or an extreme on the ray by its own x, else the line
+/// through two points or the `side` crossing of a circle, never a computed x.
+const Crossing = union(enum) {
+    point: f64,
+    line: struct { a: Vec2, b: Vec2 },
+    arc: struct { c: Vec2, r: f64, side: predicates.Side },
+};
+
+/// The sign of `p − q` in x at height `y`, exact. A point is the crossing of a circle of
+/// no radius through it, which the predicates take as it is.
+fn compareCrossings(p: Crossing, q: Crossing, y: f64) f64 {
+    return switch (p) {
+        .point => |x| switch (q) {
+            .point => |xq| if (x > xq) 1 else if (x < xq) -1 else 0,
+            .line => |l| predicates.compareArcXWithLine(.{ x, y }, 0, .east, y, l.a, l.b).?,
+            .arc => |c| -predicates.compareArcX(c.c, c.r, c.side, .{ x, y }, 0, .east, y),
+        },
+        .line => |l| switch (q) {
+            .point, .arc => -compareCrossings(q, p, y),
+            .line => |m| predicates.compareLineX(y, l.a, l.b, m.a, m.b).?,
+        },
+        .arc => |c| switch (q) {
+            .point => |xq| predicates.compareArcX(c.c, c.r, c.side, .{ xq, y }, 0, .east, y),
+            .line => |l| predicates.compareArcXWithLine(c.c, c.r, c.side, y, l.a, l.b).?,
+            .arc => |d| predicates.compareArcX(c.c, c.r, c.side, d.c, d.r, d.side, y),
+        },
+    };
+}
+
+/// The crossing's x at height `y`, as a number: for the sample along the segment, never
+/// for a comparison.
+fn crossingX(c: Crossing, y: f64) f64 {
+    return switch (c) {
+        .point => |x| x,
+        .line => |l| l.a[0] + (y - l.a[1]) * (l.b[0] - l.a[0]) / (l.b[1] - l.a[1]),
+        .arc => |a| {
+            const dy = y - a.c[1];
+            const dx = @sqrt(@max(a.r * a.r - dy * dy, 0));
+            return if (a.side == .east) a.c[0] + dx else a.c[0] - dx;
+        },
+    };
+}
+
 /// A crossing of the ray from a hole's leftmost vertex to −x.
 const Hit = struct {
-    x: f64,
-    /// The direction up from the ray along the segment (any length), and the point above
-    /// the ray it leads to (the segment's upper end: a vertex, or a circle's top).
+    at: Crossing,
+    /// The tangent up from the crossing along the segment (any length), and how the
+    /// segment bends going up: the signed curvature, positive bending east (right).
     up: Vec2,
-    top: Vec2,
+    bend: f64,
     /// The cycle whose region is just east of the crossing.
     cycle: u32,
 };
 
-/// Keeps the hit nearer the vertex: the greater x; at one x, two segments through one
-/// vertex by the ray: a vertex on the ray, with the segments going up from it, the most
-/// clockwise is nearer; a vertex a rounding above the ray, with the segments coming down
-/// through it to the same point, the most counter-clockwise (the crossings differ by
-/// less than the x can tell, and the sides of the vertex tell instead).
-fn consider(best: *?Hit, hit: Hit) void {
+/// Keeps the hit nearer the vertex: the greater x, exactly. At one x the two segments
+/// pass through one point of the ray (a vertex on it, a tangency the ray runs through),
+/// and the ray is taken a hair above the point: the segment leaning east going up is the
+/// nearer there, then, of two tangent at the point, the one bending east. (The earlier
+/// rule for a vertex a rounding above the ray, by where the up-directions led, stood in
+/// for an x comparison that rounded; the comparison is exact now, and a tie is one point.)
+fn consider(best: *?Hit, hit: Hit, y: f64) void {
     const b = best.* orelse {
         best.* = hit;
         return;
     };
-    if (hit.x < b.x) return;
-    if (hit.x > b.x) {
-        best.* = hit;
+    const order = compareCrossings(hit.at, b.at, y);
+    if (order != 0) {
+        if (order > 0) best.* = hit;
         return;
     }
     const turn = vec.cross2(hit.up, b.up);
-    const converge = hit.top[0] == b.top[0] and hit.top[1] == b.top[1];
-    if (if (converge) turn < 0 else turn > 0) best.* = hit;
+    if (turn != 0) {
+        if (turn > 0) best.* = hit;
+        return;
+    }
+    if (hit.bend > b.bend) best.* = hit;
 }
 
 /// Whether `p` is left of `q`: by x, then by y.

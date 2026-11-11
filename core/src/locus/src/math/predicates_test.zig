@@ -9,6 +9,7 @@ const lineCircleDiscriminant = predicates.lineCircleDiscriminant;
 const lineCircleCrossing = predicates.lineCircleCrossing;
 const compareArcX = predicates.compareArcX;
 const compareArcXWithLine = predicates.compareArcXWithLine;
+const compareLineX = predicates.compareLineX;
 const Side = predicates.Side;
 const Root = predicates.Root;
 const Place = predicates.Place;
@@ -382,6 +383,44 @@ fn exactCompareArcXWithLine(allocator: std.mem.Allocator, c: [2]f64, r: f64, sid
     return sh * try exactSignPlusSqrt(exact, &lhs, sideSign(side) * sh, &h2b);
 }
 
+/// The sign of `x₁ − x₂` at height `y` for two lines over big integers, from the formula
+/// multiplied through by `h₁h₂`.
+fn exactCompareLineX(allocator: std.mem.Allocator, y: f64, a1: [2]f64, b1: [2]f64, a2: [2]f64, b2: [2]f64) !?i8 {
+    if (a1[1] == b1[1] or a2[1] == b2[1]) return null;
+    const exact = Exact.init(allocator, &.{ y, a1[0], a1[1], b1[0], b1[1], a2[0], a2[1], b2[0], b2[1] });
+    var h1 = try exact.diff(b1[1], a1[1]);
+    defer h1.deinit();
+    var h2 = try exact.diff(b2[1], a2[1]);
+    defer h2.deinit();
+    var n1 = try exactLineXNumerator(exact, y, a1, b1);
+    defer n1.deinit();
+    var n2 = try exactLineXNumerator(exact, y, a2, b2);
+    defer n2.deinit();
+    var h2n1 = try exact.mul(&h2, &n1);
+    defer h2n1.deinit();
+    var h1n2 = try exact.mul(&h1, &n2);
+    defer h1n2.deinit();
+    var lhs = try exact.sub(&h2n1, &h1n2);
+    defer lhs.deinit();
+    return signOf(&h1) * signOf(&h2) * signOf(&lhs);
+}
+
+fn exactLineXNumerator(exact: Exact, y: f64, a: [2]f64, b: [2]f64) !Managed {
+    var ax = try exact.int(a[0]);
+    defer ax.deinit();
+    var h = try exact.diff(b[1], a[1]);
+    defer h.deinit();
+    var axh = try exact.mul(&ax, &h);
+    defer axh.deinit();
+    var dy = try exact.diff(y, a[1]);
+    defer dy.deinit();
+    var dx = try exact.diff(b[0], a[0]);
+    defer dx.deinit();
+    var along = try exact.mul(&dy, &dx);
+    defer along.deinit();
+    return exact.add(&axh, &along);
+}
+
 /// The `side` crossing's `x` in quadruple precision, for a cross-check where it decides;
 /// `null` where its own radicand cancels (two terms within 1e-25 of each other), since
 /// quadruple precision is no oracle there (wasm's and the native soft floats even differed
@@ -733,6 +772,43 @@ test "compareArcXWithLine: agrees with big-integer arithmetic on random inputs" 
         const side: Side = if (random.boolean()) .east else .west;
         const expected = try exactCompareArcXWithLine(testing.allocator, c, r, side, y, a, b);
         const got = compareArcXWithLine(c, r, side, y, a, b);
+        if (expected) |e| {
+            try testing.expectEqual(e, signOfFloat(got.?));
+        } else {
+            try testing.expectEqual(@as(?f64, null), got);
+        }
+    }
+}
+
+test "compareLineX: two lines at a height, equal where they cross, horizontal refused" {
+    // The lines y = x and y = 2 − x cross at (1, 1)
+    const a1 = [2]f64{ 0, 0 };
+    const b1 = [2]f64{ 2, 2 };
+    const a2 = [2]f64{ 0, 2 };
+    const b2 = [2]f64{ 2, 0 };
+    try testing.expectEqual(@as(f64, 0), compareLineX(1, a1, b1, a2, b2).?);
+    try testing.expectEqual(@as(f64, -1), compareLineX(0.5, a1, b1, a2, b2).?);
+    try testing.expectEqual(@as(f64, 1), compareLineX(1.5, a1, b1, a2, b2).?);
+    try testing.expectEqual(@as(f64, 1), compareLineX(0.5, a2, b2, a1, b1).?);
+    // Reversing a line's points changes nothing
+    try testing.expectEqual(@as(f64, -1), compareLineX(0.5, b1, a1, b2, a2).?);
+    try testing.expectEqual(@as(?f64, null), compareLineX(0.5, a1, b1, .{ 0, 1 }, .{ 1, 1 }));
+    // A ulp below the crossing the first is still west, however the floating x rounds
+    try testing.expectEqual(@as(f64, -1), compareLineX(std.math.nextAfter(f64, 1.0, 0.0), a1, b1, a2, b2).?);
+    try testing.expectEqual(@as(f64, 1), compareLineX(std.math.nextAfter(f64, 1.0, 2.0), a1, b1, a2, b2).?);
+}
+
+test "compareLineX: agrees with big-integer arithmetic on random near-degenerate inputs" {
+    var prng = std.Random.DefaultPrng.init(SEED);
+    const random = prng.random();
+    for (0..FUZZ_CASES) |_| {
+        const y = randomCoordinate(random, 3);
+        const a1 = randomPoint2(random, 3);
+        const b1 = randomPoint2(random, 3);
+        const a2 = randomPoint2(random, 3);
+        const b2 = randomPoint2(random, 3);
+        const expected = try exactCompareLineX(testing.allocator, y, a1, b1, a2, b2);
+        const got = compareLineX(y, a1, b1, a2, b2);
         if (expected) |e| {
             try testing.expectEqual(e, signOfFloat(got.?));
         } else {

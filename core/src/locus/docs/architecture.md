@@ -453,15 +453,20 @@ Arcs in the 2D overlay are where the exact tier is thinnest (an arc–arc or lin
 intersection is irrational). Arc endpoints and intersection points are constructed,
 welded and then treated as exact vertices; the order of half-edges about a vertex is
 decided by `orient2d` on points sampled a hundred zones along each curve, and nesting by
-the exact ray rule with its ties told by the same samples. The decisions that still
-compare a square root with a threshold (a tangency's discriminant, a crossing's parameter
-against its segment, which of two arc crossings a ray meets first) can be made exact
-without big numbers: every such expression has bounded depth and `f64` leaves, so
-squaring removes the roots and Shewchuk expansions evaluate the polynomial
-(`backups/locus-plan/research/li-chen-egc.md` §2; M0's exact radical predicates and M2's
-follow-ups). What exactness cannot do is put an arc's welded ends on its circle; those
-reconciliations (an arc piece within the zone of its chord is its chord, every vertex
-within the zone of an edge cuts it) are the welding's, not the predicates'.
+the exact ray rule. Every decision about a circle is exact too (D26, 2026-11-11): whether a
+line meets, touches or misses a circle and where each crossing lies along the segment
+(`lineCircleDiscriminant`, `lineCircleCrossing`), whether a point lies within an arc's turn
+about its centre (`orient2d` about the centre, never an angle: no seam, no slack, and the
+same answer for a vertex a little off the circle whichever piece of the arc asks), which
+of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLine`,
+`compareLineX`, a point taken as a circle of no radius), and a tie there means one point,
+resolved as a ray a hair above it would (the segment leaning east going up, then the one
+bending east). Each such expression has bounded depth and `f64` leaves, so squaring
+removes the roots and Shewchuk expansions evaluate the polynomial
+(`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
+arc's welded ends on its circle; those reconciliations (an arc piece within the zone of its
+chord is its chord, every vertex within the zone of an edge cuts it, the pieces cut again
+until a pass cuts nothing) are the welding's, not the predicates'.
 
 ---
 

@@ -28,19 +28,29 @@ fn circle(o: *Overlay, c: Vec2, r: f64) !void {
 }
 
 /// The arrangement is a planar map whose labels are consistent: Euler's formula over its
-/// vertices, edges and bounded faces, and across every edge the windings differ by what
-/// the inputs contributed to it.
+/// vertices, edges, bounded faces and connected components (`V − E + F = C`), and across
+/// every edge the windings differ by what the inputs contributed to it.
 fn expectPlanar(o: *const Overlay) !void {
-    var used = try testing.allocator.alloc(bool, o.points.items.len);
+    const n = o.points.items.len;
+    var used = try testing.allocator.alloc(bool, n);
     defer testing.allocator.free(used);
     @memset(used, false);
+    // The components by union-find over the edges
+    var parent = try testing.allocator.alloc(u32, n);
+    defer testing.allocator.free(parent);
+    for (parent, 0..) |*p, i| p.* = @intCast(i);
     for (o.edges.items) |e| {
         used[e.a] = true;
         used[e.b] = true;
+        parent[root(parent, e.a)] = root(parent, e.b);
     }
     var vertices: i64 = 0;
-    for (used) |u| vertices += @intFromBool(u);
-    try testing.expectEqual(@as(i64, 2), vertices - @as(i64, @intCast(o.edges.items.len)) + @as(i64, @intCast(o.faces.items.len)) + 1);
+    var components: i64 = 0;
+    for (used, 0..) |u, i| {
+        vertices += @intFromBool(u);
+        components += @intFromBool(u and root(parent, @intCast(i)) == i);
+    }
+    try testing.expectEqual(components, vertices - @as(i64, @intCast(o.edges.items.len)) + @as(i64, @intCast(o.faces.items.len)));
     for (o.edges.items, 0..) |e, ei| {
         const left = o.leftOf(@intCast(2 * ei));
         const right = o.leftOf(@intCast(2 * ei + 1));
@@ -54,6 +64,12 @@ fn expectPlanar(o: *const Overlay) !void {
             try testing.expectEqual(want, wl - wr);
         }
     }
+}
+
+fn root(parent: []u32, v: u32) u32 {
+    var r = v;
+    while (parent[r] != r) r = parent[r];
+    return r;
 }
 
 /// The faces with the given windings for inputs 0 and 1, and their total area.
@@ -330,4 +346,64 @@ test "overlay: a line just missing an arc's circle, within the zone of the arc's
     try testing.expectApproxEqAbs(end_angle / 2.0, sector.area, 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 0.5), quad.area, 1e-5);
     try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces);
+}
+
+test "overlay: a line tangent to a circle meets it at one vertex, which cuts the line and the arc" {
+    // A unit disc and a square whose bottom side y = 1 touches it at (0, 1), between the
+    // arc's ends: the touch is a vertex (the exact discriminant says tangent, never a miss
+    // or two crossings a rounding apart) shared by the side and the upper arc, so the
+    // square's four sides become five edges and the circle's two halves three
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try circle(&o, .{ 0, 0 }, 1);
+    _ = try o.addInput();
+    try polygon(&o, &.{ .{ -1, 1 }, .{ 1, 1 }, .{ 1, 3 }, .{ -1, 3 } });
+    try o.run();
+    try expectPlanar(&o);
+    try testing.expectEqual(@as(usize, 8), o.edges.items.len);
+    var touch: usize = 0;
+    for (o.points.items) |p| touch += @intFromBool(vec.distance2(.{ p[0], p[1] }, .{ 0, 1 }) <= tol.zone);
+    try testing.expectEqual(@as(usize, 1), touch);
+    try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces);
+    try testing.expectApproxEqAbs(PI, areaWhere(&o, 1, 0).area, 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4), areaWhere(&o, 0, 1).area, 1e-9);
+    // The same with the tangent a hair outside the circle: no touch, the map is planar
+    // all the same (the vertex nearest the line is 1 away, outside its zone)
+    var o2 = Overlay.init(testing.allocator, tol);
+    defer o2.deinit();
+    _ = try o2.addInput();
+    try circle(&o2, .{ 0, 0 }, 1);
+    _ = try o2.addInput();
+    const above = std.math.nextAfter(f64, 1.0, 2.0);
+    try polygon(&o2, &.{ .{ -1, above }, .{ 1, above }, .{ 1, 3 }, .{ -1, 3 } });
+    try o2.run();
+    try expectPlanar(&o2);
+    try testing.expectEqual(@as(usize, 6), o2.edges.items.len);
+}
+
+test "overlay: a hole whose leftmost vertex is a circle's centre, the ray through the circle's tangency with a line" {
+    // The grown sheet of the fuzzer's chain (offset_test.zig): the ray from the hole's
+    // leftmost vertex passes exactly through the point where a join arc touches a band's
+    // side, so the two crossings are one point. A hair above the ray the arc is east of
+    // the line, so the arc's side (inside the circle) is the region the hole lies in.
+    // Here: a region whose boundary runs up x = −1 to the circle's west point, round the
+    // circle of radius 1 about the origin, and down again, with a triangle hole whose
+    // leftmost vertex is the origin
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    // The outer loop, counter-clockwise: the band below, the circle above
+    try o.addEdge(.{ .a = .{ -1, -3 }, .b = .{ 3, -3 } });
+    try o.addEdge(.{ .a = .{ 3, -3 }, .b = .{ 3, 0 } });
+    try o.addEdge(.{ .a = .{ 3, 0 }, .b = .{ 1, 0 } });
+    try o.addEdge(.{ .a = .{ 1, 0 }, .b = .{ -1, 0 }, .arc = .{ .c = .{ 0, 0 }, .r = 1, .ccw = true } });
+    try o.addEdge(.{ .a = .{ -1, 0 }, .b = .{ -1, -3 } });
+    // The hole, clockwise, its leftmost vertex the circle's centre
+    try polygon(&o, &.{ .{ 0, 0 }, .{ 0.5, 0.3 }, .{ 0.5, -0.3 } });
+    try o.run();
+    try expectPlanar(&o);
+    const region = areaWhere(&o, 1, null);
+    try testing.expectEqual(@as(usize, 1), region.faces);
+    try testing.expectApproxEqAbs(4 * 3 + PI / 2.0 - 0.15, region.area, 1e-9);
 }

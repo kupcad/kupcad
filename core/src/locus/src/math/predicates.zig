@@ -68,6 +68,8 @@ const DISCRIMINANT_CAP: usize = 576;
 const COMPARE_ARC_CAP: usize = 1888;
 /// `h²B − A²` of `compareArcXWithLine`: 2·8·10 + 2·16·16.
 const ARC_LINE_CAP: usize = 672;
+/// `h₂N₁ − h₁N₂` of `compareLineX`, each `N` of 12: 2·2·12 + 2·2·12.
+const LINE_X_CAP: usize = 96;
 
 /// A sum or product as the rounded result `hi` and the exact remainder `lo`: `hi + lo` is
 /// the exact value.
@@ -1039,6 +1041,12 @@ fn radicandIn(comptime N: type, c: [2]f64, r: f64, y: f64) N {
     return N.of(r).square().sub(N.diff(y, c[1]).square());
 }
 
+/// `aₓ·h + (y − aᵧ)(bₓ − aₓ)` with `h = bᵧ − aᵧ`: where the line through `a` and `b`
+/// crosses height `y`, times `h`.
+fn lineXNumeratorIn(comptime N: type, y: f64, a: [2]f64, b: [2]f64) N {
+    return N.of(a[0]).mul(N.diff(b[1], a[1])).add(N.diff(y, a[1]).mul(N.diff(b[0], a[0])));
+}
+
 /// The sign of `a + s·√b` for exact `a` and `b` and `s = ±1`; a negative `b` counts as
 /// zero. Squaring removes the root once the sign of `a` says which side wins.
 fn signPlusSqrt(a: anytype, s: f64, b: @TypeOf(a)) f64 {
@@ -1159,4 +1167,21 @@ pub fn compareArcXWithLine(c: [2]f64, r: f64, side: Side, y: f64, a: [2]f64, b: 
     const lhs = h.mul(N.diff(c[0], a[0])).sub(N.diff(y, a[1]).mul(N.diff(b[0], a[0])));
     const radicand = h.square().mul(radicandIn(N, c, r, y));
     return sh * signPlusSqrt(lhs, s * sh, radicand);
+}
+
+/// The sign of `x₁ − x₂` at height `y`, where `xᵢ` is where the line through `aᵢ` and
+/// `bᵢ` crosses that height (`null` when either line is horizontal), exact: multiplied
+/// through by `h₁h₂`, it is `sign(h₁)·sign(h₂)·sign(h₂N₁ − h₁N₂)`.
+pub fn compareLineX(y: f64, a1: [2]f64, b1: [2]f64, a2: [2]f64, b2: [2]f64) ?f64 {
+    if (a1[1] == b1[1] or a2[1] == b2[1]) return null;
+    filter: {
+        const along1 = Approx.diff(y, a1[1]).mul(Approx.diff(b1[0], a1[0])).div(Approx.diff(b1[1], a1[1])) orelse break :filter;
+        const along2 = Approx.diff(y, a2[1]).mul(Approx.diff(b2[0], a2[0])).div(Approx.diff(b2[1], a2[1])) orelse break :filter;
+        if (Approx.of(a1[0]).add(along1).sub(Approx.of(a2[0]).add(along2)).sign()) |s| return s;
+    }
+    const N = Exact(LINE_X_CAP);
+    const h1 = N.diff(b1[1], a1[1]);
+    const h2 = N.diff(b2[1], a2[1]);
+    const lhs = h2.mul(lineXNumeratorIn(N, y, a1, b1)).sub(h1.mul(lineXNumeratorIn(N, y, a2, b2)));
+    return h1.sign() * h2.sign() * lhs.sign();
 }

@@ -186,7 +186,7 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     }
     const owner = try allocator.alloc(u32, n_cycles);
     defer allocator.free(owner);
-    try overlay_mod.nestCycles(allocator, segments, piece_starts, areas, owner, tol);
+    try overlay_mod.nestCycles(allocator, segments, piece_starts, areas, owner);
     var n_faces: usize = 0;
     for (0..n_cycles) |ci| {
         if (areas[ci] > 0) {
