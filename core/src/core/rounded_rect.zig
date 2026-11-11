@@ -65,6 +65,15 @@ pub const RoundedRect = struct {
         return out;
     }
 
+    /// The least and greatest x and y the outline reaches: `{min x, min y, max x, max y}`.
+    pub fn extremes(self: RoundedRect) [4]f64 {
+        const hw = self.x / 2.0;
+        const hh = self.y / 2.0;
+        const cx = if (self.center) 0.0 else hw;
+        const cy = if (self.center) 0.0 else hh;
+        return .{ cx - hw, cy - hh, cx + hw, cy + hh };
+    }
+
     /// The outline's points, counter-clockwise: each corner's arc in turn, from -90°.
     pub fn appendPoints(self: RoundedRect, allocator: std.mem.Allocator, pts: *std.ArrayList([2]f64)) !void {
         const chords = quarterArcSegments(self.segments);

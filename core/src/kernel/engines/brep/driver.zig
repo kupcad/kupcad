@@ -7,6 +7,9 @@ const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
+const path_mod = @import("../../../core/path.zig");
+const rounded_rect = @import("../../../core/rounded_rect.zig");
+const bezier = @import("../../../core/bezier.zig");
 const locus = @import("locus");
 const parallel_binding = @import("../../../bindings/parallel.zig");
 
@@ -151,7 +154,8 @@ pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
 }
 
 /// What Locus implements so far: boxes, cylinders, cones, spheres, polyhedra, sketches
-/// (square, circle, polygon, even-odd polygons), sketch booleans, offsets, hulls (of
+/// (square, circle, polygon, even-odd polygons, closed paths and rounded rectangles with
+/// their arcs exact), sketch booleans, offsets, hulls (of
 /// straight-edged sketches), outlines, containment and convexity, extrusions (no twist or
 /// taper) and revolutions (of a sketch on one side of the axis), their volume, area, genus
 /// and box (a sketch's area and box too), hulls of flat-faced solids, every rigid move,
@@ -198,6 +202,8 @@ pub const driver = struct {
     pub const circleFn = circleImpl;
     pub const polyhedronFn = polyhedronImpl;
     pub const polygonsEvenOddFn = polygonsEvenOddImpl;
+    pub const closedPathFn = closedPathImpl;
+    pub const roundedSquareFn = roundedSquareImpl;
     pub const extrudeFn = extrudeImpl;
     pub const revolveFn = revolveImpl;
     pub const sliceFn = sliceImpl;
@@ -318,6 +324,70 @@ fn polyhedronImpl(config: *const engine_config.EngineConfig, allocator: std.mem.
 fn polygonsEvenOddImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
     return build(geom.CrossSectionHandle, config, locus.construct.primitives.polygonsEvenOdd, .{contours});
+}
+
+const OutlineEdge = locus.construct.primitives.OutlineEdge;
+
+/// The exact sheet of a closed path: its lines and arcs as they are (an arc back to its own
+/// start, a full circle, as two arcs), a cubic curve chorded by its count in `chords` as
+/// the mesh engine chords it, and the end joined straight back to the start when the path
+/// does not reach it. `chords` is otherwise the mesh engine's.
+fn closedPathImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, start: [2]f64, segments: []const path_mod.Segment, chords: []const u32) ?geom.CrossSectionHandle {
+    var edges: std.ArrayList(OutlineEdge) = .empty;
+    defer edges.deinit(allocator);
+    var from = start;
+    for (segments, chords) |segment, chord_count| {
+        if (segment.arc) |arc| {
+            const circle: locus.construct.primitives.OutlineArc = .{ .c = arc.center, .r = arc.radius, .ccw = segment.ccw };
+            if (segment.to[0] == from[0] and segment.to[1] == from[1]) {
+                const opposite: [2]f64 = .{ 2 * arc.center[0] - from[0], 2 * arc.center[1] - from[1] };
+                edges.append(allocator, .{ .a = from, .b = opposite, .arc = circle }) catch return null;
+                edges.append(allocator, .{ .a = opposite, .b = segment.to, .arc = circle }) catch return null;
+            } else {
+                edges.append(allocator, .{ .a = from, .b = segment.to, .arc = circle }) catch return null;
+            }
+        } else if (segment.cubic) |cubic| {
+            const n: usize = @max(1, chord_count);
+            var prev = from;
+            for (1..n) |k| {
+                const p = bezier.pointOn(from, cubic, segment.to, @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(n)));
+                edges.append(allocator, .{ .a = prev, .b = p }) catch return null;
+                prev = p;
+            }
+            edges.append(allocator, .{ .a = prev, .b = segment.to }) catch return null;
+        } else {
+            edges.append(allocator, .{ .a = from, .b = segment.to }) catch return null;
+        }
+        from = segment.to;
+    }
+    if (from[0] != start[0] or from[1] != start[1]) edges.append(allocator, .{ .a = from, .b = start }) catch return null;
+    const contours = [_][]const OutlineEdge{edges.items};
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.outlines, .{&contours});
+}
+
+/// The exact sheet of a rectangle with rounded corners: four quarter arcs about the
+/// corners' centres joined by the sides' straight parts (none when the corners meet, as
+/// in a stadium or a disc); a radius of nothing is the plain rectangle.
+fn roundedSquareImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, rect: rounded_rect.RoundedRect) ?geom.CrossSectionHandle {
+    _ = allocator;
+    const r = rect.safeRadius();
+    if (!(r > 0)) return build(geom.CrossSectionHandle, config, locus.construct.primitives.square, .{ rect.x, rect.y, rect.center });
+    const corners = rect.corners();
+    var edges: [8]OutlineEdge = undefined;
+    // Each corner's arc from the side before it to the side after, counter-clockwise from
+    // the bottom right: the ends are the centre moved along the axes, exact
+    const steps = [4][2][2]f64{ .{ .{ 0, -1 }, .{ 1, 0 } }, .{ .{ 1, 0 }, .{ 0, 1 } }, .{ .{ 0, 1 }, .{ -1, 0 } }, .{ .{ -1, 0 }, .{ 0, -1 } } };
+    for (corners, steps, 0..) |corner, step, i| {
+        const c = corner.center;
+        const a: [2]f64 = .{ c[0] + r * step[0][0], c[1] + r * step[0][1] };
+        const b: [2]f64 = .{ c[0] + r * step[1][0], c[1] + r * step[1][1] };
+        edges[2 * i] = .{ .a = a, .b = b, .arc = .{ .c = c, .r = r, .ccw = true } };
+        const next = corners[(i + 1) % 4].center;
+        const next_start: [2]f64 = .{ next[0] + r * steps[(i + 1) % 4][0][0], next[1] + r * steps[(i + 1) % 4][0][1] };
+        edges[2 * i + 1] = .{ .a = b, .b = next_start };
+    }
+    const contours = [_][]const OutlineEdge{&edges};
+    return build(geom.CrossSectionHandle, config, locus.construct.primitives.outlines, .{&contours});
 }
 
 // --- transforms ---

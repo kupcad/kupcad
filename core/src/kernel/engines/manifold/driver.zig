@@ -8,6 +8,8 @@ const geom = @import("../../../core/geometry_handle.zig");
 const planar = @import("../../planar.zig");
 const manifold = @import("../../../bindings/manifold.zig");
 const engine_config = @import("../../../core/engine_config.zig");
+const path_mod = @import("../../../core/path.zig");
+const rounded_rect = @import("../../../core/rounded_rect.zig");
 const EngineConfig = engine_config.EngineConfig;
 const vec3 = @import("../../../core/vec3.zig");
 
@@ -73,6 +75,24 @@ fn circleImpl(config: *const EngineConfig, radius: f64, segments: i32) ?geom.Cro
 /// empty, and filled one lobe of a figure eight).
 fn polygonImpl(config: *const EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
     return polygonsEvenOddImpl(config, allocator, &.{pts});
+}
+
+/// The polygon of the path's chords, as the leaf chorded it: `chords` chords per segment,
+/// the point where the last segment ends on the start dropped (the polygon closes itself).
+fn closedPathImpl(config: *const EngineConfig, allocator: std.mem.Allocator, start: [2]f64, segments: []const path_mod.Segment, chords: []const u32) ?geom.CrossSectionHandle {
+    var pts: std.ArrayList([2]f64) = .empty;
+    defer pts.deinit(allocator);
+    path_mod.appendPoints(allocator, &pts, start, segments, chords, null) catch return null;
+    if (pts.items.len > 1 and pts.items[pts.items.len - 1][0] == start[0] and pts.items[pts.items.len - 1][1] == start[1]) _ = pts.pop();
+    return polygonImpl(config, allocator, pts.items);
+}
+
+/// The polygon of the rectangle's corner arcs, each the share of `segments` a quarter gets.
+fn roundedSquareImpl(config: *const EngineConfig, allocator: std.mem.Allocator, rect: rounded_rect.RoundedRect) ?geom.CrossSectionHandle {
+    var pts: std.ArrayList([2]f64) = .empty;
+    defer pts.deinit(allocator);
+    rect.appendPoints(allocator, &pts) catch return null;
+    return polygonImpl(config, allocator, pts.items);
 }
 
 fn polygonsEvenOddImpl(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
@@ -792,6 +812,8 @@ pub const driver = struct {
     pub const circleFn = circleImpl;
     pub const polyhedronFn = polyhedronImpl;
     pub const polygonsEvenOddFn = polygonsEvenOddImpl;
+    pub const closedPathFn = closedPathImpl;
+    pub const roundedSquareFn = roundedSquareImpl;
     pub const extrudeFn = extrudeImpl;
     pub const revolveFn = revolveImpl;
     pub const sliceFn = sliceImpl;

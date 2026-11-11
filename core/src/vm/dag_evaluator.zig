@@ -522,22 +522,27 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
             try pushSketch(vm, v_stack, node.tag, kernel.circle(&config, p.radius, p.segments));
         },
         .rounded_square => {
-            var pts: std.ArrayList([2]f64) = .empty;
-            defer pts.deinit(vm.allocator);
-            try b.getRoundedSquarePayload(node).appendPoints(vm.allocator, &pts);
-            try requireInRange(vm, node.tag, coordinatesOf(pts.items));
-            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
+            // The kernel gets the rectangle itself: the exact engine keeps its arcs, the
+            // mesh engine chords them as the leaf did before
+            const rect = b.getRoundedSquarePayload(node);
+            try requireInRange(vm, node.tag, &rect.extremes());
+            try pushSketch(vm, v_stack, node.tag, kernel.roundedSquare(&config, vm.allocator, rect));
         },
         .closed_path => {
             const closed = try b.readClosedPath(vm.allocator, node);
             defer closed.deinit(vm.allocator);
-            var pts: std.ArrayList([2]f64) = .empty;
-            defer pts.deinit(vm.allocator);
-            try path_mod.appendPoints(vm.allocator, &pts, closed.start, closed.segments, closed.chords, null);
-            // The last segment ends where the path starts, or the polygon closes it straight
-            if (pts.items.len > 1 and pts.items[pts.items.len - 1][0] == closed.start[0] and pts.items[pts.items.len - 1][1] == closed.start[1]) _ = pts.pop();
-            try requireInRange(vm, node.tag, coordinatesOf(pts.items));
-            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
+            // Every coordinate the path reaches: its points, an arc's circle's extent, a
+            // curve's controls (the curve stays within their hull)
+            var reach: std.ArrayList(f64) = .empty;
+            defer reach.deinit(vm.allocator);
+            try reach.appendSlice(vm.allocator, &closed.start);
+            for (closed.segments) |segment| {
+                try reach.appendSlice(vm.allocator, &segment.to);
+                if (segment.arc) |arc| try reach.appendSlice(vm.allocator, &.{ arc.center[0] - arc.radius, arc.center[1] - arc.radius, arc.center[0] + arc.radius, arc.center[1] + arc.radius });
+                if (segment.cubic) |cubic| try reach.appendSlice(vm.allocator, &.{ cubic.c1[0], cubic.c1[1], cubic.c2[0], cubic.c2[1] });
+            }
+            try requireInRange(vm, node.tag, reach.items);
+            try pushSketch(vm, v_stack, node.tag, kernel.closedPath(&config, vm.allocator, closed.start, closed.segments, closed.chords));
         },
         .polygon => {
             const pts = try readPoints(vm, b.extra_data.items[node.data], b.extra_data.items[node.data + 1]);

@@ -97,6 +97,12 @@ const SHAPES = [_][]const u8{
     "cylinder(r: 1, h: 3, segments: 64).scale(2)",
     "cylinder(r: 1, h: 3, segments: 64).mirror(0, 0, 1)",
     "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]).rotate(10, 20, 30).translate(-1, -2, -3)",
+    // Sketches with arcs from the graph's leaves: the exact engine keeps the arcs, the
+    // mesh engine chords them with their ends on the axes, so the boxes agree
+    "square(4, round_r: 1, segments: 64).extrude(2)",
+    "cube(3, round_r: 0.5, segments: 64)",
+    "line([0, 0], [8, 0]).arc_to([10, 2], r: 2).line_to([10, 10]).line_to([0, 10]).close.extrude(2)",
+    "(line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])).close.extrude(3)",
 };
 
 /// What the B-Rep engine refuses and the mesh engine builds: a non-uniform scale of a
@@ -166,7 +172,7 @@ test "parity: a STEP export's vertices and circles bound what the kernel bounds,
 /// Null for a curved shape at the mesh engine's default resolution, which depends on the
 /// size and is no bound this test can state.
 fn volumeBound(source: []const u8) ?f64 {
-    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve", "offset(", "arc(" }) |word| {
+    const curved = for ([_][]const u8{ "cylinder", "circle", "sphere", "revolve", "offset(", "arc(", "arc_to(", "round_r" }) |word| {
         if (std.mem.indexOf(u8, source, word) != null) break true;
     } else false;
     if (!curved) return 1e-9;

@@ -144,6 +144,47 @@ test "Driver: a sketch's offset is exact, its round joins arcs" {
     try std.testing.expect(driver.supports(.offset));
 }
 
+test "Driver: a closed path keeps its arcs, a rounded square its corners, exact; a cubic is chorded" {
+    const path_mod = @import("../../../core/path.zig");
+    // A stadium: a 4 by 2 rectangle with half-discs at its ends
+    const stadium = [_]path_mod.Segment{
+        .{ .to = .{ 4, 0 } },
+        .{ .to = .{ 4, 2 }, .arc = .{ .center = .{ 4, 1 }, .radius = 1 }, .ccw = true, .angle = std.math.pi },
+        .{ .to = .{ 0, 2 } },
+        .{ .to = .{ 0, 0 }, .arc = .{ .center = .{ 0, 1 }, .radius = 1 }, .ccw = true, .angle = std.math.pi },
+    };
+    const slot = driver.driver.closedPathFn(&TEST_CONFIG, std.testing.allocator, .{ 0, 0 }, &stadium, &.{ 1, 8, 1, 8 }) orelse return error.PathFailed;
+    defer driver.driver.destructCrossSectionFn(slot);
+    try std.testing.expectApproxEqRel(8 + std.math.pi, driver.driver.crossSectionAreaFn(slot), 1e-9);
+    // A full circle as one arc back to its start, and a path left open (closed straight)
+    const ring = [_]path_mod.Segment{.{ .to = .{ 2, 0 }, .arc = .{ .center = .{ 0, 0 }, .radius = 2 }, .ccw = true, .angle = 2 * std.math.pi }};
+    const disc = driver.driver.closedPathFn(&TEST_CONFIG, std.testing.allocator, .{ 2, 0 }, &ring, &.{16}) orelse return error.PathFailed;
+    defer driver.driver.destructCrossSectionFn(disc);
+    try std.testing.expectApproxEqRel(4 * std.math.pi, driver.driver.crossSectionAreaFn(disc), 1e-9);
+    const open = [_]path_mod.Segment{ .{ .to = .{ 3, 0 } }, .{ .to = .{ 3, 4 } } };
+    const tri = driver.driver.closedPathFn(&TEST_CONFIG, std.testing.allocator, .{ 0, 0 }, &open, &.{ 1, 1 }) orelse return error.PathFailed;
+    defer driver.driver.destructCrossSectionFn(tri);
+    try std.testing.expectApproxEqRel(@as(f64, 6), driver.driver.crossSectionAreaFn(tri), 1e-9);
+    // A cubic curve is chorded by its count: a bulge of six straight pieces, within a
+    // few percent of the curve's own area, 216/30 (y = 9t(1 − t), dx = −24t(1 − t) dt)
+    const bowed = [_]path_mod.Segment{ .{ .to = .{ 4, 0 } }, .{ .to = .{ 0, 0 }, .cubic = .{ .c1 = .{ 4, 3 }, .c2 = .{ 0, 3 } } } };
+    const bow = driver.driver.closedPathFn(&TEST_CONFIG, std.testing.allocator, .{ 0, 0 }, &bowed, &.{ 1, 6 }) orelse return error.PathFailed;
+    defer driver.driver.destructCrossSectionFn(bow);
+    const bow_area = driver.driver.crossSectionAreaFn(bow);
+    try std.testing.expect(bow_area > 7.2 * 0.95 and bow_area < 7.2);
+    // A 4 by 2 rectangle with corners of radius a half: 8 − (4 − π) r²; and a stadium by
+    // a radius of half the short side; a radius of nothing is the rectangle
+    const rounded = driver.driver.roundedSquareFn(&TEST_CONFIG, std.testing.allocator, .{ .x = 4, .y = 2, .center = false, .radius = 0.5, .segments = 16 }) orelse return error.RoundedFailed;
+    defer driver.driver.destructCrossSectionFn(rounded);
+    try std.testing.expectApproxEqRel(8 - (4 - std.math.pi) * 0.25, driver.driver.crossSectionAreaFn(rounded), 1e-9);
+    const capsule = driver.driver.roundedSquareFn(&TEST_CONFIG, std.testing.allocator, .{ .x = 4, .y = 2, .center = true, .radius = 1, .segments = 16 }) orelse return error.RoundedFailed;
+    defer driver.driver.destructCrossSectionFn(capsule);
+    try std.testing.expectApproxEqRel(4 + std.math.pi, driver.driver.crossSectionAreaFn(capsule), 1e-9);
+    const plain = driver.driver.roundedSquareFn(&TEST_CONFIG, std.testing.allocator, .{ .x = 4, .y = 2, .center = false, .radius = 0, .segments = 16 }) orelse return error.RoundedFailed;
+    defer driver.driver.destructCrossSectionFn(plain);
+    try std.testing.expectApproxEqRel(@as(f64, 8), driver.driver.crossSectionAreaFn(plain), 1e-9);
+}
+
 test "Driver: a sketch's hull, contours, containment and convexity" {
     const sq = driver.driver.squareFn(&TEST_CONFIG, 2, 2, false) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(sq);

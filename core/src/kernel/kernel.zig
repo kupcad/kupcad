@@ -13,6 +13,8 @@
 
 const std = @import("std");
 const geom = @import("../core/geometry_handle.zig");
+const path_mod = @import("../core/path.zig");
+const rounded_rect = @import("../core/rounded_rect.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
@@ -269,6 +271,22 @@ pub fn polyhedron(config: *const EngineConfig, allocator: std.mem.Allocator, poi
 
 pub inline fn polygonsEvenOdd(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     return dispatchOn("polygonsEvenOddFn", config.engine, .{ config, allocator, contours });
+}
+
+/// The sketch a closed path of lines, arcs and cubic curves from `start` encloses, filled by
+/// the even-odd rule (a Path's `close`, `polygon(round_r:)` and `chamfer:`): the exact
+/// engine keeps its lines and arcs (a cubic curve is chorded by its count in `chords` on
+/// both engines, until free-form curves), the mesh engine the polygon of `chords` chords
+/// per segment, as the leaf chorded it before the exact engine had arcs.
+pub inline fn closedPath(config: *const EngineConfig, allocator: std.mem.Allocator, start: [2]f64, segments: []const path_mod.Segment, chords: []const u32) ?geom.CrossSectionHandle {
+    return dispatchOn("closedPathFn", config.engine, .{ config, allocator, start, segments, chords });
+}
+
+/// A rectangle with rounded corners (`square(round_r:)`, the profile of `cube(round_r:)`):
+/// exact arcs on the exact engine, the share of `rect.segments` a quarter gets on the mesh
+/// engine.
+pub inline fn roundedSquare(config: *const EngineConfig, allocator: std.mem.Allocator, rect: rounded_rect.RoundedRect) ?geom.CrossSectionHandle {
+    return dispatchOn("roundedSquareFn", config.engine, .{ config, allocator, rect });
 }
 
 pub inline fn translate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {

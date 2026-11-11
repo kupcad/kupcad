@@ -98,6 +98,8 @@ pub const EXACT: f64 = 1e-9;
 /// A circle cut into 64 segments: its polygon's area is (n/2)·sin(2π/n) of the disc's,
 /// 0.9984 for n = 64, so a mesh volume is within this of the exact one.
 const CHORDS_64: f64 = 1e-2;
+/// A unit arc at the default resolution: a few chords a turn, a tenth off.
+const CHORDS_DEFAULT: f64 = 1e-1;
 /// A round offset's arcs get the mesh engine's default segments, few at these sizes.
 const CHORDS_OFFSET: f64 = 2e-2;
 
@@ -108,9 +110,7 @@ const PLAN = "locus-plan MILESTONES M2 exit (case rig, 2026-11-09)";
 /// fix lands, when it leaves this list (a fix that does not is a test failure, as a new
 /// failure is). Never a workaround in the case.
 pub const Known = struct { name: []const u8, why: []const u8 };
-pub const KNOWN_FRONTIER = [_]Known{
-    .{ .name = "cube with rounded edges", .why = "the B-Rep engine chords a rounded square's corners (the graph's rounded_square and closed_path leaves reach it as polygons); sketches with arcs from paths are an M3 item" },
-};
+pub const KNOWN_FRONTIER = [_]Known{};
 
 pub const CASES = [_]Case{
     // --- 01 primitives: closed-form volumes and areas
@@ -134,6 +134,8 @@ pub const CASES = [_]Case{
     .{ .tier = .profiles, .name = "square extruded", .script = "square(10).extrude(5)", .what = "a 10 by 10 square extruded 5", .method = "100 × 5; area 2 × 100 + 4 × 50", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 500, .area = 400 } }, .mesh_bound = EXACT },
     .{ .tier = .profiles, .name = "quadrilateral extruded", .script = "polygon([[0, 0], [4, 0], [4, 3], [1, 5]]).extrude(2)", .what = "a quadrilateral of area 14.5 extruded 2", .method = "the shoelace area 14.5, times 2; area twice it plus the perimeter (7 + √13 + √26) times 2", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 29, .area = 29 + 2 * (7 + @sqrt(13.0) + @sqrt(26.0)) } }, .mesh_bound = EXACT },
     .{ .tier = .profiles, .name = "hexagon extruded", .script = "regular_polygon(6, r: 5).extrude(2)", .what = "a regular hexagon of circumradius 5 extruded 2", .method = "(3√3 / 2) r² × 2", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 3 * @sqrt(3.0) / 2.0 * 25 * 2 } }, .mesh_bound = EXACT },
+    .{ .tier = .profiles, .name = "rounded triangle extruded", .script = "polygon([[0, 0], [4, 0], [4, 3]], round_r: 0.5, segments: 64).extrude(2)", .what = "the 3-4-5 triangle with its corners rounded to a half, extruded 2", .method = "each corner of angle θ loses r² (cot(θ/2) − (π − θ)/2): the three together r² (6 − π), so (6 − 1.5 + π/4) × 2", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = (4.5 + PI / 4.0) * 2 } }, .mesh_bound = CHORDS_64 },
+    .{ .tier = .profiles, .name = "slot from a closed path", .script = "line([0, 0], [4, 0]).arc_to([4, 2], r: 1).line_to([0, 2]).arc_to([0, 0], r: 1).close.extrude(2)", .what = "a stadium of a 4 by 2 rectangle with half-discs of radius 1 at its ends, extruded 2", .method = "(8 + π) × 2", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = (8 + PI) * 2 } }, .mesh_bound = CHORDS_DEFAULT },
     .{ .tier = .profiles, .name = "square revolved", .script = "square(2).translate(1, 0).revolve(segments: 64)", .what = "a 2 by 2 square a unit off the axis, revolved fully", .method = "Pappus: the area 4 times the path of its centroid, 2π × 2", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 16 * PI } }, .mesh_bound = CHORDS_64 },
     .{ .tier = .profiles, .name = "square revolved a quarter", .script = "square(2).translate(1, 0).revolve(deg: 90, segments: 64)", .what = "the same square revolved a quarter turn", .method = "a quarter of Pappus: 4π", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 4 * PI } }, .mesh_bound = CHORDS_64 },
     .{ .tier = .profiles, .name = "triangle revolved into a cone", .script = "polygon([[0, 0], [2, 0], [0, 3]]).revolve(segments: 64)", .what = "a right triangle on the axis revolved: a cone of radius 2, height 3", .method = "π r² h / 3", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 4 * PI } }, .mesh_bound = CHORDS_64 },
