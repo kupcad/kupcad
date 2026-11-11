@@ -52,7 +52,14 @@ const AREA_CLOSE = 1e-9;
 const IDENTITY_CLOSE = 1e-9;
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
-const PLAIN_RUN_BYTES = 256;
+const PLAIN_RUN_SEED = 0x2d_c4a1;
+/// How many of the plain run's chains must reach their checks: the invariants are tested
+/// on the chains that run, so a share of refusals above this would test less than the
+/// run count says (the thesis's strict model, research/li-chen-egc.md §4). The run drew
+/// its chains from a Smith over random bytes until 2026-11-11, which takes each value as
+/// a little-endian u64 and falls back to the range's least when it is out of it, as
+/// random bytes always are: every ring was all zeros and no chain ever reached a check.
+const PLAIN_RUN_CHECKED_AT_LEAST = PLAIN_RUN_CHAINS / 2;
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: the body JSON reader takes any input" {
@@ -104,18 +111,30 @@ test "fuzz: the 2D kernel takes any generated sketch chain" {
 }
 
 fn sketchChain(_: void, smith: *Smith) anyerror!void {
-    try runChain(smith);
+    _ = try runChain(smith);
 }
 
-test "Fuzz chains: generated sketch chains run clean on a plain test run" {
-    var bytes: [PLAIN_RUN_BYTES]u8 = undefined;
-    for (0..PLAIN_RUN_CHAINS) |seed| {
-        var prng = std.Random.DefaultPrng.init(seed);
-        prng.random().bytes(&bytes);
-        var smith: Smith = .{ .in = &bytes };
-        try runChain(&smith);
-    }
+test "Fuzz chains: generated sketch chains run clean on a plain test run, most of them checked" {
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED);
+    var source = RandomSource{ .random = prng.random() };
+    var checked: usize = 0;
+    for (0..PLAIN_RUN_CHAINS) |_| checked += @intFromBool(try runChain(&source) == .checked);
+    try testing.expect(checked >= PLAIN_RUN_CHECKED_AT_LEAST);
 }
+
+/// The Smith's two draws the chains use, from a random generator: what the plain run
+/// drives the chains with (the fuzzer drives them with its Smith).
+const RandomSource = struct {
+    random: std.Random,
+
+    fn valueRangeAtMost(self: *RandomSource, comptime T: type, at_least: T, at_most: T) T {
+        return self.random.intRangeAtMost(T, at_least, at_most);
+    }
+
+    fn index(self: *RandomSource, len: usize) usize {
+        return self.random.uintLessThan(usize, len);
+    }
+};
 
 /// What a chain did, for the report of a failure.
 const Log = struct {
@@ -128,14 +147,14 @@ const Log = struct {
 
 const Op = enum { boolean, offset, hull, queries };
 
-fn runChain(smith: *Smith) !void {
+fn runChain(smith: anytype) !Outcome {
     var log: Log = .{};
     defer log.text.deinit(testing.allocator);
     errdefer std.debug.print("the chain that failed:\n{s}", .{log.text.items});
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
 
-    var current = (try sheet(smith, &log, &diag)) orelse return;
+    var current = (try sheet(smith, &log, &diag)) orelse return .refused;
     defer current.deinit();
     try expectSound(&current, &diag);
 
@@ -190,23 +209,29 @@ fn runChain(smith: *Smith) !void {
             },
         }
     }
+    return .checked;
 }
 
 /// One value of an enum, the Smith's choice.
-fn pick(comptime T: type, smith: *Smith) T {
+fn pick(comptime T: type, smith: anytype) T {
     const values = std.enums.values(T);
     return values[smith.index(values.len)];
 }
 
 /// A clean error: the operation refused, saying what; never a crash. Out of memory is
 /// the test harness's own.
-fn clean(err: anyerror) anyerror!void {
+fn clean(err: anyerror) anyerror!Outcome {
     if (err == error.OutOfMemory) return err;
+    return .refused;
 }
+
+/// What a chain did: ran to its checks, or was refused somewhere on the way (a clean
+/// error, which is no failure but checks nothing further).
+const Outcome = enum { checked, refused };
 
 /// A sheet from rings of grid points by the even-odd rule, or null when the rings make no
 /// region (a clean refusal). The rings are logged.
-fn sheet(smith: *Smith, log: *Log, diag: *Diagnostics) !?Body {
+fn sheet(smith: anytype, log: *Log, diag: *Diagnostics) !?Body {
     const ring_count = smith.valueRangeAtMost(u8, 1, MAX_RINGS);
     var points: [MAX_RINGS * MAX_POINTS]Vec2 = undefined;
     var rings: [MAX_RINGS][]const Vec2 = undefined;
@@ -224,7 +249,7 @@ fn sheet(smith: *Smith, log: *Log, diag: *Diagnostics) !?Body {
     }
     try log.add("\n", .{});
     return primitives.polygonsEvenOdd(testing.allocator, tol, rings[0..ring_count], diag) catch |err| {
-        try clean(err);
+        _ = try clean(err);
         return null;
     };
 }
@@ -303,7 +328,7 @@ fn chordBound(body: *const Body, diag: *Diagnostics) !f64 {
 /// intersection is a clean error, not a failure).
 fn expectWithin(inner: *const Body, outer: *const Body, diag: *Diagnostics) !void {
     var both = boolean.boolean(testing.allocator, &.{ inner, outer }, .intersection, .{}, diag) catch |err| {
-        try clean(err);
+        _ = try clean(err);
         return;
     };
     defer both.deinit();
@@ -336,7 +361,7 @@ fn expectAreaIdentities(p: *const Body, q: *const Body, diag: *Diagnostics) !voi
     var areas: [3]f64 = undefined;
     for (ops, 0..) |op, i| {
         results[i] = boolean.boolean(testing.allocator, &.{ p, q }, op, .{}, diag) catch |err| {
-            try clean(err);
+            _ = try clean(err);
             return;
         };
         areas[i] = (try mass.mass(&results[i].?, .{}, diag)).area;
