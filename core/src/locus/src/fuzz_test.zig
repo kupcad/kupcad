@@ -67,6 +67,8 @@ const IDENTITY_CLOSE = 1e-9;
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
 const PLAIN_RUN_SEED = 0x2d_c4a1;
+/// Curves the chord target's plain run checks.
+const PLAIN_RUN_CURVES = 2000;
 /// How many of the plain run's chains must reach their checks: the invariants are tested
 /// on the chains that run, so a share of refusals above this would test less than the
 /// run count says (the thesis's strict model, research/li-chen-egc.md §4). The run drew
@@ -134,6 +136,10 @@ const BOW_SLACK = 1e-9;
 /// a clean refusal (a cusp, a loop the budget cannot hold), or spans each of which the
 /// curve, evaluated densely, keeps within the budget the enclosure certified.
 fn freeFormChords(_: void, smith: *Smith) anyerror!void {
+    try checkFreeFormChords(smith);
+}
+
+fn checkFreeFormChords(smith: anytype) anyerror!void {
     const resolution: tolerance.Resolution = if (smith.valueRangeAtMost(u8, 0, 1) == 0) .{} else .{ .segments = smith.valueRangeAtMost(u32, 3, 360) };
     var points: [10]vec.Vec4 = undefined;
     var knots: [24]f64 = undefined;
@@ -193,7 +199,7 @@ fn freeFormChords(_: void, smith: *Smith) anyerror!void {
 }
 
 /// A number the Smith picks across the decades 1e-3 to 1e3, either sign.
-fn decade(smith: *Smith) f64 {
+fn decade(smith: anytype) f64 {
     const mantissa = @as(f64, @floatFromInt(smith.valueRangeAtMost(u32, 0, 999))) / 100.0;
     const exponent = smith.valueRangeAtMost(i32, -3, 3);
     const sign: f64 = if (smith.valueRangeAtMost(u8, 0, 1) == 0) 1 else -1;
@@ -586,4 +592,26 @@ fn expectAreaIdentities(p: *const Body, q: *const Body, diag: *Diagnostics) !voi
     const slack = try weldingSlack(p, diag) + try weldingSlack(q, diag) + IDENTITY_CLOSE * @max(ap + aq, 1);
     try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], slack);
     try testing.expectApproxEqAbs(ap - areas[1], areas[2], slack);
+}
+
+test "Fuzz chords: generated free-form curves on a plain test run are certified or refused, the 2026-11-12 find included" {
+    // A rational cubic whose weights run from 2.8e-3 to 4.6e3: its hull certified a span
+    // 6e-12 short of where the curve reached, by rounding; the certificate now leaves room
+    // for the curve's own rounding, so such a curve's edge is refused
+    const knots = [_]f64{ 0, 0, 0, 0, 0.2, 0.4, 0.6, 0.8, 1, 1, 1, 1 };
+    const points = [_]vec.Vec4{
+        .{ -3.4e-2, 5.33e3, -5.8e3, 42.4 },  .{ 1.81, -0.978, -6.02e-2, 2.86e3 },   .{ 8.4e-3, -9.74e3, -4.2e3, 0.683 },
+        .{ -6.45e-3, -0.216, 5.36e-2, 3.98e-2 }, .{ 0.993, 0.291, 4.94e-2, 7.45e-3 }, .{ -8.53, -6.83, -268, 4.57e3 },
+        .{ -4.17e-3, 21.3, 5.48, 2.81e-3 },  .{ -0.451, 0.936, 51.2, 0.903 },
+    };
+    const curve: curves.Curve = .{ .nurbs = .{ .degree = 3, .knots = &knots, .points = &points } };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var out: std.ArrayList(f64) = .empty;
+    defer out.deinit(testing.allocator);
+    try testing.expectError(error.LimitExceeded, chords.sampleParams(testing.allocator, curve, 0.13, 1, .{ .segments = 179 }, &out, &diag, .none));
+    // And many generated curves, each certified to the dense check or refused
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED);
+    var source: RandomSource = .{ .random = prng.random() };
+    for (0..PLAIN_RUN_CURVES) |_| try checkFreeFormChords(&source);
 }

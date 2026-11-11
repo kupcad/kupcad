@@ -10,7 +10,12 @@
 //! a frame along its chord (how far the enclosure reaches across the chord, and past its
 //! ends), halved until it passes, and the halves' ends are the samples; a span that
 //! does not pass within `MAX_DEPTH` halvings (a cusp, a loop smaller than the chord's
-//! budget) is refused with a finding, never sampled and hoped for.
+//! budget) is refused with a finding, never sampled and hoped for. The enclosures and the
+//! chord's own ends are computed in floating point, so each test also leaves room for the
+//! rounding of a point of the curve (`evalRounding`, an a-priori bound: for a NURBS curve
+//! its homogeneous coordinates' size over its least weight, which a curve with weights
+//! decades apart makes large enough that its spans are refused rather than certified by
+//! luck; the fuzzer's first find, 2026-11-12).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -30,6 +35,10 @@ const Error = diagnostics.Error;
 pub const MAX_DEPTH: u8 = 24;
 /// The most spans one edge gets: a refusal past it, not a mesh of a million chords.
 pub const MAX_SPANS: usize = 1 << 16;
+/// The rounding of one evaluated point, in units of the curve's size times the machine
+/// epsilon (per degree, for NURBS): the basis functions' or de Casteljau's few dozen
+/// operations, with room.
+const ROUNDING_ULPS: f64 = 32;
 
 /// Appends to `out`, in increasing order, the parameters strictly between `t0` and `t1`
 /// at which the edge on `curve` is cut: none for a line or a circle (those have their
@@ -42,7 +51,7 @@ pub fn sampleParams(allocator: std.mem.Allocator, curve: curves.Curve, t0: f64, 
         .line, .circle => {},
         .ellipse => |e| {
             var spans: usize = 1;
-            try refine(EllipseSpan{ .ellipse = e }, t0, t1, 0, resolution, allocator, out, &spans, diag, entity);
+            try refine(EllipseSpan{ .ellipse = e, .rounding = evalRounding(curve) }, t0, t1, 0, resolution, allocator, out, &spans, diag, entity);
         },
         .nurbs => |n| {
             const segments = try n.decompose(allocator);
@@ -52,7 +61,7 @@ pub fn sampleParams(allocator: std.mem.Allocator, curve: curves.Curve, t0: f64, 
             }
             const distinct = try distinctKnots(allocator, n);
             defer allocator.free(distinct);
-            var span = BezierSpan{ .curve = n, .segments = segments, .knots = distinct };
+            var span = BezierSpan{ .curve = n, .segments = segments, .knots = distinct, .rounding = evalRounding(curve) };
             var spans: usize = 1;
             var a = t0;
             for (distinct[1 .. distinct.len - 1]) |knot| {
@@ -69,7 +78,7 @@ pub fn sampleParams(allocator: std.mem.Allocator, curve: curves.Curve, t0: f64, 
 /// Halves `[a, b]` until each piece's enclosure lies within the chord's budget, the
 /// halving points appended in order.
 fn refine(ctx: anytype, a: f64, b: f64, depth: u8, resolution: tolerance.Resolution, allocator: std.mem.Allocator, out: *std.ArrayList(f64), spans: *usize, diag: *Diagnostics, entity: diagnostics.EntityRef) Error!void {
-    if (passes(ctx, a, b, resolution)) return;
+    if (passes(ctx, a, b, resolution, ctx.rounding)) return;
     if (depth >= MAX_DEPTH) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .entity = entity, .label = "the halvings of a free-form edge's span (no chord within the resolution)", .measured = @floatFromInt(depth), .threshold = @floatFromInt(MAX_DEPTH) });
     spans.* += 1;
     if (spans.* > MAX_SPANS) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .entity = entity, .label = "the chords of a free-form edge", .measured = @floatFromInt(spans.*), .threshold = @floatFromInt(MAX_SPANS) });
@@ -100,14 +109,39 @@ const ChordFrame = struct {
 const Reach = struct { along: Interval, across: f64 };
 
 /// Whether the span's enclosure lies within the chord's budget: no farther across than
-/// the bow the resolution allows a chord of this length, and no farther past either end.
-fn passes(ctx: anytype, a: f64, b: f64, resolution: tolerance.Resolution) bool {
+/// the bow the resolution allows a chord of this length, and no farther past either end,
+/// with room for `rounding` at both ends of the chord and in the enclosure.
+fn passes(ctx: anytype, a: f64, b: f64, resolution: tolerance.Resolution, rounding: f64) bool {
     const pa = ctx.point(a);
     const pb = ctx.point(b);
     const frame = ChordFrame.of(pa, pb) orelse return false;
-    const budget = resolution.chordBow(frame.length);
+    const budget = resolution.chordBow(frame.length) - 3 * rounding;
+    if (!(budget > 0)) return false;
     const reach = ctx.reach(a, b, frame);
     return reach.across <= budget and reach.along.lo >= -budget and reach.along.hi <= frame.length + budget;
+}
+
+/// An a-priori bound on how far an evaluated point of `curve` lies from the true one:
+/// `ROUNDING_ULPS · ε` times the curve's size (an ellipse's centre plus its axes; a NURBS
+/// curve's largest homogeneous coordinate over its least weight, times its order, since a
+/// point is a ratio of weighted sums); none for a line or a circle, which are not cut
+/// here.
+pub fn evalRounding(curve: curves.Curve) f64 {
+    const eps = std.math.floatEps(f64);
+    return switch (curve) {
+        .line, .circle => 0,
+        .ellipse => |e| ROUNDING_ULPS * eps * (vec.length(e.c) + e.a + e.b),
+        .nurbs => |n| blk: {
+            var size: f64 = 0;
+            var least: f64 = std.math.inf(f64);
+            for (n.points) |q| {
+                size = @max(size, vec.length(.{ q[0], q[1], q[2] }));
+                least = @min(least, q[3]);
+            }
+            const order: f64 = @floatFromInt(n.degree + 1);
+            break :blk ROUNDING_ULPS * eps * order * size / least;
+        },
+    };
 }
 
 /// A span of an ellipse, enclosed by interval arithmetic in the mean-value form: along
@@ -117,6 +151,7 @@ fn passes(ctx: anytype, a: f64, b: f64, resolution: tolerance.Resolution) bool {
 /// the chord and shrinks only linearly with the span, never under the budget.)
 const EllipseSpan = struct {
     ellipse: curves.Ellipse,
+    rounding: f64,
 
     fn point(self: EllipseSpan, t: f64) Vec3 {
         return self.ellipse.eval(t);
@@ -152,6 +187,7 @@ const BezierSpan = struct {
     segments: []const []const Vec4,
     /// The distinct knots, `segments.len + 1` of them.
     knots: []const f64,
+    rounding: f64,
 
     fn point(self: *const BezierSpan, t: f64) Vec3 {
         return self.curve.eval(t);
