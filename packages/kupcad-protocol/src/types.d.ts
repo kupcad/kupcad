@@ -46,6 +46,12 @@ export interface Part {
    */
   volume?: number | null;
   size?: [number, number, number] | null;
+  /**
+   * Whether its mesh in the frame's GLB is a bounded preview of a large exact part (the B-Rep
+   * engine's preview budget), coarser than the part's own mesh, which an export builds; absent
+   * from an older core.
+   */
+  provisional?: boolean;
   /** Where its name was first given (`named`); null, or absent from an older core, for a part without a name. */
   source?: Source | null;
 }
