@@ -49,7 +49,7 @@ pub fn materialLibraryOf(allocator: std.mem.Allocator, vm: *VM, solids: []const 
     for (solids) |solid| {
         const handle = try vm.ensureConcrete(solid);
         try vm.requireFeature(handle.engine, .mesh);
-        const mesh = try mesh_part.floatMesh(allocator, handle);
+        const mesh = try mesh_part.floatMesh(allocator, handle, false);
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         var tri: usize = 0;
@@ -225,7 +225,7 @@ fn exportSolids(
         // The parts once each, placed per copy: the Solids themselves, not their meshes.
         .@"3mf" => return threemfOf(allocator, vm, solids, title),
         .obj => {
-            var parts = try namedParts(allocator, vm, solids, ghosts);
+            var parts = try namedParts(allocator, vm, solids, ghosts, false);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             return obj_exporter.build(allocator, parts.items, vm.materials.items, title, options.mtl_name);
@@ -250,7 +250,7 @@ fn exportSolids(
             };
         },
         .glb, .gltf => {
-            var parts = try namedParts(allocator, vm, solids, ghosts);
+            var parts = try namedParts(allocator, vm, solids, ghosts, options.preview);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
@@ -312,17 +312,17 @@ const NamedParts = struct {
     }
 };
 
-fn namedParts(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !NamedParts {
+fn namedParts(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle, preview: bool) !NamedParts {
     var arena = std.heap.ArenaAllocator.init(allocator);
     errdefer arena.deinit();
     const items = try arena.allocator().alloc(MeshPart, ghosts.len + solids.len);
-    for (ghosts, items[0..ghosts.len]) |ghost, *item| item.* = .{ .handle = ghost };
+    for (ghosts, items[0..ghosts.len]) |ghost, *item| item.* = .{ .handle = ghost, .preview = preview };
     const grouping = try parts_mod.group(vm, allocator, solids);
     defer grouping.deinit(allocator);
     var names = try parts_mod.CopyNames.init(allocator, &grouping);
     defer names.deinit(allocator);
     for (solids, grouping.copies, items[ghosts.len..]) |solid, copy, *item| {
-        item.* = .{ .handle = try vm.ensureConcrete(solid), .name = try names.next(arena.allocator(), copy) };
+        item.* = .{ .handle = try vm.ensureConcrete(solid), .name = try names.next(arena.allocator(), copy), .preview = preview };
     }
     return .{ .arena = arena, .items = items };
 }

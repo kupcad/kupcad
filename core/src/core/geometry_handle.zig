@@ -108,6 +108,9 @@ pub const Mesh = struct {
     vert_props: []f32,
     tri_verts: []u32,
     num_prop: usize,
+    /// A preview mesh cut short of the part's resolution by the engine's preview budget
+    /// (`kernel.getPreviewMesh` on the B-Rep engine): a picture, not the part's mesh.
+    provisional: bool = false,
 };
 
 pub const RayHit = struct {

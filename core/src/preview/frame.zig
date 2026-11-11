@@ -63,6 +63,10 @@ pub const Part = struct {
     /// Added in protocol version 1, optional: no version bump.
     volume: ?f64 = null,
     size: ?[3]f64 = null,
+    /// Whether the part's mesh in the body is a bounded preview of a large exact part
+    /// (the B-Rep engine's preview budget), coarser than the part's own mesh, which an
+    /// export builds. Added in protocol version 1, optional: no version bump.
+    provisional: bool = false,
     /// Where its name was first given (`named`), so a viewer shows its line from the part;
     /// null for a part without a name. Added in protocol version 1, optional.
     source: ?Source = null,

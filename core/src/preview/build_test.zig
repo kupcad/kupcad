@@ -259,3 +259,25 @@ test "preview: a refusal before the run keeps the schema and says why" {
     try testing.expect(h.@"error".?.line == null);
     try testing.expectEqualStrings("width", h.params.schema.object.get("parameters").?.array.items[0].object.get("name").?.string);
 }
+
+test "preview: a large exact part is shown as a bounded preview mesh and says so; a small one as its own" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // A sphere of radius 30 at 1200 segments a turn is some 719k points at its
+    // resolution: the viewer gets a bounded picture, the cube its mesh
+    const source =
+        \\CAD.config(engine: :brep, resolution: { min_angle: 0.3, min_length: 0.02 })
+        \\[sphere(r: 30).named("ball"), cube(10).named("block").translate(x: 50)]
+    ;
+    const read = try preview(arena.allocator(), source, "");
+    const h = read.header;
+    if (h.@"error") |e| std.debug.print("preview error: {s}\n", .{e.message});
+    try testing.expect(h.@"error" == null);
+    try testing.expectEqual(@as(usize, 2), h.parts.len);
+    try testing.expectEqualStrings("ball", h.parts[0].name);
+    try testing.expect(h.parts[0].provisional);
+    try testing.expectEqualStrings("block", h.parts[1].name);
+    try testing.expect(!h.parts[1].provisional);
+    // The GLB holds far fewer vertices than the part's mesh would
+    try testing.expect(read.body.len < 300_000 * 12);
+}

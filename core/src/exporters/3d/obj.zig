@@ -47,7 +47,7 @@ pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, materials: [
     var vertices_written: u32 = 0;
     var normals_written: u32 = 0;
     for (parts) |part| {
-        const mesh = try mesh_part.floatMesh(allocator, part.handle);
+        const mesh = try mesh_part.floatMesh(allocator, part.handle, part.preview);
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         if (mesh.tri_verts.len == 0) continue;

@@ -680,8 +680,20 @@ chords' share; an elliptic extrusion, a rational-arc extrusion, a spline revolut
 a bilinear saddle the same; the fuzz chains extrude their sheet and hold its mesh to the
 same, and a fuzz target shapes random ellipses and NURBS curves and checks each certified
 chord densely. The driver's `getMesh` and `numTris` build the mesh at the part's
-resolution (`supports(.mesh)` since 2026-11-11); a free-form edge no chord certifies
-refuses the whole mesh, so no export writes a hole.
+resolution (`supports(.mesh)` since 2026-11-11), once per part and kept (a body never
+changes); a free-form edge no chord certifies refuses the whole mesh, so no export writes
+a hole. **A bounded provisional mesh** for the viewer while a part is being edited
+(research/solidcraft.md §2, 2026-11-11): `tessellateWithin(body, resolution, Budget)`
+caps the interior points per edge (resampled evenly at the cap), per face (the grid
+thinned, refinement stopped) and per body (the edges' total, then the faces' share of
+what is left), and marks the mesh `provisional` when a cap cut it; a part within the
+budget gets its full mesh, unmarked. The driver's `getPreviewMesh` serves the viewer
+(`kernel.getPreviewMesh`, the preview frame's GLB): the part's own mesh when it has been
+built, else one under `PREVIEW_BUDGET` (32 points per edge, 4096 per face, 2¹⁸ per body),
+kept as the part's mesh when whole and as its preview when cut, so a large exact part is a
+bounded picture at once rather than a late one (a cache miss, never a late picture); the
+frame says `provisional: true` for such a part, and an export always builds the full
+mesh. A capped mesh is a picture, not a measure: never exported, never certified.
 
 ### 7.8 Local operations (later)
 

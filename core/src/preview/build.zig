@@ -15,6 +15,7 @@ const Diagnostic = @import("../core/errors.zig").Diagnostic;
 const extractor = @import("../tools/doc/extractor.zig");
 const model_mod = @import("../exporters/model.zig");
 const export_mod = @import("../exporters/export.zig");
+const kernel = @import("../kernel/kernel.zig");
 const parts_mod = @import("../exporters/parts.zig");
 const material_mod = @import("../core/material.zig");
 const MaterialDef = material_mod.MaterialDef;
@@ -158,7 +159,7 @@ fn shown(arena: std.mem.Allocator, vm: *VM) !Shown {
             const message = try std.fmt.allocPrint(vm.allocator, "the preview shows the model's Solids; its {d} Sketches and Paths beside them aren't shown (export them as SVG or DXF to see them)", .{flat});
             try vm.report.addWarning(vm.allocator, message, null);
         }
-        const glb = export_mod.exportShapes(arena, vm, .glb, .{}, .{ .solids = model.solids.items, .ghosts = model.ghosts, .title = model.title }) catch |err| switch (err) {
+        const glb = export_mod.exportShapes(arena, vm, .glb, .{ .preview = true }, .{ .solids = model.solids.items, .ghosts = model.ghosts, .title = model.title }) catch |err| switch (err) {
             error.NoGeometry => {
                 try vm.report.addWarning(vm.allocator, try vm.allocator.dupe(u8, EMPTY_MODEL), null);
                 return .{ .model = .{ .kind = .none } };
@@ -186,9 +187,16 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
     var names = try parts_mod.CopyNames.init(arena, &grouping);
     const nodes = try arena.alloc(std.ArrayList([]const u8), grouping.parts.len);
     @memset(nodes, .empty);
-    for (grouping.copies) |copy| try nodes[copy.part].append(arena, try names.next(arena, copy));
+    // Whether the GLB holds a part's bounded preview mesh: asked of the copies' own
+    // handles, the ones the GLB was built from
+    const provisional = try arena.alloc(bool, grouping.parts.len);
+    @memset(provisional, false);
+    for (grouping.copies, solids) |copy, solid| {
+        try nodes[copy.part].append(arena, try names.next(arena, copy));
+        if (kernel.previewIsProvisional(try vm.ensureConcrete(solid))) provisional[copy.part] = true;
+    }
     const out = try arena.alloc(frame.Part, grouping.parts.len);
-    for (grouping.parts, nodes, out) |part, part_nodes, *o| {
+    for (grouping.parts, nodes, provisional, out) |part, part_nodes, is_provisional, *o| {
         const measured = try parts_mod.measuresOf(vm, part, .leave_out);
         o.* = .{
             .name = part_nodes.items[0],
@@ -198,6 +206,7 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
             .opacity = if (part.material) |m| m.alpha else 1,
             .volume = if (measured) |m| m.volume else null,
             .size = if (measured) |m| m.size else null,
+            .provisional = is_provisional,
             .source = try sourceOf(arena, vm, part.name),
         };
     }

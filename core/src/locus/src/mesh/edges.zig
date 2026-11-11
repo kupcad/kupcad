@@ -61,13 +61,25 @@ pub const EdgePoints = struct {
 
 /// The edges of `body` as polylines at `resolution`; owned by `allocator`.
 pub fn discretize(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, diag: *Diagnostics) Error!EdgePoints {
-    return discretizeRefined(allocator, body, resolution, null, diag);
+    return discretizeRefined(allocator, body, resolution, null, Cap.none, null, diag);
 }
+
+/// The most interior points an edge, and all edges together, may have in a provisional
+/// mesh (`tessellate.Budget`); `none` for the resolution's own counts.
+pub const Cap = struct {
+    per_edge: u32 = std.math.maxInt(u32),
+    total: u32 = std.math.maxInt(u32),
+
+    pub const none: Cap = .{};
+};
 
 /// As `discretize`, each edge's circle grid doubled `doublings[e]` times: the finer grid
 /// keeps the coarser one's points, so an edge refined where its chords would cross a
-/// neighbour still meets the edges around it where it did.
-pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: ?[]const u8, diag: *Diagnostics) Error!EdgePoints {
+/// neighbour still meets the edges around it where it did. Under `cap`, an edge with
+/// more interior points than its share is resampled evenly at that many (the edges'
+/// shares of the total in proportion to their counts), and `capped`, when given, is set
+/// whenever that happened: such a polyline is a bounded picture, not the resolution's.
+pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: ?[]const u8, cap: Cap, capped: ?*bool, diag: *Diagnostics) Error!EdgePoints {
     const n_edges = body.edges.items.len;
     // Each edge's points strictly between its ends, with their parameters
     const interior = try allocator.alloc(std.ArrayList(Interior), n_edges);
@@ -105,6 +117,7 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
             },
         }
     }
+    try applyCap(allocator, body, interior, cap, capped);
     try matchCusps(allocator, body, interior);
     var points: std.ArrayList(Vec3) = .empty;
     errdefer points.deinit(allocator);
@@ -134,6 +147,25 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
     const owned_points = try points.toOwnedSlice(allocator);
     errdefer allocator.free(owned_points);
     return .{ .points = owned_points, .params = try params.toOwnedSlice(allocator), .starts = starts };
+}
+
+/// Resamples evenly every edge whose interior points exceed its share of `cap`.
+fn applyCap(allocator: std.mem.Allocator, body: *const Body, interior: []std.ArrayList(Interior), cap: Cap, capped: ?*bool) Error!void {
+    var total: usize = 0;
+    for (interior) |list| total += list.items.len;
+    const share: f64 = if (total > cap.total) @as(f64, @floatFromInt(cap.total)) / @as(f64, @floatFromInt(total)) else 1;
+    for (interior, body.edges.items) |*list, e| {
+        var allowed: usize = cap.per_edge;
+        if (share < 1) allowed = @min(allowed, @max(1, @as(usize, @intFromFloat(@floor(@as(f64, @floatFromInt(list.items.len)) * share)))));
+        if (list.items.len <= allowed) continue;
+        if (capped) |flag| flag.* = true;
+        const curve = body.geometry.curve(e.curve);
+        list.clearRetainingCapacity();
+        for (1..allowed + 1) |k| {
+            const t = e.t0 + (e.t1 - e.t0) * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(allowed + 1));
+            try list.append(allocator, .{ .t = t, .p = curve.eval(t) });
+        }
+    }
 }
 
 /// A point of an edge's polyline between its ends, at the curve's parameter `t`.

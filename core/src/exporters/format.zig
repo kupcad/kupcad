@@ -140,4 +140,7 @@ pub const ExportOptions = struct {
     /// The material library an OBJ names (`mtllib`), written by `exportMaterialLibrary`;
     /// null for an OBJ without materials.
     mtl_name: ?[]const u8 = null,
+    /// The bytes are a viewer's picture while the part is being edited, never a file: a
+    /// part's preview mesh may stand in for its mesh (`kernel.getPreviewMesh`).
+    preview: bool = false,
 };

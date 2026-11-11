@@ -495,3 +495,50 @@ test "tessellate: a box with a bilinear top is two triangles when flat and a ref
     const exact = 6.0 * (16 + 2) / 4.0;
     try testing.expectApproxEqRel(exact, signedVolume(refined), 0.01);
 }
+
+test "tessellate: a budget bounds a provisional mesh by edge, face and body, closed still; a body within it gets its full mesh unmarked" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var ball = try primitives.sphere(testing.allocator, tol, 3, &diag);
+    defer ball.deinit();
+    const fine: tolerance.Resolution = .{ .segments = 256 };
+    var full = try tessellate.tessellate(testing.allocator, &ball, fine, .{}, &diag);
+    defer full.deinit(testing.allocator);
+    try testing.expect(!full.provisional);
+    try testing.expectEqual(@as(usize, 2 + 127 * 256), full.positions.len);
+    const budget: tessellate.Budget = .{ .points_per_edge = 16, .points_per_face = 1000, .points_per_body = 4000 };
+    var bounded = try tessellate.tessellateWithin(testing.allocator, &ball, fine, budget, .{}, &diag);
+    defer bounded.deinit(testing.allocator);
+    try testing.expect(bounded.provisional);
+    try testing.expect(bounded.positions.len <= 4000 + 2 + 4 * 16);
+    try testing.expect(bounded.positions.len > 100);
+    try testing.expectEqual(bounded.faces.len, countStatus(bounded, .ok));
+    try expectEdgePairs(bounded);
+    try expectNoDegenerate(bounded);
+    for (bounded.positions) |p| try testing.expectApproxEqAbs(@as(f64, 3), vec.length(p), 1e-12);
+    const exact = 4.0 / 3.0 * PI * 27;
+    try testing.expect(signedVolume(bounded) < exact and signedVolume(bounded) > 0.8 * exact);
+    // Each meridian half has its 16 interior points at most
+    for (bounded.edges) |e| try testing.expect(e.count <= 16 + 2);
+    // The same mesh with an unbounded budget, and a box, which no cap touches
+    var free = try tessellate.tessellateWithin(testing.allocator, &ball, fine, tessellate.Budget.unbounded, .{}, &diag);
+    defer free.deinit(testing.allocator);
+    try testing.expect(!free.provisional);
+    try testing.expectEqualSlices([3]u32, full.triangles, free.triangles);
+    var box = try primitives.box(testing.allocator, tol, 2, 3, 4, false, &diag);
+    defer box.deinit();
+    var small = try tessellate.tessellateWithin(testing.allocator, &box, .{}, .{ .points_per_edge = 1, .points_per_face = 1, .points_per_body = 1 }, .{}, &diag);
+    defer small.deinit(testing.allocator);
+    try testing.expect(!small.provisional);
+    try testing.expectEqual(@as(usize, 12), small.triangles.len);
+    // A cylinder's circles resampled to 8 points per half: still closed, on the circle
+    var cyl = try primitives.cylinder(testing.allocator, tol, 2, 5, false, &diag);
+    defer cyl.deinit();
+    var coarse = try tessellate.tessellateWithin(testing.allocator, &cyl, .{ .segments = 64 }, .{ .points_per_edge = 8, .points_per_face = 1 << 20, .points_per_body = 1 << 20 }, .{}, &diag);
+    defer coarse.deinit(testing.allocator);
+    try testing.expect(coarse.provisional);
+    try testing.expectEqual(@as(usize, 4 + 4 * 8), coarse.positions.len);
+    try expectEdgePairs(coarse);
+    try expectNoDegenerate(coarse);
+    for (coarse.positions) |p| try testing.expectApproxEqAbs(@as(f64, 2), @sqrt(p[0] * p[0] + p[1] * p[1]), 1e-12);
+}

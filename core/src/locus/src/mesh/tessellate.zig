@@ -21,7 +21,11 @@
 //! (`CHECK_EDGE_PAIRS`). A face the triangulator refuses is `.failed` with why, a warning
 //! names it, and it is filled leniently (a fan of its outer loop) so that the rest of the
 //! body is still delivered with no hole in the picture (a viewer wants the part it can
-//! draw).
+//! draw). A `Budget` bounds a **provisional** mesh for a viewer while a part is being
+//! edited (research/solidcraft.md §2): caps on the interior points per edge, per face and
+//! per body, met by resampling edges evenly and thinning faces' grids, and the mesh says
+//! so (`provisional`); a body within the budget gets its full mesh, unmarked. A capped
+//! mesh is a picture, not a measure: never exported, never certified.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -50,6 +54,16 @@ const GRID_MERGE: f64 = 1e-9;
 const MAX_REFINE_ROUNDS: usize = 8;
 /// The most points a face's triangulation takes before refinement stops.
 const MAX_FACE_POINTS: usize = 1 << 18;
+
+/// The caps of a provisional mesh: interior points per edge, per face (its grid and
+/// refinement) and per body (the edges' total, then the faces' share of what is left).
+pub const Budget = struct {
+    points_per_edge: u32,
+    points_per_face: u32,
+    points_per_body: u32,
+
+    pub const unbounded: Budget = .{ .points_per_edge = std.math.maxInt(u32), .points_per_face = std.math.maxInt(u32), .points_per_body = std.math.maxInt(u32) };
+};
 
 /// What became of a face.
 pub const Status = enum(u8) {
@@ -87,6 +101,8 @@ pub const Mesh = struct {
     faces: []FaceRange,
     edges: []EdgeRange,
     edge_vertices: []u32,
+    /// Whether a `Budget` cut the mesh short of the resolution's: a picture, not a measure.
+    provisional: bool = false,
 
     pub fn deinit(self: *Mesh, allocator: std.mem.Allocator) void {
         allocator.free(self.positions);
@@ -112,6 +128,11 @@ pub const Mesh = struct {
 /// clears) has its arcs' grids doubled, the mesh built again, up to
 /// `edges.MAX_DOUBLINGS` times; what still fails is reported `.failed` with a warning.
 pub fn tessellate(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
+    return tessellateWithin(allocator, body, resolution, Budget.unbounded, options, diag);
+}
+
+/// As `tessellate`, within `budget`: the mesh is `provisional` when a cap cut it short.
+pub fn tessellateWithin(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, budget: Budget, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
     try options.checkCancel();
     const doublings = try allocator.alloc(u8, body.edges.items.len);
     defer allocator.free(doublings);
@@ -120,7 +141,7 @@ pub fn tessellate(allocator: std.mem.Allocator, body: *const Body, resolution: t
     while (true) : (round += 1) {
         var attempt = Diagnostics.init(allocator);
         defer attempt.deinit();
-        var mesh = try build(allocator, body, resolution, doublings, options, &attempt);
+        var mesh = try build(allocator, body, resolution, doublings, budget, options, &attempt);
         errdefer mesh.deinit(allocator);
         var refined = false;
         if (round < edges_mod.MAX_DOUBLINGS) {
@@ -187,6 +208,9 @@ const Builder = struct {
     extra_id: std.ArrayList(u32) = .empty,
     grid_u: std.ArrayList(f64) = .empty,
     grid_v: std.ArrayList(f64) = .empty,
+    /// The current face's cap on interior points, and whether any cap cut the mesh.
+    face_cap: usize = std.math.maxInt(usize),
+    provisional: bool = false,
 
     fn deinit(self: *Builder) void {
         self.positions.deinit(self.allocator);
@@ -277,6 +301,13 @@ const Builder = struct {
         try naturalGrid(self.allocator, surface, box, resolution, &self.grid_u, &self.grid_v, diag);
         distinct(&self.grid_u);
         distinct(&self.grid_v);
+        // Under a budget, both grids thinned alike until their product fits the cap
+        if (self.grid_u.items.len * self.grid_v.items.len > self.face_cap) {
+            const step: usize = @intFromFloat(@ceil(@sqrt(@as(f64, @floatFromInt(self.grid_u.items.len * self.grid_v.items.len)) / @as(f64, @floatFromInt(@max(self.face_cap, 1))))));
+            thin(&self.grid_u, step);
+            thin(&self.grid_v, step);
+            self.provisional = true;
+        }
         const polygon: triangulate.Polygon = .{ .points = self.scaled.items, .starts = self.starts.items };
         var extent = geometry.Box2.empty;
         for (self.scaled.items) |p| extent.grow(p);
@@ -335,8 +366,12 @@ const Builder = struct {
                 else => return err,
             };
             defer self.allocator.free(local);
-            if (kind == .free_form and round < MAX_REFINE_ROUNDS and self.extra.items.len + self.ring_uv.items.len < MAX_FACE_POINTS) {
-                if (try self.refineWhereOff(local, surface, resolution, scale)) continue;
+            if (kind == .free_form and round < MAX_REFINE_ROUNDS) {
+                if (self.extra.items.len + self.ring_uv.items.len < @min(MAX_FACE_POINTS, self.face_cap)) {
+                    if (try self.refineWhereOff(local, surface, resolution, scale)) continue;
+                } else if (self.face_cap < MAX_FACE_POINTS) {
+                    self.provisional = true;
+                }
             }
             for (local) |t| {
                 const a = try self.vertexOf(t[0], surface);
@@ -410,15 +445,16 @@ const Builder = struct {
     }
 };
 
-fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
-    var edge_points = try edges_mod.discretizeRefined(allocator, body, resolution, doublings, diag);
+fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, doublings: []const u8, budget: Budget, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
+    var edges_capped = false;
+    var edge_points = try edges_mod.discretizeRefined(allocator, body, resolution, doublings, .{ .per_edge = budget.points_per_edge, .total = budget.points_per_body }, &edges_capped, diag);
     defer edge_points.deinit(allocator);
 
     const vertex_id = try allocator.alloc(u32, body.vertices.items.len);
     defer allocator.free(vertex_id);
     const interior_start = try allocator.alloc(u32, body.edges.items.len);
     defer allocator.free(interior_start);
-    var b: Builder = .{ .allocator = allocator, .body = body, .edge_points = &edge_points, .vertex_id = vertex_id, .interior_start = interior_start };
+    var b: Builder = .{ .allocator = allocator, .body = body, .edge_points = &edge_points, .vertex_id = vertex_id, .interior_start = interior_start, .provisional = edges_capped };
     defer b.deinit();
 
     // Mesh vertices: the body's vertices first, then each edge's interior points
@@ -462,6 +498,9 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
             var scale = Vec2{ 1, 1 };
             b.extra.clearRetainingCapacity();
             if (kind != .planar) {
+                // The face's share of the body's budget: what the edges left
+                const remaining = @as(usize, budget.points_per_body) -| b.positions.items.len;
+                b.face_cap = @min(@as(usize, budget.points_per_face), remaining);
                 scale = isometricScale(surface, face.uv_box);
                 b.scaled.clearRetainingCapacity();
                 for (b.ring_uv.items) |uv| try b.scaled.append(allocator, .{ uv[0] * scale[0], uv[1] * scale[1] });
@@ -479,7 +518,19 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
     errdefer allocator.free(owned_faces);
     const owned_edges = try edge_ranges.toOwnedSlice(allocator);
     errdefer allocator.free(owned_edges);
-    return .{ .positions = owned_positions, .triangles = owned_triangles, .faces = owned_faces, .edges = owned_edges, .edge_vertices = try edge_vertices.toOwnedSlice(allocator) };
+    return .{ .positions = owned_positions, .triangles = owned_triangles, .faces = owned_faces, .edges = owned_edges, .edge_vertices = try edge_vertices.toOwnedSlice(allocator), .provisional = b.provisional };
+}
+
+/// Keeps every `step`-th value of `values`, the first always.
+fn thin(values: *std.ArrayList(f64), step: usize) void {
+    if (step <= 1) return;
+    var kept: usize = 0;
+    for (values.items, 0..) |x, i| {
+        if (i % step != 0) continue;
+        values.items[kept] = x;
+        kept += 1;
+    }
+    values.shrinkRetainingCapacity(kept);
 }
 
 /// The factors that make the face's UV near-isometric: the lengths of the surface's

@@ -435,6 +435,43 @@ test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh e
     try std.testing.expect(driver.supports(.mesh));
 }
 
+test "Driver: a preview mesh is bounded for a large part and marked, the part's own for a small one, and the meshes are kept" {
+    // A sphere of radius 30 at a fine resolution: 1200 segments a turn, a mesh of some
+    // 719k points at the part's resolution; the preview budget bounds it
+    const fine: EngineConfig = .{ .engine = .brep_native, .resolution = .{ .min_angle = 0.3, .min_length = 0.02 } };
+    const ball = driver.driver.sphereFn(&fine, 30, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(ball);
+    const preview = driver.driver.getPreviewMeshFn(std.testing.allocator, ball) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(preview.vert_props);
+    defer std.testing.allocator.free(preview.tri_verts);
+    try std.testing.expect(preview.provisional);
+    const points = preview.vert_props.len / 3;
+    try std.testing.expect(points > 1000 and points <= driver.PREVIEW_BUDGET.points_per_body + 4 * driver.PREVIEW_BUDGET.points_per_edge + 2);
+    try std.testing.expect(driver.previewIsProvisional(ball));
+    // Every preview vertex on the sphere
+    var v: usize = 0;
+    while (v < preview.vert_props.len) : (v += 3) {
+        const x = preview.vert_props[v];
+        const y = preview.vert_props[v + 1];
+        const z = preview.vert_props[v + 2];
+        try std.testing.expectApproxEqAbs(@as(f32, 30), @sqrt(x * x + y * y + z * z), 1e-3);
+    }
+    // A small part's preview is its own mesh, kept for the export and the count
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 15, false, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    const first = driver.driver.getPreviewMeshFn(std.testing.allocator, cyl) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(first.vert_props);
+    defer std.testing.allocator.free(first.tri_verts);
+    try std.testing.expect(!first.provisional);
+    try std.testing.expect(!driver.previewIsProvisional(cyl));
+    const full = driver.driver.getMeshFn(std.testing.allocator, cyl) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(full.vert_props);
+    defer std.testing.allocator.free(full.tri_verts);
+    try std.testing.expectEqualSlices(u32, first.tri_verts, full.tri_verts);
+    try std.testing.expectEqualSlices(f32, first.vert_props, full.vert_props);
+    try std.testing.expectEqual(@as(?usize, full.tri_verts.len / 3), driver.driver.numTrisFn(cyl));
+}
+
 test "BRep Driver: solids keep the tolerance they were built under, and pass it on" {
     var config = TEST_CONFIG;
     config.tolerance = 1e-3;

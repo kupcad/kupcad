@@ -714,6 +714,12 @@ fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh
     return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = manifold.meshGLNumProp(mesh) };
 }
 
+/// A mesh engine's part is its mesh: never provisional.
+fn previewIsProvisionalImpl(handle: geom.GeometryHandle) bool {
+    std.debug.assert(handle.engine == .manifold);
+    return false;
+}
+
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .manifold);
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
@@ -843,6 +849,8 @@ pub const driver = struct {
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
+    pub const getPreviewMeshFn = getMeshImpl;
+    pub const previewIsProvisionalFn = previewIsProvisionalImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;

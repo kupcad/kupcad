@@ -129,7 +129,7 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnost
 /// triangles, which KupCAD's own importer rejects.
 pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
     if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
-    const mesh = try mesh_part.floatMesh(allocator, handle);
+    const mesh = try mesh_part.floatMesh(allocator, handle, false);
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
 

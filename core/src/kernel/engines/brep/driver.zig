@@ -71,11 +71,21 @@ pub const Settings = struct {
     }
 };
 
+/// The caps of a preview mesh (research/solidcraft.md §2): interior points per edge, per
+/// face and per body; a part within them gets its full mesh.
+pub const PREVIEW_BUDGET: locus.mesh.tessellate.Budget = .{ .points_per_edge = 32, .points_per_face = 4096, .points_per_body = 1 << 18 };
+
 /// A solid or a sketch of the B-Rep engine: a Locus body with the settings it was built
-/// under.
+/// under, and its meshes once built (the body never changes, so a mesh built once serves
+/// every later ask: the viewer's, an export's, a count's).
 pub const BrepSolid = struct {
     body: Body,
     settings: Settings,
+    /// The mesh at the part's resolution, once asked for.
+    mesh: ?locus.mesh.tessellate.Mesh = null,
+    /// The preview mesh under `PREVIEW_BUDGET`, when a preview asked before any export did
+    /// and the budget cut it short (else `mesh` serves the preview too).
+    preview: ?locus.mesh.tessellate.Mesh = null,
 
     /// Takes `body` into a new handle; on failure the body is freed.
     pub fn create(body: Body, settings: Settings) !*BrepSolid {
@@ -89,6 +99,8 @@ pub const BrepSolid = struct {
     }
 
     pub fn destroy(self: *BrepSolid) void {
+        if (self.mesh) |*m| m.deinit(backend_allocator);
+        if (self.preview) |*m| m.deinit(backend_allocator);
         self.body.deinit();
         backend_allocator.destroy(self);
     }
@@ -234,6 +246,8 @@ pub const driver = struct {
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
+    pub const getPreviewMeshFn = getPreviewMeshImpl;
+    pub const previewIsProvisionalFn = previewIsProvisionalImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;
@@ -775,8 +789,55 @@ fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [
 /// and the triangles' corners; null, the reason remembered, when a free-form edge has no
 /// chord the resolution certifies.
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
-    var mesh = meshOf(solidOf(handle.ptr)) orelse return null;
-    defer mesh.deinit(backend_allocator);
+    const src = solidOf(handle.ptr);
+    const mesh = fullMesh(src) orelse return null;
+    return copyOut(allocator, mesh);
+}
+
+/// The mesh a viewer shows while the part is being edited: the part's mesh when it has
+/// been built (an export or a count asked), else one within `PREVIEW_BUDGET`, kept as the
+/// part's mesh when the budget left it whole and as its preview when not, so a large part
+/// is a bounded picture at once rather than a late one (research/solidcraft.md §2).
+fn getPreviewMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
+    const src = solidOf(handle.ptr);
+    if (src.mesh) |*m| return copyOut(allocator, m);
+    if (src.preview) |*m| return copyOut(allocator, m);
+    var mesh = meshWithin(src, PREVIEW_BUDGET) orelse return null;
+    errdefer mesh.deinit(backend_allocator);
+    if (mesh.provisional) src.preview = mesh else src.mesh = mesh;
+    return copyOut(allocator, if (mesh.provisional) &src.preview.? else &src.mesh.?);
+}
+
+/// Whether the mesh a preview gets is the bounded one: the part's mesh not built, its
+/// preview cut short.
+pub fn previewIsProvisional(handle: geom.GeometryHandle) bool {
+    return previewIsProvisionalImpl(handle);
+}
+
+fn previewIsProvisionalImpl(handle: geom.GeometryHandle) bool {
+    const src = solidOf(handle.ptr);
+    return src.mesh == null and src.preview != null;
+}
+
+/// The solid's mesh at its resolution, built on the first ask and kept.
+fn fullMesh(src: *BrepSolid) ?*const locus.mesh.tessellate.Mesh {
+    if (src.mesh == null) src.mesh = meshWithin(src, locus.mesh.tessellate.Budget.unbounded) orelse return null;
+    return &src.mesh.?;
+}
+
+/// Locus's mesh of the solid within `budget`, in the backend's memory; null with the
+/// reason remembered when the tessellator refuses (a free-form edge no chord certifies).
+fn meshWithin(src: *const BrepSolid, budget: locus.mesh.tessellate.Budget) ?locus.mesh.tessellate.Mesh {
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    return locus.mesh.tessellate.tessellateWithin(backend_allocator, &src.body, src.settings.resolution, budget, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+}
+
+/// `mesh` in the caller's memory: positions as `f32` triples, the triangles' corners.
+fn copyOut(allocator: std.mem.Allocator, mesh: *const locus.mesh.tessellate.Mesh) ?geom.Mesh {
     const vert_props = allocator.alloc(f32, 3 * mesh.positions.len) catch return null;
     errdefer allocator.free(vert_props);
     for (mesh.positions, 0..) |p, i| {
@@ -784,28 +845,17 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     }
     const tri_verts = allocator.alloc(u32, 3 * mesh.triangles.len) catch return null;
     for (mesh.triangles, 0..) |t, i| tri_verts[3 * i ..][0..3].* = t;
-    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3 };
-}
-
-/// Locus's mesh of the solid, in the backend's memory; null with the reason remembered
-/// when the tessellator refuses (a free-form edge no chord certifies).
-fn meshOf(src: *const BrepSolid) ?locus.mesh.tessellate.Mesh {
-    var diag = locus.Diagnostics.init(backend_allocator);
-    defer diag.deinit();
-    return locus.mesh.tessellate.tessellate(backend_allocator, &src.body, src.settings.resolution, src.options(), &diag) catch {
-        remember(&diag);
-        return null;
-    };
+    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3, .provisional = mesh.provisional };
 }
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
     return solidOf(handle.ptr).body.counts().vertices;
 }
 
-/// A B-Rep solid has faces, not triangles: the count is its mesh's, built for the answer.
+/// A B-Rep solid has faces, not triangles: the count is its mesh's, built for the answer
+/// and kept.
 fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
-    var mesh = meshOf(solidOf(handle.ptr)) orelse return null;
-    defer mesh.deinit(backend_allocator);
+    const mesh = fullMesh(solidOf(handle.ptr)) orelse return null;
     return mesh.triangles.len;
 }
 

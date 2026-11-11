@@ -203,7 +203,7 @@ const Parts = struct {
         const handle = part.handle;
         // A part the kernel can't mesh is an error: skipping it exported a model without it.
         if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
-        const mesh = try mesh_part.floatMesh(allocator, handle);
+        const mesh = try mesh_part.floatMesh(allocator, handle, part.preview);
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         if (mesh.vert_props.len / mesh.num_prop == 0) return;

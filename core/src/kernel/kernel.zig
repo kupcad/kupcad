@@ -558,6 +558,20 @@ pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     return dispatchOn("getMeshFn", handle.engine, .{ allocator, handle });
 }
 
+/// The mesh a viewer shows while the part is being edited: the part's own mesh when the
+/// engine has it at hand, else one bounded by the engine's preview budget and marked
+/// `provisional` (the B-Rep engine; the mesh engine's parts are their mesh). Never for a
+/// file.
+pub inline fn getPreviewMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
+    return dispatchOn("getPreviewMeshFn", handle.engine, .{ allocator, handle });
+}
+
+/// Whether the preview mesh the engine has at hand for `handle` is a provisional one (cut
+/// short by its preview budget, the part's own mesh not built yet).
+pub inline fn previewIsProvisional(handle: geom.GeometryHandle) bool {
+    return dispatch("previewIsProvisionalFn", handle, .{});
+}
+
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
     return brep_driver.exportStep(allocator, handles);
 }

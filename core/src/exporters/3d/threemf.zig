@@ -114,7 +114,7 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
 /// `material_count`), each by its number in `used`; false (and nothing written) when the
 /// mesh has none.
 fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize, used: *material_groups.UsedSlots) !bool {
-    const mesh = try mesh_part.floatMesh(allocator, part.handle);
+    const mesh = try mesh_part.floatMesh(allocator, part.handle, part.preview);
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
     if (mesh.tri_verts.len == 0) return false;
