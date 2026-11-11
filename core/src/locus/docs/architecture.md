@@ -645,8 +645,25 @@ candidates two ulps inside the frustum's top edge, as slivers), inserted into th
 then Lawson flips) and mapped through the surface; a triangle with two corners at one
 mesh vertex (along a pole line) is dropped. A cylinder's side gets no interior point and
 has the mesh engine's vertices; a hemisphere a latitude-longitude grid with pole fans; a
-cone's side a fan to its apex. A face on an `extrusion` or `revolution` surface is
-`.curved_later` until free-form edges are discretized. Output:
+cone's side a fan to its apex. A free-form edge (an ellipse, a NURBS curve) is cut where
+its **certified chords** say (`mesh/chords.zig`, 2026-11-11): a span passes when an
+enclosure of it, in a frame along its chord, reaches no farther across the chord than
+`Resolution.chordBow(L)`, the sagitta a circle's segment with that chord has at the
+resolution (`(L/2)·tan(θ/4)` for the turning `θ` of `min_angle`, or of the coarsest
+circle, `2π/MIN_AUTO_SEGMENTS`, when the chord is within `min_length`: the coarser of the
+two rules, as a circle is cut), and no farther past either end; else it is halved, the
+halves' ends the samples, `MAX_DEPTH` halvings at most and then a refusal with the
+finding (a cusp, a loop smaller than the budget). The enclosure of an ellipse's span is
+interval arithmetic in the mean-value form (`(P(t) − P(a))·n = (t − a)·P'(ξ)·n`, the
+plain form cannot see the cancellation along the chord and never shrinks under the
+budget); a NURBS span's is the hull of the Bézier control points of that piece (A5.6,
+then de Casteljau), measured on the piece's two halves (an arc's apex control point stands
+twice its sagitta off the chord, the halves' once). A free-form face (an extrusion or a
+revolution of such a curve, a NURBS patch) gets the generator's certified chords and the
+patch's knots as its grid lines (a revolution's `u` the circle grid of its farthest
+radius), then is refined where a link's or a triangle's midpoint on the surface stands
+off the mesh by more than `chordBow` of its length, `MAX_REFINE_ROUNDS` times at most: the
+face test is sampled, the edge certificate is not. Output:
 positions, normals, triangles (`f64` inside Locus; the adapter narrows to KupCAD's
 `f32`), per-face triangle ranges so KupCAD can colour parts and map a hovered triangle to
 its face, **per-edge polylines with the edge's id and regularity** (`Mesh.edges`,
@@ -659,10 +676,12 @@ delivered (a viewer wants the part it can draw; a boolean, by contrast, fails wh
 Tests assert `CHECK_EDGE_PAIRS` (every edge once forward and once backward), exact
 counts for a box, a cylinder, a cone and a torus, outward normals on a sphere, no
 degenerate triangles, and the mesh's volume and area against the exact ones within the
-chords' share; the fuzz chains extrude their sheet and hold its mesh to the same. The
-driver's `getMesh` and `numTris` build the mesh at the part's resolution (`supports(.mesh)`
-since 2026-11-11); a face left for later refuses the whole mesh, so no export writes a
-hole.
+chords' share; an elliptic extrusion, a rational-arc extrusion, a spline revolution and
+a bilinear saddle the same; the fuzz chains extrude their sheet and hold its mesh to the
+same, and a fuzz target shapes random ellipses and NURBS curves and checks each certified
+chord densely. The driver's `getMesh` and `numTris` build the mesh at the part's
+resolution (`supports(.mesh)` since 2026-11-11); a free-form edge no chord certifies
+refuses the whole mesh, so no export writes a hole.
 
 ### 7.8 Local operations (later)
 

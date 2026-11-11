@@ -770,10 +770,10 @@ fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [
 }
 
 /// The solid's mesh at the resolution it was built under (Locus `tessellate`: its edges
-/// on the circle grid the mesh engine uses, its curved faces gridded between them, every
-/// mesh welded and closed), the positions as `f32` triples and the triangles' corners;
-/// null, the reason remembered, when an edge or a face is on a swept or free-form surface
-/// the tessellator leaves for later (M3), so an export never writes a mesh with a hole.
+/// on the circle grid the mesh engine uses or on certified chords, its curved faces
+/// gridded between them, every mesh welded and closed), the positions as `f32` triples
+/// and the triangles' corners; null, the reason remembered, when a free-form edge has no
+/// chord the resolution certifies.
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     var mesh = meshOf(solidOf(handle.ptr)) orelse return null;
     defer mesh.deinit(backend_allocator);
@@ -788,22 +788,14 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
 }
 
 /// Locus's mesh of the solid, in the backend's memory; null with the reason remembered
-/// when a face is on a surface the tessellator leaves for later or an edge is free-form.
+/// when the tessellator refuses (a free-form edge no chord certifies).
 fn meshOf(src: *const BrepSolid) ?locus.mesh.tessellate.Mesh {
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
-    var mesh = locus.mesh.tessellate.tessellate(backend_allocator, &src.body, src.settings.resolution, src.options(), &diag) catch {
+    return locus.mesh.tessellate.tessellate(backend_allocator, &src.body, src.settings.resolution, src.options(), &diag) catch {
         remember(&diag);
         return null;
     };
-    for (mesh.faces) |range| {
-        if (range.status != .curved_later) continue;
-        mesh.deinit(backend_allocator);
-        diag.add(.{ .code = .not_implemented, .entity = .of(.face, @backingInt(range.face)), .label = "the mesh of a face on a swept or free-form surface (M3)" }) catch {};
-        remember(&diag);
-        return null;
-    }
-    return mesh;
 }
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {

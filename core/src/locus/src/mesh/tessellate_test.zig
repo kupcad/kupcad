@@ -14,6 +14,7 @@ const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
 const transform = @import("../construct/transform.zig");
+const test_bodies = @import("../construct/test_bodies.zig");
 const edges = @import("edges.zig");
 const tessellate = @import("tessellate.zig");
 const boolean = @import("../sketch/boolean.zig");
@@ -386,4 +387,111 @@ test "tessellate: a crescent of two circles tangent at a point is simple at ever
         // Within the chords' share of the area: a few percent at the coarsest
         try testing.expectApproxEqRel(2.25 * PI, area(mesh), 0.05);
     }
+}
+
+test "tessellate: a sheet with an elliptic side extruded is closed, its side the ellipse's certified chords, within the chords of the exact volume" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = try test_bodies.ellipseSheet(testing.allocator, tol, &diag);
+    defer sheet.deinit();
+    var block = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 4 }, .{}, &diag);
+    defer block.deinit();
+    for ([_]tolerance.Resolution{ .{}, .{ .segments = 64 } }) |resolution| {
+        var mesh = try meshOf(&block, resolution);
+        defer mesh.deinit(testing.allocator);
+        try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+        try testing.expectEqual(@as(usize, 0), diag.warnings());
+        try expectEdgePairs(mesh);
+        try expectNoDegenerate(mesh);
+        // The half ellipse's edge is cut, and its side face (an extrusion surface) runs
+        // between the two copies' chords: every vertex on the ellipse or a corner
+        var on_ellipse: usize = 0;
+        for (mesh.positions) |p| {
+            const dy = (p[1] - 1.5) / 1.5;
+            const dx = (p[0] - 2) / 0.8;
+            if (p[0] > 2 + 1e-9) {
+                try testing.expectApproxEqAbs(@as(f64, 1), dx * dx + dy * dy, 1e-9);
+                on_ellipse += 1;
+            }
+        }
+        try testing.expect(on_ellipse >= 2 * 3);
+        const exact = (6 + 0.6 * PI) * 4;
+        const volume = signedVolume(mesh);
+        try testing.expect(volume < exact + 1e-9 and volume > exact * 0.97);
+        if (resolution.segments == 64) try testing.expect(volume > exact * 0.999);
+    }
+}
+
+test "tessellate: a quarter disc with a rational arc extruded, and a spline profile revolved, mesh closed within the chords of the exact volume" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var disc = try test_bodies.quarterDisc(testing.allocator, tol, &diag);
+    defer disc.deinit();
+    var wedge = try sweep.extrude(testing.allocator, &disc, .{ 0, 0, 3 }, .{}, &diag);
+    defer wedge.deinit();
+    var mesh = try meshOf(&wedge, .{ .segments = 32 });
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+    try expectEdgePairs(mesh);
+    try expectNoDegenerate(mesh);
+    for (mesh.positions) |p| {
+        const rho = @sqrt(p[0] * p[0] + p[1] * p[1]);
+        try testing.expect(rho <= 2 + 1e-9);
+    }
+    const exact = PI * 3;
+    const volume = signedVolume(mesh);
+    try testing.expect(volume < exact and volume > exact * 0.99);
+
+    // The spline sheet shifted to x in [1, 3] and stood up, turned about z: a ring whose
+    // outer and inner walls are surfaces of revolution (the spline is straight, so the
+    // exact volume is the rectangle's 6 swept at its centroid's radius 2)
+    var sheet = try test_bodies.splineSheet(testing.allocator, tol, &diag);
+    defer sheet.deinit();
+    var shifted = try transform.transform(testing.allocator, &sheet, &mat.Affine.translate(.{ 1, 0, 0 }), .{}, &diag);
+    defer shifted.deinit();
+    var profile = try transform.transform(testing.allocator, &shifted, &mat.Affine.rotate(vec.X3, PI / 2.0), .{}, &diag);
+    defer profile.deinit();
+    var ring = try sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 2 * PI, .{}, &diag);
+    defer ring.deinit();
+    var ring_mesh = try meshOf(&ring, .{ .segments = 24 });
+    defer ring_mesh.deinit(testing.allocator);
+    try testing.expectEqual(ring_mesh.faces.len, countStatus(ring_mesh, .ok));
+    try expectEdgePairs(ring_mesh);
+    try expectNoDegenerate(ring_mesh);
+    const ring_exact = 2 * PI * 2 * 6;
+    const ring_volume = signedVolume(ring_mesh);
+    // The inscribed polygon's share: cos²(π/24) of the area of each disc
+    try testing.expect(ring_volume < ring_exact and ring_volume > ring_exact * 0.98);
+}
+
+test "tessellate: a box with a bilinear top is two triangles when flat and a refined saddle when not, closed, the exact volume within the chords" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var flat = try test_bodies.patchTopBox(testing.allocator, tol, 0, &diag);
+    defer flat.deinit();
+    var mesh = try meshOf(&flat, .{});
+    defer mesh.deinit(testing.allocator);
+    try testing.expectEqual(mesh.faces.len, countStatus(mesh, .ok));
+    try testing.expectEqual(@as(usize, 8), mesh.positions.len);
+    try testing.expectEqual(@as(usize, 12), mesh.triangles.len);
+    try expectEdgePairs(mesh);
+    try testing.expectApproxEqRel(@as(f64, 24), signedVolume(mesh), CLOSE);
+
+    var saddle = try test_bodies.patchTopBox(testing.allocator, tol, 2, &diag);
+    defer saddle.deinit();
+    var refined = try meshOf(&saddle, .{});
+    defer refined.deinit(testing.allocator);
+    try testing.expectEqual(refined.faces.len, countStatus(refined, .ok));
+    try expectEdgePairs(refined);
+    try expectNoDegenerate(refined);
+    // Refined: points inside the top beyond its four corners, every one on the patch
+    try testing.expect(refined.positions.len > 8);
+    for (refined.positions) |p| {
+        if (p[2] <= 4 + 1e-12 and (p[0] == 0 or p[0] == 2 or p[1] == 0 or p[1] == 3)) continue;
+        const u = p[0] / 2;
+        const v = p[1] / 3;
+        try testing.expectApproxEqAbs(4 + 2 * u * v, p[2], 1e-9);
+    }
+    const exact = 6.0 * (16 + 2) / 4.0;
+    try testing.expectApproxEqRel(exact, signedVolume(refined), 0.01);
 }

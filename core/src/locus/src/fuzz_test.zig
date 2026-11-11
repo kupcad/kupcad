@@ -25,6 +25,8 @@ const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
 const sweep = @import("construct/sweep.zig");
 const edges = @import("mesh/edges.zig");
+const chords = @import("mesh/chords.zig");
+const curves = @import("geometry/curves.zig");
 const Vec2 = vec.Vec2;
 const Diagnostics = diagnostics.Diagnostics;
 
@@ -111,6 +113,86 @@ fn readJson(buf: *[MAX_JSON_BYTES]u8, smith: *Smith) anyerror!void {
 }
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
+test "fuzz: a free-form edge's chords are certified or refused" {
+    try testing.fuzz({}, freeFormChords, .{});
+}
+
+/// Evaluations per span when a chord's certificate is checked against the curve.
+const DENSE_CHECK = 32;
+/// Rounding slack on the bow budget, relative to the chord.
+const BOW_SLACK = 1e-9;
+
+/// An ellipse or a NURBS curve the Smith shapes (sizes across the decades, a range,
+/// degree and control points with weights, a resolution), cut by `chords.sampleParams`:
+/// a clean refusal (a cusp, a loop the budget cannot hold), or spans each of which the
+/// curve, evaluated densely, keeps within the budget the enclosure certified.
+fn freeFormChords(_: void, smith: *Smith) anyerror!void {
+    const resolution: tolerance.Resolution = if (smith.valueRangeAtMost(u8, 0, 1) == 0) .{} else .{ .segments = smith.valueRangeAtMost(u32, 3, 360) };
+    var points: [10]vec.Vec4 = undefined;
+    var knots: [24]f64 = undefined;
+    var curve: curves.Curve = undefined;
+    var t0: f64 = undefined;
+    var t1: f64 = undefined;
+    if (smith.valueRangeAtMost(u8, 0, 1) == 0) {
+        const x = vec.normalized(.{ decade(smith), decade(smith), decade(smith) }) orelse vec.X3;
+        curve = .{ .ellipse = .{ .c = .{ decade(smith), decade(smith), decade(smith) }, .x = x, .y = vec.perpendicular(x), .a = @abs(decade(smith)), .b = @abs(decade(smith)) } };
+        if (!(curve.ellipse.a > 0 and curve.ellipse.b > 0)) return;
+        t0 = @as(f64, @floatFromInt(smith.valueRangeAtMost(i32, -720, 720))) * std.math.pi / 360.0;
+        t1 = t0 + @as(f64, @floatFromInt(smith.valueRangeAtMost(u32, 1, 1440))) * std.math.pi / 360.0;
+    } else {
+        const degree: u8 = smith.valueRangeAtMost(u8, 1, 5);
+        const count: usize = degree + 1 + smith.valueRangeAtMost(u8, 0, 4);
+        for (points[0..count]) |*q| q.* = .{ decade(smith), decade(smith), decade(smith), @abs(decade(smith)) };
+        for (points[0..count]) |q| if (!(q[3] > 0)) return;
+        const m = count + degree + 1;
+        for (0..m) |i| knots[i] = if (i <= degree) 0 else if (i >= count) 1 else @as(f64, @floatFromInt(i - degree)) / @as(f64, @floatFromInt(count - degree));
+        curve = .{ .nurbs = .{ .degree = degree, .knots = knots[0..m], .points = points[0..count] } };
+        if (!curve.nurbs.isValid()) return;
+        t0 = @as(f64, @floatFromInt(smith.valueRangeAtMost(u32, 0, 99))) / 100.0;
+        t1 = t0 + @as(f64, @floatFromInt(smith.valueRangeAtMost(u32, 1, 100))) / 100.0;
+        if (t1 > 1) t1 = 1;
+        if (!(t1 > t0)) return;
+    }
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var out: std.ArrayList(f64) = .empty;
+    defer out.deinit(testing.allocator);
+    chords.sampleParams(testing.allocator, curve, t0, t1, resolution, &out, &diag, .none) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        try testing.expectEqual(error.LimitExceeded, err);
+        return;
+    };
+    var a = t0;
+    for (0..out.items.len + 1) |k| {
+        const b = if (k < out.items.len) out.items[k] else t1;
+        try testing.expect(b > a);
+        const pa = curve.eval(a);
+        const pb = curve.eval(b);
+        const chord = vec.sub(pb, pa);
+        const length = vec.length(chord);
+        if (!(length > 0)) return error.ZeroChord;
+        const dir = vec.scale(chord, 1.0 / length);
+        const budget = resolution.chordBow(length) + BOW_SLACK * length;
+        for (0..DENSE_CHECK + 1) |i| {
+            const t = a + (b - a) * @as(f64, @floatFromInt(i)) / DENSE_CHECK;
+            const d = vec.sub(curve.eval(t), pa);
+            const along = vec.dot(d, dir);
+            const across = vec.length(vec.sub(d, vec.scale(dir, along)));
+            try testing.expect(across <= budget);
+            try testing.expect(along >= -budget and along <= length + budget);
+        }
+        a = b;
+    }
+}
+
+/// A number the Smith picks across the decades 1e-3 to 1e3, either sign.
+fn decade(smith: *Smith) f64 {
+    const mantissa = @as(f64, @floatFromInt(smith.valueRangeAtMost(u32, 0, 999))) / 100.0;
+    const exponent = smith.valueRangeAtMost(i32, -3, 3);
+    const sign: f64 = if (smith.valueRangeAtMost(u8, 0, 1) == 0) 1 else -1;
+    return sign * mantissa * std.math.pow(f64, 10, @floatFromInt(exponent));
+}
+
 test "fuzz: the 2D kernel takes any generated sketch chain" {
     try testing.fuzz({}, sketchChain, .{});
 }

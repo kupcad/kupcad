@@ -238,6 +238,11 @@ pub const Curve = struct {
         return .{ .p = r[0], .d1 = r[1], .d2 = r[2] };
     }
 
+    /// A5.6: the curve as its Bézier segments (`decomposeCurve`).
+    pub fn decompose(self: Curve, allocator: std.mem.Allocator) Error![][]Vec4 {
+        return decomposeCurve(self, allocator);
+    }
+
     /// §6.1: the parameter nearest `target`, Newton from the nearest of a few samples per
     /// span; `eps` the point tolerance, `max_steps` the Newton bound.
     pub fn project(self: Curve, target: Vec3, eps: f64, max_steps: u32) f64 {
@@ -577,6 +582,13 @@ pub const CurveData = struct {
     /// A5.6: the curve as its Bézier segments, each `p+1` control points, in order: the
     /// same curve span by span.
     pub fn decompose(self: *const CurveData, allocator: std.mem.Allocator) Error![][]Vec4 {
+        return self.view().decompose(allocator);
+    }
+};
+
+/// A5.6 on a view (`CurveData.decompose`).
+pub fn decomposeCurve(self: Curve, allocator: std.mem.Allocator) Error![][]Vec4 {
+    {
         const p = self.degree;
         const n = self.points.len - 1;
         const m = n + p + 1;
@@ -634,7 +646,7 @@ pub const CurveData = struct {
         }
         return out;
     }
-};
+}
 
 // ---------------------------------------------------------------------------------------
 // Curve constructors (ch. 7, 8)

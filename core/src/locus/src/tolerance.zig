@@ -123,4 +123,21 @@ pub const Resolution = struct {
         if (!(count < @as(f64, std.math.maxInt(u32)))) return std.math.maxInt(u32);
         return @max(MIN_AUTO_SEGMENTS, @as(u32, @intFromFloat(count)));
     }
+
+    /// The most a free-form curve's span may bow from its chord of length `chord`: the
+    /// sagitta a circle's segment with that chord has at this resolution, `(L/2)·tan(θ/4)`
+    /// for the turning `θ` a segment gets (`2π/segments` when set; else `min_angle`, or,
+    /// for a chord within `min_length`, the turning of the coarsest circle,
+    /// `2π/MIN_AUTO_SEGMENTS`, since a small circle is cut by length and keeps that many
+    /// segments at least), so a free-form span passes by the rule that cuts a circle,
+    /// the coarser of the two (`mesh/chords.zig`).
+    pub fn chordBow(self: Resolution, chord: f64) f64 {
+        const turning: f64 = if (self.segments > 0)
+            2.0 * std.math.pi / @as(f64, @floatFromInt(self.segments))
+        else if (chord <= self.min_length)
+            2.0 * std.math.pi / @as(f64, @floatFromInt(MIN_AUTO_SEGMENTS))
+        else
+            self.min_angle * std.math.pi / 180.0;
+        return 0.5 * chord * @tan(turning / 4.0);
+    }
 };

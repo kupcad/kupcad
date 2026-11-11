@@ -11,13 +11,17 @@
 //! constrained Delaunay triangulation and mapped through the surface (a structured grid
 //! zipped to the edge points, research/solidcraft.md §3; a cylinder's side gets no
 //! interior point and keeps the mesh engine's vertices, a hemisphere a latitude-longitude
-//! grid); a triangle along a pole (two corners at one vertex) is dropped. Vertices are welded by construction: a body vertex is one mesh vertex, an
-//! edge's interior point one, so a closed body gives a mesh in which every edge appears
-//! once each way (`CHECK_EDGE_PAIRS`). A face on a swept or free-form surface is reported
-//! as `.curved_later` with no triangles until free-form edges are discretized (M3); a face
-//! the triangulator refuses is `.failed` with why, a warning names it, and it is filled
-//! leniently (a fan of its outer loop) so that the rest of the body is still delivered
-//! with no hole in the picture (a viewer wants the part it can draw).
+//! grid); a triangle along a pole (two corners at one vertex) is dropped. A free-form
+//! face (an extrusion or a revolution of a free-form curve, a NURBS patch) gets the
+//! generator's certified chords (`chords.zig`) and the patch's knots as its lines, and is
+//! then refined where a link's or a triangle's midpoint on the surface stands off the
+//! mesh by more than a chord of that length may bow. Vertices are welded by
+//! construction: a body vertex is one mesh vertex, an edge's interior point one, so a
+//! closed body gives a mesh in which every edge appears once each way
+//! (`CHECK_EDGE_PAIRS`). A face the triangulator refuses is `.failed` with why, a warning
+//! names it, and it is filled leniently (a fan of its outer loop) so that the rest of the
+//! body is still delivered with no hole in the picture (a viewer wants the part it can
+//! draw).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -30,6 +34,7 @@ const geometry = @import("../geometry/types.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const edges_mod = @import("edges.zig");
 const triangulate = @import("triangulate.zig");
+const chords = @import("chords.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -41,12 +46,14 @@ const TWO_PI: f64 = 2 * std.math.pi;
 /// Two parameter values closer than this share of the face's UV box are one grid line
 /// (an edge's grid point within `edges.END_SLACK` of its end is left to the vertex).
 const GRID_MERGE: f64 = 1e-9;
+/// How often a free-form face is triangulated again with the midpoints that stood off.
+const MAX_REFINE_ROUNDS: usize = 8;
+/// The most points a face's triangulation takes before refinement stops.
+const MAX_FACE_POINTS: usize = 1 << 18;
 
 /// What became of a face.
 pub const Status = enum(u8) {
     ok,
-    /// A face on a swept or free-form surface: tessellated once its edges are (M3).
-    curved_later,
     /// The triangulator refused the face's polygon (`FaceRange.reason` says why): a
     /// defect upstream, in the loops; the face is filled leniently.
     failed,
@@ -99,9 +106,8 @@ pub const Mesh = struct {
     }
 };
 
-/// The mesh of `body` at `resolution`; owned by `allocator`. `error.NotImplemented` for a
-/// body with a free-form edge (M3); a face on a swept or free-form surface is left out
-/// with its status. A face whose chorded outline crosses itself at the resolution (a
+/// The mesh of `body` at `resolution`; owned by `allocator`. `error.LimitExceeded` for a
+/// free-form edge no chord certifies. A face whose chorded outline crosses itself at the resolution (a
 /// chord of an arc cutting across a hole or a neighbouring edge that the arc itself
 /// clears) has its arcs' grids doubled, the mesh built again, up to
 /// `edges.MAX_DOUBLINGS` times; what still fails is reported `.failed` with a warning.
@@ -146,14 +152,15 @@ fn doubleArcs(body: *const Body, f: types.FaceIndex, doublings: []u8, diag: *Dia
     return any;
 }
 
-/// How a face is meshed, by its surface.
-const Kind = enum { planar, curved, later };
+/// How a face is meshed, by its surface: projected flat; gridded between its edges on the
+/// circle grids; gridded and refined where the surface stands off the mesh.
+const Kind = enum { planar, curved, free_form };
 
 fn kindOf(surface: surfaces.Surface) Kind {
     return switch (surface) {
         .plane => .planar,
         .cylinder, .cone, .sphere, .torus => .curved,
-        .extrusion, .revolution, .nurbs => .later,
+        .extrusion, .revolution, .nurbs => .free_form,
     };
 }
 
@@ -259,7 +266,7 @@ const Builder = struct {
     /// unscaled): the grid's own lines hold the boundary's points, and two edges' ends
     /// agree only to rounding (a seam's end parameter against a circle's pcurve height),
     /// so a candidate a few ulps inside an edge is the boundary's, not a sliver's.
-    fn collectInterior(self: *Builder, surface: surfaces.Surface, box: geometry.Box2, resolution: tolerance.Resolution, scale: Vec2) Error!void {
+    fn collectInterior(self: *Builder, surface: surfaces.Surface, box: geometry.Box2, resolution: tolerance.Resolution, scale: Vec2, diag: *Diagnostics) Error!void {
         self.extra.clearRetainingCapacity();
         self.grid_u.clearRetainingCapacity();
         self.grid_v.clearRetainingCapacity();
@@ -267,7 +274,7 @@ const Builder = struct {
             try self.grid_u.append(self.allocator, uv[0]);
             try self.grid_v.append(self.allocator, uv[1]);
         }
-        try naturalGrid(self.allocator, surface, box, resolution, &self.grid_u, &self.grid_v);
+        try naturalGrid(self.allocator, surface, box, resolution, &self.grid_u, &self.grid_v, diag);
         distinct(&self.grid_u);
         distinct(&self.grid_v);
         const polygon: triangulate.Polygon = .{ .points = self.scaled.items, .starts = self.starts.items };
@@ -298,39 +305,94 @@ const Builder = struct {
 
     /// Triangulates the current face's rings (with `extra` interior points when curved)
     /// and appends its triangles, turned to the face's outward normal; a triangle with two
-    /// corners at one mesh vertex (along a pole) is dropped. The face's range.
-    fn meshFace(self: *Builder, f: types.FaceIndex, kind: Kind, surface: surfaces.Surface, scale: Vec2, diag: *Diagnostics) Error!FaceRange {
+    /// corners at one mesh vertex (along a pole) is dropped. A free-form face (an
+    /// extrusion, a revolution, a NURBS patch, whose grid is the knots' and the generator's
+    /// chords) is refined where a link's or a triangle's midpoint on the surface stands off
+    /// the mesh by more than a chord of that length may bow: the midpoint joins the
+    /// interior points and the face is triangulated again, `MAX_REFINE_ROUNDS` times at
+    /// most and `MAX_FACE_POINTS` points at most. The face's range.
+    fn meshFace(self: *Builder, f: types.FaceIndex, kind: Kind, surface: surfaces.Surface, scale: Vec2, resolution: tolerance.Resolution, diag: *Diagnostics) Error!FaceRange {
         const face = self.body.face(f);
         const first: u32 = @intCast(self.triangles.items.len);
         if (self.starts.items.len < 2) return .{ .face = f, .first = first, .count = 0, .status = .ok };
-        const points = if (kind == .curved) self.scaled.items else self.ring_uv.items;
+        const points = if (kind == .planar) self.ring_uv.items else self.scaled.items;
         const polygon: triangulate.Polygon = .{ .points = points, .starts = self.starts.items };
-        self.extra_scaled.clearRetainingCapacity();
-        for (self.extra.items) |uv| try self.extra_scaled.append(self.allocator, .{ uv[0] * scale[0], uv[1] * scale[1] });
-        try self.extra_id.resize(self.allocator, self.extra.items.len);
-        @memset(self.extra_id.items, NONE);
-        var face_diag = Diagnostics.init(self.allocator);
-        defer face_diag.deinit();
-        const local = triangulate.triangulateWith(self.allocator, polygon, self.extra_scaled.items, &face_diag) catch |err| switch (err) {
-            error.InvalidInput, error.LimitExceeded => {
-                const code = if (face_diag.first()) |finding| finding.code else .not_simple;
-                try diag.warn(.{ .code = code, .entity = .of(.face, @backingInt(f)), .label = "a face's polygon" });
-                try self.fanFill(face.same_sense);
-                return .{ .face = f, .first = first, .count = @intCast(self.triangles.items.len - first), .status = .failed, .reason = code };
-            },
-            else => return err,
-        };
-        defer self.allocator.free(local);
-        for (local) |t| {
-            const a = try self.vertexOf(t[0], surface);
-            const b = try self.vertexOf(t[1], surface);
-            const c = try self.vertexOf(t[2], surface);
-            if (a == b or b == c or a == c) continue;
-            // Counter-clockwise in UV is about the surface's normal: turned over when
-            // the face's outward normal is its opposite
-            try self.triangles.append(self.allocator, if (face.same_sense) .{ a, b, c } else .{ a, c, b });
+        var round: usize = 0;
+        while (true) : (round += 1) {
+            self.extra_scaled.clearRetainingCapacity();
+            for (self.extra.items) |uv| try self.extra_scaled.append(self.allocator, .{ uv[0] * scale[0], uv[1] * scale[1] });
+            try self.extra_id.resize(self.allocator, self.extra.items.len);
+            @memset(self.extra_id.items, NONE);
+            var face_diag = Diagnostics.init(self.allocator);
+            defer face_diag.deinit();
+            const local = triangulate.triangulateWith(self.allocator, polygon, self.extra_scaled.items, &face_diag) catch |err| switch (err) {
+                error.InvalidInput, error.LimitExceeded => {
+                    const code = if (face_diag.first()) |finding| finding.code else .not_simple;
+                    try diag.warn(.{ .code = code, .entity = .of(.face, @backingInt(f)), .label = "a face's polygon" });
+                    try self.fanFill(face.same_sense);
+                    return .{ .face = f, .first = first, .count = @intCast(self.triangles.items.len - first), .status = .failed, .reason = code };
+                },
+                else => return err,
+            };
+            defer self.allocator.free(local);
+            if (kind == .free_form and round < MAX_REFINE_ROUNDS and self.extra.items.len + self.ring_uv.items.len < MAX_FACE_POINTS) {
+                if (try self.refineWhereOff(local, surface, resolution, scale)) continue;
+            }
+            for (local) |t| {
+                const a = try self.vertexOf(t[0], surface);
+                const b = try self.vertexOf(t[1], surface);
+                const c = try self.vertexOf(t[2], surface);
+                if (a == b or b == c or a == c) continue;
+                // Counter-clockwise in UV is about the surface's normal: turned over when
+                // the face's outward normal is its opposite
+                try self.triangles.append(self.allocator, if (face.same_sense) .{ a, b, c } else .{ a, c, b });
+            }
+            return .{ .face = f, .first = first, .count = @intCast(self.triangles.items.len - first), .status = .ok };
         }
-        return .{ .face = f, .first = first, .count = @intCast(self.triangles.items.len - first), .status = .ok };
+    }
+
+    /// The UV of triangle corner `index` of the current face, unscaled.
+    fn uvOf(self: *const Builder, index: u32) Vec2 {
+        const n_ring: u32 = @intCast(self.ring_uv.items.len);
+        return if (index < n_ring) self.ring_uv.items[index] else self.extra.items[index - n_ring];
+    }
+
+    /// Adds to `extra` the UV midpoint of every link, and the centroid of every triangle,
+    /// whose point on the surface stands off the mesh by more than a chord of its length
+    /// may bow (`Resolution.chordBow`); whether any was added. A midpoint on or near a
+    /// ring's edge is the boundary's (its edge was cut by its own certified chords).
+    fn refineWhereOff(self: *Builder, local: []const [3]u32, surface: surfaces.Surface, resolution: tolerance.Resolution, scale: Vec2) Error!bool {
+        const before = self.extra.items.len;
+        var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        defer seen.deinit(self.allocator);
+        const polygon: triangulate.Polygon = .{ .points = self.scaled.items, .starts = self.starts.items };
+        var extent = geometry.Box2.empty;
+        for (self.scaled.items) |p| extent.grow(p);
+        const near = GRID_MERGE * vec.distance2(extent.min, extent.max);
+        for (local) |t| {
+            var corners: [3]Vec3 = undefined;
+            var uvs: [3]Vec2 = undefined;
+            for (0..3) |k| {
+                uvs[k] = self.uvOf(t[k]);
+                corners[k] = surface.eval(uvs[k][0], uvs[k][1]);
+            }
+            for (0..3) |k| {
+                const i = t[k];
+                const j = t[(k + 1) % 3];
+                const key = (@as(u64, @min(i, j)) << 32) | @max(i, j);
+                if ((try seen.getOrPut(self.allocator, key)).found_existing) continue;
+                const mid_uv = vec.lerp2(uvs[k], uvs[(k + 1) % 3], 0.5);
+                const chord = vec.distance(corners[k], corners[(k + 1) % 3]);
+                const off = vec.distance(surface.eval(mid_uv[0], mid_uv[1]), vec.lerp(corners[k], corners[(k + 1) % 3], 0.5));
+                if (off > resolution.chordBow(chord) and inside(polygon, .{ mid_uv[0] * scale[0], mid_uv[1] * scale[1] }, near)) try self.extra.append(self.allocator, mid_uv);
+            }
+            const centre_uv = vec.scale2(vec.add2(vec.add2(uvs[0], uvs[1]), uvs[2]), 1.0 / 3.0);
+            const centre = vec.scale(vec.add(vec.add(corners[0], corners[1]), corners[2]), 1.0 / 3.0);
+            const longest = @max(vec.distance(corners[0], corners[1]), @max(vec.distance(corners[1], corners[2]), vec.distance(corners[2], corners[0])));
+            const off = vec.distance(surface.eval(centre_uv[0], centre_uv[1]), centre);
+            if (off > resolution.chordBow(longest) and inside(polygon, .{ centre_uv[0] * scale[0], centre_uv[1] * scale[1] }, near)) try self.extra.append(self.allocator, centre_uv);
+        }
+        return self.extra.items.len > before;
     }
 
     /// The lenient fill of a face the triangulator refused: a fan of its outer ring from
@@ -396,20 +458,16 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
             const face = body.face(f);
             const surface = body.geometry.surface(face.surface);
             const kind = kindOf(surface);
-            if (kind == .later) {
-                try b.faces.append(allocator, .{ .face = f, .first = @intCast(b.triangles.items.len), .count = 0, .status = .curved_later });
-                continue;
-            }
             try b.collectRings(f, surface, diag);
             var scale = Vec2{ 1, 1 };
             b.extra.clearRetainingCapacity();
-            if (kind == .curved) {
+            if (kind != .planar) {
                 scale = isometricScale(surface, face.uv_box);
                 b.scaled.clearRetainingCapacity();
                 for (b.ring_uv.items) |uv| try b.scaled.append(allocator, .{ uv[0] * scale[0], uv[1] * scale[1] });
-                if (b.starts.items.len >= 2) try b.collectInterior(surface, face.uv_box, resolution, scale);
+                if (b.starts.items.len >= 2) try b.collectInterior(surface, face.uv_box, resolution, scale, diag);
             }
-            const range = try b.meshFace(f, kind, surface, scale, diag);
+            const range = try b.meshFace(f, kind, surface, scale, resolution, diag);
             try b.faces.append(allocator, range);
         }
     }
@@ -443,19 +501,32 @@ fn isometricScale(surface: surfaces.Surface, box: geometry.Box2) Vec2 {
 }
 
 /// The resolution's own parameter lines across `box`, appended to `grid_u` and `grid_v`:
-/// in a direction that runs around a circle (`u` on every curved kind; `v` on a sphere,
-/// a meridian, and on a torus, the tube) the grid a full circle of that direction's
-/// largest radius gets, `segmentsFor(r)` equal steps from angle 0 (`edges.zig` cuts the
-/// edges on it, so a boundary along such a circle lies on these lines), strictly inside
-/// the box; none along a straight direction (a cylinder's or a cone's `v`).
-fn naturalGrid(allocator: std.mem.Allocator, surface: surfaces.Surface, box: geometry.Box2, resolution: tolerance.Resolution, grid_u: *std.ArrayList(f64), grid_v: *std.ArrayList(f64)) Error!void {
+/// in a direction that runs around a circle (`u` on every analytic curved kind and on a
+/// revolution; `v` on a sphere, a meridian, and on a torus, the tube) the grid a full
+/// circle of that direction's largest radius gets, `segmentsFor(r)` equal steps from
+/// angle 0 (`edges.zig` cuts the edges on it, so a boundary along such a circle lies on
+/// these lines), strictly inside the box; along a generator curve (an extrusion's `u`, a
+/// revolution's `v`) the curve's certified chords (`chords.zig`, as its edges are cut);
+/// on a NURBS patch the knots; none along a straight direction (a cylinder's or a cone's
+/// `v`, an extrusion's `v`).
+fn naturalGrid(allocator: std.mem.Allocator, surface: surfaces.Surface, box: geometry.Box2, resolution: tolerance.Resolution, grid_u: *std.ArrayList(f64), grid_v: *std.ArrayList(f64), diag: *Diagnostics) Error!void {
     if (box.isEmpty()) return;
+    switch (surface) {
+        .extrusion => |s| if (box.max[0] > box.min[0]) try chords.sampleParams(allocator, s.curve, box.min[0], box.max[0], resolution, grid_u, diag, .none),
+        .revolution => |s| if (box.max[1] > box.min[1]) try chords.sampleParams(allocator, s.curve, box.min[1], box.max[1], resolution, grid_v, diag, .none),
+        .nurbs => |s| {
+            for (s.knots_u) |k| if (k > box.min[0] and k < box.max[0]) try grid_u.append(allocator, k);
+            for (s.knots_v) |k| if (k > box.min[1] and k < box.max[1]) try grid_v.append(allocator, k);
+        },
+        else => {},
+    }
     const radii: [2]f64 = switch (surface) {
         .cylinder => |s| .{ s.r, 0 },
         .cone => |s| .{ @max(@abs(s.radiusAt(box.min[1])), @abs(s.radiusAt(box.max[1]))), 0 },
         .sphere => |s| .{ s.r, s.r },
         .torus => |s| .{ s.major + s.minor, s.minor },
-        .plane, .extrusion, .revolution, .nurbs => .{ 0, 0 },
+        .revolution => |s| .{ farthestFromAxis(s, box), 0 },
+        .plane, .extrusion, .nurbs => .{ 0, 0 },
     };
     for (radii, [2]*std.ArrayList(f64){ grid_u, grid_v }, 0..) |r, grid, axis| {
         if (!(r > 0)) continue;
@@ -470,6 +541,23 @@ fn naturalGrid(allocator: std.mem.Allocator, surface: surfaces.Surface, box: geo
             if (angle > lo and angle < hi) try grid.append(allocator, angle);
         }
     }
+}
+
+/// How far the revolution's generator reaches from its axis over the box's `v` range: the
+/// farthest corner of the generator's bounding box.
+fn farthestFromAxis(s: surfaces.Revolution, box: geometry.Box2) f64 {
+    const gen = s.curve.bounds(box.min[1], box.max[1]);
+    if (gen.isEmpty()) return 0;
+    var rho: f64 = 0;
+    for ([_]f64{ gen.min[0], gen.max[0] }) |x| {
+        for ([_]f64{ gen.min[1], gen.max[1] }) |y| {
+            for ([_]f64{ gen.min[2], gen.max[2] }) |z| {
+                const l = s.frame.toLocal(.{ x, y, z });
+                rho = @max(rho, @sqrt(l[0] * l[0] + l[1] * l[1]));
+            }
+        }
+    }
+    return rho;
 }
 
 fn derivativeLengths(surface: surfaces.Surface, uv: Vec2) Vec2 {

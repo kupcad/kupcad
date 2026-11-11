@@ -65,6 +65,7 @@ pub const construct = struct {
 pub const mesh = struct {
     pub const triangulate = @import("mesh/triangulate.zig");
     pub const edges = @import("mesh/edges.zig");
+    pub const chords = @import("mesh/chords.zig");
     pub const tessellate = @import("mesh/tessellate.zig");
 };
 /// Measures: bounding boxes (volume, area and genus in M1).
@@ -120,6 +121,8 @@ test {
     _ = @import("sketch/query_test.zig");
     _ = @import("mesh/triangulate_test.zig");
     _ = @import("mesh/tessellate_test.zig");
+    _ = @import("mesh/chords_test.zig");
+    _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
     _ = @import("fuzz_test.zig");

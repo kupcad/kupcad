@@ -7,13 +7,15 @@
 //! (kernel parity), and two arcs of one circle meet on the grid. A degenerate edge is one
 //! point. Two arcs tangent at a vertex and curving the same way bound a cusp, and there
 //! the flatter arc takes the tighter one's points' tangent coordinates too (`matchCusps`),
-//! so the two polylines cannot cross. Free-form edges (ellipses, NURBS) are M3's and are
-//! refused until then.
+//! so the two polylines cannot cross. A free-form edge (an ellipse, a NURBS curve) is cut
+//! where its certified chords say (`chords.zig`): each span's enclosure within the bow the
+//! resolution allows a circle's segment of that chord.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const tolerance = @import("../tolerance.zig");
 const diagnostics = @import("../diagnostics.zig");
+const chords = @import("chords.zig");
 const types = @import("../topology/types.zig");
 const curves = @import("../geometry/curves.zig");
 const body_mod = @import("../topology/body.zig");
@@ -93,7 +95,14 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
                     try interior[i].append(allocator, .{ .t = angle, .p = circle.eval(angle) });
                 }
             },
-            .ellipse, .nurbs => return diag.fail(error.NotImplemented, .{ .code = .not_implemented, .entity = .of(.edge, i), .label = "a free-form edge's polyline (M3)" }),
+            // A free-form edge: the parameters its certified chords are cut at
+            .ellipse, .nurbs => {
+                var params: std.ArrayList(f64) = .empty;
+                defer params.deinit(allocator);
+                const curve = body.geometry.curve(e.curve);
+                try chords.sampleParams(allocator, curve, e.t0, e.t1, resolution, &params, diag, .of(.edge, i));
+                for (params.items) |t| try interior[i].append(allocator, .{ .t = t, .p = curve.eval(t) });
+            },
         }
     }
     try matchCusps(allocator, body, interior);
