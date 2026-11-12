@@ -407,3 +407,36 @@ test "overlay: a hole whose leftmost vertex is a circle's centre, the ray throug
     try testing.expectEqual(@as(usize, 1), region.faces);
     try testing.expectApproxEqAbs(4 * 3 + PI / 2.0 - 0.15, region.area, 1e-9);
 }
+
+test "overlay: two arcs meeting a rounding above the ray, where their circles cross at its height, fan down from it" {
+    // The fuzzer's find (2026-11-12, an offset's result intersected with its source): the
+    // circles of radius √4.5 about (1.5, 0.5) and (1.5, −1.5) cross at (1.5 + √3.5, −0.5),
+    // welded to a vertex a rounding above. A region east of both circles has its dents
+    // meet there, and a sliver west of it touches it there. The ray from the second
+    // input's leftmost vertex, at height −0.5 exactly, meets the region's arc and the
+    // sliver's at one exact x; below the vertex the region's arc is the nearer, so the
+    // second input lies in the region (taking every tie as a fan up put it in the plane)
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    const r = 2.1213203435596424;
+    const v = Vec2{ 3.3708286933869704, -0.4999999999999998 };
+    _ = try o.addInput();
+    // The region, counter-clockwise, its dents clockwise arcs
+    try o.addEdge(.{ .a = v, .b = .{ 3.566037735849056, -1.0188679245283017 }, .arc = .{ .c = .{ 1.5, -1.5 }, .r = r, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 3.566037735849056, -1.0188679245283017 }, .b = .{ 7, -1.5 } });
+    try o.addEdge(.{ .a = .{ 7, -1.5 }, .b = .{ 7, 1 } });
+    try o.addEdge(.{ .a = .{ 7, 1 }, .b = .{ 3.6213203435596424, 0.5 } });
+    try o.addEdge(.{ .a = .{ 3.6213203435596424, 0.5 }, .b = v, .arc = .{ .c = .{ 1.5, 0.5 }, .r = r, .ccw = false } });
+    // The sliver, counter-clockwise
+    try o.addEdge(.{ .a = v, .b = .{ 3, 0 }, .arc = .{ .c = .{ 1.5, -1.5 }, .r = r, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 3, 0 }, .b = .{ 3.2926829268292686, -0.6341463414634141 } });
+    try o.addEdge(.{ .a = .{ 3.2926829268292686, -0.6341463414634141 }, .b = v, .arc = .{ .c = .{ 1.5, 0.5 }, .r = r, .ccw = true } });
+    _ = try o.addInput();
+    try polygon(&o, &.{ .{ 4, -0.5 }, .{ 5, -0.8 }, .{ 6, -0.5 }, .{ 5, 0 } });
+    try o.run();
+    try expectPlanar(&o);
+    const both = areaWhere(&o, 1, 1);
+    try testing.expectEqual(@as(usize, 1), both.faces);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), both.area, 1e-12);
+    try testing.expectEqual(@as(usize, 0), areaWhere(&o, 0, 1).faces);
+}

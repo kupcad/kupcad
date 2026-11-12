@@ -31,6 +31,37 @@ fn grown(sheet: *const Body, delta: f64, join: offset.Join, diag: *Diagnostics) 
     return offset.offset(testing.allocator, sheet, delta, join, 2, .{}, diag);
 }
 
+/// A ring's point, the fuzzer's way (fuzz_test.zig): the edge to the next point is an arc
+/// when `bulge` is set, its centre off the chord's middle by `bulge` half-chords to the
+/// left, run counter-clockwise or not.
+const RingPoint = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = true };
+
+/// A sheet filled by the even-odd rule from rings of `RingPoint`s.
+fn bulged(rings: []const []const RingPoint, diag: *Diagnostics) !Body {
+    var total: usize = 0;
+    for (rings) |ring| total += ring.len;
+    const edges = try testing.allocator.alloc(primitives.OutlineEdge, total);
+    defer testing.allocator.free(edges);
+    const outlines = try testing.allocator.alloc([]const primitives.OutlineEdge, rings.len);
+    defer testing.allocator.free(outlines);
+    var at: usize = 0;
+    for (rings, outlines) |ring, *outline| {
+        for (ring, 0..) |pt, k| {
+            const a = pt.p;
+            const b = ring[(k + 1) % ring.len].p;
+            edges[at + k] = .{ .a = a, .b = b };
+            if (pt.bulge) |bulge| {
+                const half = vec.scale2(vec.sub2(b, a), 0.5);
+                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+                edges[at + k].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = pt.ccw };
+            }
+        }
+        outline.* = edges[at..][0..ring.len];
+        at += ring.len;
+    }
+    return primitives.outlines(testing.allocator, tol, outlines, diag);
+}
+
 test "offset: a square by one, with each join; shrunk; shrunk to nothing" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
@@ -367,3 +398,48 @@ test "offset: pieces smaller than the shrink are gone (the fuzzer's chain whose 
     defer gone.deinit();
     try testing.expect(gone.isEmpty());
 }
+
+test "offset: a shrunk sheet lies within its sheet where two arcs meet a rounding above the nesting ray" {
+    // The fuzzer's find (2026-11-12): the intersection of two three-ring sheets of lines
+    // and arcs, united with a third, shrunk by one half with miter joins. The sheet's arcs
+    // about (1.5, 0.5) and (1.5, −1.5) meet at a vertex a rounding above y = −0.5, where
+    // their circles cross, and a sliver's arcs on the same circles meet there too; the
+    // ray from the shrunk sheet's largest face, its leftmost vertex at y = −0.5, met the
+    // two at one exact x, and the tie taken as a fan up from the ray put the face (of
+    // area 16.9) in the plane, outside its sheet (overlay_test.zig has the geometry alone)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var s1 = try bulged(&.{
+        &.{ .{ .p = .{ 0, 0 } }, .{ .p = .{ 0, 4 }, .bulge = 0.5 }, .{ .p = .{ 0, 2 } } },
+        &.{ .{ .p = .{ 4, 0 } }, .{ .p = .{ 0, 4 }, .bulge = 0.5 }, .{ .p = .{ 4, 0 } }, .{ .p = .{ 6, 1 } }, .{ .p = .{ 3, 4 } }, .{ .p = .{ 5, 0 } } },
+        &.{ .{ .p = .{ 2, 1 } }, .{ .p = .{ 0, 5 } }, .{ .p = .{ 0, 2 } }, .{ .p = .{ 6, 4 } }, .{ .p = .{ 2, 3 } }, .{ .p = .{ 0, 3 } }, .{ .p = .{ 1, 6 }, .bulge = 0.5 }, .{ .p = .{ 6, 0 }, .bulge = 0.5 } },
+    }, &diag);
+    defer s1.deinit();
+    var s2 = try bulged(&.{
+        &.{ .{ .p = .{ 4, 5 }, .bulge = 0.5, .ccw = false }, .{ .p = .{ 5, 1 } }, .{ .p = .{ 0, 6 } }, .{ .p = .{ 5, 4 } } },
+        &.{ .{ .p = .{ 1, 0 }, .bulge = 1 }, .{ .p = .{ 3, 4 } }, .{ .p = .{ 2, 5 }, .bulge = -1, .ccw = false }, .{ .p = .{ 1, 2 }, .bulge = -0.5 }, .{ .p = .{ 0, 4 } } },
+        &.{ .{ .p = .{ 4, 6 }, .bulge = 1 }, .{ .p = .{ 1, 4 } }, .{ .p = .{ 4, 5 }, .bulge = 0.5, .ccw = false } },
+    }, &diag);
+    defer s2.deinit();
+    var s3 = try bulged(&.{
+        &.{ .{ .p = .{ 3, 2 }, .bulge = 1 }, .{ .p = .{ 1, 5 } }, .{ .p = .{ 0, 0 }, .bulge = -1 }, .{ .p = .{ 3, 0 }, .bulge = -1 }, .{ .p = .{ 5, 4 } }, .{ .p = .{ 0, 2 }, .bulge = -1 } },
+        &.{ .{ .p = .{ 2, 4 } }, .{ .p = .{ 2, 5 } }, .{ .p = .{ 6, 0 } }, .{ .p = .{ 2, 1 } }, .{ .p = .{ 6, 0 } }, .{ .p = .{ 3, 3 } }, .{ .p = .{ 2, 2 } }, .{ .p = .{ 1, 1 } } },
+    }, &diag);
+    defer s3.deinit();
+    var common = try boolean.boolean(testing.allocator, &.{ &s1, &s2 }, .intersection, .{}, &diag);
+    defer common.deinit();
+    var sheet = try boolean.boolean(testing.allocator, &.{ &common, &s3 }, .@"union", .{}, &diag);
+    defer sheet.deinit();
+    var s = try offset.offset(testing.allocator, &sheet, -0.5, .miter, 3, .{}, &diag);
+    defer s.deinit();
+    try testing.expect(try areaOf(&s) > 19);
+    for ([_][2]*const Body{ .{ &s, &sheet }, .{ &sheet, &s } }) |pair| {
+        var both = try boolean.boolean(testing.allocator, &pair, .intersection, .{}, &diag);
+        defer both.deinit();
+        try testing.expectApproxEqRel(try areaOf(&s), try areaOf(&both), 1e-9);
+    }
+    var outside = try boolean.boolean(testing.allocator, &.{ &s, &sheet }, .difference, .{}, &diag);
+    defer outside.deinit();
+    try testing.expectEqual(@as(usize, 0), outside.counts().faces);
+}
+

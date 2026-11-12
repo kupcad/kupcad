@@ -1083,12 +1083,13 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     const descending = piece.y0 > piece.y1;
                     const at: Vec2 = .{ crossingX(where, v[1]), v[1] };
                     const top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
+                    const bottom: Vec2 = if (descending) .{ piece.x1, piece.y1 } else .{ piece.x0, piece.y0 };
                     const radial = vec.sub2(at, arc.c);
                     var up = Vec2{ -radial[1], radial[0] };
                     if (up[1] < 0 or (up[1] == 0 and vec.dot2(up, vec.sub2(top, at)) < 0)) up = vec.scale2(up, -1);
                     const up_ccw = if (descending) !arc.ccw else arc.ccw;
                     const bend = if (up_ccw) -1 / arc.r else 1 / arc.r;
-                    consider(&best, .{ .at = where, .up = up, .bend = bend, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
+                    consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
                 }
                 continue;
             }
@@ -1097,7 +1098,9 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
             if (compareCrossings(where, v_at, v[1]) >= 0) continue;
             const descending = s.a[1] > s.b[1];
             const up = if (descending) vec.sub2(s.a, s.b) else vec.sub2(s.b, s.a);
-            consider(&best, .{ .at = where, .up = up, .bend = 0, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
+            const top = if (descending) s.a else s.b;
+            const bottom = if (descending) s.b else s.a;
+            consider(&best, .{ .at = where, .up = up, .bend = 0, .top = top, .bottom = bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
         }
         if (best) |hit| parent[i] = hit.cycle;
     }
@@ -1169,16 +1172,26 @@ const Hit = struct {
     /// segment bends going up: the signed curvature, positive bending east (right).
     up: Vec2,
     bend: f64,
+    /// The segment's (or arc piece's) ends above the ray and at or below it, exactly as
+    /// given: two segments that tie meet at one of them.
+    top: Vec2,
+    bottom: Vec2,
     /// The cycle whose region is just east of the crossing.
     cycle: u32,
 };
 
 /// Keeps the hit nearer the vertex: the greater x, exactly. At one x the two segments
-/// pass through one point of the ray (a vertex on it, a tangency the ray runs through),
-/// and the ray is taken a hair above the point: the segment leaning east going up is the
-/// nearer there, then, of two tangent at the point, the one bending east. (The earlier
-/// rule for a vertex a rounding above the ray, by where the up-directions led, stood in
-/// for an x comparison that rounded; the comparison is exact now, and a tie is one point.)
+/// pass through one point of the ray, and as the segments of an arrangement cross nowhere
+/// but at their ends, their order there is their order at the end they share: a vertex on
+/// the ray (the ray taken a hair above it) or below it, which they fan up from, the
+/// segment leaning east going up the nearer; or a vertex the welder put a rounding above
+/// the ray, where their circles truly cross at its height, which they fan down from, the
+/// segment leaning east going down (west going up) the nearer. Of two tangent there, the
+/// one bending east is the nearer either way (the bend is the same going down). (The
+/// earlier rule for a vertex a rounding above the ray, by where the up-directions led,
+/// stood in for an x comparison that rounded; the comparison is exact now, and a tie is
+/// one point; and taking every tie as a fan up nested a hole beyond two arcs meeting a
+/// rounding above its ray, a fuzz find of 2026-11-12.)
 fn consider(best: *?Hit, hit: Hit, y: f64) void {
     const b = best.* orelse {
         best.* = hit;
@@ -1191,10 +1204,21 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
     }
     const turn = vec.cross2(hit.up, b.up);
     if (turn != 0) {
-        if (turn > 0) best.* = hit;
+        if ((turn > 0) != fanDown(hit, b, y)) best.* = hit;
         return;
     }
     if (hit.bend > b.bend) best.* = hit;
+}
+
+/// Whether two hits tied at height `y` meet above the ray, at their shared top, rather
+/// than at or below it: when they share both ends (two arcs between one pair of
+/// vertices), the end nearer the ray, where the tie came from.
+fn fanDown(p: Hit, q: Hit, y: f64) bool {
+    const shared_top = p.top[0] == q.top[0] and p.top[1] == q.top[1];
+    const shared_bottom = p.bottom[0] == q.bottom[0] and p.bottom[1] == q.bottom[1];
+    if (!shared_top) return false;
+    if (!shared_bottom) return true;
+    return p.top[1] - y < y - p.bottom[1];
 }
 
 /// Whether `p` is left of `q`: by x, then by y.

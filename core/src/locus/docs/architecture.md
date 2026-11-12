@@ -460,8 +460,10 @@ about its centre (`orient2d` about the centre, never an angle: no seam, no slack
 same answer for a vertex a little off the circle whichever piece of the arc asks), which
 of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLine`,
 `compareLineX`, a point taken as a circle of no radius), and a tie there means one point,
-resolved as a ray a hair above it would (the segment leaning east going up, then the one
-bending east). Each such expression has bounded depth and `f64` leaves, so squaring
+where the two segments meet: their order is the one at the end they share, the segment
+leaning east going up when they fan up from a vertex on or below the ray (the ray taken
+a hair above it), going down when they fan down from a vertex the welder put a rounding
+above it where their circles cross at its height, then the one bending east. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
 arc's welded ends on its circle; those reconciliations (an arc piece within the zone of its
