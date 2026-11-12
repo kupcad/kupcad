@@ -220,3 +220,27 @@ test "Examples: the snapshot compare tolerates platform noise, not real changes"
     try testing.expect(!linesMatch("part 1 manifold", "part 1"));
     try testing.expect(linesMatch("part 1  manifold", "part 1 manifold"));
 }
+
+test "Examples: on the B-Rep engine each example builds or is refused by design, never failed in the kernel" {
+    // What `kupcad dev brep-readiness` reports, held: a refusal names what the engine lacks
+    // (NotImplementedError) or what the format can't hold; a GeometryError is a fault of
+    // the kernel's (parabolic_dish and planetary_gearbox were, unseen by the case rig, until
+    // M3's review, 2026-11-12)
+    const readiness = @import("tools/dev/brep_readiness.zig");
+    inline for (examples.names) |name| {
+        errdefer std.debug.print("example {s}.kup\n", .{name});
+        var outcome = try readiness.check(testing.allocator, testing.io, @embedFile("example/" ++ name), .none);
+        defer outcome.deinit(testing.allocator);
+        switch (outcome) {
+            .builds => {},
+            .refused => |message| {
+                errdefer std.debug.print("refused: {s}\n", .{message});
+                try testing.expect(!std.mem.startsWith(u8, message, "GeometryError"));
+            },
+            .failed => |err| {
+                std.debug.print("failed: {s}\n", .{@errorName(err)});
+                return error.TestUnexpectedResult;
+            },
+        }
+    }
+}

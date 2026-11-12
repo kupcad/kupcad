@@ -66,6 +66,8 @@ const SHAPES = [_][]const u8{
     // Sweeps along one segment (M2, through the profile's outline): a line extrudes, an arc revolves
     "square(2).sweep(line([0, 0], [10, 0]))",
     "square(2).sweep(arc(center: [10, 0], r: 10, start: 180, sweep: 90), segments: 64)",
+    // A profile across the axis: both engines cut it there and turn its part at x ≥ 0
+    "square(4, center: true).revolve(segments: 64)",
     // Text (M2): its glyphs' chords filled by the even-odd rule on both engines, so exact
     "text(\"Hi\", size: 10).extrude(2)",
     // The hull of sketches (M2), of polygons: one with arcs is refused (`curved_hull`)
@@ -111,9 +113,6 @@ const SHAPES = [_][]const u8{
 const BREP_REFUSES = [_][]const u8{
     "cylinder(r: 1, h: 3, segments: 64).scale(1, 2, 1)",
     "cylinder(r: 1, h: 3, segments: 64).transform([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])",
-    // A profile across the axis: the mesh engine clips it there, the exact one refuses it
-    // until the 2D kernel (M2) can cut it
-    "square(4, center: true).revolve(segments: 64)",
 };
 
 /// Arguments both engines must refuse, with the same error.

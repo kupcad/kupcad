@@ -510,16 +510,24 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
 
 /// The sketch stood up (its x the radius, its y the height) and turned about z by
 /// `revolve_degrees`, as the mesh engine's Revolve places it; exact, so `segments` is the
-/// mesh engine's. A sketch crossing the axis is refused (the mesh engine clips it there),
-/// until the 2D kernel can cut it.
+/// mesh engine's. A sketch across the axis is cut there first and its part at x ≥ 0 turned,
+/// as the mesh engine cuts it (Locus's revolve refuses a profile across its axis: which
+/// side to keep is the host's rule); a sketch wholly at x ≤ 0 turns into nothing.
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     _ = segments;
     const src = solidOf(cs.ptr);
     if (src.body.isEmpty()) return emptySolidLike(src);
     var diag = locus.Diagnostics.init(backend_allocator);
     defer diag.deinit();
+    var clipped = clipAtAxis(src, &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    defer if (clipped) |*c| c.deinit();
+    const sketch = if (clipped) |*c| c else &src.body;
+    if (sketch.isEmpty()) return emptySolidLike(src);
     const stand_up = Affine.rotate(locus.math.vec.X3, std.math.pi / 2.0);
-    var profile = locus.construct.transform.transform(backend_allocator, &src.body, &stand_up, src.options(), &diag) catch {
+    var profile = locus.construct.transform.transform(backend_allocator, sketch, &stand_up, src.options(), &diag) catch {
         remember(&diag);
         return null;
     };
@@ -530,6 +538,21 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
     };
     const solid = BrepSolid.create(body, src.settings) catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+/// The part of the sketch at `src` at x ≥ 0 when some of it lies at x < 0 (beyond the
+/// zone), as a new sheet: its intersection with a rectangle from the axis out past its box;
+/// null when all of it is at x ≥ 0 already.
+fn clipAtAxis(src: *const BrepSolid, diag: *locus.Diagnostics) !?Body {
+    const box = try locus.measure.bbox.bodyBounds(&src.body);
+    const tol = src.body.tol;
+    if (!(box.min[0] < -tol.zone)) return null;
+    // Past the box by its own size, so no edge of the sketch lies on the rectangle's far sides
+    const margin = @max(box.max[0] - box.min[0], box.max[1] - box.min[1]) + 1;
+    const far = @max(box.max[0], 0) + margin;
+    var half = try locus.construct.primitives.polygon(backend_allocator, tol, &.{ .{ 0, box.min[1] - margin }, .{ far, box.min[1] - margin }, .{ far, box.max[1] + margin }, .{ 0, box.max[1] + margin } }, diag);
+    defer half.deinit();
+    return try locus.sketch.boolean.boolean(backend_allocator, &.{ &src.body, &half }, .intersection, src.options(), diag);
 }
 
 fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {

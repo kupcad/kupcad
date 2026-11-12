@@ -105,6 +105,9 @@ const CHORDS_OFFSET: f64 = 2e-2;
 
 const ANALYTIC = Source.analytic;
 const PLAN = "locus-plan MILESTONES M2 exit (case rig, 2026-11-09)";
+/// The examples parabolic_dish and planetary_gearbox, failing in extrude and revolve until
+/// M3's review found them (2026-11-12), reduced.
+const FOUND_AT_M3_EXIT = "examples parabolic_dish and planetary_gearbox, M3 follow-up (2026-11-12)";
 
 /// A case known to fail, with why: the frontier the ladder is expected to show until the
 /// fix lands, when it leaves this list (a fix that does not is a test failure, as a new
@@ -140,6 +143,10 @@ pub const CASES = [_]Case{
     .{ .tier = .profiles, .name = "square revolved a quarter", .script = "square(2).translate(1, 0).revolve(deg: 90, segments: 64)", .what = "the same square revolved a quarter turn", .method = "a quarter of Pappus: 4π", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 4 * PI } }, .mesh_bound = CHORDS_64 },
     .{ .tier = .profiles, .name = "triangle revolved into a cone", .script = "polygon([[0, 0], [2, 0], [0, 3]]).revolve(segments: 64)", .what = "a right triangle on the axis revolved: a cone of radius 2, height 3", .method = "π r² h / 3", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 4 * PI } }, .mesh_bound = CHORDS_64 },
     .{ .tier = .profiles, .name = "disc revolved into a torus", .script = "circle(r: 1, segments: 64).translate(3, 0).revolve(segments: 64)", .what = "a disc of radius 1 three off the axis, revolved", .method = "Pappus: π r² × 2π R", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 6 * PI * PI } }, .mesh_bound = CHORDS_64 },
+
+    .{ .tier = .profiles, .name = "bow tie extruded", .script = "polygon([[0, 0], [2, 2], [2, 0], [0, 2]]).extrude(3)", .what = "a self-crossing outline: two triangles touching at (1, 1), extruded 3 (two solids touching along a line)", .method = "each triangle of area 1 times 3; area: four triangle caps and the sides, 3 × twice the perimeter 2 + 2√2", .source = ANALYTIC, .from = FOUND_AT_M3_EXIT, .expect = .{ .measures = .{ .volume = 6, .area = 4 + 12 + 12 * @sqrt(2.0) } }, .mesh_bound = EXACT },
+    .{ .tier = .profiles, .name = "bow tie revolved", .script = "polygon([[0, 0], [2, 2], [2, 0], [0, 2]]).translate(3, 0).revolve(segments: 64)", .what = "the bow tie three off the axis, revolved: two rings touching along a circle, the diagonals' pieces on one cone", .method = "Pappus: each triangle's area 1 times its centroid's path, 2π (3 + 1/3) + 2π (3 + 5/3) = 16π", .source = ANALYTIC, .from = FOUND_AT_M3_EXIT, .expect = .{ .measures = .{ .volume = 16 * PI } }, .mesh_bound = CHORDS_64 },
+    .{ .tier = .profiles, .name = "two blocks sharing a side plane", .script = "(square(2, 1) + square(2, 1).translate(3, -1)).extrude(2)", .what = "two 2 by 1 blocks whose sides lie in the plane y = 0, facing opposite ways (as an even-toothed gear's opposite flanks)", .method = "2 × (2 × 1 × 2); area 2 × 2 (2 + 4 + 2)", .source = ANALYTIC, .from = FOUND_AT_M3_EXIT, .expect = .{ .measures = .{ .volume = 8, .area = 32 } }, .mesh_bound = EXACT },
 
     // --- 04 sweeps
     .{ .tier = .sweeps, .name = "square swept along a line", .script = "square(2).sweep(line([0, 0], [10, 0]))", .what = "a 2 by 2 square swept 10 along a line", .method = "4 × 10", .source = ANALYTIC, .from = PLAN, .expect = .{ .measures = .{ .volume = 40 } }, .mesh_bound = EXACT },

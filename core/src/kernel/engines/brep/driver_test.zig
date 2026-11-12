@@ -75,7 +75,7 @@ test "Driver: an extrusion is exact and refuses a twist or a taper" {
     try std.testing.expectEqual([3]f64{ -3, -3, 0 }, (try boxOf(cyl)).min);
 }
 
-test "Driver: a revolution is exact; a sketch across the axis is refused with its reason" {
+test "Driver: a revolution is exact; a sketch across the axis is cut there, as the mesh engine cuts it" {
     const sq = driver.driver.squareFn(&TEST_CONFIG, 4, 3, false) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(sq);
     const drum = driver.driver.revolveFn(sq, 16, 360) orelse return error.RevolveFailed;
@@ -90,11 +90,19 @@ test "Driver: a revolution is exact; a sketch across the axis is refused with it
     try std.testing.expectApproxEqAbs(@as(f64, 4), qbox.max[1], 1e-12);
     try std.testing.expect(driver.supports(.revolve));
 
+    // A 4 by 3 square about the origin: its half at x ≥ 0 turned, a cylinder of radius 2
     const centred = driver.driver.squareFn(&TEST_CONFIG, 4, 3, true) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(centred);
-    try std.testing.expect(driver.driver.revolveFn(centred, 16, 360) == null);
-    const why = driver.driver.takeFailureFn() orelse return error.NoReason;
-    try std.testing.expect(std.mem.indexOf(u8, why, "crossing the axis") != null);
+    const clipped = driver.driver.revolveFn(centred, 16, 360) orelse return error.RevolveFailed;
+    defer driver.driver.destructFn(clipped);
+    try std.testing.expectApproxEqRel(12 * std.math.pi, driver.driver.volumeFn(clipped), 1e-12);
+    try std.testing.expectEqual([3]f64{ 2, 2, 1.5 }, (try boxOf(clipped)).max);
+    // Wholly at x < 0: nothing to turn
+    const behind = driver.driver.crossSectionTransformFn(sq, .{ 1, 0, 0, 1, -10, 0 }) orelse return error.TransformFailed;
+    defer driver.driver.destructCrossSectionFn(behind);
+    const nothing = driver.driver.revolveFn(behind, 16, 360) orelse return error.RevolveFailed;
+    defer driver.driver.destructFn(nothing);
+    try std.testing.expectEqual(@as(f64, 0), driver.driver.volumeFn(nothing));
 }
 
 test "Driver: volume, area, genus and a sketch's area are exact" {
