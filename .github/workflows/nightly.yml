@@ -56,6 +56,11 @@ jobs:
           # and within the 75 or so the others take on a slower hosted runner.
           - target: locus
             runs: 50K
+          # Locus's overlay on generated arrangements alone (near-tangent arcs, points a
+          # rounding off the grid), each checked against its inputs by exact point counts:
+          # 100K took 5.5 minutes on an M-series Mac (2026-11-12), so this is about 30 there.
+          - target: locus_overlay
+            runs: 500K
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,18 +86,14 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        # A crash `--fuzz` finds is reported but leaves the exit code 0 (Zig 0.17 counts only
-        # the steps before fuzzing), so the input it saves is what fails the job. One the cache
-        # brought back is an earlier run's, so it goes first.
-        run: |
-          crash="${ZIG_LOCAL_CACHE_DIR:?}/f/crash"
-          rm -f "$crash"
-          zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
-          if [ -e "$crash" ]; then
-            echo "::error::The fuzzer found a crash; its input is in the fuzz-crash-${{ matrix.target }} artifact"
-            exit 1
-          fi
+        # `zig build fuzz-run` (core/scripts/fuzz_run.zig) fails when the fuzzer finds a
+        # failure: Zig 0.17's `zig build fuzz --fuzz=N` reports it but exits 0, counting only
+        # the steps before fuzzing. It clears a crash the cache brought back, and keeps the
+        # session's output (with a Locus target's `replay:` line) beside the crash it saves.
+        run: zig build fuzz-run -Dfuzz-target=${{ matrix.target }} -Dfuzz-runs=${{ matrix.runs }}
 
+      # The crash bytes and the session's output: a Locus find's `replay:` line, copied into
+      # a file, replays with `zig build test -Dfuzz-replay=FILE` in core/src/locus
       - name: Keep the failing input
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -735,8 +735,8 @@ pub fn build(b: *std.Build) void {
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts, locus };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import, locus for the B-Rep kernel's body reader and 2D kernel");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts, locus, locus_overlay };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import, locus for the B-Rep kernel's body reader, 2D kernel and overlay, locus_overlay for the overlay's arrangements alone");
         // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
             .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
@@ -750,9 +750,10 @@ pub fn build(b: *std.Build) void {
             .fonts => "importers_fuzz_test.test.fuzz: a font file a script imports",
             // Locus's tests are a test of their own, below
             .locus => "fuzz:",
+            .locus_overlay => "fuzz: the overlay",
         } else "fuzz:";
         const fuzz_step = b.step("fuzz", "Fuzz the front end, the runtime and Locus (with --fuzz; without it, replay the corpus)");
-        if (fuzz_target != .locus) {
+        if (fuzz_target != .locus and fuzz_target != .locus_overlay) {
             const fuzz_tests = b.addTest(.{
                 .root_module = mod,
                 .filters = b.graph.dupeStrings(&.{fuzz_filter}),
@@ -762,14 +763,38 @@ pub fn build(b: *std.Build) void {
         }
         // Locus is its own module, so its fuzz tests (src/locus/src/fuzz_test.zig) are a
         // test of their own, built the same way
-        if (fuzz_target == null or fuzz_target == .locus) {
+        if (fuzz_target == null or fuzz_target == .locus or fuzz_target == .locus_overlay) {
             const locus_fuzz_tests = b.addTest(.{
                 .root_module = locus.module("locus"),
-                .filters = b.graph.dupeStrings(&.{"fuzz:"}),
+                .filters = b.graph.dupeStrings(&.{if (fuzz_target == .locus_overlay) fuzz_filter else "fuzz:"}),
                 .use_llvm = true,
             });
             fuzz_step.dependOn(&b.addRunArtifact(locus_fuzz_tests).step);
         }
+
+        // `zig build fuzz-run [-Dfuzz-target=T] [-Dfuzz-runs=N]`: a `zig build fuzz --fuzz=N`
+        // session whose exit status is what it found (scripts/fuzz_run.zig): Zig 0.17's
+        // build runner reports a failing input and saves it as f/crash in the cache, but
+        // exits 0, counting only the steps it made before fuzzing. The nightly runs this.
+        const fuzz_runs = b.option([]const u8, "fuzz-runs", "How many runs `zig build fuzz-run` fuzzes for (--fuzz's count: 10K, 1M)") orelse "10K";
+        const fuzz_run_exe = b.addExecutable(.{
+            .name = "fuzz_run",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("scripts/fuzz_run.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
+        });
+        const fuzz_run = b.addRunArtifact(fuzz_run_exe);
+        fuzz_run.addFileArg(std.Build.LazyPath.zig_exe);
+        fuzz_run.addDirectoryArg(std.Build.LazyPath.cache_root);
+        fuzz_run.addArg(fuzz_runs);
+        if (fuzz_target) |t| fuzz_run.addArg(@tagName(t));
+        fuzz_run.setCwd(b.path("."));
+        fuzz_run.has_side_effects = true;
+        fuzz_run.stdio = .inherit;
+        const fuzz_run_step = b.step("fuzz-run", "Fuzz as `zig build fuzz --fuzz=N` does, failing when the fuzzer finds a failure (Zig 0.17's exits 0)");
+        fuzz_run_step.dependOn(&fuzz_run.step);
 
         const gen_grammar_exe = b.addExecutable(.{
             .name = "gen_grammar",
