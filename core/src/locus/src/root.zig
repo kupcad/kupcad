@@ -54,6 +54,7 @@ pub const sketch = struct {
     pub const offset = @import("sketch/offset.zig");
     pub const query = @import("sketch/query.zig");
     pub const hull = @import("sketch/hull.zig");
+    pub const overlap = @import("sketch/overlap.zig");
 };
 /// Constructions: sewing, the primitives, the hull.
 pub const construct = struct {
@@ -144,6 +145,7 @@ test {
     _ = @import("sketch/offset_test.zig");
     _ = @import("sketch/parameters_test.zig");
     _ = @import("sketch/query_test.zig");
+    _ = @import("sketch/overlap_test.zig");
     _ = @import("mesh/triangulate_test.zig");
     _ = @import("mesh/tessellate_test.zig");
     _ = @import("mesh/validate_test.zig");

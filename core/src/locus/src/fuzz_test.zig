@@ -21,6 +21,7 @@ const boolean = @import("sketch/boolean.zig");
 const offset = @import("sketch/offset.zig");
 const query = @import("sketch/query.zig");
 const hull = @import("sketch/hull.zig");
+const overlap = @import("sketch/overlap.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
 const validate = @import("mesh/validate.zig");
@@ -386,8 +387,8 @@ fn sheet(smith: anytype, log: *Log, diag: *Diagnostics) !?Body {
     };
 }
 
-/// The sheet passes every rule of the checker, and has an area unless it is the empty
-/// sheet (a boolean's empty result).
+/// The sheet passes every rule of the checker and the overlap rule (sketch/overlap.zig),
+/// and has an area unless it is the empty sheet (a boolean's empty result).
 fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     var report = try check.run(testing.allocator, body, .global);
     defer report.deinit(testing.allocator);
@@ -395,6 +396,11 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
         std.debug.print("the checker: {f}\n", .{report.first().?});
         return error.ResultNotValid;
     }
+    // No two faces over one region (the rule the checker cannot run: it needs the overlay)
+    overlap.check(testing.allocator, body, diag) catch |err| {
+        std.debug.print("the overlap rule: {f}\n", .{diag});
+        return err;
+    };
     const m = try mass.mass(body, .{}, diag);
     if (body.counts().faces == 0) {
         try testing.expectEqual(@as(f64, 0), m.area);

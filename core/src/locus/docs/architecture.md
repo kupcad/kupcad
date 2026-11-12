@@ -880,7 +880,10 @@ a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the cu
 domain; edge length > `δ`; face area > `zone²`; no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
-(the intersector run over face pairs); hole loops inside their outer loop and not inside
+(the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:
+the sheet overlaid with itself winds once about every region of it, a rule beside the
+overlay since the checker imports no operation (§4), run where sheets are graded, the
+fuzzer's chains and the sketch tests; for solids M4 and M5); hole loops inside their outer loop and not inside
 each other; the point at infinity is outside every outer shell; void shells inside the
 outer shell and not inside each other; singular vertices of a solid (its faces about a
 vertex not one fan, a solid touching itself at a point) as warnings; and OpenGeometry's two pcurve rules

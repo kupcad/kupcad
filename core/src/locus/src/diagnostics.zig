@@ -104,6 +104,7 @@ pub const Code = enum(u16) {
     hole_outside_outer,
     redundant_topology,
     singular_vertex,
+    faces_overlap,
     // Triangulation (mesh/triangulate.zig)
     ring_starts,
     ring_too_small,
@@ -155,6 +156,7 @@ pub const Code = enum(u16) {
             .hole_outside_outer => "has a hole loop that is not inside its outer loop, or is inside another hole",
             .redundant_topology => "could be merged: its two faces lie on one surface the same way, or are one face",
             .singular_vertex => "is singular: the faces about it are not one fan (a solid touching itself at a point)",
+            .faces_overlap => "lies under more than one face of the sheet, or under a face facing the other way",
             .ring_starts => "do not begin at 0, rise, and end at the point count",
             .ring_too_small => "has fewer than three points",
             .not_simple => "is not simple: its rings cross or touch, or repeat a point",
