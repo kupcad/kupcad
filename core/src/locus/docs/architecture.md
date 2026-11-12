@@ -605,8 +605,10 @@ flow through step 3 (copied) and 7 (unioned).
 
 ### 7.5 The 2D kernel (sketches)
 
-A sketch is a body of planar faces on `z = 0`, bounded by lines and circular arcs (NURBS
-later), so it reuses the topology, the overlay engine and the checker. Sketch booleans are
+A sketch is a body of planar faces on `z = 0`, bounded by lines and circular arcs (conics
+in M5, beside the intersector that makes them, then NURBS), so it reuses the topology, the
+overlay engine and the checker. Until then a section whose trace is a conic is refused,
+never chorded into a polygon (NOTES §8). Sketch booleans are
 the overlay with winding labels; offset is the sheet united with (grown) or less (shrunk)
 the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector, the pies
 about a centre the offset passes) and each opening corner's join (round, miter, bevel,
