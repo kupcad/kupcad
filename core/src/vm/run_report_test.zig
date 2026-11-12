@@ -118,9 +118,9 @@ test "run report: a run's parameters are its own, after the output is reset" {
 /// The modules the script imports, by path.
 const MODULES = [_]struct { path: []const u8, source: []const u8 }{
     // Its function warns of what it is given: the script's call is where
-    .{ .path = "tint.kup", .source = "def tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n" },
+    .{ .path = "tint.kup", .source = "def tinted(s)\n  warn(\"tinted \", s.volume)\n  s\nend\nexport tinted\n" },
     // It warns as it runs: the script's import is where
-    .{ .path = "shaded.kup", .source = "CAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n" },
+    .{ .path = "shaded.kup", .source = "CAD.config(engine: :brep)\nwarn(\"shade\")\nshade = cube(1)\nexport shade\n" },
     .{ .path = "boom.kup", .source = "def boom\n  raise \"boom\"\nend\nexport boom\n" },
 };
 
@@ -154,7 +154,7 @@ test "run report: what a module warns of as it runs is placed in it, and given a
     const script = "x = 1\nimport { shade } from \"./shaded.kup\"\nimport \"./shaded.kup\"\n";
     try testing.expectEqual(.ok, try run(&vm, script));
     try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
-    try testing.expect(std.mem.find(u8, vm.report.warnings.items[0].message, "brep") != null);
+    try testing.expect(std.mem.find(u8, vm.report.warnings.items[0].message, "shade") != null);
     try testing.expectEqualStrings("shaded.kup", vm.report.warnings.items[0].module.?);
     try testing.expectEqual(@as(u32, 2), vm.report.warnings.items[0].position.?.line);
 
@@ -196,8 +196,8 @@ test "run report: an error raised in an imported module's code is placed at the 
 test "run report: a warning or an error in a call is placed at the call, not at its last argument" {
     var vm = try support.initVm();
     defer vm.deinit();
-    // It was column 23, the colour's
-    try testing.expectEqual(.ok, try run(&vm, "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n"));
+    // It was the last argument's column
+    try testing.expectEqual(.ok, try run(&vm, "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\n"));
     try testing.expectEqual(run_report.LinePosition{ .line = 3, .column = 1 }, vm.report.warnings.items[0].position.?);
     vm.resetRunOutput();
     try testing.expectEqual(.runtime_error, try run(&vm, "x = 1\ny = cube(\"a\")\n"));

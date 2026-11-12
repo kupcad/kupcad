@@ -199,7 +199,7 @@ test "lsp worker: serve gives a document its values, which its next frame runs w
 
 test "lsp worker: what each module's run warned of reaches the server, placed" {
     const path = "part.kup";
-    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n";
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n";
     var requests: std.Io.Writer.Allocating = .init(testing.allocator);
     defer requests.deinit();
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
@@ -209,7 +209,7 @@ test "lsp worker: what each module's run warned of reaches the server, placed" {
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     var in: std.Io.Reader = .fixed(requests.written());
     var replies: std.Io.Writer.Allocating = .init(testing.allocator);
     defer replies.deinit();

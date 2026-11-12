@@ -146,11 +146,11 @@ test "preview: Sketches beside Solids, and a model that is empty, are said in wa
 test "preview: a warning the run gave says where" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    // The engine can't keep the material line 3 gives
-    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n";
+    // The warning line 3 gives
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\npart\n";
     const warnings = (try preview(arena.allocator(), source, "")).header.warnings;
     try testing.expectEqual(@as(usize, 1), warnings.len);
-    try testing.expect(std.mem.find(u8, warnings[0].message, "brep") != null);
+    try testing.expect(std.mem.find(u8, warnings[0].message, "thin wall") != null);
     try testing.expectEqual(@as(?u32, 3), warnings[0].line);
     try testing.expect(warnings[0].column != null);
 }

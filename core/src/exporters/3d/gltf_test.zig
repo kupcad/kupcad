@@ -218,6 +218,35 @@ test "GLTF: multi-part exports are valid and each part keeps its own material" {
     }
 }
 
+test "GLTF: parts of the B-Rep engine keep their materials, a curved one's too" {
+    // The engine dropped them with a warning until its faces carried them
+    const source =
+        \\CAD.config(engine: :brep)
+        \\[cube(2), cube(2).translate(x: 5).material(color: "#FF0000"),
+        \\ sphere(1).material(color: "#00FF00").translate(x: 10)]
+    ;
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .glb });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    try expectValidLayout(&glb);
+    try std.testing.expectEqual(@as(usize, 3), glb.array("materials").len);
+    var buf: [8][4]f64 = undefined;
+    const colors = try primitiveColors(&glb, &buf);
+    try std.testing.expectEqual(@as(usize, 3), colors.len);
+    var grey: usize = 0;
+    var red: usize = 0;
+    var green: usize = 0;
+    for (colors) |c| {
+        if (c[0] == 0.8 and c[1] == 0.8) grey += 1;
+        if (c[0] == 1 and c[1] == 0) red += 1;
+        if (c[0] == 0 and c[1] == 1) green += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), grey);
+    try std.testing.expectEqual(@as(usize, 1), red);
+    try std.testing.expectEqual(@as(usize, 1), green);
+}
+
 /// Under Draco each primitive is decoded on its own, so each needs a POSITION accessor
 /// counting its own vertices, with their bounds. Every primitive used to point at one
 /// accessor with the total count, which no decoder accepts for a multi-part model.

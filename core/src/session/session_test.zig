@@ -913,8 +913,8 @@ test "ScriptSession: an import runs with the default settings, not its importer'
 test "ScriptSession: a module's run's warnings are kept with it, until its next run" {
     var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
-    session.vm.mute_errors = true; // the engine's warning would print to the test log
-    const id = try session.workspace.addModule("part.kup", "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    session.vm.mute_errors = true; // the run's warning would print to the test log
+    const id = try session.workspace.addModule("part.kup", "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n");
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
     try session.evaluateWorkspace();

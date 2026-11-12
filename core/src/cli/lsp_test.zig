@@ -923,10 +923,10 @@ test "LSP: an edited document that didn't run has its last run's warnings put ba
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
     const arena = server.arena.allocator();
-    const warns = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n";
+    const warns = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n";
     try server.open(LIB_URI, warns);
     server.settle();
     try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, LIB_URI)).len);
@@ -1076,22 +1076,22 @@ test "LSP: what a run warned of is a diagnostic on the line of its call, beside 
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     const arena = server.arena.allocator();
-    // An unused variable (a lint finding) and a material the B-Rep engine can't keep
-    try server.open(URI, "unused = 1\nCAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    // An unused variable (a lint finding) and a warning the run gives
+    try server.open(URI, "unused = 1\nCAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n");
     try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, URI)).len);
     server.settle();
     const shown = try diagnosticsOf(&server, arena, URI);
     try testing.expectEqual(@as(usize, 2), shown.len);
     try testing.expectEqual(@as(u32, 3), shown[1].range.start.line);
     try testing.expectEqual(@as(u32, 2), shown[1].severity);
-    try testing.expect(std.mem.find(u8, shown[1].message, "brep") != null);
+    try testing.expect(std.mem.find(u8, shown[1].message, "thin wall") != null);
     // It has no code, and says none: `"code": null` is no code
     try testing.expectEqual(@as(usize, 0), server.sent("\"code\":null"));
 
     // Edited, its lines may have moved: the warning goes until the next run says it again
-    try server.change(URI, "unused = 1\n\nCAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    try server.change(URI, "unused = 1\n\nCAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n");
     try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, URI)).len);
     server.settle();
     try testing.expectEqual(@as(u32, 4), (try diagnosticsOf(&server, arena, URI))[1].range.start.line);
@@ -1102,20 +1102,20 @@ test "LSP: a library's warning is a diagnostic in the library, at its own line, 
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
     const arena = server.arena.allocator();
-    try server.open(LIB_URI, "def tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n");
+    try server.open(LIB_URI, "def tinted(s)\n  warn(\"tinted \", s.volume)\n  s\nend\nexport tinted\n");
     try server.open(MAIN_URI, "CAD.config(engine: :brep)\nimport { tinted } from \"./lib.kup\"\ntinted(cube(1))\n");
     server.settle();
     try testing.expectEqual(@as(usize, 0), (try diagnosticsOf(&server, arena, MAIN_URI)).len);
     const in_lib = try diagnosticsOf(&server, arena, LIB_URI);
     try testing.expectEqual(@as(usize, 1), in_lib.len);
     try testing.expectEqual(@as(u32, 1), in_lib[0].range.start.line);
-    try testing.expect(std.mem.find(u8, in_lib[0].message, "brep") != null);
+    try testing.expect(std.mem.find(u8, in_lib[0].message, "tinted") != null);
 
     // The library edited, its lines moved: gone until the script's next run says it again
-    try server.change(LIB_URI, "\ndef tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n");
+    try server.change(LIB_URI, "\ndef tinted(s)\n  warn(\"tinted \", s.volume)\n  s\nend\nexport tinted\n");
     try testing.expectEqual(@as(usize, 0), (try diagnosticsOf(&server, arena, LIB_URI)).len);
     try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
     server.settle();

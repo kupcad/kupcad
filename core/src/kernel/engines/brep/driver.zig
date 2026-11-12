@@ -176,11 +176,12 @@ pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
 /// taper) and revolutions (of a sketch on one side of the axis), their volume, area, genus
 /// and box (a sketch's area and box too), hulls of flat-faced solids, every rigid move,
 /// uniform scale and mirror, meshes, a solid's point containment, ray casts, gaps and
-/// faces by direction, and STEP export. Everything else is refused before the driver runs
+/// faces by direction, plane sections (`slice`), materials (each face's attribute, in the
+/// meshes as the mesh engine's), and STEP export. Everything else is refused before the driver runs
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces, .slice => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces, .slice, .materials => true,
         .boolean,
         .loft,
         .curved_hull,
@@ -190,7 +191,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .trim_by_plane,
         .project,
         .decompose,
-        .materials,
         .empty,
         => false,
     };
@@ -865,7 +865,7 @@ fn indexOf(src: *BrepSolid) ?*const locus.query.FaceIndex {
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     const src = solidOf(handle.ptr);
     const mesh = fullMesh(src) orelse return null;
-    return copyOut(allocator, mesh);
+    return copyOut(allocator, &src.body, mesh);
 }
 
 /// The mesh a viewer shows while the part is being edited: the part's mesh when it has
@@ -874,12 +874,12 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
 /// is a bounded picture at once rather than a late one (research/solidcraft.md §2).
 fn getPreviewMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     const src = solidOf(handle.ptr);
-    if (src.mesh) |*m| return copyOut(allocator, m);
-    if (src.preview) |*m| return copyOut(allocator, m);
+    if (src.mesh) |*m| return copyOut(allocator, &src.body, m);
+    if (src.preview) |*m| return copyOut(allocator, &src.body, m);
     var mesh = meshWithin(src, PREVIEW_BUDGET) orelse return null;
     errdefer mesh.deinit(backend_allocator);
     if (mesh.provisional) src.preview = mesh else src.mesh = mesh;
-    return copyOut(allocator, if (mesh.provisional) &src.preview.? else &src.mesh.?);
+    return copyOut(allocator, &src.body, if (mesh.provisional) &src.preview.? else &src.mesh.?);
 }
 
 /// Whether the mesh a preview gets is the bounded one: the part's mesh not built, its
@@ -910,16 +910,73 @@ fn meshWithin(src: *const BrepSolid, budget: locus.mesh.tessellate.Budget) ?locu
     };
 }
 
-/// `mesh` in the caller's memory: positions as `f32` triples, the triangles' corners.
-fn copyOut(allocator: std.mem.Allocator, mesh: *const locus.mesh.tessellate.Mesh) ?geom.Mesh {
-    const vert_props = allocator.alloc(f32, 3 * mesh.positions.len) catch return null;
-    errdefer allocator.free(vert_props);
-    for (mesh.positions, 0..) |p, i| {
-        for (0..3) |k| vert_props[3 * i + k] = @floatCast(p[k]);
+/// `mesh` (of `body`) in the caller's memory: positions as `f32` triples and the
+/// triangles' corners; when a face of the body has a material (its attribute), each vertex
+/// has a fourth property, its material slot, as the mesh engine's do. A vertex's
+/// properties are one, so a vertex shared by faces of different materials (where a red
+/// face meets a blue one) is one vertex per material: each keeps its index for the first
+/// material its triangles meet it with, and the others follow the mesh's vertices.
+fn copyOut(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh) ?geom.Mesh {
+    var any_material = false;
+    for (mesh.faces) |range| any_material = any_material or body.face(range.face).attribute != kernel.DEFAULT_MATERIAL_SLOT;
+    if (!any_material) {
+        const vert_props = allocator.alloc(f32, 3 * mesh.positions.len) catch return null;
+        errdefer allocator.free(vert_props);
+        for (mesh.positions, 0..) |p, i| {
+            for (0..3) |k| vert_props[3 * i + k] = @floatCast(p[k]);
+        }
+        const tri_verts = allocator.alloc(u32, 3 * mesh.triangles.len) catch return null;
+        for (mesh.triangles, 0..) |t, i| tri_verts[3 * i ..][0..3].* = t;
+        return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3, .provisional = mesh.provisional };
     }
-    const tri_verts = allocator.alloc(u32, 3 * mesh.triangles.len) catch return null;
+    return withMaterials(allocator, body, mesh) catch null;
+}
+
+/// `copyOut`'s mesh with each vertex's material slot as its fourth property.
+fn withMaterials(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh) error{OutOfMemory}!geom.Mesh {
+    const n = mesh.positions.len;
+    // Each vertex's first material, and the copies for the others: (vertex, slot) → index
+    const first = try backend_allocator.alloc(?u32, n);
+    defer backend_allocator.free(first);
+    @memset(first, null);
+    var copies: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer copies.deinit(backend_allocator);
+    var extra: std.ArrayList(u32) = .empty; // the vertex each copy is of
+    defer extra.deinit(backend_allocator);
+    const tri_verts = try allocator.alloc(u32, 3 * mesh.triangles.len);
+    errdefer allocator.free(tri_verts);
+    // Every triangle is a face's; the corners as they are until its face's range says
     for (mesh.triangles, 0..) |t, i| tri_verts[3 * i ..][0..3].* = t;
-    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3, .provisional = mesh.provisional };
+    var slots: std.ArrayList(u32) = .empty; // each copy's slot
+    defer slots.deinit(backend_allocator);
+    for (mesh.faces) |range| {
+        const slot = body.face(range.face).attribute;
+        for (mesh.triangles[range.first..][0..range.count], range.first..) |t, ti| {
+            for (t, 0..) |v, k| {
+                const at = &first[v];
+                tri_verts[3 * ti + k] = if (at.* == null or at.*.? == slot) blk: {
+                    at.* = slot;
+                    break :blk v;
+                } else blk: {
+                    const entry = try copies.getOrPut(backend_allocator, .{ v, slot });
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = @intCast(n + extra.items.len);
+                        try extra.append(backend_allocator, v);
+                        try slots.append(backend_allocator, slot);
+                    }
+                    break :blk entry.value_ptr.*;
+                };
+            }
+        }
+    }
+    const vert_props = try allocator.alloc(f32, 4 * (n + extra.items.len));
+    for (0..n + extra.items.len) |i| {
+        const v = if (i < n) i else extra.items[i - n];
+        const slot = if (i < n) first[i] orelse kernel.DEFAULT_MATERIAL_SLOT else slots.items[i - n];
+        for (0..3) |k| vert_props[4 * i + k] = @floatCast(mesh.positions[v][k]);
+        vert_props[4 * i + 3] = @floatFromInt(slot);
+    }
+    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 4, .provisional = mesh.provisional };
 }
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
@@ -939,10 +996,13 @@ fn simplifyImpl(a: geom.GeometryHandle, tol: f64) ?geom.GeometryHandle {
     return cloneImpl(a);
 }
 
+/// A copy of the solid made of material `material_id`: every face's attribute its slot
+/// (kernel.materialSlot), which its meshes carry (`copyOut`) and every move keeps.
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
-    _ = material_id;
-    // Materials are not stored on B-Rep solids yet; return a copy, never the input.
-    return cloneImpl(a);
+    const copy = solidOf(a.ptr).clone() catch return null;
+    const slot = kernel.materialSlot(material_id);
+    for (copy.body.faces.items) |*f| f.attribute = slot;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
 }
 
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {

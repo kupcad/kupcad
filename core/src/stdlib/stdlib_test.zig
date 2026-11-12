@@ -2444,21 +2444,25 @@ test "Stdlib: the sketch measures and operations answer alike on both engines" {
     }
 }
 
-test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped silently" {
-    const warnings = test_support.expectWarnings();
-    defer warnings.restore();
+test "Stdlib: a material on a B-Rep part is kept, in its mesh as on the mesh engine, with no warning" {
+    // It was dropped with a warning until the engine's faces carried it (M3)
     var vm = try initVm();
     defer vm.deinit();
-    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "cube(10).material(color: \"#FF0000\").simplify"));
-    try testing.expectEqual(@as(usize, 0), vm.report.warnings.items.len); // Manifold keeps materials
-
-    // When the script gives it, whether or not the run builds the part
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
         \\CAD.config(engine: :brep)
-        \\a = cube(10).material(color: "#FF0000")
-        \\b = cube(5).highlight.simplify
+        \\a = cube(10).material(color: "#FF0000").translate(x: 5)
+        \\b = cylinder(r: 2, h: 3).material(color: "#00FF00")
     ));
-    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expectEqual(@as(usize, 0), vm.report.warnings.items.len);
+    for ([_][]const u8{ "a", "b" }, [_]u32{ 0, 1 }) |name, id| {
+        const handle = try vm.ensureConcrete(vm.globals.get(name) orelse return error.MissingGlobal);
+        try testing.expectEqual(.brep_native, handle.engine);
+        const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.MissingMesh;
+        defer testing.allocator.free(mesh.vert_props);
+        defer testing.allocator.free(mesh.tri_verts);
+        try testing.expectEqual(@as(usize, 4), mesh.num_prop);
+        for (mesh.tri_verts) |v| try testing.expectEqual(kernel.materialSlot(id), @as(u32, @intFromFloat(mesh.vert_props[v * 4 + 3])));
+    }
 }
 
 test "Stdlib: geometry arguments reject non-number coordinates" {

@@ -399,6 +399,66 @@ test "Driver: a slice is the exact section, the solid just above the plane; an e
     try std.testing.expect(std.mem.indexOf(u8, why, "ellipse") != null);
 }
 
+/// Each vertex's material slot in `mesh` (its fourth property).
+fn slotAt(mesh: geom.Mesh, vertex: u32) u32 {
+    return @intFromFloat(mesh.vert_props[vertex * mesh.num_prop + 3]);
+}
+
+fn freeMesh(mesh: geom.Mesh) void {
+    std.testing.allocator.free(mesh.vert_props);
+    std.testing.allocator.free(mesh.tri_verts);
+}
+
+test "Driver: a material is every face's, in the mesh as each vertex's slot; faces of two materials split their shared vertices" {
+    const kernel = @import("../../kernel.zig");
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    const plain = driver.driver.getMeshFn(std.testing.allocator, cube) orelse return error.KernelFailed;
+    defer freeMesh(plain);
+    try std.testing.expectEqual(@as(usize, 3), plain.num_prop);
+    const vertices = plain.vert_props.len / 3;
+
+    const red = driver.driver.setMaterialFn(cube, 2) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(red);
+    // Moved, it keeps its material; the full mesh and the preview's both carry it
+    const moved = driver.driver.translateFn(red, 1, 2, 3) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(moved);
+    for ([_]geom.GeometryHandle{ red, moved }) |handle| {
+        for ([_]bool{ false, true }) |preview| {
+            const mesh = (if (preview) driver.driver.getPreviewMeshFn(std.testing.allocator, handle) else driver.driver.getMeshFn(std.testing.allocator, handle)) orelse return error.KernelFailed;
+            defer freeMesh(mesh);
+            try std.testing.expectEqual(@as(usize, 4), mesh.num_prop);
+            try std.testing.expectEqual(vertices, mesh.vert_props.len / 4);
+            for (mesh.tri_verts) |v| try std.testing.expectEqual(kernel.materialSlot(2), slotAt(mesh, v));
+        }
+    }
+    try std.testing.expect(driver.supports(.materials));
+
+    // Its top another material: the top's four corners are a vertex more each, every
+    // triangle's corners its own face's material, every position one of the cube's
+    const two = driver.driver.cloneFn(red) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(two);
+    const body = &@as(*driver.BrepSolid, @ptrCast(@alignCast(two.ptr))).body;
+    for (body.faces.items, 0..) |*f, i| {
+        const box = try locus.measure.bbox.faceBounds(body, .of(i));
+        if (box.min[2] == 10) f.attribute = kernel.materialSlot(5);
+    }
+    const mixed = driver.driver.getMeshFn(std.testing.allocator, two) orelse return error.KernelFailed;
+    defer freeMesh(mixed);
+    try std.testing.expectEqual(vertices + 4, mixed.vert_props.len / 4);
+    var tri: usize = 0;
+    var top: usize = 0;
+    while (tri < mixed.tri_verts.len) : (tri += 3) {
+        const corners = mixed.tri_verts[tri..][0..3];
+        var on_top = true;
+        for (corners) |v| on_top = on_top and mixed.vert_props[v * 4 + 2] == 10;
+        top += @intFromBool(on_top);
+        const want = if (on_top) kernel.materialSlot(5) else kernel.materialSlot(2);
+        for (corners) |v| try std.testing.expectEqual(want, slotAt(mixed, v));
+    }
+    try std.testing.expectEqual(@as(usize, 2), top);
+}
+
 test "Driver: unsupported operations report null, never a stand-in result" {
     const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructCrossSectionFn(sq);

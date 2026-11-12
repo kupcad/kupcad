@@ -321,8 +321,8 @@ test "LSP preview: each run's warnings are its own, the same on every run" {
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
-    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n";
+    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\npart\n";
     // The second run, edited, finds the Solid built by the first in the result cache
     for ([_][]const u8{ source, source ++ "\n" }) |edited| {
         try preview.update("part.kup", edited);
@@ -351,8 +351,8 @@ test "LSP preview: the warnings taken are those of the modules that ran since, a
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
-    try preview.update("lib.kup", "CAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n");
+    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
+    try preview.update("lib.kup", "CAD.config(engine: :brep)\nwarn(\"shade\")\nshade = cube(1)\nexport shade\n");
     try preview.update("main.kup", "import { shade } from \"./lib.kup\"\nshade\n");
     try preview.update("other.kup", "cube(1)\n");
     _ = try frameOf(a, &preview, "main.kup");
@@ -366,7 +366,7 @@ test "LSP preview: the warnings taken are those of the modules that ran since, a
 
     // lib.kup edited, another document evaluated: lib.kup didn't run, and its last run's
     // warning (on a line that moved) isn't given again
-    try preview.update("lib.kup", "\nCAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n");
+    try preview.update("lib.kup", "\nCAD.config(engine: :brep)\nwarn(\"shade\")\nshade = cube(1)\nexport shade\n");
     _ = try frameOf(a, &preview, "other.kup");
     try testing.expectEqualDeep(@as([]const []const u8, &.{"other.kup"}), try pathsOf(a, try preview.takeRunWarnings(a)));
 
