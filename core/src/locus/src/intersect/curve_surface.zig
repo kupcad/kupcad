@@ -121,7 +121,9 @@ fn conicPlane(c: Vec3, x: Vec3, y: Vec3, radius: f64, t0: f64, t1: f64, plane: P
     const k = -b / m;
     // Beyond reach by more than the zone: no root; within it of the extreme: a touch
     if (@abs(k) * m > m + tol.zone) return out;
-    const spread = if (@abs(k) >= 1) 0 else std.math.acos(k);
+    // cos(t − φ) = k: a touch at the turn itself when k reaches 1, half a turn from it
+    // when k reaches −1
+    const spread = if (k >= 1) 0 else if (k <= -1) std.math.pi else std.math.acos(k);
     for ([_]f64{ phi - spread, phi + spread }) |root| {
         const t = into(root, t0 - same);
         if (t <= last + same) out.add(std.math.clamp(t, t0, last), same);

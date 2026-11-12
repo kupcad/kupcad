@@ -1,5 +1,6 @@
 //! A curve against a plane: a line crossing, ending on, lying in and missing it; a circle
-//! standing across it (two crossings, a touch, a miss, part of its turn), one lying in it
+//! standing across it (two crossings, a touch at its highest and at its lowest point, a
+//! miss, part of its turn), one lying in it
 //! and one level above it; an ellipse; and the zone at the ends.
 
 const std = @import("std");
@@ -51,6 +52,12 @@ test "curvePlane: a circle standing across a plane crosses it twice, touches it 
     try expectParams(&.{ PI + PI / 6.0, 2 * PI - PI / 6.0 }, try crossings(standing, 0, 2 * PI, 4));
     try expectParams(&.{PI / 2.0}, try crossings(standing, 0, 2 * PI, 7));
     try expectParams(&.{}, try crossings(standing, 0, 2 * PI, 7.5));
+    // Touching from above, at its lowest point, where the height's cosine is −1, not +1:
+    // the touch is half a turn from the turn of its highest point (once taken there: the
+    // overlap rules' first fuzz find, 2026-11-12, a cap's arc touching a side's plane
+    // gave a point across the circle), and a touch a fraction of the zone beyond is one
+    try expectParams(&.{3 * PI / 2.0}, try crossings(standing, 0, 2 * PI, 3));
+    try expectParams(&.{3 * PI / 2.0}, try crossings(standing, 0, 2 * PI, 3 - 0.5e-5));
     // Part of its turn: one root inside, the other outside the range
     try expectParams(&.{PI / 6.0}, try crossings(standing, 0, PI / 2.0, 6));
     // A range starting past a turn: the roots taken into it
