@@ -131,18 +131,24 @@ pub fn ringSheet(allocator: std.mem.Allocator, tol: Tolerance, rings: []const []
     defer allocator.free(outlines);
     var at: usize = 0;
     for (rings, outlines) |ring, *outline| {
-        for (ring, 0..) |pt, k| {
-            const a = pt.p;
-            const b = ring[(k + 1) % ring.len].p;
-            edges[at + k] = .{ .a = a, .b = b };
-            if (pt.bulge) |bulge| {
-                const half = vec.scale2(vec.sub2(b, a), 0.5);
-                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
-                edges[at + k].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = pt.ccw };
-            }
-        }
-        outline.* = edges[at..][0..ring.len];
+        outline.* = ringEdges(ring, edges[at..][0..ring.len]);
         at += ring.len;
     }
     return primitives.outlines(allocator, tol, outlines, diag);
+}
+
+/// The edges of one ring, into `out` (as long as the ring): a line, or an arc where the
+/// point has a bulge.
+pub fn ringEdges(ring: []const RingPoint, out: []primitives.OutlineEdge) []primitives.OutlineEdge {
+    for (ring, 0..) |pt, k| {
+        const a = pt.p;
+        const b = ring[(k + 1) % ring.len].p;
+        out[k] = .{ .a = a, .b = b };
+        if (pt.bulge) |bulge| {
+            const half = vec.scale2(vec.sub2(b, a), 0.5);
+            const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+            out[k].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = pt.ccw };
+        }
+    }
+    return out[0..ring.len];
 }

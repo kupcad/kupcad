@@ -5,6 +5,9 @@
 
 const std = @import("std");
 
+/// The most a `-Dfuzz-replay` file may hold: replay lines of a few thousand draws each.
+const MAX_REPLAY_BYTES = 16 << 20;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -24,6 +27,12 @@ pub fn build(b: *std.Build) void {
     // The fixtures (src/fixtures/*.json, the primitives' bodies as JSON) are rewritten from
     // the current output instead of compared with it; the diff is reviewed like code.
     test_paths.addOption(bool, "update_snapshots", b.option(bool, "update-snapshots", "Rewrite the body JSON fixtures from the current output") orelse false);
+    // The fuzz finds a plain run replays (src/fuzz_test.zig): a file of the `replay:` lines
+    // a failing chain or arrangement prints, read here so the tests touch no file system
+    // (they run under wasmtime too). Empty without the option, and the replay test skips.
+    const replay_path = b.option([]const u8, "fuzz-replay", "A file of fuzz finds' `replay:` lines for the replay test to run");
+    const replay_text: []const u8 = if (replay_path) |path| std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, .limited(MAX_REPLAY_BYTES)) catch |err| std.debug.panic("-Dfuzz-replay={s}: {t}", .{ path, err }) else "";
+    test_paths.addOption([]const u8, "fuzz_replay", replay_text);
     module.addOptions("test_paths", test_paths);
 
     const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};

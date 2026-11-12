@@ -21,6 +21,10 @@ const boolean = @import("sketch/boolean.zig");
 const offset = @import("sketch/offset.zig");
 const query = @import("sketch/query.zig");
 const hull = @import("sketch/hull.zig");
+const overlay_mod = @import("sketch/overlay.zig");
+const predicates = @import("math/predicates.zig");
+const trig = @import("math/trig.zig");
+const test_bodies = @import("construct/test_bodies.zig");
 const overlap = @import("sketch/overlap.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
@@ -86,6 +90,28 @@ const PLAIN_RUN_CURVES = 2000;
 /// a little-endian u64 and falls back to the range's least when it is out of it, as
 /// random bytes always are: every ring was all zeros and no chain ever reached a check.
 const PLAIN_RUN_CHECKED_AT_LEAST = PLAIN_RUN_CHAINS / 2;
+/// Arrangements the overlay target's plain run checks.
+const PLAIN_RUN_ARRANGEMENTS = 300;
+/// The overlay target's arrangements: up to this many inputs of up to this many rings,
+/// points on a grid of `FINE_SCALE` steps a unit over [0, FINE_GRID / FINE_SCALE], circles
+/// of these radii about its points, one point in `NUDGE_ONE_IN` a rounding off it.
+const MAX_INPUTS = 3;
+const MAX_INPUT_RINGS = 2;
+const FINE_GRID: i32 = 24;
+const FINE_SCALE: f64 = 4;
+const RADII = [_]f64{ 0.25, 0.5, 1, 1.5, 2, 3 };
+const NUDGE_ONE_IN: u8 = 8;
+/// Where the label check probes a face: this share of its outer cycle's longest piece in
+/// from the piece's middle, and never nearer it than this many zones (a piece shorter is
+/// not probed).
+const LABEL_PROBE_SHARE = 1e-3;
+const LABEL_PROBE_MIN = 50;
+/// How many zones a probe must keep from every edge of its face.
+const LABEL_PROBE_CLEAR = 10;
+/// How closely each input's winding over the faces holds to its own area beyond the
+/// welding (the zone along its perimeter, twice: its own ends moved, and an arc piece
+/// within the zone of its chord taken as the chord).
+const WINDING_CLOSE = 1e-9;
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: the body JSON reader takes any input" {
@@ -146,7 +172,10 @@ const BOW_SLACK = 1e-9;
 /// a clean refusal (a cusp, a loop the budget cannot hold), or spans each of which the
 /// curve, evaluated densely, keeps within the budget the enclosure certified.
 fn freeFormChords(_: void, smith: *Smith) anyerror!void {
-    try checkFreeFormChords(smith);
+    var recording: Recording(*Smith) = .{ .inner = smith };
+    defer recording.deinit();
+    errdefer recording.report("chords");
+    try checkFreeFormChords(&recording);
 }
 
 fn checkFreeFormChords(smith: anytype) anyerror!void {
@@ -221,15 +250,451 @@ test "fuzz: the 2D kernel takes any generated sketch chain" {
 }
 
 fn sketchChain(_: void, smith: *Smith) anyerror!void {
-    _ = try runChain(smith);
+    var recording: Recording(*Smith) = .{ .inner = smith };
+    defer recording.deinit();
+    errdefer recording.report("chain");
+    _ = try runChain(&recording);
 }
 
 test "Fuzz chains: generated sketch chains run clean on a plain test run, most of them checked" {
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED);
     var source = RandomSource{ .random = prng.random() };
     var checked: usize = 0;
-    for (0..PLAIN_RUN_CHAINS) |_| checked += @intFromBool(try runChain(&source) == .checked);
+    for (0..PLAIN_RUN_CHAINS) |_| {
+        var recording: Recording(*RandomSource) = .{ .inner = &source };
+        defer recording.deinit();
+        errdefer recording.report("chain");
+        checked += @intFromBool(try runChain(&recording) == .checked);
+    }
     try testing.expect(checked >= PLAIN_RUN_CHECKED_AT_LEAST);
+}
+
+/// A source of draws (the fuzzer's Smith, or `RandomSource`) that keeps every value it
+/// gives, so a failing run prints them as a `replay:` line: the run's every choice, which
+/// `ScriptedSource` plays back exactly. Zig 0.17 saves the fuzzer's failing input as bytes
+/// that do not replay through the Smith on a plain run; this line does, from a CI log.
+fn Recording(comptime Inner: type) type {
+    return struct {
+        inner: Inner,
+        draws: std.ArrayList(i64) = .empty,
+
+        const Self = @This();
+
+        fn valueRangeAtMost(self: *Self, comptime T: type, at_least: T, at_most: T) T {
+            const v = self.inner.valueRangeAtMost(T, at_least, at_most);
+            self.keep(@intCast(v));
+            return v;
+        }
+
+        fn index(self: *Self, len: usize) usize {
+            const i = self.inner.index(len);
+            self.keep(@intCast(i));
+            return i;
+        }
+
+        fn keep(self: *Self, v: i64) void {
+            self.draws.append(testing.allocator, v) catch @panic("out of memory keeping a fuzz run's draws");
+        }
+
+        fn deinit(self: *Self) void {
+            self.draws.deinit(testing.allocator);
+        }
+
+        /// Prints the run's draws as one `replay:` line of `kind` (a line of a file given
+        /// to `zig build test -Dfuzz-replay=FILE` in core/src/locus).
+        fn report(self: *const Self, kind: []const u8) void {
+            std.debug.print("replay: {s}", .{kind});
+            for (self.draws.items) |v| std.debug.print(" {d}", .{v});
+            std.debug.print("\n", .{});
+        }
+    };
+}
+
+/// The draws of a `replay:` line, given back in order, each clamped to the range asked
+/// (a line edited by hand stays a valid run); past its end, each range's least, as the
+/// Smith gives when its bytes run out.
+const ScriptedSource = struct {
+    draws: []const i64,
+    at: usize = 0,
+
+    fn next(self: *ScriptedSource) ?i64 {
+        if (self.at >= self.draws.len) return null;
+        defer self.at += 1;
+        return self.draws[self.at];
+    }
+
+    fn valueRangeAtMost(self: *ScriptedSource, comptime T: type, at_least: T, at_most: T) T {
+        const v = self.next() orelse return at_least;
+        return @intCast(std.math.clamp(v, @as(i64, at_least), @as(i64, at_most)));
+    }
+
+    fn index(self: *ScriptedSource, len: usize) usize {
+        const v = self.next() orelse return 0;
+        return @intCast(std.math.clamp(v, 0, @as(i64, @intCast(len)) - 1));
+    }
+};
+
+/// What a `replay:` line runs: its kind's target on its draws.
+const ReplayKind = enum { chain, chords, overlay };
+
+/// Runs one `replay:` line, after the `replay:`; `error.InvalidReplay` when it is not one.
+fn replayLine(line: []const u8) !void {
+    var words = std.mem.tokenizeAny(u8, line, " \t\r");
+    const kind = std.meta.stringToEnum(ReplayKind, words.next() orelse return error.InvalidReplay) orelse return error.InvalidReplay;
+    var draws: std.ArrayList(i64) = .empty;
+    defer draws.deinit(testing.allocator);
+    while (words.next()) |w| try draws.append(testing.allocator, std.fmt.parseInt(i64, w, 10) catch return error.InvalidReplay);
+    var source: ScriptedSource = .{ .draws = draws.items };
+    switch (kind) {
+        .chain => _ = try runChain(&source),
+        .chords => try checkFreeFormChords(&source),
+        .overlay => _ = try runArrangement(&source),
+    }
+}
+
+test "Fuzz replay: the finds given with -Dfuzz-replay=FILE run clean" {
+    // Each `replay:` line of the file (a failing run's, copied from a log) runs its target
+    // on its draws; a find not yet fixed fails here, a fixed one is its regression test
+    const text: []const u8 = @import("test_paths").fuzz_replay;
+    if (text.len == 0) return error.SkipZigTest;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var ran: usize = 0;
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const at = std.mem.indexOf(u8, line, "replay:") orelse continue;
+        errdefer std.debug.print("the replay that failed: {s}\n", .{line});
+        try replayLine(line[at + "replay:".len ..]);
+        ran += 1;
+    }
+    try testing.expect(ran > 0);
+}
+
+test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve and an arrangement" {
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x7e91);
+    var source = RandomSource{ .random = prng.random() };
+    for (std.enums.values(ReplayKind)) |kind| {
+        for (0..8) |_| {
+            var first: Recording(*RandomSource) = .{ .inner = &source };
+            defer first.deinit();
+            switch (kind) {
+                .chain => _ = try runChain(&first),
+                .chords => try checkFreeFormChords(&first),
+                .overlay => _ = try runArrangement(&first),
+            }
+            var scripted: ScriptedSource = .{ .draws = first.draws.items };
+            var again: Recording(*ScriptedSource) = .{ .inner = &scripted };
+            defer again.deinit();
+            switch (kind) {
+                .chain => _ = try runChain(&again),
+                .chords => try checkFreeFormChords(&again),
+                .overlay => _ = try runArrangement(&again),
+            }
+            try testing.expectEqualSlices(i64, first.draws.items, again.draws.items);
+        }
+    }
+    // A line read as the test reads a file's
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(testing.allocator);
+    var recorded: Recording(*RandomSource) = .{ .inner = &source };
+    defer recorded.deinit();
+    _ = try runChain(&recorded);
+    try line.appendSlice(testing.allocator, "chain");
+    for (recorded.draws.items) |v| try line.print(testing.allocator, " {d}", .{v});
+    try replayLine(line.items);
+    try testing.expectError(error.InvalidReplay, replayLine("ball 1 2 3"));
+    try testing.expectError(error.InvalidReplay, replayLine("chain 1 x"));
+}
+
+test "fuzz: the overlay labels any generated arrangement by each input's own area" {
+    try testing.fuzz({}, overlayArrangement, .{});
+}
+
+fn overlayArrangement(_: void, smith: *Smith) anyerror!void {
+    var recording: Recording(*Smith) = .{ .inner = smith };
+    defer recording.deinit();
+    errdefer recording.report("overlay");
+    _ = try runArrangement(&recording);
+}
+
+test "Fuzz overlay: generated arrangements label by their inputs' areas on a plain test run" {
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x0e71a7);
+    var source = RandomSource{ .random = prng.random() };
+    var checked: usize = 0;
+    for (0..PLAIN_RUN_ARRANGEMENTS) |_| {
+        var recording: Recording(*RandomSource) = .{ .inner = &source };
+        defer recording.deinit();
+        errdefer recording.report("overlay");
+        checked += @intFromBool(try runArrangement(&recording) == .checked);
+    }
+    try testing.expect(checked >= PLAIN_RUN_ARRANGEMENTS / 2);
+}
+
+/// One generated arrangement, fed to the overlay as it is (no sheet built first), dense in
+/// near-tangent arcs: up to `MAX_INPUTS` inputs of up to `MAX_INPUT_RINGS` closed rings,
+/// each a polygon of fine-grid points with some edges arcs (a bulge as the chains draw
+/// them) or a circle about a grid point of one of `RADII` (tangent to grid lines and to
+/// other circles), one point in `NUDGE_ONE_IN` a rounding off its grid point. Then the
+/// arrangement is planar (`expectPlanar`: Euler, labels across every edge), and for each
+/// input k the faces' windings weigh their areas to its own: the sum of winding_k × area
+/// over the faces is the signed area its edges enclose (Green's theorem on the edges as
+/// given), within the welding. A misnested cycle breaks that, by its own area.
+fn runArrangement(source: anytype) !Outcome {
+    var o = overlay_mod.Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    const n_inputs = source.valueRangeAtMost(u8, 1, MAX_INPUTS);
+    var own_area: [MAX_INPUTS]f64 = @splat(0);
+    var perimeter: [MAX_INPUTS]f64 = @splat(0);
+    var given: [MAX_INPUTS]std.ArrayList(overlay_mod.InputEdge) = @splat(.empty);
+    defer for (&given) |*g| g.deinit(testing.allocator);
+    for (0..n_inputs) |k| {
+        _ = o.addInput() catch |err| return clean(err);
+        const rings = source.valueRangeAtMost(u8, 1, MAX_INPUT_RINGS);
+        for (0..rings) |_| {
+            var ring: [MAX_POINTS]overlay_mod.InputEdge = undefined;
+            const n = try arrangementRing(source, &ring);
+            for (ring[0..n]) |e| {
+                o.addEdge(e) catch |err| return clean(err);
+                try given[k].append(testing.allocator, e);
+                own_area[k] += greenTerm(e) / 2;
+                perimeter[k] += edgeLength(e);
+            }
+        }
+    }
+    o.run() catch |err| return clean(err);
+    try expectWeighed(&o, own_area[0..n_inputs], perimeter[0..n_inputs]);
+    var inputs: [MAX_INPUTS][]const overlay_mod.InputEdge = undefined;
+    for (given[0..n_inputs], inputs[0..n_inputs]) |g, *i| i.* = g.items;
+    try expectLabels(&o, inputs[0..n_inputs]);
+    return .checked;
+}
+
+/// The overlay's labels against a count of their own: at a point inside each face (just
+/// left of the middle of its outer cycle's longest piece, kept when the face's own cycles
+/// cross a ray from it an odd number of times, so it is inside the face and off every
+/// other edge by more than the welding), each input's edges as given cross the ray an odd
+/// number of times exactly when the face's winding of that input is odd. A cycle nested in
+/// the wrong face has its region labelled from that face: the count disagrees there. (The
+/// areas' identity, `expectWeighed`, cannot see it: the misnested cycle's area moves into
+/// the face it was wrongly left out of, by the winding it lost.) Every crossing is the
+/// exact one (`overlay.arcCrossings`, `orient2d`).
+fn expectLabels(o: *const overlay_mod.Overlay, inputs: []const []const overlay_mod.InputEdge) !void {
+    var face_edges: std.ArrayList(overlay_mod.InputEdge) = .empty;
+    defer face_edges.deinit(testing.allocator);
+    for (o.faces.items, 0..) |f, fi| {
+        // The face's cycles as edges, and its outer cycle's longest piece
+        face_edges.clearRetainingCapacity();
+        var longest: ?overlay_mod.InputEdge = null;
+        var longest_length: f64 = 0;
+        for (o.halvesOf(f.outer)) |h| {
+            const e = halfEdge(o, h);
+            try face_edges.append(testing.allocator, e);
+            const length = edgeLength(e);
+            if (length > longest_length) {
+                longest_length = length;
+                longest = e;
+            }
+        }
+        for (o.holesOf(@intCast(fi))) |hole| for (o.halvesOf(hole)) |h| try face_edges.append(testing.allocator, halfEdge(o, h));
+        const along = longest orelse continue;
+        if (longest_length < LABEL_PROBE_MIN * tol.zone) continue;
+        const p = leftOfMiddle(along, @max(LABEL_PROBE_SHARE * longest_length, LABEL_PROBE_MIN * tol.zone));
+        if (!crossesOddly(face_edges.items, p)) continue;
+        // Off every edge of the face by more than the welding moved any (a thin face's other
+        // side can be nearer than its longest piece)
+        var clear = true;
+        for (face_edges.items) |e| clear = clear and distanceTo(e, p) > LABEL_PROBE_CLEAR * tol.zone;
+        if (!clear) continue;
+        for (inputs, 0..) |edges_k, k| {
+            errdefer std.debug.print("face {d} at ({d}, {d}): input {d} labelled {d}\n", .{ fi, p[0], p[1], k, o.windingOf(@intCast(fi), @intCast(k)) });
+            try testing.expectEqual(@mod(o.windingOf(@intCast(fi), @intCast(k)), 2) == 1, crossesOddly(edges_k, p));
+        }
+    }
+}
+
+/// The distance from `p` to edge `e`: to the nearest point of its line segment or its arc
+/// (by the arc's turn about its centre, else its nearer end).
+fn distanceTo(e: overlay_mod.InputEdge, p: Vec2) f64 {
+    if (e.arc) |arc| {
+        const to_ends = @min(vec.distance2(p, e.a), vec.distance2(p, e.b));
+        const turn = overlay_mod.arcSweep(e.a, e.b, arc);
+        const start = trig.atan2(e.a[1] - arc.c[1], e.a[0] - arc.c[0]);
+        const at = trig.atan2(p[1] - arc.c[1], p[0] - arc.c[0]);
+        const along = @mod(if (arc.ccw) at - start else start - at, 2 * std.math.pi);
+        if (along > turn) return to_ends;
+        return @min(to_ends, @abs(vec.distance2(p, arc.c) - arc.r));
+    }
+    const d = vec.sub2(e.b, e.a);
+    const length_sq = vec.dot2(d, d);
+    if (length_sq == 0) return vec.distance2(p, e.a);
+    const t = std.math.clamp(vec.dot2(vec.sub2(p, e.a), d) / length_sq, 0, 1);
+    return vec.distance2(p, vec.add2(e.a, vec.scale2(d, t)));
+}
+
+/// Half-edge `h` of the overlay as an edge from its origin to its target.
+fn halfEdge(o: *const overlay_mod.Overlay, h: u32) overlay_mod.InputEdge {
+    return .{ .a = o.point(o.origin(h)), .b = o.point(o.target(h)), .arc = o.arcOf(h) };
+}
+
+/// A point `d` to the left of the middle of edge `e`: its region's side.
+fn leftOfMiddle(e: overlay_mod.InputEdge, d: f64) Vec2 {
+    if (e.arc) |arc| {
+        const start = trig.atan2(e.a[1] - arc.c[1], e.a[0] - arc.c[0]);
+        const half = overlay_mod.arcSweep(e.a, e.b, arc) / 2;
+        const angle = if (arc.ccw) start + half else start - half;
+        const radial: Vec2 = .{ @cos(angle), @sin(angle) };
+        // Left of a counter-clockwise arc is toward its centre
+        const r = if (arc.ccw) arc.r - d else arc.r + d;
+        return vec.add2(arc.c, vec.scale2(radial, r));
+    }
+    const mid = vec.scale2(vec.add2(e.a, e.b), 0.5);
+    const dir = vec.normalized2(vec.sub2(e.b, e.a)) orelse return mid;
+    return vec.add2(mid, vec.scale2(vec.perp2(dir), d));
+}
+
+/// Whether the ray from `p` to +x crosses `edges` an odd number of times, each crossing
+/// told exactly: an arc by its y-monotone pieces (`overlay.arcCrossings`), a line by the
+/// half-open rule and `orient2d`.
+fn crossesOddly(cycle_edges: []const overlay_mod.InputEdge, p: Vec2) bool {
+    var odd = false;
+    for (cycle_edges) |e| {
+        if (e.arc) |arc| {
+            if (overlay_mod.arcCrossings(e.a, e.b, arc, p)) odd = !odd;
+            continue;
+        }
+        if ((e.a[1] > p[1]) == (e.b[1] > p[1])) continue;
+        const side = predicates.orient2d(e.a, e.b, p);
+        if ((side > 0) == (e.b[1] > e.a[1])) odd = !odd;
+    }
+    return odd;
+}
+
+/// The overlay's oracle: the arrangement is planar (`expectPlanar`), and for each input k
+/// the sum over faces of winding_k × area is `own_area[k]`, the signed area its edges
+/// enclose, within the welding along its `perimeter[k]`.
+fn expectWeighed(o: *const overlay_mod.Overlay, own_area: []const f64, perimeter: []const f64) !void {
+    try @import("sketch/overlay_test.zig").expectPlanar(o);
+    for (own_area, perimeter, 0..) |own, length, k| {
+        var weighed: f64 = 0;
+        for (o.faces.items, 0..) |f, fi| {
+            var area = o.cycles.items[f.outer].area;
+            for (o.holesOf(@intCast(fi))) |h| area += o.cycles.items[h].area;
+            weighed += @as(f64, @floatFromInt(o.windingOf(@intCast(fi), @intCast(k)))) * area;
+        }
+        errdefer std.debug.print("input {d}: its area {d}, the faces' windings weigh {d}\n", .{ k, own, weighed });
+        try testing.expectApproxEqAbs(own, weighed, 2 * tol.zone * length + WINDING_CLOSE * @max(@abs(own), 1));
+    }
+}
+
+test "Fuzz overlay: the oracle on a nesting find of 2026-11-12, two arcs meeting a rounding above the ray" {
+    // overlay_test.zig's case: a region whose dents meet at a vertex a rounding above
+    // y = −0.5, a sliver touching it there, and a second input whose leftmost vertex lies
+    // at y = −0.5. With its outside nested in the plane, the second input's face was
+    // labelled outside the first's region, where a point inside it counts the first
+    // input's edges once. (The other nesting find of that day, a lens beside two arcs'
+    // lowest point, went wrong in the sketch builder's nesting of its boundary, after the
+    // overlay: the sheet overlap rule sees that one.)
+    var o = overlay_mod.Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    const r = 2.1213203435596424;
+    const v: Vec2 = .{ 3.3708286933869704, -0.4999999999999998 };
+    const inputs = [2][]const overlay_mod.InputEdge{
+        &.{
+            .{ .a = v, .b = .{ 3.566037735849056, -1.0188679245283017 }, .arc = .{ .c = .{ 1.5, -1.5 }, .r = r, .ccw = false } },
+            .{ .a = .{ 3.566037735849056, -1.0188679245283017 }, .b = .{ 7, -1.5 } },
+            .{ .a = .{ 7, -1.5 }, .b = .{ 7, 1 } },
+            .{ .a = .{ 7, 1 }, .b = .{ 3.6213203435596424, 0.5 } },
+            .{ .a = .{ 3.6213203435596424, 0.5 }, .b = v, .arc = .{ .c = .{ 1.5, 0.5 }, .r = r, .ccw = false } },
+            .{ .a = v, .b = .{ 3, 0 }, .arc = .{ .c = .{ 1.5, -1.5 }, .r = r, .ccw = true } },
+            .{ .a = .{ 3, 0 }, .b = .{ 3.2926829268292686, -0.6341463414634141 } },
+            .{ .a = .{ 3.2926829268292686, -0.6341463414634141 }, .b = v, .arc = .{ .c = .{ 1.5, 0.5 }, .r = r, .ccw = true } },
+        },
+        &.{
+            .{ .a = .{ 4, -0.5 }, .b = .{ 5, -0.8 } },
+            .{ .a = .{ 5, -0.8 }, .b = .{ 6, -0.5 } },
+            .{ .a = .{ 6, -0.5 }, .b = .{ 5, 0 } },
+            .{ .a = .{ 5, 0 }, .b = .{ 4, -0.5 } },
+        },
+    };
+    var own_area: [2]f64 = @splat(0);
+    var perimeter: [2]f64 = @splat(0);
+    for (inputs, 0..) |edges_k, k| {
+        _ = try o.addInput();
+        for (edges_k) |e| {
+            try o.addEdge(e);
+            own_area[k] += greenTerm(e) / 2;
+            perimeter[k] += edgeLength(e);
+        }
+    }
+    try o.run();
+    try expectWeighed(&o, &own_area, &perimeter);
+    try expectLabels(&o, &inputs);
+}
+
+/// One closed ring of an arrangement into `out`: a circle as two or four arcs about a fine-
+/// grid point, or a polygon of fine-grid points whose edges are lines or, one in
+/// `ARC_ONE_IN`, arcs; zero-length edges left out. Returns how many edges.
+fn arrangementRing(source: anytype, out: *[MAX_POINTS]overlay_mod.InputEdge) !usize {
+    if (source.valueRangeAtMost(u8, 0, 2) == 0) {
+        const c = finePoint(source);
+        const r = RADII[source.index(RADII.len)];
+        const quarters: usize = if (source.valueRangeAtMost(u8, 0, 1) == 0) 2 else 4;
+        const ccw = source.valueRangeAtMost(u8, 0, 1) == 1;
+        var at: [4]Vec2 = undefined;
+        for (0..quarters) |i| {
+            const angle = 2 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(quarters));
+            at[i] = .{ c[0] + r * @cos(angle), c[1] + r * @sin(angle) };
+        }
+        for (0..quarters) |i| {
+            const from = if (ccw) i else quarters - i;
+            const to = if (ccw) i + 1 else quarters - i - 1;
+            out[i] = .{ .a = at[from % quarters], .b = at[to % quarters], .arc = .{ .c = c, .r = r, .ccw = ccw } };
+        }
+        return quarters;
+    }
+    const n = source.valueRangeAtMost(u8, MIN_POINTS, MAX_POINTS);
+    var points: [MAX_POINTS]Vec2 = undefined;
+    for (points[0..n]) |*p| p.* = finePoint(source);
+    var made: usize = 0;
+    for (0..n) |i| {
+        const a = points[i];
+        const b = points[(i + 1) % n];
+        const arc = source.valueRangeAtMost(u8, 1, ARC_ONE_IN) == 1;
+        const bulge = BULGES[source.index(BULGES.len)];
+        const ccw = source.valueRangeAtMost(u8, 0, 1) == 1;
+        if (a[0] == b[0] and a[1] == b[1]) continue;
+        out[made] = .{ .a = a, .b = b };
+        if (arc) {
+            const half = vec.scale2(vec.sub2(b, a), 0.5);
+            const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+            out[made].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = ccw };
+        }
+        made += 1;
+    }
+    return made;
+}
+
+/// A point of the fine grid, one in `NUDGE_ONE_IN` moved a rounding off it in x.
+fn finePoint(source: anytype) Vec2 {
+    var p: Vec2 = .{ @as(f64, @floatFromInt(source.valueRangeAtMost(i32, 0, FINE_GRID))) / FINE_SCALE, @as(f64, @floatFromInt(source.valueRangeAtMost(i32, 0, FINE_GRID))) / FINE_SCALE };
+    if (source.valueRangeAtMost(u8, 1, NUDGE_ONE_IN) == 1) p[0] = std.math.nextAfter(f64, p[0], std.math.inf(f64));
+    return p;
+}
+
+/// Twice the edge's share of the area its cycles enclose (the overlay's `areaTerm` on an
+/// input edge): the chord's cross product, plus an arc's segment by its turn.
+fn greenTerm(e: overlay_mod.InputEdge) f64 {
+    var twice = e.a[0] * e.b[1] - e.b[0] * e.a[1];
+    if (e.arc) |arc| {
+        const theta = overlay_mod.arcSweep(e.a, e.b, arc);
+        const segment = arc.r * arc.r * (theta - @sin(theta));
+        twice += if (arc.ccw) segment else -segment;
+    }
+    return twice;
+}
+
+fn edgeLength(e: overlay_mod.InputEdge) f64 {
+    if (e.arc) |arc| return arc.r * overlay_mod.arcSweep(e.a, e.b, arc);
+    return vec.distance2(e.a, e.b);
 }
 
 /// The Smith's two draws the chains use, from a random generator: what the plain run
