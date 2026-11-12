@@ -130,6 +130,18 @@ const REFUSED = [_][]const u8{
     "polygon([[0, 0], [4, 0], [4, 3]], round_r: -1)",
     "polygon([[0, 0], [4, 0], [4, 3]], round_r: 5)",
     "polyline([[0, 0], [4, 0], [4, 3]]).chamfer(4)",
+    // M3's: a section, the queries, a material
+    "cube(10).slice(\"a\")",
+    "cube(10).slice(Number::NAN)",
+    "cube(10).slice(Number::INFINITY)",
+    "cube(10).contains?([1, 2])",
+    "cube(10).contains?(\"a\")",
+    "cube(10).ray_cast([0, 0, 0], [0, 0, 0])",
+    "cube(10).ray_cast([0, 0], [1, 1, 1])",
+    "cube(10).min_gap(cube(1), -1)",
+    "cube(10).min_gap(square(1))",
+    "cube(10).material(color: \"red\")",
+    "cube(10).material(alpha: 2)",
 };
 
 test "parity: each shape both engines build has the same box on each" {
@@ -558,4 +570,46 @@ test "parity: a STEP box counts every vertex and each circle's full extent" {
     const box = try stepBox(testing.allocator, step);
     try testing.expectEqual([3]f64{ -1, -2, -1 }, box.min);
     try testing.expectEqual([3]f64{ 3, 2, 5 }, box.max);
+}
+
+/// The material slot of every vertex of the mesh `source` builds on `engine`, sorted and
+/// without repeats, into `out`.
+fn slotsOn(engine: geom.EngineType, source: []const u8, out: []u32) ![]u32 {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var script: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer script.deinit();
+    try script.writer.print("{s}r = {s}", .{ if (engine == .brep_native) BREP_CONFIG else "", source });
+    try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+    const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+    try testing.expectEqual(engine, handle.engine);
+    const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.NoMesh;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+    var n: usize = 0;
+    var v: usize = 0;
+    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+        const slot: u32 = if (mesh.num_prop < 4) kernel.DEFAULT_MATERIAL_SLOT else @intFromFloat(mesh.vert_props[v + 3]);
+        if (std.mem.indexOfScalar(u32, out[0..n], slot) == null) {
+            out[n] = slot;
+            n += 1;
+        }
+    }
+    std.mem.sort(u32, out[0..n], {}, std.sort.asc(u32));
+    return out[0..n];
+}
+
+test "parity: a material is every vertex's on both engines, moved or not; none is the default" {
+    for ([_]struct { source: []const u8, slots: []const u32 }{
+        .{ .source = "cube(10)", .slots = &.{kernel.DEFAULT_MATERIAL_SLOT} },
+        .{ .source = "cube(10).material(color: \"#ff0000\")", .slots = &.{kernel.materialSlot(0)} },
+        .{ .source = "cylinder(r: 2, h: 3).material(color: \"#00ff00\").translate(5, 0, 0).rotate(x: 30)", .slots = &.{kernel.materialSlot(0)} },
+        .{ .source = "sphere(2).material(color: \"#ff0000\").material(color: \"#0000ff\")", .slots = &.{kernel.materialSlot(1)} },
+    }) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.source});
+        var mesh_buf: [8]u32 = undefined;
+        var brep_buf: [8]u32 = undefined;
+        try testing.expectEqualSlices(u32, case.slots, try slotsOn(.manifold, case.source, &mesh_buf));
+        try testing.expectEqualSlices(u32, case.slots, try slotsOn(.brep_native, case.source, &brep_buf));
+    }
 }
