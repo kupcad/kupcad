@@ -110,6 +110,8 @@ pub const Code = enum(u16) {
     // Booleans (boolean/)
     imprint_unmatched,
     unclassified,
+    nearly_coplanar,
+    solids_touch,
     // Triangulation (mesh/triangulate.zig)
     ring_starts,
     ring_too_small,
@@ -164,6 +166,8 @@ pub const Code = enum(u16) {
             .faces_overlap => "lies under more than one face of the sheet, or under a face facing the other way",
             .faces_intersect => "meets another face of the body away from the two faces' boundaries, passing through it or lying on it (the measured value is the other face)",
             .imprint_unmatched => "was split where the operands' interferences found no point (its pieces and its neighbours' would not meet)",
+            .nearly_coplanar => "lies parallel to a face of the other operand a hair from its plane (the measured distance), not in it: the result has faces as thin as that",
+            .solids_touch => "is where two solids of the result touch along a line: one edge for each, at one place",
             .unclassified => "has a piece that lies on the other operand's boundary but on none of its faces in this face's plane, so it is neither inside nor outside",
             .shell_overlaps => "lies where the body's other shells put this much material, not none (an outer shell) or one (a void)",
             .ring_starts => "do not begin at 0, rise, and end at the point count",

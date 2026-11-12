@@ -15,6 +15,9 @@ const check = @import("../topology/check.zig");
 const primitives = @import("../construct/primitives.zig");
 const sew = @import("../construct/sew.zig");
 const simplify = @import("simplify.zig");
+const euler = @import("../topology/euler.zig");
+const traverse = @import("../topology/traverse.zig");
+const curves = @import("../geometry/curves.zig");
 const select = @import("select.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
@@ -123,4 +126,38 @@ test "select: Mäntylä's table, a coincident face kept once, from the first ope
         .{ .op = .intersection, .operand = 1, .class = .on_same, .want = .drop },
     };
     for (rows) |row| try testing.expectEqual(row.want, select.keep(row.op, row.operand, row.class));
+}
+
+test "simplify: an edge shorter than the minimum feature size collapses into its start" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+    defer body.deinit();
+    // The corner at the origin split: its edge up moved onto a vertex 1.4 zones off, an
+    // edge that short between them (what two vertices of an operand merged toward each
+    // other leave)
+    const corner = for (body.vertices.items, 0..) |_, i| {
+        if (vec.length(body.point(types.VertexIndex.of(i))) == 0) break types.VertexIndex.of(i);
+    } else unreachable;
+    var up: types.CoedgeIndex = .none;
+    var around = traverse.Umbrella.init(&body, corner);
+    while (try around.next()) |c| {
+        if (body.point(body.coedgeEnd(c))[2] == 1) up = c;
+    }
+    var from_up = traverse.Umbrella.initFrom(&body, up);
+    _ = try from_up.next();
+    const next_around = (try from_up.next()).?;
+    const off: Vec3 = .{ 1e-5, 1e-5, 0 };
+    const point = try body.geometry.addPoint(testing.allocator, off);
+    const line = try body.geometry.addLine(testing.allocator, curves.Line.through(.{ 0, 0, 0 }, off).?);
+    _ = try euler.mevSplitVertex(&body, up, next_around, point, .{ .curve = line, .t0 = 0, .t1 = vec.length(off) });
+    var before = try check.run(testing.allocator, &body, .geometric);
+    defer before.deinit(testing.allocator);
+    try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
+    try simplify.run(&body, &diag);
+    try expectValid(&body);
+    const counts = body.counts();
+    try testing.expectEqual(@as(usize, 6), counts.faces);
+    try testing.expectEqual(@as(usize, 12), counts.edges);
+    try testing.expectEqual(@as(usize, 8), counts.vertices);
 }

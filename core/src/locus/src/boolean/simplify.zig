@@ -13,6 +13,12 @@
 //!   with the larger area about the outward normal kept first, as the outer).
 //! - A vertex with two edges, both pieces of one line meeting end to end, goes (`kevJoin`,
 //!   the edges one).
+//! - An edge no longer than the minimum feature size (twice the zone, the checker's
+//!   `edge_too_short`) collapses into its start (`kevMerge`), the edges at its end moved
+//!   there and their ranges taken to it, when neither of its faces is left with fewer than
+//!   three edges; a sliver that would be is left for the checker to refuse. (The paves keep
+//!   merged vertices further apart than the intersection tolerance, so this is for what a
+//!   vertex merge moved: two vertices of one operand each moved toward the other.)
 //!
 //! Repeated until nothing changes, then the tombstones are compacted away.
 
@@ -40,6 +46,7 @@ pub fn run(body: *Body, diag: *Diagnostics) Error!void {
         changed = try mergeFaces(body, diag) or changed;
         changed = try removeInnerEdges(body, diag) or changed;
         changed = try joinEdges(body, diag) or changed;
+        changed = try collapseShortEdges(body, diag) or changed;
         if (!changed) break;
     }
     var remap = body.compact() catch |err| return switch (err) {
@@ -185,6 +192,38 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
             changed = true;
             break;
         }
+    }
+    return changed;
+}
+
+fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
+    var changed = false;
+    const shortest = 2 * body.tol.zone;
+    for (0..body.edges.items.len) |i| {
+        const e = body.edges.items[i];
+        if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
+        if (vec.distance(body.point(e.start), body.point(e.end)) > shortest) continue;
+        const c = e.coedge;
+        const p = body.coedge(c).partner;
+        if (p == .none or body.coedge(c).loop == body.coedge(p).loop) continue;
+        if ((traverse.loopLength(body, body.coedge(c).loop) catch return corrupt(diag)) <= 3) continue;
+        if ((traverse.loopLength(body, body.coedge(p).loop) catch return corrupt(diag)) <= 3) continue;
+        const keep = body.coedgeStart(c);
+        euler.kevMerge(body, c) catch |err| switch (err) {
+            error.Invalid => continue,
+            else => return eulerError(diag, err),
+        };
+        // The lines at the vertex kept: their ranges reach its point
+        const at = body.point(keep);
+        for (body.edges.items) |*other| {
+            if (other.flags.tombstone or (other.start != keep and other.end != keep)) continue;
+            const line = switch (body.geometry.curve(other.curve)) {
+                .line => |l| l,
+                else => continue,
+            };
+            if (other.start == keep) other.t0 = line.project(at) else other.t1 = line.project(at);
+        }
+        changed = true;
     }
     return changed;
 }

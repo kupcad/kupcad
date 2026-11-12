@@ -132,3 +132,40 @@ test "paves: a box resting on another meets it face to face, the same domain fac
     // The square under the resting box, and the resting box's bottom
     try testing.expectEqual(@as(usize, 2), opposite);
 }
+
+test "paves: boxes overlapping along four edges have four common blocks; at a corner none" {
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var b = try box(.{ 1, 0, 0 }, .{ 3, 2, 2 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag);
+    defer p.deinit();
+    // Each of the four edges along x where y and z are 0 or 2: from x = 1 to 2 in both
+    try testing.expectEqual(@as(usize, 4), p.common.items.len);
+    for (p.common.items) |block| {
+        try testing.expectApproxEqAbs(@as(f64, 1), vec.distance(p.point(block.vertices[0]), p.point(block.vertices[1])), 1e-12);
+    }
+    var c = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer c.deinit();
+    var q = try pave.run(testing.allocator, &a, &c, tol, .{}, &diag);
+    defer q.deinit();
+    try testing.expectEqual(@as(usize, 0), q.common.items.len);
+}
+
+test "paves: an edge whose shrunk range is under twice the tolerance is not split, but refused" {
+    // A slab three intersection tolerances thick, cut through the middle of its height:
+    // each vertical edge would be split a tolerance and a half from either end
+    const xsect = tol.xsect;
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 3 * xsect });
+    defer a.deinit();
+    var b = try box(.{ 0.25, 0.25, 1.5 * xsect }, .{ 2, 2, 1 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.TooSmallEdge, pave.run(testing.allocator, &a, &b, tol, .{}, &diag));
+    const f = diag.first().?;
+    try testing.expectEqual(diagnostics.Code.edge_too_short, f.code);
+    try testing.expectEqual(diagnostics.EntityKind.edge, f.entity.kind);
+}

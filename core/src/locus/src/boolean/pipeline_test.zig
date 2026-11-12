@@ -322,3 +322,35 @@ test "boolean: a box touching another's face along a line from inside; the diffe
     try testing.expectError(error.NotValid, pipeline.boolean(testing.allocator, &a, &b, .difference, .{}, &diag));
     try testing.expectEqual(diagnostics.Code.euler_poincare, diag.first().?.code);
 }
+
+test "boolean: warnings name what they concern: faces a hair from one plane, solids touching along an edge" {
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    // A top five hundred-thousandths above the other's: a step that thin in the union
+    var b = try box(.{ 0.5, 0.25, 0.25 }, .{ 1.5, 0.75, 1 + 5e-5 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var u = try pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag);
+    defer u.deinit();
+    var near: usize = 0;
+    for (diag.findings.items) |f| {
+        if (f.code != .nearly_coplanar) continue;
+        near += 1;
+        try testing.expectEqual(diagnostics.Severity.warning, f.severity);
+        try testing.expectEqual(diagnostics.EntityKind.face, f.entity.kind);
+        try testing.expectApproxEqAbs(@as(f64, 5e-5), f.measured, 1e-12);
+    }
+    try testing.expectEqual(@as(usize, 1), near);
+    // Edge to edge: one warning, naming an edge of the result
+    var corner = try box(.{ 1, 1, 0 }, .{ 2, 2, 1 });
+    defer corner.deinit();
+    diag.clear();
+    var pair = try pipeline.boolean(testing.allocator, &a, &corner, .@"union", .{}, &diag);
+    defer pair.deinit();
+    try testing.expectEqual(@as(usize, 1), diag.warnings());
+    const w = diag.findings.items[0];
+    try testing.expectEqual(diagnostics.Code.solids_touch, w.code);
+    try testing.expectEqual(diagnostics.EntityKind.edge, w.entity.kind);
+    try testing.expect(w.entity.index < pair.edges.items.len);
+}

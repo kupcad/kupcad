@@ -70,6 +70,13 @@ pub const Pave = struct {
     }
 };
 
+/// A piece both operands' edges have: its merged vertices (the smaller first), and the
+/// edge of `a` and the edge of `b` it is a piece of.
+pub const CommonBlock = struct {
+    vertices: [2]u32,
+    edges: [2]u32,
+};
+
 /// A merged vertex lying on a face.
 const Incidence = struct {
     face: FaceRef,
@@ -101,6 +108,9 @@ pub const Paves = struct {
     sections: [2][]std.ArrayList([2]u32) = .{ &.{}, &.{} },
     /// The pairs of faces (of `a`, of `b`) lying in one plane.
     coplanar: std.ArrayList([2]u32) = .empty,
+    /// The common blocks: pieces of an edge of `a` and an edge of `b` between the same two
+    /// merged vertices, the operands' edges overlapping there (one edge of the result).
+    common: std.ArrayList(CommonBlock) = .empty,
 
     pub fn deinit(self: *Paves) void {
         const a = self.allocator;
@@ -117,6 +127,7 @@ pub const Paves = struct {
         }
         self.incidences.deinit(a);
         self.coplanar.deinit(a);
+        self.common.deinit(a);
         self.* = undefined;
     }
 
@@ -174,6 +185,7 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     try filler.edgeFace();
     try options.checkCancel();
     try filler.collectIncidences();
+    try filler.commonBlocks();
     try filler.faceFace();
     for (0..2) |k| for (p.sections[k]) |*list| sortUnique([2]u32, list, lessPair);
     return p;
@@ -345,9 +357,12 @@ const Filler = struct {
     }
 
     /// Where `q` lies along edge `e` of operand `k`: its parameter from start (0) to end
-    /// (1) and its distance from the edge's segment, when its foot is inside the segment
-    /// beyond the tolerance from either end.
-    fn along(self: *const Filler, k: usize, e: types.EdgeIndex, q: Vec3) ?struct { s: f64, distance: f64 } {
+    /// (1) and its distance from the edge's segment, when its foot is inside the edge's
+    /// shrunk range (OCCT's `IntTools_ShrunkRange`): beyond the intersection tolerance and
+    /// the end's gap from either end, where the end's ball does not already hold it.
+    /// `splittable` is false for an edge whose shrunk range is shorter than twice the
+    /// tolerance: a pave there would leave a piece too short to be an edge.
+    fn along(self: *const Filler, k: usize, e: types.EdgeIndex, q: Vec3) ?Along {
         const v = self.ends(k, e);
         const p0 = self.p.point(v[0]);
         const p1 = self.p.point(v[1]);
@@ -357,8 +372,19 @@ const Filler = struct {
         const s = vec.dot(vec.sub(q, p0), d) / len_sq;
         const len = @sqrt(len_sq);
         const xsect = self.p.tol.xsect;
-        if (s * len <= xsect or (1 - s) * len <= xsect) return null;
-        return .{ .s = s, .distance = vec.distance(q, vec.addScaled(p0, d, s)) };
+        const lo = xsect + self.p.gaps.items[v[0]];
+        const hi = len - (xsect + self.p.gaps.items[v[1]]);
+        if (s * len <= lo or s * len >= hi) return null;
+        return .{ .s = s, .distance = vec.distance(q, vec.addScaled(p0, d, s)), .splittable = hi - lo >= 2 * xsect };
+    }
+
+    const Along = struct { s: f64, distance: f64, splittable: bool };
+
+    /// Merged vertex `v` as a pave of edge `e` of operand `k` at `at`; `TooSmallEdge`,
+    /// naming the edge, when the edge cannot be split.
+    fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
+        if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = if (k == 0) "an edge of the first operand, too short to split where the second meets it" else "an edge of the second operand, too short to split where the first meets it", .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
+        try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
     }
 
     // --- vertex–edge ---
@@ -399,7 +425,7 @@ const Filler = struct {
             if (self.hasPave(k, e, v)) continue;
             const at = self.along(k, e, q) orelse continue;
             if (at.distance > self.p.tol.xsect + self.p.gaps.items[v]) continue;
-            try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
+            try self.addPave(k, e, v, at);
         }
     }
 
@@ -432,7 +458,7 @@ const Filler = struct {
             for ([2]usize{ 0, 1 }, [2]types.EdgeIndex{ ea, eb }) |k, e| {
                 if (self.hasPave(k, e, v)) continue;
                 const at = self.along(k, e, self.p.point(v)) orelse continue;
-                try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
+                try self.addPave(k, e, v, at);
             }
             try self.onEdges(0, v, ea);
             try self.onEdges(1, v, eb);
@@ -528,7 +554,7 @@ const Filler = struct {
                 const before = self.p.points.items.len;
                 const w = try self.weld(q, 0);
                 if (!self.hasPave(k, e, w)) {
-                    if (self.along(k, e, self.p.point(w))) |at| try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = w, .s = at.s });
+                    if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at);
                 }
                 try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = w });
                 if (place == .boundary and self.p.points.items.len > before) try self.onEdges(other, w, null);
@@ -561,6 +587,27 @@ const Filler = struct {
         sortUnique(Incidence, &p.incidences, Incidence.lessThan);
     }
 
+    // --- common blocks ---
+
+    /// The pave blocks of `a`'s edges and `b`'s between the same two merged vertices.
+    fn commonBlocks(self: *Filler) Error!void {
+        const p = self.p;
+        var of_a: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+        defer of_a.deinit(self.allocator);
+        for (self.edges[0]) |e| {
+            const list = p.edge_paves[0][@backingInt(e)].items;
+            for (list[0 .. list.len - 1], list[1..]) |x, y| try of_a.put(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) }, @backingInt(e));
+        }
+        for (self.edges[1]) |e| {
+            const list = p.edge_paves[1][@backingInt(e)].items;
+            for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                const key: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
+                const ea = of_a.get(key) orelse continue;
+                try p.common.append(self.allocator, .{ .vertices = key, .edges = .{ ea, @backingInt(e) } });
+            }
+        }
+    }
+
     // --- face–face ---
 
     /// Every pair of faces of `a` and `b`: lying in one plane, recorded, and each one's
@@ -588,6 +635,12 @@ const Filler = struct {
                 try self.blocksInside(1, fb, 0, fa);
                 try self.blocksInside(0, fa, 1, fb);
                 continue;
+            }
+            // Parallel and a hair apart: not one plane, but the result will have faces as
+            // thin as the hair (OCCT's BadPositioning)
+            if (p.tol.parallel(frame_a.z, frame_b.z)) {
+                const apart = try self.planeGap(0, fa, frame_b);
+                if (apart <= NEARLY_COPLANAR * p.tol.xsect) try self.diag.warn(.{ .code = .nearly_coplanar, .entity = .of(.face, @backingInt(fa)), .measured = apart, .threshold = p.tol.xsect });
             }
             const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
             try p.verticesOn(0, @backingInt(fa), &on_a);
@@ -624,6 +677,20 @@ const Filler = struct {
                 if (in_b == .inside) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
             }
         }
+    }
+
+    /// The furthest any vertex of face `f` of operand `k` lies from the plane of `frame`.
+    fn planeGap(self: *const Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!f64 {
+        const p = self.p;
+        const plane = planar_faces.planeOf(frame);
+        const body_k = self.body(k);
+        var apart: f64 = 0;
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| apart = @max(apart, @abs(plane.height(p.point(p.vertex_of[k][@backingInt(body_k.coedgeStart(c))]))));
+        }
+        return apart;
     }
 
     /// Whether every vertex of face `f` of operand `k` lies on the plane of `frame` within
@@ -677,6 +744,10 @@ fn closestOnLines(p: Vec3, d: Vec3, q: Vec3, e: Vec3) ?[2]f64 {
     if (denom <= PARALLEL * a * c) return null;
     return .{ (b * f - c * g) / denom, (a * f - b * g) / denom };
 }
+
+/// How many intersection tolerances apart two parallel faces of the operands may lie for
+/// the warning that the result will have faces that thin.
+const NEARLY_COPLANAR: f64 = 100;
 
 /// The squared sine of the angle under which two edges count as parallel for edge–edge:
 /// their crossing, if any, lies along an overlap that vertex–edge already split.

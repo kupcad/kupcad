@@ -18,6 +18,12 @@
 //!    on a line;
 //! 7. the checker: the result passes it or the operation fails with its finding.
 //!
+//! Typed findings name the entity: failures `TooSmallEdge` (an operand's edge, `pave`),
+//! `imprint_unmatched` and `unclassified` (an operand's face), the checker's on the
+//! result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
+//! plane, the result's faces that thin) and `solids_touch` (a result's edge where two of
+//! its solids touch along a line).
+//!
 //! An empty operand answers without geometry (the union is the other, a difference
 //! without `b` is `a`, the rest are empty). Operands with a curved face are M5's: refused,
 //! naming the face. The result's tolerance is the larger of the operands' (§6) unless the
@@ -85,7 +91,27 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var report = try check.run(allocator, &result, .geometric);
     defer report.deinit(allocator);
     if (report.first()) |f| return diag.fail(error.NotValid, f);
+    try warnTouching(allocator, &result, diag);
     return result;
+}
+
+/// A warning (`solids_touch`) for each place the result's solids touch along a line: two
+/// edges between one pair of vertices, one for each solid, the first of them named.
+fn warnTouching(allocator: std.mem.Allocator, body: *const Body, diag: *Diagnostics) Error!void {
+    var seen: std.AutoHashMapUnmanaged([2]u32, struct { edge: u32, warned: bool }) = .empty;
+    defer seen.deinit(allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.flags.degenerate) continue;
+        const key: [2]u32 = .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) };
+        const entry = try seen.getOrPut(allocator, key);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{ .edge = @intCast(i), .warned = false };
+            continue;
+        }
+        if (entry.value_ptr.warned) continue;
+        entry.value_ptr.warned = true;
+        try diag.warn(.{ .code = .solids_touch, .entity = .of(.edge, entry.value_ptr.edge) });
+    }
 }
 
 /// `NotImplemented` naming the first face of `body` that is not planar or has an edge that
