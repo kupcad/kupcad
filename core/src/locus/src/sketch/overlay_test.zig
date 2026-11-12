@@ -498,3 +498,82 @@ test "overlay: a cycle that runs each of its edges both ways bounds nothing, wha
     try expectPlanar(&tree);
     try testing.expectEqual(@as(usize, 0), tree.faces.items.len);
 }
+
+/// The overlay fuzz target's find of 2026-11-12, as its arrangement printed it.
+fn bisectedCircle(o: *Overlay) !void {
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 2.25, 0.75 }, .b = .{ 0.25, 0.7500000000000001 }, .arc = .{ .c = .{ 1.25, 0.75 }, .r = 1, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 0.25, 0.7500000000000001 }, .b = .{ 2.25, 0.75 }, .arc = .{ .c = .{ 1.25, 0.75 }, .r = 1, .ccw = true } });
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 2.25, 0.5 }, .b = .{ 6.000000000000001, 0.75 } });
+    try o.addEdge(.{ .a = .{ 6.000000000000001, 0.75 }, .b = .{ 4, 4 }, .arc = .{ .c = .{ 3.375, 1.3749999999999996 }, .r = 2.6983791431153636, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 4, 4 }, .b = .{ 5.5, 1.25 }, .arc = .{ .c = .{ 3.375, 1.875 }, .r = 2.2150056433336687, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 5.5, 1.25 }, .b = .{ 0.25, 0.75 }, .arc = .{ .c = .{ 2.75, 2.3125 }, .r = 2.948119103767689, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 0.25, 0.75 }, .b = .{ 2.75, 0.75 } });
+    try o.addEdge(.{ .a = .{ 2.75, 0.75 }, .b = .{ 3.5, 3.25 } });
+    try o.addEdge(.{ .a = .{ 3.5, 3.25 }, .b = .{ 0.75, 1 } });
+    try o.addEdge(.{ .a = .{ 0.75, 1 }, .b = .{ 2.25, 0.5 } });
+}
+
+test "overlay: a circle's west extreme a rounding from the vertex its arcs leave is that vertex" {
+    // The overlay fuzz target's find (2026-11-12): a circle in two halves meeting at
+    // (0.25, 0.75 + 1 ulp), its west extreme one rounding below, and a ring whose line
+    // runs through both its vertices and whose arc leaves the same vertex. Taken from the
+    // extreme, the ray crossed that arc a rounding to the west (its radius rounded), and
+    // the component's outer boundary was nested as a hole of one of its own faces: every
+    // label 0. From the vertex, the edges leaving it meet the ray where it starts
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    try bisectedCircle(&o);
+    try o.run();
+    try expectPlanar(&o);
+    // The circle wound once over all of its disc
+    try testing.expectApproxEqAbs(@as(f64, PI), areaWhere(&o, 1, null).area, 1e-9);
+}
+
+test "overlay: a ray a rounding above a vertex an arc and a line leave orders them as the overlay did" {
+    // The overlay fuzz target's find (2026-11-12): a small circle's leftmost vertex one
+    // ulp above the height of a vertex (2.75, 0.25) that a line and an arc leave upward;
+    // at that height the arc's exact crossing (its radius rounded, its welded end a
+    // rounding off its circle) fell west of the line's, the circle was nested in the wrong
+    // region and labelled −1 for the polygon it lies outside of
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 0.5, 2 }, .b = .{ 1.5, 4 }, .arc = .{ .c = .{ 0.5, 3.25 }, .r = 1.25, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 1.5, 4 }, .b = .{ 0.5, 2 }, .arc = .{ .c = .{ 0.5, 3.25 }, .r = 1.25, .ccw = false } });
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 4, 0.25 }, .b = .{ 3.5, 0.25000000000000006 }, .arc = .{ .c = .{ 3.75, 0.25 }, .r = 0.25, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 3.5, 0.25000000000000006 }, .b = .{ 4, 0.25 }, .arc = .{ .c = .{ 3.75, 0.25 }, .r = 0.25, .ccw = false } });
+    for ([_][2]Vec2{ .{ .{ 4.5, 1 }, .{ 4.25, 0.75 } }, .{ .{ 4.25, 0.75 }, .{ 4, 1 } }, .{ .{ 4, 1 }, .{ 4.25, 1.25 } }, .{ .{ 4.25, 1.25 }, .{ 4.5, 1 } } }) |e| {
+        try o.addEdge(.{ .a = e[0], .b = e[1], .arc = .{ .c = .{ 4.25, 1 }, .r = 0.25, .ccw = false } });
+    }
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 2.75, 0.25 }, .b = .{ 3.5, 6 } });
+    try o.addEdge(.{ .a = .{ 3.5, 6 }, .b = .{ 0, 5.5 }, .arc = .{ .c = .{ 2, 4 }, .r = 2.5, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 0, 5.5 }, .b = .{ 2.75, 0.25 }, .arc = .{ .c = .{ 0.0625, 2.1875 }, .r = 3.313089570174643, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 0, 3.25 }, .b = .{ 1.75, 0.5 } });
+    try o.addEdge(.{ .a = .{ 1.75, 0.5 }, .b = .{ 2, 3.25 }, .arc = .{ .c = .{ 0.5, 2 }, .r = 1.9525624189766635, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 2, 3.25 }, .b = .{ 1, 3.25 } });
+    try o.addEdge(.{ .a = .{ 1, 3.25 }, .b = .{ 6, 4 } });
+    try o.addEdge(.{ .a = .{ 6, 4 }, .b = .{ 1.75, 2 }, .arc = .{ .c = .{ 4.375, 1.9375 }, .r = 2.6257439422000006, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 1.75, 2 }, .b = .{ 3.25, 1.25 } });
+    try o.addEdge(.{ .a = .{ 3.25, 1.25 }, .b = .{ 1.25, 0.5 } });
+    try o.addEdge(.{ .a = .{ 1.25, 0.5 }, .b = .{ 0, 3.25 } });
+    try o.run();
+    try expectPlanar(&o);
+    // The faces inside the small circle (every vertex of their outer cycle in its box):
+    // wound once by it, clockwise, and not at all by the polygon east of which it lies
+    var inside: usize = 0;
+    for (o.faces.items, 0..) |f, i| {
+        const in_box = for (o.halvesOf(f.outer)) |h| {
+            const p = o.point(o.origin(h));
+            if (p[0] < 3.5 - 1e-9 or p[0] > 4 + 1e-9 or p[1] < -1e-9 or p[1] > 0.5 + 1e-9) break false;
+        } else true;
+        if (!in_box) continue;
+        inside += 1;
+        try testing.expectEqual(@as(i32, -1), o.windingOf(@intCast(i), 1));
+        try testing.expectEqual(@as(i32, 0), o.windingOf(@intCast(i), 2));
+    }
+    try testing.expectEqual(@as(usize, 1), inside);
+}

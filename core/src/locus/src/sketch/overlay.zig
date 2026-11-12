@@ -743,7 +743,7 @@ pub const Overlay = struct {
         starts[n] = @intCast(self.cycle_halves.items.len);
         const owner = try allocator.alloc(u32, n);
         defer allocator.free(owner);
-        try nestCycles(allocator, segments, starts, areas, owner);
+        try nestCycles(allocator, segments, starts, areas, self.tol.zone, owner);
         for (self.cycles.items, owner) |*c, within| {
             if (c.area > 0) continue;
             c.face = if (within == UNBOUNDED) UNBOUNDED else self.cycles.items[within].face;
@@ -1058,7 +1058,7 @@ pub const NO_SLOT: u32 = std.math.maxInt(u32);
 /// the segments up from it tie at its x, and the most clockwise of them (the tangent,
 /// then the bend) bounds the region east of it. A clockwise cycle found that way lies in
 /// the same face and reaches further left, so the owners resolve in a bounded chain.
-pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, starts: []const u32, areas: []const f64, owner: []u32) error{OutOfMemory}!void {
+pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, starts: []const u32, areas: []const f64, zone: f64, owner: []u32) error{OutOfMemory}!void {
     const n = areas.len;
     const parent = try allocator.alloc(u32, n);
     defer allocator.free(parent);
@@ -1070,7 +1070,13 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
         // bulges past its ends. The point is compared with the crossings as what it is:
         // a vertex by its own x, an extreme as the arc's own crossing there (its x as a
         // number is a rounding of `cx − r`, which the exact comparison would put a hair
-        // off the arc's crossing, and the cycle's own segment must be passed, never hit)
+        // off the arc's crossing, and the cycle's own segment must be passed, never hit).
+        // An extreme within the zone of the arc's end is that end, as the welding has it:
+        // every edge leaving the vertex crosses the ray there a rounding to either side of
+        // the extreme, and one taken for a hit to its west nests the cycle in its own
+        // region (the overlay fuzz target, 2026-11-12: a circle's west extreme a rounding
+        // below the vertex its half and a lens arc leave, the lens arc's radius rounded to
+        // cross west of it, a component's outer boundary a hole of one of its faces)
         var v = segments[starts[i]].a;
         var v_at: Crossing = .{ .point = v[0] };
         for (segments[starts[i]..starts[i + 1]]) |s| {
@@ -1080,7 +1086,8 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
             }
             if (s.arc) |arc| {
                 const west: Vec2 = .{ arc.c[0] - arc.r, arc.c[1] };
-                if (onArcStrictly(s.a, s.b, arc, west) and lefter(west, v)) {
+                const at_end = vec.distance2(west, s.a) <= zone or vec.distance2(west, s.b) <= zone;
+                if (!at_end and onArcStrictly(s.a, s.b, arc, west) and lefter(west, v)) {
                     v = west;
                     v_at = .{ .arc = .{ .c = arc.c, .r = arc.r, .side = .west } };
                 }
@@ -1203,12 +1210,15 @@ const Hit = struct {
     cycle: u32,
 };
 
-/// Keeps the hit nearer the vertex: the greater x, exactly. At one x the two segments
-/// pass through one point of the ray, and as the segments of an arrangement cross nowhere
-/// but at their ends, they share a vertex there, and their order is the overlay's order
-/// about it (`orderAtSharedVertex`), the order its cycles were walked by. A tie with no
-/// shared vertex the order knows takes the ray a hair above, the segments fanning up from
-/// the point: the one leaning east going up, then, level and opposite (an arc's two pieces
+/// Keeps the hit nearer the vertex. Two segments sharing a vertex are ordered as the
+/// overlay ordered them about it (`orderAtSharedVertex`), the order its cycles were walked
+/// by: the segments of an arrangement cross nowhere but at their ends, so along any height
+/// between their shared vertex and their other ends their order is the one they leave the
+/// vertex in, whatever the exact crossings say where an arc's welded end is a rounding off
+/// its circle (the overlay fuzz target, 2026-11-12: a ray a rounding above a vertex an arc
+/// and a line leave upward found the arc west of the line, its radius rounded). Otherwise
+/// the greater x, exactly. A tie with no shared vertex the order knows takes the ray a
+/// hair above, the segments fanning up from the point: the one leaning east going up, then, level and opposite (an arc's two pieces
 /// at its lowest point on the ray, an extreme and no vertex), the one pointing east, then
 /// of two tangent the same way the one bending east. (Re-deriving the order at a shared
 /// vertex from tangents got two cases wrong, both fuzz finds of 2026-11-12: a vertex a
@@ -1221,13 +1231,13 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
         best.* = hit;
         return;
     };
+    if (orderAtSharedVertex(hit, b, y)) |hit_nearer| {
+        if (hit_nearer) best.* = hit;
+        return;
+    }
     const order = compareCrossings(hit.at, b.at, y);
     if (order != 0) {
         if (order > 0) best.* = hit;
-        return;
-    }
-    if (orderAtSharedVertex(hit, b, y)) |hit_nearer| {
-        if (hit_nearer) best.* = hit;
         return;
     }
     const turn = vec.cross2(hit.up, b.up);
@@ -1242,7 +1252,7 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
     if (hit.bend > b.bend) best.* = hit;
 }
 
-/// Two hits tied at height `y` that share a vertex, ordered as the overlay ordered their
+/// Two hits at height `y` that share a vertex, ordered as the overlay ordered their
 /// half-edges about it (the slots, counter-clockwise from east by the direction to a point
 /// a few zones along each, `order()`): fanning up from a vertex on or below the ray, the
 /// one leaving it further east (the lower slot) is the nearer just above; fanning down
