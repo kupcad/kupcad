@@ -13,6 +13,7 @@ const transform = @import("../construct/transform.zig");
 const mass = @import("../measure/mass.zig");
 const boolean = @import("boolean.zig");
 const offset_mod = @import("offset.zig");
+const test_bodies = @import("../construct/test_bodies.zig");
 const Vec2 = vec.Vec2;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -204,4 +205,46 @@ test "sketch booleans: three edges within a degree of each other at one vertex k
     var i = try boolean.boolean(testing.allocator, &.{ &a, &b }, .intersection, .{}, &diag);
     defer i.deinit();
     try testing.expect(i.isEmpty());
+}
+
+test "sketch booleans: a lens beside two arcs rising either way from one lowest point is a hole, and the areas add up" {
+    // The fuzzer's find (2026-11-12): in the first sheet, the lens below the chord from
+    // (5, 2) to (6, 2) lies inside the third ring's region, and the ray west from its
+    // leftmost vertex first meets (4, 2), the lowest point of two arcs (about (4, 3) and
+    // (4, 4)), one rising east and one west. Their directions there are level and opposite;
+    // the tie rule took them for two tangent the same way and chose by bend, the west
+    // one: the lens was nested in the plane, a face of its own over the big face (two
+    // shells overlapping, which no checker rule sees), and every boolean with the second
+    // sheet missed A(P) + A(Q) = A(P ∪ Q) + A(P ∩ Q) by the lens's area
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var p = try test_bodies.ringSheet(testing.allocator, tol, &.{
+        &.{ .{ .p = .{ 6, 2 } }, .{ .p = .{ 6, 2 }, .bulge = -1, .ccw = false }, .{ .p = .{ 5, 2 } } },
+        &.{ .{ .p = .{ 2, 4 }, .bulge = 1, .ccw = false }, .{ .p = .{ 5, 3 }, .bulge = -1, .ccw = false }, .{ .p = .{ 4, 2 }, .bulge = -1, .ccw = false } },
+        &.{ .{ .p = .{ 1, 2 }, .bulge = 1, .ccw = false }, .{ .p = .{ 0, 2 }, .bulge = -0.5, .ccw = false }, .{ .p = .{ 2, 0 } }, .{ .p = .{ 1, 1 } }, .{ .p = .{ 6, 6 }, .bulge = 1, .ccw = false }, .{ .p = .{ 1, 0 } }, .{ .p = .{ 0, 4 } }, .{ .p = .{ 1, 4 } } },
+    }, &diag);
+    defer p.deinit();
+    // The lens is a hole: five faces, six loops
+    try testing.expectEqual(@as(usize, 5), p.counts().faces);
+    try testing.expectEqual(@as(usize, 6), p.counts().loops);
+    var q = try test_bodies.ringSheet(testing.allocator, tol, &.{
+        &.{ .{ .p = .{ 3, 6 }, .bulge = 1, .ccw = false }, .{ .p = .{ 3, 0 } }, .{ .p = .{ 3, 1 }, .bulge = -1 } },
+        &.{ .{ .p = .{ 1, 2 }, .bulge = 0.5, .ccw = false }, .{ .p = .{ 6, 6 } }, .{ .p = .{ 6, 0 }, .bulge = -1 }, .{ .p = .{ 6, 2 }, .bulge = 1 }, .{ .p = .{ 2, 2 } }, .{ .p = .{ 0, 1 } }, .{ .p = .{ 5, 3 } }, .{ .p = .{ 3, 4 } } },
+        &.{ .{ .p = .{ 3, 6 } }, .{ .p = .{ 0, 5 } }, .{ .p = .{ 3, 5 } }, .{ .p = .{ 0, 4 } }, .{ .p = .{ 6, 5 }, .bulge = -0.5, .ccw = false }, .{ .p = .{ 1, 4 }, .bulge = -1, .ccw = false }, .{ .p = .{ 6, 0 }, .bulge = 0.5, .ccw = false } },
+    }, &diag);
+    defer q.deinit();
+    const ap = try areaOf(&p);
+    const aq = try areaOf(&q);
+    // P re-overlaid alone is itself
+    var alone = try boolean.boolean(testing.allocator, &.{&p}, .@"union", .{}, &diag);
+    defer alone.deinit();
+    try testing.expectApproxEqAbs(ap, try areaOf(&alone), 1e-9);
+    var areas: [3]f64 = undefined;
+    for ([_]boolean.Op{ .@"union", .intersection, .difference }, &areas) |op, *area| {
+        var r = try boolean.boolean(testing.allocator, &.{ &p, &q }, op, .{}, &diag);
+        defer r.deinit();
+        area.* = try areaOf(&r);
+    }
+    try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], 1e-9);
+    try testing.expectApproxEqAbs(ap - areas[1], areas[2], 1e-9);
 }

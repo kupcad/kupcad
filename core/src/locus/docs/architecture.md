@@ -463,7 +463,9 @@ of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLin
 where the two segments meet: their order is the one at the end they share, the segment
 leaning east going up when they fan up from a vertex on or below the ray (the ray taken
 a hair above it), going down when they fan down from a vertex the welder put a rounding
-above it where their circles cross at its height, then the one bending east. Each such expression has bounded depth and `f64` leaves, so squaring
+above it where their circles cross at its height (two level there and opposite, the
+lowest points of two arcs rising each way, lean as far as they can: the east one), then
+of two tangent the same way the one bending east. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
 arc's welded ends on its circle; those reconciliations (an arc piece within the zone of its

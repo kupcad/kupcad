@@ -1186,12 +1186,16 @@ const Hit = struct {
 /// the ray (the ray taken a hair above it) or below it, which they fan up from, the
 /// segment leaning east going up the nearer; or a vertex the welder put a rounding above
 /// the ray, where their circles truly cross at its height, which they fan down from, the
-/// segment leaning east going down (west going up) the nearer. Of two tangent there, the
-/// one bending east is the nearer either way (the bend is the same going down). (The
+/// segment leaning east going down (west going up) the nearer. Two level there and
+/// opposite (two arcs whose lowest point is the vertex, one rising each way) lean as far
+/// as they can, the east one the nearer. Of two tangent there the same way, the one
+/// bending east is the nearer either way (the bend is the same going down). (The
 /// earlier rule for a vertex a rounding above the ray, by where the up-directions led,
 /// stood in for an x comparison that rounded; the comparison is exact now, and a tie is
 /// one point; and taking every tie as a fan up nested a hole beyond two arcs meeting a
-/// rounding above its ray, a fuzz find of 2026-11-12.)
+/// rounding above its ray, and two level opposite tangents, whose cross product is 0, were
+/// taken as tangent the same way and decided by their bends, both fuzz finds of
+/// 2026-11-12.)
 fn consider(best: *?Hit, hit: Hit, y: f64) void {
     const b = best.* orelse {
         best.* = hit;
@@ -1202,9 +1206,14 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
         if (order > 0) best.* = hit;
         return;
     }
+    // Leaning east going up: turned clockwise of the other, or, both level and opposite
+    // (two arcs whose lowest point is the vertex on the ray, one rising each way), the one
+    // pointing east
     const turn = vec.cross2(hit.up, b.up);
-    if (turn != 0) {
-        if ((turn > 0) != fanDown(hit, b, y)) best.* = hit;
+    const opposite = turn == 0 and vec.dot2(hit.up, b.up) < 0;
+    if (turn != 0 or opposite) {
+        const east = if (opposite) hit.up[0] > 0 else turn > 0;
+        if (east != fanDown(hit, b, y)) best.* = hit;
         return;
     }
     if (hit.bend > b.bend) best.* = hit;

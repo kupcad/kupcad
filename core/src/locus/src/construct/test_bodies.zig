@@ -1,7 +1,8 @@
 //! Bodies with free-form geometry for tests (a sketch has only lines and arcs, so these
 //! are built by hand): a sheet with a B-spline side, one with an elliptic side, a quarter
 //! disc whose arc is a rational B-spline, a box whose top is a bilinear patch, flat or a
-//! saddle. Shared by the STEP writer's and the tessellator's tests.
+//! saddle. Shared by the STEP writer's and the tessellator's tests. And the sheets of the
+//! fuzzer's rings (`ringSheet`), for its finds replayed as tests.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -13,6 +14,7 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const primitives = @import("primitives.zig");
 const sew = @import("sew.zig");
+const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
 const Tolerance = tolerance.Tolerance;
@@ -111,4 +113,36 @@ pub fn patchTopBox(allocator: std.mem.Allocator, tol: Tolerance, lift: f64, diag
         }
     }
     return b.finish(&specs, .outer);
+}
+
+/// A ring's point as the fuzzer writes it (fuzz_test.zig's `sheet`, `~bulge` after the
+/// point, `c` for clockwise): the edge to the next point is an arc when `bulge` is set, its
+/// centre off the chord's middle by `bulge` half-chords to the left, run counter-clockwise
+/// unless `ccw` is false.
+pub const RingPoint = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = true };
+
+/// The sheet `rings` fill by the even-odd rule, built as the fuzzer builds its sheets.
+pub fn ringSheet(allocator: std.mem.Allocator, tol: Tolerance, rings: []const []const RingPoint, diag: *Diagnostics) !Body {
+    var total: usize = 0;
+    for (rings) |ring| total += ring.len;
+    const edges = try allocator.alloc(primitives.OutlineEdge, total);
+    defer allocator.free(edges);
+    const outlines = try allocator.alloc([]const primitives.OutlineEdge, rings.len);
+    defer allocator.free(outlines);
+    var at: usize = 0;
+    for (rings, outlines) |ring, *outline| {
+        for (ring, 0..) |pt, k| {
+            const a = pt.p;
+            const b = ring[(k + 1) % ring.len].p;
+            edges[at + k] = .{ .a = a, .b = b };
+            if (pt.bulge) |bulge| {
+                const half = vec.scale2(vec.sub2(b, a), 0.5);
+                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+                edges[at + k].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = pt.ccw };
+            }
+        }
+        outline.* = edges[at..][0..ring.len];
+        at += ring.len;
+    }
+    return primitives.outlines(allocator, tol, outlines, diag);
 }

@@ -16,6 +16,7 @@ const mass = @import("../measure/mass.zig");
 const boolean = @import("boolean.zig");
 const offset = @import("offset.zig");
 const hull = @import("hull.zig");
+const test_bodies = @import("../construct/test_bodies.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
@@ -31,35 +32,10 @@ fn grown(sheet: *const Body, delta: f64, join: offset.Join, diag: *Diagnostics) 
     return offset.offset(testing.allocator, sheet, delta, join, 2, .{}, diag);
 }
 
-/// A ring's point, the fuzzer's way (fuzz_test.zig): the edge to the next point is an arc
-/// when `bulge` is set, its centre off the chord's middle by `bulge` half-chords to the
-/// left, run counter-clockwise or not.
-const RingPoint = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = true };
+const RingPoint = test_bodies.RingPoint;
 
-/// A sheet filled by the even-odd rule from rings of `RingPoint`s.
 fn bulged(rings: []const []const RingPoint, diag: *Diagnostics) !Body {
-    var total: usize = 0;
-    for (rings) |ring| total += ring.len;
-    const edges = try testing.allocator.alloc(primitives.OutlineEdge, total);
-    defer testing.allocator.free(edges);
-    const outlines = try testing.allocator.alloc([]const primitives.OutlineEdge, rings.len);
-    defer testing.allocator.free(outlines);
-    var at: usize = 0;
-    for (rings, outlines) |ring, *outline| {
-        for (ring, 0..) |pt, k| {
-            const a = pt.p;
-            const b = ring[(k + 1) % ring.len].p;
-            edges[at + k] = .{ .a = a, .b = b };
-            if (pt.bulge) |bulge| {
-                const half = vec.scale2(vec.sub2(b, a), 0.5);
-                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
-                edges[at + k].arc = .{ .c = c, .r = vec.distance2(a, c), .ccw = pt.ccw };
-            }
-        }
-        outline.* = edges[at..][0..ring.len];
-        at += ring.len;
-    }
-    return primitives.outlines(testing.allocator, tol, outlines, diag);
+    return test_bodies.ringSheet(testing.allocator, tol, rings, diag);
 }
 
 test "offset: a square by one, with each join; shrunk; shrunk to nothing" {
