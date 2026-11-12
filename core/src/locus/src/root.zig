@@ -87,6 +87,17 @@ pub const query = struct {
     pub const faces = @import("query/faces.zig");
 };
 
+/// Intersections: a curve against a plane, a plane against each surface kind (M3, what a
+/// plane section needs; the general surface pairs in M5).
+pub const intersect = struct {
+    pub const curve_surface = @import("intersect/curve_surface.zig");
+    pub const surface_surface = @import("intersect/surface_surface.zig");
+};
+/// Operations on solids through the overlay: the plane section (M3; the booleans in M4).
+pub const boolean = struct {
+    pub const section = @import("boolean/section.zig");
+};
+
 pub const io = struct {
     pub const body_json = @import("io/body_json.zig");
     pub const step_write = @import("io/step_write.zig");
@@ -141,6 +152,9 @@ test {
     _ = @import("query/raycast_test.zig");
     _ = @import("query/distance_test.zig");
     _ = @import("query/faces_test.zig");
+    _ = @import("intersect/curve_surface_test.zig");
+    _ = @import("intersect/surface_surface_test.zig");
+    _ = @import("boolean/section_test.zig");
     _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");

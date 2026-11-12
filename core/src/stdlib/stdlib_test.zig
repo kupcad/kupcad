@@ -2365,7 +2365,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
-        .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
+        .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = "no error" }, // exact since M3
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
         .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
         .{ .src = comptime rescued("cube(10).volume"), .expected = "no error" }, // was 0; exact since M1

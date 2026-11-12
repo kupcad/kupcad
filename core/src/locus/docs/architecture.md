@@ -533,6 +533,23 @@ split, and it serves:
 - plane sections (the plane's trace imprinted, then the section faces built; S p.187–192),
 - projection (silhouette and boundary edges imprinted on a plane; S p.192–194).
 
+As built for plane sections (`boolean/section.zig`, KupCAD's `slice`, 2026-11-12). The
+plane's trace on each face's surface comes in closed form from `intersect/surface_surface.zig`
+(a plane cuts a plane in a line, a cylinder in a circle, two lines or an ellipse, a cone along
+its axis, a sphere and a torus along its axis in circles; a plane only touching a surface is
+`tangent`; the rest waits for M5), and each edge's crossings with the plane from
+`intersect/curve_surface.zig`, computed once per edge so both faces of an edge split their
+traces at the same points. The imprint on a face is the trace split at the face's boundary
+points and each piece kept when its middle is inside the face; the face itself is not split,
+since a section needs only the pieces (M4's `trim_by_plane` splits it with the same pieces).
+Each kept piece runs along `n_plane × n_face`, the material on its left, and the pieces are
+one input of the overlay, whose faces wound once are the section, a sheet on `z = 0`. On the
+plane the section is the solid just above it, as Manifold slices (a triangle counts when its
+lowest corner is at or below the height and its highest above): a face lying in the plane
+gives nothing and an edge lying in it is taken from each face that rises from it, so two
+faces rising from one edge (a groove's floor) cancel; a face only touching the plane gives
+nothing. A trace that is an ellipse has no sketch edge and is refused naming the face.
+
 ### 7.4 Booleans
 
 Inputs `a`, `b`, op ∈ {union, difference, intersection}. Stroud's stepwise algorithm with

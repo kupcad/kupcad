@@ -180,7 +180,7 @@ pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
 /// (kernel.Feature), never answered with a stand-in.
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
-        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces => true,
+        .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces, .slice => true,
         .boolean,
         .loft,
         .curved_hull,
@@ -188,7 +188,6 @@ pub fn supports(feature: kernel.Feature) bool {
         .extrude_scale,
         .minkowski,
         .trim_by_plane,
-        .slice,
         .project,
         .decompose,
         .materials,
@@ -655,10 +654,20 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
     return res;
 }
 
+/// The solid cut by the plane `z = height`, as a sketch (Locus `slice`): its lines and arcs
+/// exact, the solid just above the plane as the mesh engine slices (a cube cut at its
+/// bottom is its bottom square, at its top nothing); null, the reason remembered, where a
+/// trace is not a line or a circle (a tilted cylinder's ellipse) or waits for M5.
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    _ = a;
-    _ = height;
-    return null;
+    const src = solidOf(a.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.boolean.section.slice(backend_allocator, &src.body, height, src.options(), &diag) catch {
+        remember(&diag);
+        return null;
+    };
+    const sheet = BrepSolid.create(body, src.settings) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(sheet) };
 }
 
 fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {

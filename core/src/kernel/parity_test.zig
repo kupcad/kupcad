@@ -429,6 +429,34 @@ test "parity: contains?, ray_cast and min_gap agree on both engines, curved part
     }
 }
 
+test "parity: a slice has the same area on both engines, the solid just above the plane, a circle's within the chordal bound" {
+    const setup =
+        \\b = cube(10, 4, 6)
+        \\c = cylinder(r: 5, h: 10, segments: 64)
+        \\lying = cylinder(r: 2, h: 10, segments: 64).rotate(x: 90)
+    ;
+    // A circle of 64 sides misses r² (π − 32 sin(2π/64)) of its disc
+    const disc = 25 * (std.math.pi - 32 * @sin(2 * std.math.pi / 64.0));
+    const cases = [_]struct { expr: []const u8, slack: f64 }{
+        // Inside, on the bottom (its square), on the top and beside it (nothing)
+        .{ .expr = "[b.slice(3).area, b.slice(0).area, b.slice(6).area, b.slice(7).area, b.slice(-1).area]", .slack = 0 },
+        .{ .expr = "[c.slice(4).area, c.slice(0).area]", .slack = disc },
+        .{ .expr = "c.slice(10).area", .slack = 0 },
+        // Through the axis of a lying cylinder: a band as wide as its diameter (the polygon
+        // has corners there); touching its top nothing
+        .{ .expr = "[lying.slice(0).area, lying.slice(2).area]", .slack = 0 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("expression: {s}\n", .{case.expr});
+        var mesh_buf: [8]f64 = undefined;
+        var brep_buf: [8]f64 = undefined;
+        const mesh_engine = try numbersOn(.manifold, setup, case.expr, &mesh_buf);
+        const brep = try numbersOn(.brep_native, setup, case.expr, &brep_buf);
+        try testing.expectEqual(mesh_engine.len, brep.len);
+        for (mesh_engine, brep) |m, x| try testing.expectApproxEqAbs(m, x, case.slack + 1e-9);
+    }
+}
+
 /// The kernel's volume of what `source` builds on `engine`.
 fn volumeOn(engine: geom.EngineType, source: []const u8) !f64 {
     var vm = try support.initVm();

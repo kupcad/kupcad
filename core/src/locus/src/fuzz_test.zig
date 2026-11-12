@@ -26,6 +26,9 @@ const tessellate = @import("mesh/tessellate.zig");
 const validate = @import("mesh/validate.zig");
 const condition = @import("topology/condition.zig");
 const sweep = @import("construct/sweep.zig");
+const transform = @import("construct/transform.zig");
+const section = @import("boolean/section.zig");
+const Affine = @import("math/mat.zig").Affine;
 const solid_query = struct {
     const FaceIndex = @import("query/index.zig").FaceIndex;
     const raycast = @import("query/raycast.zig");
@@ -52,6 +55,10 @@ const MAX_POINTS = 8;
 const MAX_OPS = 4;
 /// Rays of each kind (vertical, horizontal) cast at every extruded fuzz solid.
 const QUERY_RAYS = 4;
+/// Where between its ends a fuzz solid is sliced off the grid, and how many points of the
+/// turned solid's section are checked against the solid.
+const SLICE_AT = 0.37;
+const SLICE_POINTS = 16;
 /// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps, or, one chain in
 /// EXTREME_ONE_IN, a value a script would never write (a parameter sweep inside the
 /// chains, beside sketch/parameters_test.zig's table on fixed sheets).
@@ -505,6 +512,61 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
     const bound = (try chordBound(sheet_body, diag) + try weldingSlack(sheet_body, diag) + AREA_CLOSE * @max(exact / height, 1)) * height;
     try testing.expectApproxEqAbs(exact, volume, bound);
     try expectQueries(&solid, height, diag);
+    try expectSlices(&solid, sheet_body, height, diag);
+}
+
+/// The extruded solid's plane sections: at its bottom (the solid just above the plane) and
+/// at a height off the grid, the sheet itself, each within the other; at its top, nothing;
+/// and the solid turned a right angle about x (its sides lying, its arcs' cylinders cut in
+/// lines) at a height off the grid, whose section holds a point exactly when the solid
+/// holds the point at that height (off the boundary). A refusal of a section is clean.
+fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: *Diagnostics) !void {
+    const a_sheet = (try mass.mass(sheet_body, .{}, diag)).area;
+    for ([_]f64{ 0, height * SLICE_AT, height }) |z| {
+        var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        defer cut.deinit();
+        errdefer std.debug.print("the section at {d}\n", .{z});
+        try expectSound(&cut, diag);
+        if (z == height) {
+            try testing.expectEqual(@as(usize, 0), cut.counts().faces);
+            continue;
+        }
+        const a_cut = (try mass.mass(&cut, .{}, diag)).area;
+        try testing.expectApproxEqAbs(a_sheet, a_cut, try weldingSlack(sheet_body, diag) + AREA_CLOSE * @max(a_sheet, 1));
+        try expectWithin(&cut, sheet_body, diag);
+        try expectWithin(sheet_body, &cut, diag);
+    }
+    var lying = transform.transform(testing.allocator, solid, &Affine.rotate(vec.X3, std.math.pi / 2.0), .{}, diag) catch |err| {
+        _ = try clean(err);
+        return;
+    };
+    defer lying.deinit();
+    var index = try solid_query.FaceIndex.build(testing.allocator, &lying, diag);
+    defer index.deinit(testing.allocator);
+    const box = index.box;
+    const span = box.size();
+    const z = box.min[2] + SLICE_AT * span[2];
+    var cut = section.slice(testing.allocator, &lying, z, .{}, diag) catch |err| {
+        _ = try clean(err);
+        return;
+    };
+    defer cut.deinit();
+    errdefer std.debug.print("the section of the solid turned about x at {d}\n", .{z});
+    try expectSound(&cut, diag);
+    for (0..SLICE_POINTS) |i| {
+        const k: f64 = @floatFromInt(i);
+        const p: Vec2 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
+        const place = solid_query.point_in_body.classify(testing.allocator, &lying, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        if (place == .boundary) continue;
+        errdefer std.debug.print("at ({d}, {d}) the solid says {s}\n", .{ p[0], p[1], @tagName(place) });
+        try testing.expectEqual(place == .inside, try query.contains(&cut, p, 0, diag));
+    }
 }
 
 /// Rays across the solid (vertical ones over a skewed grid, horizontal ones at mid

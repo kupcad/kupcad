@@ -374,6 +374,31 @@ test "Driver: no-op operations return new handles, never their input" {
     try std.testing.expect(single.ptr != cube.ptr);
 }
 
+test "Driver: a slice is the exact section, the solid just above the plane; an ellipse's is refused with its reason" {
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 4, 6, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    for ([_]f64{ 0, 3 }) |height| {
+        const square = driver.driver.sliceFn(cube, height) orelse return error.SliceFailed;
+        defer driver.driver.destructCrossSectionFn(square);
+        try std.testing.expectApproxEqRel(@as(f64, 40), driver.driver.crossSectionAreaFn(square), 1e-12);
+    }
+    const nothing = driver.driver.sliceFn(cube, 6) orelse return error.SliceFailed;
+    defer driver.driver.destructCrossSectionFn(nothing);
+    try std.testing.expectEqual(@as(f64, 0), driver.driver.crossSectionAreaFn(nothing));
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 10, false, 16) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    const disc = driver.driver.sliceFn(cyl, 4) orelse return error.SliceFailed;
+    defer driver.driver.destructCrossSectionFn(disc);
+    try std.testing.expectApproxEqRel(25 * std.math.pi, driver.driver.crossSectionAreaFn(disc), 1e-9);
+    try std.testing.expect(driver.hasCurvedEdges(.{ .engine = .brep_native, .ptr = disc.ptr }));
+    try std.testing.expect(driver.supports(.slice));
+    const tilted = driver.driver.rotateFn(cyl, 30, 0, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(tilted);
+    try std.testing.expect(driver.driver.sliceFn(tilted, 3) == null);
+    const why = driver.driver.takeFailureFn() orelse return error.NoReason;
+    try std.testing.expect(std.mem.indexOf(u8, why, "ellipse") != null);
+}
+
 test "Driver: unsupported operations report null, never a stand-in result" {
     const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructCrossSectionFn(sq);
@@ -381,7 +406,6 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructFn(cube);
     try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
     try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
-    try std.testing.expect(driver.driver.sliceFn(cube, 5) == null);
     try std.testing.expect(driver.driver.projectFn(cube) == null);
     try std.testing.expect(driver.driver.trimByPlaneFn(cube, 0, 0, 1, 5) == null);
     try std.testing.expect(!driver.supports(.boolean));
