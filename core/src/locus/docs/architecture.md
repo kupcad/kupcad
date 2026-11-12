@@ -459,13 +459,20 @@ line meets, touches or misses a circle and where each crossing lies along the se
 about its centre (`orient2d` about the centre, never an angle: no seam, no slack, and the
 same answer for a vertex a little off the circle whichever piece of the arc asks), which
 of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLine`,
-`compareLineX`, a point taken as a circle of no radius), and a tie there means one point,
-where the two segments meet, a vertex they share: their order is the overlay's own order
-of their half-edges about it, the order the cycles were walked by (2026-11-12; re-deriving
-it from tangents got a vertex a rounding above the ray and two level opposite tangents
-wrong). A tie at no vertex (an arc's two pieces at its lowest point on the ray) takes the
+`compareLineX`, a point taken as a circle of no radius), but two segments sharing a
+vertex are ordered by the overlay's own order of their half-edges about it, the order the
+cycles were walked by, at whatever height the ray passes: they cross nowhere between that
+vertex and their other ends, so that order holds all along, where the exact crossings of
+an arc whose welded end is a rounding off its circle do not (2026-11-12, the overlay
+target: a ray one ulp above a vertex found an arc west of the line it leaves the vertex
+east of; earlier the same day re-deriving the order from tangents got a vertex a rounding
+above the ray and two level opposite tangents wrong). A tie at no vertex (an arc's two pieces at its lowest point on the ray) takes the
 ray a hair above: the piece leaning east going up, level and opposite the east one, then
-the one bending east. A cycle that runs each of its edges both ways bounds nothing, its
+the one bending east. The ray starts at the cycle's leftmost point, an arc's west extreme
+when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
+end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
+vertex crossed the ray a rounding to either side, and a component's outer boundary was
+nested in its own face). A cycle that runs each of its edges both ways bounds nothing, its
 area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
