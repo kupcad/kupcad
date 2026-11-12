@@ -685,6 +685,19 @@ importing only those before it, which the layering test holds):**
   index, roles composed, the stronger standing), and a refusal's step (`failed_step`) and
   stage. An empty step goes on (an empty operand answers at once); one operand gives its
   copy.
+- Cuts by a plane (`boolean/trim.zig`): the part on the side the normal points to is the
+  solid's intersection with a half-space box, from the plane past the solid's box on every
+  other side, as the mesh engine's `TrimByPlane` takes it; a split is the two trims, the
+  second by the plane turned round.
+- Parts (`construct/decompose.zig`): each outer shell with the voids it holds, a void given
+  to the innermost outer shell around one of its vertices (`point_in_body` against a face
+  index of that shell alone, `FaceIndex.buildShell`); each part the body with the other
+  shells taken away, compacted. The mesh engine's `Decompose` splits by mesh connectivity
+  and gives a void back as a part of its own, inside out: a known difference, by design.
+- KupCAD's driver (M4's fifth item): `supports(.boolean, .trim_by_plane, .decompose,
+  .empty)`; its batch booleans are `chain`; a solid with curved faces in a boolean or a cut
+  is refused before the driver by a feature of its own, `curved_boolean`, which the B-Rep
+  engine lacks until M5 (as `curved_hull`), so the script's error names it.
 - The result report (`pipeline.Report`, research/opengeometry.md §4, filled even when the
   operation fails and sent to the trace as the phase "report" beside the bodies of the
   phases): the operation; its quality, exact or approximate with the largest gap of a
