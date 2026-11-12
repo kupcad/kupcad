@@ -27,6 +27,16 @@ pub const FaceIndex = struct {
     /// The index of `body`'s faces, their boxes grown by the body's zone. Owned by
     /// `allocator`.
     pub fn build(allocator: std.mem.Allocator, body: *const Body, diag: *Diagnostics) Error!FaceIndex {
+        return buildOf(allocator, body, null, diag);
+    }
+
+    /// The index of one shell's faces alone: the queries against that shell as a solid of
+    /// its own (which voids lie in which outer shell, `construct/decompose.zig`).
+    pub fn buildShell(allocator: std.mem.Allocator, body: *const Body, shell: types.ShellIndex, diag: *Diagnostics) Error!FaceIndex {
+        return buildOf(allocator, body, shell, diag);
+    }
+
+    fn buildOf(allocator: std.mem.Allocator, body: *const Body, only: ?types.ShellIndex, diag: *Diagnostics) Error!FaceIndex {
         var faces: std.ArrayList(types.FaceIndex) = .empty;
         defer faces.deinit(allocator);
         var boxes: std.ArrayList(Box3) = .empty;
@@ -34,6 +44,7 @@ pub const FaceIndex = struct {
         var box = Box3.empty;
         var shells = traverse.Shells.init(body);
         while (shells.next() catch return corrupt(diag)) |s| {
+            if (only != null and only.? != s) continue;
             var it = traverse.Faces.init(body, s);
             while (it.next() catch return corrupt(diag)) |f| {
                 const face_box = bbox.faceBounds(body, f) catch return corrupt(diag);

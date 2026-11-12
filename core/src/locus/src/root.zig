@@ -63,6 +63,7 @@ pub const construct = struct {
     pub const hull = @import("construct/hull.zig");
     pub const transform = @import("construct/transform.zig");
     pub const sweep = @import("construct/sweep.zig");
+    pub const decompose = @import("construct/decompose.zig");
 };
 /// Meshes: the triangulator (M2), the tessellation of bodies (planar faces in M2).
 pub const mesh = struct {
@@ -107,6 +108,7 @@ pub const boolean = struct {
     pub const select = @import("boolean/select.zig");
     pub const simplify = @import("boolean/simplify.zig");
     pub const pipeline = @import("boolean/pipeline.zig");
+    pub const trim = @import("boolean/trim.zig");
 };
 
 pub const io = struct {
@@ -171,6 +173,8 @@ test {
     _ = @import("boolean/pipeline_test.zig");
     _ = @import("boolean/pave_test.zig");
     _ = @import("boolean/simplify_test.zig");
+    _ = @import("boolean/trim_test.zig");
+    _ = @import("construct/decompose_test.zig");
     _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
