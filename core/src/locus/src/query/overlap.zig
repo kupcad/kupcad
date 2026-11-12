@@ -11,7 +11,8 @@
 //!   shell and for faces of two shells: faces sharing an edge meet along it, and solids
 //!   touching along a line or at a point (the sweep of a bow tie, its two solids with an
 //!   edge each on the line) pass, as touching at a point does in the checker; a face
-//!   passing through another, or lying on it, does not.
+//!   passing through another, or lying on it, does not. Solids (two shells) touching at a
+//!   point inside a face of one, a corner on a face, pass too: a point splits no face.
 //! - Each shell lies where the other shells put no material (an outer shell) or one solid's
 //!   worth (a void): at a point inside one of its faces, the other shells' winding numbers
 //!   (a closed shell's solid angle about the point over 4π, +1 inside an outer shell, −1
@@ -94,7 +95,8 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
         const overlaps = switch (relation) {
             .apart => false,
             .crossing => blk: {
-                for (pieces.items) |piece| if (!try onBoundaries(body, f, g, piece, tol, diag)) break :blk true;
+                const apart = body.face(f).shell != body.face(g).shell;
+                for (pieces.items) |piece| if (!try onBoundaries(body, f, g, piece, apart, tol, diag)) break :blk true;
                 break :blk false;
             },
             .coplanar => try coplanarOverlap(allocator, body, f, g, tol, diag),
@@ -105,8 +107,12 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
 
 /// Whether every point of `piece` (its ends and middle) lies within the intersection
 /// tolerance of both faces' boundaries: the faces touch there, neither passing into the
-/// other.
-fn onBoundaries(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, tol: Tolerance, diag: *Diagnostics) Error!bool {
+/// other. A point where faces of two shells touch needs only one's boundary: solids touching
+/// at a point (a corner on a face) split no face, so no edge or vertex of the face records
+/// it (a vertex loop could, once the mesher and the STEP writer take one); within one shell
+/// it would be a pinch.
+fn onBoundaries(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, apart: bool, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    if (piece.isPoint() and apart) return try nearBoundary(body, f, piece.a, tol, diag) or try nearBoundary(body, g, piece.a, tol, diag);
     const points = [3]Vec3{ piece.a, vec.lerp(piece.a, piece.b, 0.5), piece.b };
     const count: usize = if (piece.isPoint()) 1 else 3;
     for (points[0..count]) |p| {

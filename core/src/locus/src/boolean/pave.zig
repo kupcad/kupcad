@@ -230,6 +230,7 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     try filler.collectIncidences();
     try filler.commonBlocks();
     try filler.faceFace();
+    try filler.nearlyCoplanar();
     for (0..2) |k| for (p.sections[k]) |*list| sortUnique([2]u32, list, lessPair);
     return p;
 }
@@ -246,6 +247,8 @@ const Filler = struct {
     faces: [2][]types.FaceIndex = .{ &.{}, &.{} },
     edge_tree: [2]Bvh = .{ .{}, .{} },
     face_tree: [2]Bvh = .{ .{}, .{} },
+    /// Each face's box, not grown (the near-coplanar warning grows them by its own reach).
+    face_boxes: [2][]Box3 = .{ &.{}, &.{} },
     /// Vertex–face and edge–face incidences found before they are collected.
     found: std.ArrayList(Incidence) = .empty,
 
@@ -255,6 +258,7 @@ const Filler = struct {
             self.allocator.free(self.faces[k]);
             self.edge_tree[k].deinit(self.allocator);
             self.face_tree[k].deinit(self.allocator);
+            self.allocator.free(self.face_boxes[k]);
         }
         self.found.deinit(self.allocator);
     }
@@ -374,6 +378,8 @@ const Filler = struct {
 
             var faces: std.ArrayList(types.FaceIndex) = .empty;
             defer faces.deinit(self.allocator);
+            var plain: std.ArrayList(Box3) = .empty;
+            defer plain.deinit(self.allocator);
             boxes.clearRetainingCapacity();
             var shells = traverse.Shells.init(body_k);
             while (shells.next() catch return corrupt(self.diag)) |s| {
@@ -381,10 +387,12 @@ const Filler = struct {
                 while (it.next() catch return corrupt(self.diag)) |f| {
                     try faces.append(self.allocator, f);
                     const box = bbox.faceBounds(body_k, f) catch return corrupt(self.diag);
+                    try plain.append(self.allocator, box);
                     try boxes.append(self.allocator, box.inflated(2 * xsect));
                 }
             }
             self.faces[k] = try faces.toOwnedSlice(self.allocator);
+            self.face_boxes[k] = try plain.toOwnedSlice(self.allocator);
             self.face_tree[k] = try Bvh.build(self.allocator, boxes.items);
         }
     }
@@ -680,12 +688,6 @@ const Filler = struct {
                 try self.blocksInside(0, fa, 1, fb);
                 continue;
             }
-            // Parallel and a hair apart: not one plane, but the result will have faces as
-            // thin as the hair (OCCT's BadPositioning)
-            if (p.tol.parallel(frame_a.z, frame_b.z)) {
-                const apart = try self.planeGap(0, fa, frame_b);
-                if (apart <= NEARLY_COPLANAR * p.tol.xsect) try self.diag.warn(.{ .code = .nearly_coplanar, .entity = .of(.face, @backingInt(fa)), .measured = apart, .threshold = p.tol.xsect });
-            }
             const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
             try p.verticesOn(0, @backingInt(fa), &on_a);
             try p.verticesOn(1, @backingInt(fb), &on_b);
@@ -720,6 +722,36 @@ const Filler = struct {
                 if (in_a == .inside) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (in_b == .inside) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
             }
+        }
+    }
+
+    /// A warning (`nearly_coplanar`, OCCT's BadPositioning) for each face of `a` parallel to
+    /// a face of `b` within `NEARLY_COPLANAR` intersection tolerances of its plane but not
+    /// in it, their boxes that near: the result has faces as thin as the gap. Its own pairs,
+    /// the boxes grown by that reach, since faces that far apart meet in no other stage.
+    fn nearlyCoplanar(self: *Filler) Error!void {
+        const p = self.p;
+        const reach = NEARLY_COPLANAR * p.tol.xsect;
+        var trees: [2]Bvh = .{ .{}, .{} };
+        defer for (&trees) |*t| t.deinit(self.allocator);
+        var grown: std.ArrayList(Box3) = .empty;
+        defer grown.deinit(self.allocator);
+        for (0..2) |k| {
+            grown.clearRetainingCapacity();
+            for (self.face_boxes[k]) |b| try grown.append(self.allocator, b.inflated(reach / 2));
+            trees[k] = try Bvh.build(self.allocator, grown.items);
+        }
+        var pairs = try self.overlapping(&trees[0], &trees[1]);
+        defer pairs.deinit(self.allocator);
+        for (pairs.items) |pair| {
+            const fa = self.faces[0][pair[0]];
+            const fb = self.faces[1][pair[1]];
+            const frame_a = planar_faces.frameOf(self.body(0), fa).?;
+            const frame_b = planar_faces.frameOf(self.body(1), fb).?;
+            if (!p.tol.parallel(frame_a.z, frame_b.z)) continue;
+            const apart = try self.planeGap(0, fa, frame_b);
+            if (apart <= p.tol.xsect or apart > reach) continue;
+            try self.diag.warn(.{ .code = .nearly_coplanar, .entity = .of(.face, @backingInt(fa)), .measured = apart, .threshold = p.tol.xsect });
         }
     }
 

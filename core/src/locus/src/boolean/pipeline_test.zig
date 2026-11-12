@@ -25,7 +25,7 @@ const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
 
 /// A box from `lo` to `hi`.
-fn box(lo: Vec3, hi: Vec3) !Body {
+pub fn box(lo: Vec3, hi: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var unit = try primitives.box(testing.allocator, tol, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, &diag);
@@ -35,7 +35,7 @@ fn box(lo: Vec3, hi: Vec3) !Body {
 
 /// `a op b`, checked: every rule of the checker and the overlap rules pass it, and its
 /// report fits it.
-fn sound(a: *const Body, b: *const Body, op: Op) !Body {
+pub fn sound(a: *const Body, b: *const Body, op: Op) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var r = pipeline.Report.init(testing.allocator);
@@ -84,14 +84,14 @@ fn expectReportFits(r: *const pipeline.Report, a: *const Body, b: *const Body, r
     for (result.faces.items, covered) |f, c| if (!f.flags.tombstone) try testing.expect(c);
 }
 
-fn volume(body: *const Body) !f64 {
+pub fn volume(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     return (try mass.mass(body, .{}, &diag)).volume;
 }
 
 /// The result's volume, faces and shells.
-fn expectShape(body: *const Body, want_volume: f64, faces: usize, shells: usize) !void {
+pub fn expectShape(body: *const Body, want_volume: f64, faces: usize, shells: usize) !void {
     try testing.expectApproxEqAbs(want_volume, try volume(body), CLOSE);
     const counts = body.counts();
     try testing.expectEqual(faces, counts.faces);
@@ -99,7 +99,7 @@ fn expectShape(body: *const Body, want_volume: f64, faces: usize, shells: usize)
 }
 
 /// The volume identities: V(A ∪ B) + V(A ∩ B) = V(A) + V(B), V(A − B) = V(A) − V(A ∩ B).
-fn expectIdentities(a: *const Body, b: *const Body) !void {
+pub fn expectIdentities(a: *const Body, b: *const Body) !void {
     var u = try sound(a, b, .@"union");
     defer u.deinit();
     var i = try sound(a, b, .intersection);
@@ -250,8 +250,22 @@ test "boolean: an empty operand answers at once; a curved one is refused naming 
     try testing.expectEqual(diagnostics.EntityKind.face, diag.first().?.entity.kind);
 }
 
+/// `body` moved by `by`.
+pub fn moved(body: *const Body, by: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return transform.transform(testing.allocator, body, &mat.Affine.translate(by), .{}, &diag);
+}
+
+/// `body` mirrored across the plane through the origin normal to `normal`.
+pub fn mirrored(body: *const Body, normal: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return transform.transform(testing.allocator, body, &mat.Affine.mirror(normal), .{}, &diag);
+}
+
 /// `body` turned by `angle` about `axis` through `origin`.
-fn turned(body: *const Body, origin: Vec3, axis: Vec3, angle: f64) !Body {
+pub fn turned(body: *const Body, origin: Vec3, axis: Vec3, angle: f64) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     return transform.transform(testing.allocator, body, &mat.Affine.rotateAbout(origin, vec.normalized(axis).?, angle), .{}, &diag);
@@ -331,7 +345,7 @@ test "boolean: solids touching along a line, the line inside a face of one: a sl
     try expectIdentities(&c, &d);
 }
 
-test "boolean: a box touching another's face along a line from inside; the difference, pinched along it, is refused" {
+test "boolean: a box touching another's face along a line from inside; the difference, pinched along it, is refused by design" {
     var a = try box(.{ 0, 3, 1 }, .{ 2, 4, 4 });
     defer a.deinit();
     var b0 = try box(.{ 1, 3, 2 }, .{ 4, 4, 4 });
@@ -344,12 +358,12 @@ test "boolean: a box touching another's face along a line from inside; the diffe
     defer i.deinit();
     try testing.expectApproxEqAbs(try volume(&a) + try volume(&b), try volume(&u) + try volume(&i), CLOSE);
     // The pocket left in `a` meets its front face along the line: one shell touching
-    // itself along an edge, which no shell's Euler–Poincaré count admits (the degeneracy
-    // corpus's pinches, M4)
+    // itself along an edge, which no shell's Euler–Poincaré count admits, refused by design
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    try testing.expectError(error.NotValid, pipeline.boolean(testing.allocator, &a, &b, .difference, .{}, &diag, null));
-    try testing.expectEqual(diagnostics.Code.euler_poincare, diag.first().?.code);
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &a, &b, .difference, .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    try testing.expectEqual(diagnostics.EntityKind.shell, diag.first().?.entity.kind);
 }
 
 test "boolean: warnings name what they concern: faces a hair from one plane, solids touching along an edge" {
@@ -385,19 +399,19 @@ test "boolean: warnings name what they concern: faces a hair from one plane, sol
 }
 
 /// `a op b` with its report.
-fn reported(a: *const Body, b: *const Body, op: Op, options: pipeline.Options, r: *pipeline.Report) !Body {
+pub fn reported(a: *const Body, b: *const Body, op: Op, options: pipeline.Options, r: *pipeline.Report) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     return pipeline.boolean(testing.allocator, a, b, op, options, &diag, r);
 }
 
-fn roleOf(r: *const pipeline.Report, operand: u32, input: u32) ?pipeline.Role {
+pub fn roleOf(r: *const pipeline.Report, operand: u32, input: u32) ?pipeline.Role {
     for (r.faces.items) |m| if (m.operand == operand and m.input == input) return m.role;
     return null;
 }
 
 /// The face of `body` facing along `normal`.
-fn facing(body: *const Body, normal: Vec3) u32 {
+pub fn facing(body: *const Body, normal: Vec3) u32 {
     for (body.faces.items, 0..) |f, i| {
         if (f.flags.tombstone) continue;
         if (vec.dot(@import("../query/in_face.zig").outwardNormal(body, @import("../topology/types.zig").FaceIndex.of(i), .{ 0, 0 }), normal) > 0.5) return @intCast(i);
@@ -586,7 +600,7 @@ test "report: the trace gets it beside the phases; a refusal's names the stage i
 }
 
 /// The shells' kinds of `body`: outer shells and voids.
-fn shellKinds(body: *const Body) [2]usize {
+pub fn shellKinds(body: *const Body) [2]usize {
     var kinds = [2]usize{ 0, 0 };
     for (body.shells.items) |s| {
         if (s.tombstone) continue;

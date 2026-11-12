@@ -19,8 +19,9 @@
 //! 7. the checker: the result passes it or the operation fails with its finding.
 //!
 //! Typed findings name the entity: failures `TooSmallEdge` (an operand's edge, `pave`),
-//! `imprint_unmatched` and `unclassified` (an operand's face), the checker's on the
-//! result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
+//! `imprint_unmatched` and `unclassified` (an operand's face), `pinched` (a result's shell
+//! touching itself along a line or at a point inside one solid, refused by design), the
+//! checker's on the result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
 //! plane, the result's faces that thin) and `solids_touch` (a result's edge where two of
 //! its solids touch along a line).
 //!
@@ -38,6 +39,7 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const check = @import("../topology/check.zig");
+const condition = @import("../topology/condition.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const trace = @import("../io/trace.zig");
 const primitives = @import("../construct/primitives.zig");
@@ -207,7 +209,12 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     stage = .check;
     var checked = try check.run(allocator, &result, .geometric);
     defer checked.deinit(allocator);
-    if (checked.first()) |f| return diag.fail(error.NotValid, f);
+    if (checked.first()) |f| {
+        if (f.code == .euler_poincare) if (try pinchedShell(allocator, &result, f)) |s| {
+            return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, s), .label = "the result" });
+        };
+        return diag.fail(error.NotValid, f);
+    }
     try faceMap(allocator, &result, &made, &log, options.tag_op, r, diag);
     for (result.vertices.items) |v| if (!v.tombstone) {
         r.max_gap = @max(r.max_gap, v.gap);
@@ -319,6 +326,23 @@ fn contacts(paves: *const pave.Paves, classes: []const classify.Classified, r: *
     @memset(on, 0);
     for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
     for (on, 0..) |operands, v| if (operands == 3) try r.contacts.append(r.allocator, paves.point(@intCast(v)));
+}
+
+/// The shell an Euler–Poincaré finding names when it is pinched: one shell touching itself
+/// along a line or at a point, so a vertex of it is singular (its faces about it two fans
+/// or more, `topology/condition.zig`), which no count of one shell admits. Null for any
+/// other failure of the count.
+fn pinchedShell(allocator: std.mem.Allocator, body: *const Body, finding: diagnostics.Finding) Error!?u32 {
+    var grades: std.ArrayList(condition.ShellGrade) = .empty;
+    defer grades.deinit(allocator);
+    condition.ofBody(allocator, body, &grades) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Corrupt => return null,
+    };
+    for (grades.items) |g| {
+        if (@backingInt(g.shell) == finding.entity.index and g.grade.singular_vertices > 0) return finding.entity.index;
+    }
+    return null;
 }
 
 /// A warning (`solids_touch`) for each place the result's solids touch along a line: two
