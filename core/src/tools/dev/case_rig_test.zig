@@ -6,6 +6,8 @@ const std = @import("std");
 const testing = std.testing;
 const cases = @import("cases.zig");
 const rig = @import("case_rig.zig");
+const geom = @import("../../core/geometry_handle.zig");
+const mesh_compare = @import("../../kernel/mesh_compare.zig");
 
 /// Any case takes well under this on either engine; a run past it is a hang.
 const TIME_LIMIT_MS = 60_000;
@@ -102,4 +104,75 @@ test "case rig: the ladder report lists each tier's counts and frontier" {
         \\  all: 1 pass, 1 fail, 1 refused by design; frontier: 01 primitives, a box that fails
         \\
     , out.written());
+}
+
+/// Both engines cut every circle into this many segments when their meshes are compared.
+const COMPARE_PRELUDE = "CAD.config(resolution: {segments: 64})\n";
+
+/// The kernel's mesh as the comparison reads it: its positions in doubles (owned) and its
+/// triangles.
+fn comparable(allocator: std.mem.Allocator, mesh: geom.Mesh) !struct { points: [][3]f64, triangles: []const [3]u32 } {
+    const n = mesh.vert_props.len / mesh.num_prop;
+    const points = try allocator.alloc([3]f64, n);
+    for (points, 0..) |*p, i| {
+        for (0..3) |k| p[k] = mesh.vert_props[i * mesh.num_prop + k];
+    }
+    return .{ .points = points, .triangles = std.mem.bytesAsSlice([3]u32, std.mem.sliceAsBytes(mesh.tri_verts)) };
+}
+
+test "case rig: on every case both engines build, their meshes lie within a chord of each other, the volume between them a thin shell" {
+    // Both cut every circle into 64 segments, so each mesh lies within the sagitta
+    // r (1 − cos(π/64)) of the exact solid, r at most half the box's diagonal D: the two
+    // within D (1 − cos(π/64)) of each other, and what only one holds within a shell of
+    // that thickness on either side of the surface
+    const chord = 1 - @cos(std.math.pi / 64.0);
+    var compared: usize = 0;
+    for (&cases.CASES) |*case| {
+        if (case.mesh_bound == null) continue;
+        errdefer std.debug.print("case: {s} ({s})\n", .{ case.name, case.script });
+        var outcomes: [2]rig.Outcome = undefined;
+        var made: usize = 0;
+        defer for (outcomes[0..made]) |*o| o.deinit(testing.allocator);
+        for ([_]geom.EngineType{ .brep_native, .manifold }, &outcomes) |engine, *o| {
+            o.* = try rig.runWith(testing.allocator, testing.io, case, engine, .{ .time_limit_ms = TIME_LIMIT_MS, .prelude = COMPARE_PRELUDE, .keep_mesh = true });
+            made += 1;
+            try testing.expectEqual(.pass, o.verdict);
+        }
+        // An empty result has no mesh on either
+        if (case.expect.measures.empty) {
+            try testing.expect(outcomes[0].mesh == null and outcomes[1].mesh == null);
+            continue;
+        }
+        const a = try comparable(testing.allocator, outcomes[0].mesh.?);
+        defer testing.allocator.free(a.points);
+        const b = try comparable(testing.allocator, outcomes[1].mesh.?);
+        defer testing.allocator.free(b.points);
+        var lo: [3]f64 = @splat(std.math.inf(f64));
+        var hi: [3]f64 = @splat(-std.math.inf(f64));
+        for (a.points) |p| for (0..3) |k| {
+            lo[k] = @min(lo[k], p[k]);
+            hi[k] = @max(hi[k], p[k]);
+        };
+        var diagonal: f64 = 0;
+        for (0..3) |k| diagonal += (hi[k] - lo[k]) * (hi[k] - lo[k]);
+        diagonal = @sqrt(diagonal);
+        var area: f64 = 0;
+        for (a.triangles) |t| area += triangleArea(a.points[t[0]], a.points[t[1]], a.points[t[2]]);
+        const c = try mesh_compare.compare(testing.allocator, .{ .points = a.points, .triangles = a.triangles }, .{ .points = b.points, .triangles = b.triangles }, .{ .spacing = diagonal / SAMPLES_ACROSS });
+        errdefer std.debug.print("distance {d} (bound {d}), only one {d} (bound {d})\n", .{ c.distance(), diagonal * chord, c.only_one, 2 * diagonal * chord * area });
+        try testing.expect(c.distance() <= diagonal * chord);
+        try testing.expect(c.only_one <= 2 * diagonal * chord * area);
+        compared += 1;
+    }
+    try testing.expect(compared >= 30);
+}
+
+/// Samples along a mesh's box's diagonal, at the most, in the comparison.
+const SAMPLES_ACROSS = 50;
+
+fn triangleArea(a: [3]f64, b: [3]f64, c: [3]f64) f64 {
+    const u: [3]f64 = .{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+    const v: [3]f64 = .{ c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+    const n: [3]f64 = .{ u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+    return @sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) / 2;
 }

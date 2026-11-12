@@ -42,11 +42,27 @@ pub const Outcome = struct {
     verdict: Verdict,
     /// Why, for anything but a pass (owned).
     message: ?[]u8 = null,
+    /// The result's mesh, when a pass was asked to keep it (owned).
+    mesh: ?geom.Mesh = null,
 
     pub fn deinit(self: *Outcome, allocator: std.mem.Allocator) void {
         if (self.message) |m| allocator.free(m);
+        if (self.mesh) |m| {
+            allocator.free(m.vert_props);
+            allocator.free(m.tri_verts);
+        }
         self.* = undefined;
     }
+};
+
+/// How a case is run beyond its judging.
+pub const Options = struct {
+    /// Past this the run is a hang; null for no limit.
+    time_limit_ms: ?u64 = null,
+    /// Statements before the script, settings both engines take (`CAD.config(resolution: …)`).
+    prelude: []const u8 = "",
+    /// Whether a pass keeps its result's mesh, to compare the engines' meshes by.
+    keep_mesh: bool = false,
 };
 
 pub const Result = struct {
@@ -56,7 +72,13 @@ pub const Result = struct {
 
 /// Runs `case` on `engine` within `time_limit_ms` (null for no limit) and judges it.
 pub fn run(allocator: std.mem.Allocator, io: std.Io, case: *const cases.Case, engine: geom.EngineType, time_limit_ms: ?u64) !Outcome {
-    const source = try std.mem.concat(allocator, u8, &.{ if (engine == .brep_native) BREP_CONFIG else "", "r = ", case.script });
+    return runWith(allocator, io, case, engine, .{ .time_limit_ms = time_limit_ms });
+}
+
+/// `run` with `options`.
+pub fn runWith(allocator: std.mem.Allocator, io: std.Io, case: *const cases.Case, engine: geom.EngineType, options: Options) !Outcome {
+    const time_limit_ms = options.time_limit_ms;
+    const source = try std.mem.concat(allocator, u8, &.{ if (engine == .brep_native) BREP_CONFIG else "", options.prelude, "r = ", case.script });
     defer allocator.free(source);
     var doc = try api.Document.parse(allocator, source);
     defer doc.deinit();
@@ -79,7 +101,14 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, case: *const cases.Case, en
         return crashed(allocator, err);
     };
     if (handle.engine != engine) return failure(allocator, "built on the other engine", .{});
-    return judgeMeasures(allocator, case, engine, handle);
+    var outcome = try judgeMeasures(allocator, case, engine, handle);
+    if (options.keep_mesh and outcome.verdict == .pass and !kernel.isEmpty(handle)) {
+        outcome.mesh = kernel.getMesh(allocator, handle) orelse {
+            outcome.deinit(allocator);
+            return failure(allocator, "no mesh: {s}", .{kernel.takeFailure() orelse "the kernel gave no reason"});
+        };
+    }
+    return outcome;
 }
 
 /// A run that ended in the script's error: a hang, the refusal the case expects, or a

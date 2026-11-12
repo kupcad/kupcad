@@ -150,6 +150,7 @@ test {
     // Kernels
     _ = @import("kernel/kernel_test.zig");
     _ = @import("kernel/mesh_check_test.zig");
+    _ = @import("kernel/mesh_compare_test.zig");
     _ = @import("kernel/parity_test.zig");
     _ = @import("kernel/invariants_test.zig");
 
