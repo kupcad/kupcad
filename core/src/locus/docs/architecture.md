@@ -631,7 +631,9 @@ importing only those before it, which the layering test holds):**
 - `pave.zig`: `a`'s vertices each a merged vertex, `b`'s merged with the first of `a`'s
   within `xsect` (the centre of their points' box, the gap reaching the furthest);
   vertex–edge for every merged vertex against the edges of the operand it holds no vertex
-  of (on the segment within `xsect` plus its gap, beyond `xsect` from either end);
+  of (on the segment within `xsect` plus its gap, its foot in the edge's shrunk range:
+  beyond `xsect` and the end's gap from either end; an edge whose shrunk range is under
+  `2·xsect` is not split but refused, `TooSmallEdge` naming it);
   edge–edge by the closest points of the two lines (parallel lines skipped: their overlaps
   are made of vertex–edge's paves), the point welded to a merged vertex within `xsect` or
   new, then tried against every other edge; vertex–face; edge–face where an edge's ends lie
@@ -641,7 +643,11 @@ importing only those before it, which the layering test holds):**
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
   line, each gap whose middle is in both a section segment of each face it is inside of.
   Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
-  one's pave blocks inside the other its section segments.
+  one's pave blocks inside the other its section segments; two parallel a hair apart (within
+  100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
+  the result has faces that thin). Pave blocks of an edge of each operand between the same
+  two merged vertices are the common blocks, a table of their own (one edge of the result,
+  the operands' contact for the result report).
 - `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its
   section segments there and back (input 1); each region input 0 winds about is a fragment,
   its cycles read back as merged vertices by their coordinates. A vertex the overlay made
@@ -659,7 +665,10 @@ importing only those before it, which the layering test holds):**
   a void. Then `simplify.zig` (`kef` across edges between faces on one plane record of one
   sense and attribute, never across an edge with a copy, whose line the touching solid
   needs; spurs whose far vertex nothing else uses, bridges by `kemr`; `kevJoin` at
-  vertices of two edges on one line, counted over the whole body), `compact`, the checker.
+  vertices of two edges on one line, counted over the whole body; `kevMerge` of an edge no
+  longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
+  `compact`, the checker; a warning (`solids_touch`) names each edge where two of the
+  result's solids touch along a line.
 - Refused, each by its own finding: operands with a curved face or edge (M5); a
   difference that leaves one shell touching itself along a line or at a point (a pocket
   meeting a face along an edge of the cut, the degeneracy corpus's pinches, M4), which
