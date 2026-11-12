@@ -40,6 +40,15 @@ const RULES = [_]Rule{
     .{ .path = "local/", .may_import = &([_][]const u8{ "local/", "io/" } ++ OPERATIONS ++ MODEL) },
 };
 
+/// The boolean's phases in their order (docs/architecture.md §7.4, boolean/pipeline.zig):
+/// each may import only those before it, so the tables flow one way.
+const BOOLEAN_PHASES = [_][]const u8{ "boolean/pave.zig", "boolean/imprint.zig", "boolean/classify.zig", "boolean/select.zig", "boolean/simplify.zig", "boolean/pipeline.zig" };
+
+fn phaseOf(path: []const u8) ?usize {
+    for (BOOLEAN_PHASES, 0..) |phase, i| if (std.mem.eql(u8, path, phase)) return i;
+    return null;
+}
+
 /// The directories where topology is decided: no `@mulAdd` there, so every platform rounds
 /// each product and sum the same way (§6, determinism).
 const NO_FMA = [_][]const u8{ "intersect/", "boolean/", "sketch/", "mesh/" };
@@ -161,6 +170,10 @@ fn checkLayers(path: []const u8, source: []const u8) !void {
             std.debug.print("src/{s} imports src/{s}, which the {s} layer may not\n", .{ path, target, rule.path });
             violations += 1;
         }
+        if (phaseOf(path)) |from| if (phaseOf(target)) |to| if (to >= from) {
+            std.debug.print("src/{s} imports src/{s}, a phase of the boolean after it\n", .{ path, target });
+            violations += 1;
+        };
     }
 }
 
@@ -266,6 +279,12 @@ test "Hosts: no file touches the file system, threads, the process or the consol
     violations = 0;
     try walkSources(checkHostServices);
     try testing.expectEqual(@as(usize, 0), violations);
+}
+
+test "Layers: the boolean's phases import only the phases before them" {
+    try testing.expectEqual(@as(?usize, 0), phaseOf("boolean/pave.zig"));
+    try testing.expectEqual(@as(?usize, 5), phaseOf("boolean/pipeline.zig"));
+    try testing.expectEqual(@as(?usize, null), phaseOf("boolean/section.zig"));
 }
 
 test "Layers: an import is resolved against its file, and the longest rule wins" {

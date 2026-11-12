@@ -97,9 +97,16 @@ pub const intersect = struct {
     pub const surface_surface = @import("intersect/surface_surface.zig");
     pub const planar_faces = @import("intersect/planar_faces.zig");
 };
-/// Operations on solids through the overlay: the plane section (M3; the booleans in M4).
+/// Operations on solids through the overlay: the plane section (M3) and the booleans of
+/// solids with planar faces, their phases in order (M4; boolean/pipeline.zig).
 pub const boolean = struct {
     pub const section = @import("boolean/section.zig");
+    pub const pave = @import("boolean/pave.zig");
+    pub const imprint = @import("boolean/imprint.zig");
+    pub const classify = @import("boolean/classify.zig");
+    pub const select = @import("boolean/select.zig");
+    pub const simplify = @import("boolean/simplify.zig");
+    pub const pipeline = @import("boolean/pipeline.zig");
 };
 
 pub const io = struct {
@@ -161,6 +168,9 @@ test {
     _ = @import("intersect/curve_surface_test.zig");
     _ = @import("intersect/surface_surface_test.zig");
     _ = @import("boolean/section_test.zig");
+    _ = @import("boolean/pipeline_test.zig");
+    _ = @import("boolean/pave_test.zig");
+    _ = @import("boolean/simplify_test.zig");
     _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
     _ = @import("alloc_failure_test.zig");
