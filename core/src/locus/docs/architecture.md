@@ -669,6 +669,20 @@ importing only those before it, which the layering test holds):**
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
   `compact`, the checker; a warning (`solids_touch`) names each edge where two of the
   result's solids touch along a line.
+- The result report (`pipeline.Report`, research/opengeometry.md §4, filled even when the
+  operation fails and sent to the trace as the phase "report" beside the bodies of the
+  phases): the operation; its quality, exact or approximate with the largest gap of a
+  vertex moved to meet the other operand; whether the operands had coincident faces; the
+  contacts, the merged vertices on faces of both operands when no fragment of either lies
+  inside the other; each input face's result faces with a role (preserved: whole and
+  alone; split; merged: made one with a face of the other operand, lying on it or beside
+  it in one plane) and whether reversed (the second operand's inside of a difference),
+  followed through `simplify`'s merges and renumbering; and for a refusal `failed_in`,
+  the stage it came from (the operands' checks, an interference class, or a later
+  phase), the findings of the paves naming their class in their label. The result's
+  tags follow D14: its table holds both operands' rows, a whole face keeps its tag, a
+  piece of a split face a `split` row of it and faces made one a `merged` row, under the
+  host's operation number (`Options.tag_op`).
 - Refused, each by its own finding: operands with a curved face or edge (M5); a
   difference that leaves one shell touching itself along a line or at a point (a pocket
   meeting a face along an edge of the cut, the degeneracy corpus's pinches, M4), which
