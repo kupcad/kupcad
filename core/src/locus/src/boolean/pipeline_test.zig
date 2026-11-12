@@ -391,7 +391,7 @@ fn reported(a: *const Body, b: *const Body, op: Op, options: pipeline.Options, r
     return pipeline.boolean(testing.allocator, a, b, op, options, &diag, r);
 }
 
-fn roleOf(r: *const pipeline.Report, operand: u1, input: u32) ?pipeline.Role {
+fn roleOf(r: *const pipeline.Report, operand: u32, input: u32) ?pipeline.Role {
     for (r.faces.items) |m| if (m.operand == operand and m.input == input) return m.role;
     return null;
 }
@@ -583,4 +583,180 @@ test "report: the trace gets it beside the phases; a refusal's names the stage i
     defer curved.deinit();
     try testing.expectError(error.NotImplemented, reported(&a, &cylinder, .@"union", .{}, &curved));
     try testing.expectEqual(@as(?pipeline.Stage, .operands), curved.failed_in);
+}
+
+/// The shells' kinds of `body`: outer shells and voids.
+fn shellKinds(body: *const Body) [2]usize {
+    var kinds = [2]usize{ 0, 0 };
+    for (body.shells.items) |s| {
+        if (s.tombstone) continue;
+        kinds[@intFromBool(s.kind == .void)] += 1;
+    }
+    return kinds;
+}
+
+test "containment: operands that meet nowhere are answered by the table as the general path answers them" {
+    var outer = try box(.{ 0, 0, 0 }, .{ 6, 6, 6 });
+    defer outer.deinit();
+    var inner = try box(.{ 2, 2, 2 }, .{ 3, 3, 3 });
+    defer inner.deinit();
+    var away = try box(.{ 10, 0, 0 }, .{ 11, 1, 1 });
+    defer away.deinit();
+    var cavity = try box(.{ 1, 1, 1 }, .{ 5, 5, 5 });
+    defer cavity.deinit();
+    var hollow = try sound(&outer, &cavity, .difference);
+    defer hollow.deinit();
+    var twins = try sound(&inner, &away, .@"union");
+    defer twins.deinit();
+    // A box inside, a box around, apart, a box in a hollow's cavity, a two-shell operand
+    // one of whose shells is inside a box
+    const pairs = [_][2]*const Body{ .{ &outer, &inner }, .{ &inner, &outer }, .{ &inner, &away }, .{ &hollow, &inner }, .{ &inner, &hollow }, .{ &twins, &outer }, .{ &outer, &twins } };
+    for (pairs) |pair| for ([_]Op{ .@"union", .difference, .intersection }) |op| {
+        var fast = pipeline.Report.init(testing.allocator);
+        defer fast.deinit();
+        var by_table = try reported(pair[0], pair[1], op, .{}, &fast);
+        defer by_table.deinit();
+        var slow = pipeline.Report.init(testing.allocator);
+        defer slow.deinit();
+        var by_path = try reported(pair[0], pair[1], op, .{ .fast_paths = false }, &slow);
+        defer by_path.deinit();
+        errdefer std.debug.print("{s}: table {d} faces, {d} shells; path {d} faces, {d} shells\n", .{ @tagName(op), by_table.counts().faces, by_table.counts().shells, by_path.counts().faces, by_path.counts().shells });
+        try testing.expect(fast.by_containment);
+        try testing.expect(!slow.by_containment);
+        try testing.expectApproxEqAbs(try volume(&by_path), try volume(&by_table), CLOSE);
+        try testing.expectEqual(by_path.counts(), by_table.counts());
+        try testing.expectEqual(shellKinds(&by_path), shellKinds(&by_table));
+        try testing.expectEqualSlices(pipeline.FaceMap, slow.faces.items, fast.faces.items);
+    };
+    // The answers themselves: a box in a cavity stays, a void in a void is none
+    var floating = try sound(&hollow, &inner, .@"union");
+    defer floating.deinit();
+    try testing.expectEqual([2]usize{ 2, 1 }, shellKinds(&floating));
+    try testing.expectApproxEqAbs(@as(f64, 216 - 64 + 1), try volume(&floating), CLOSE);
+    var pocket = try sound(&outer, &inner, .difference);
+    defer pocket.deinit();
+    try testing.expectEqual([2]usize{ 1, 1 }, shellKinds(&pocket));
+    var none = try sound(&hollow, &inner, .intersection);
+    defer none.deinit();
+    try testing.expect(none.isEmpty());
+}
+
+test "boolean: operands with several shells and voids: a cavity filled, two solids joined, a wall cut" {
+    var outer = try box(.{ 0, 0, 0 }, .{ 4, 4, 4 });
+    defer outer.deinit();
+    var cavity = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer cavity.deinit();
+    var hollow = try sound(&outer, &cavity, .difference);
+    defer hollow.deinit();
+    // The cavity filled exactly: the void's faces and the filler's touch, both go
+    var filled = try sound(&hollow, &cavity, .@"union");
+    defer filled.deinit();
+    try expectShape(&filled, 64, 6, 1);
+    try expectIdentities(&hollow, &cavity);
+    // Two boxes apart joined by a bar: one solid
+    var left = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer left.deinit();
+    var right = try box(.{ 3, 0, 0 }, .{ 4, 1, 1 });
+    defer right.deinit();
+    var pair = try sound(&left, &right, .@"union");
+    defer pair.deinit();
+    var bar = try box(.{ 0.5, 0.25, 0.25 }, .{ 3.5, 0.75, 0.75 });
+    defer bar.deinit();
+    var joined = try sound(&pair, &bar, .@"union");
+    defer joined.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+    try testing.expectApproxEqAbs(@as(f64, 2 + 2 * 0.25), try volume(&joined), CLOSE);
+    try expectIdentities(&pair, &bar);
+    // A box through the hollow's wall into its cavity
+    var through = try box(.{ 2, 2, 2 }, .{ 5, 3, 3 });
+    defer through.deinit();
+    try expectIdentities(&hollow, &through);
+    var part = try sound(&hollow, &through, .intersection);
+    defer part.deinit();
+    // The wall's thickness of it: from x = 3 to 4
+    try testing.expectApproxEqAbs(@as(f64, 1), try volume(&part), CLOSE);
+}
+
+test "chain: unions, differences and intersections folded from the left, the report followed through the steps" {
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 1, 1 });
+    defer a.deinit();
+    var b = try box(.{ 1, 0, 0 }, .{ 3, 1, 1 });
+    defer b.deinit();
+    var c = try box(.{ 2, 0, 0 }, .{ 4, 1, 1 });
+    defer c.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var row = try pipeline.chain(testing.allocator, &.{ &a, &b, &c }, .@"union", .{}, &diag, &r);
+    defer row.deinit();
+    // One bar, four long: six faces, each from faces of the operands
+    try expectShape(&row, 4, 6, 1);
+    // The first's bottom merged with the others' into the bar's; its far end kept whole
+    try testing.expectEqual(pipeline.Role.merged, roleOf(&r, 0, facing(&a, vec.neg(vec.Z3))).?);
+    try testing.expectEqual(pipeline.Role.preserved, roleOf(&r, 0, facing(&a, vec.neg(vec.X3))).?);
+    try testing.expectEqual(pipeline.Role.preserved, roleOf(&r, 2, facing(&c, vec.X3)).?);
+    for (r.faces.items) |m| try testing.expect(m.operand <= 2 and m.result < row.faces.items.len);
+    // Two holes drilled through a slab
+    var slab = try box(.{ 0, 0, 0 }, .{ 5, 2, 1 });
+    defer slab.deinit();
+    var drill1 = try box(.{ 1, 0.5, -1 }, .{ 2, 1.5, 2 });
+    defer drill1.deinit();
+    var drill2 = try box(.{ 3, 0.5, -1 }, .{ 4, 1.5, 2 });
+    defer drill2.deinit();
+    var holes = pipeline.Report.init(testing.allocator);
+    defer holes.deinit();
+    var drilled = try pipeline.chain(testing.allocator, &.{ &slab, &drill1, &drill2 }, .difference, .{}, &diag, &holes);
+    defer drilled.deinit();
+    try expectShape(&drilled, 10 - 2, 6 + 8, 1);
+    var reversed: usize = 0;
+    for (holes.faces.items) |m| {
+        if (m.reversed) {
+            reversed += 1;
+            try testing.expect(m.operand == 1 or m.operand == 2);
+        }
+    }
+    try testing.expectEqual(@as(usize, 8), reversed);
+    // What all three hold: the middle unit
+    var common = try pipeline.chain(testing.allocator, &.{ &a, &b, &c }, .intersection, .{}, &diag, null);
+    defer common.deinit();
+    try testing.expect(common.isEmpty());
+    var middle = try pipeline.chain(testing.allocator, &.{ &a, &b }, .intersection, .{}, &diag, null);
+    defer middle.deinit();
+    try expectShape(&middle, 1, 6, 1);
+    // One operand: its copy
+    var alone = try pipeline.chain(testing.allocator, &.{&a}, .difference, .{}, &diag, null);
+    defer alone.deinit();
+    try expectShape(&alone, 2, 6, 1);
+}
+
+test "chain: an empty step goes on; a refusal names its step and stage" {
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var b = try box(.{ 2, 0, 0 }, .{ 3, 1, 1 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // Nothing left after the first step, the next union gives the third back
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var gone = try pipeline.chain(testing.allocator, &.{ &a, &a, &b }, .difference, .{}, &diag, &r);
+    defer gone.deinit();
+    try testing.expect(gone.isEmpty());
+    var back = try pipeline.chain(testing.allocator, &.{ &a, &b, &b }, .intersection, .{}, &diag, null);
+    defer back.deinit();
+    try testing.expect(back.isEmpty());
+    // A slab too thin to split, cut in the second step
+    const xsect = tol.xsect;
+    var slab = try box(.{ 0, 0, 0 }, .{ 1, 1, 3 * xsect });
+    defer slab.deinit();
+    var big = try box(.{ -1, -1, -1 }, .{ 2, 2, 2 });
+    defer big.deinit();
+    var cut = try box(.{ 0.25, 0.25, 1.5 * xsect }, .{ 2, 2, 1 });
+    defer cut.deinit();
+    var failed = pipeline.Report.init(testing.allocator);
+    defer failed.deinit();
+    try testing.expectError(error.TooSmallEdge, pipeline.chain(testing.allocator, &.{ &slab, &big, &cut }, .intersection, .{}, &diag, &failed));
+    try testing.expectEqual(@as(?u32, 2), failed.failed_step);
+    try testing.expectEqual(@as(?pipeline.Stage, .edge_face), failed.failed_in);
 }

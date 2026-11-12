@@ -80,6 +80,32 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, options: diagnosti
     return out;
 }
 
+/// Every face of both operands whole, one fragment each (the containment table's, when the
+/// paves found the operands apart): its loops as its coedges' starts, merged.
+pub fn wholeFaces(allocator: std.mem.Allocator, paves: *const Paves, diag: *Diagnostics) Error!Fragments {
+    var out: Fragments = .{ .allocator = allocator };
+    errdefer out.deinit();
+    for (0..2) |k| {
+        const body = paves.operands[k];
+        var shells = traverse.Shells.init(body);
+        while (shells.next() catch return corrupt(diag)) |s| {
+            var faces = traverse.Faces.init(body, s);
+            while (faces.next() catch return corrupt(diag)) |f| {
+                const first_loop: u32 = @intCast(out.loops.items.len);
+                var loops = traverse.Loops.init(body, f);
+                while (loops.next() catch return corrupt(diag)) |l| {
+                    const start: u32 = @intCast(out.vertices.items.len);
+                    var it = traverse.Coedges.init(body, l);
+                    while (it.next() catch return corrupt(diag)) |c| try out.vertices.append(allocator, paves.vertex_of[k][@backingInt(body.coedgeStart(c))]);
+                    try out.loops.append(allocator, .{ start, @intCast(out.vertices.items.len - start) });
+                }
+                try out.items.append(allocator, .{ .operand = @intCast(k), .face = @backingInt(f), .first_loop = first_loop, .loop_count = @intCast(out.loops.items.len - first_loop) });
+            }
+        }
+    }
+    return out;
+}
+
 /// The point's coordinates, the key the overlay's vertices are read back by.
 const Key = [2]u64;
 

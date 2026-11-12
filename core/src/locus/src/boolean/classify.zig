@@ -83,6 +83,44 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     return classes;
 }
 
+/// Each fragment's class by its shell, one point per shell classified against the other
+/// operand (the containment table, §7.4 step 0: operands the paves found apart, each shell
+/// wholly inside or outside the other). The point is a vertex of the shell's first face; on
+/// the other's boundary it contradicts the paves (`unclassified`).
+pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, options: diagnostics.Options, diag: *Diagnostics) Error![]Classified {
+    var indexes: [2]index_mod.FaceIndex = undefined;
+    indexes[0] = try index_mod.FaceIndex.build(allocator, paves.operands[0], diag);
+    defer indexes[0].deinit(allocator);
+    indexes[1] = try index_mod.FaceIndex.build(allocator, paves.operands[1], diag);
+    defer indexes[1].deinit(allocator);
+    // Each operand's shells' classes, by shell index, decided once
+    var decided: [2][]?Class = undefined;
+    for (0..2) |k| {
+        decided[k] = try allocator.alloc(?Class, paves.operands[k].shells.items.len);
+        @memset(decided[k], null);
+    }
+    defer for (decided) |d| allocator.free(d);
+    const classes = try allocator.alloc(Classified, fragments.items.items.len);
+    errdefer allocator.free(classes);
+    for (fragments.items.items, classes, 0..) |fragment, *out, i| {
+        const body = paves.operands[fragment.operand];
+        const other = 1 - fragment.operand;
+        const shell = @backingInt(body.face(types.FaceIndex.of(fragment.face)).shell);
+        if (decided[fragment.operand][shell] == null) {
+            try options.checkCancel();
+            const loop = fragments.loopsOf(i)[0];
+            const p = paves.point(fragments.loopVertices(loop)[0]);
+            decided[fragment.operand][shell] = switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
+                .inside => .inside,
+                .outside => .outside,
+                .boundary => return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a shell of the first operand, which the paves found apart from the second" else "a shell of the second operand, which the paves found apart from the first" }),
+            };
+        }
+        out.* = .{ .class = decided[fragment.operand][shell].? };
+    }
+    return classes;
+}
+
 /// A point strictly inside fragment `i`, as far from its edges as a triangle's centroid
 /// gets, or null when it has no area. Its loops are triangulated without their spurs: a
 /// section segment ending inside the face (the other operand touching it along a line from

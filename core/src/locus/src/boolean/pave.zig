@@ -170,6 +170,23 @@ pub const Paves = struct {
         }
     }
 
+    /// Whether the operands met nowhere: no vertex of one merged with or lying on the
+    /// other, no edge crossing, no face pair coplanar or cut. Then each operand's shells
+    /// lie wholly inside or outside the other (the containment table, §7.4 step 0).
+    pub fn apart(self: *const Paves) bool {
+        if (self.coplanar.items.len > 0 or self.common.items.len > 0) return false;
+        for (self.owners.items) |o| if (o != 1 and o != 2) return false;
+        for (self.incidences.items) |inc| {
+            const o = self.owners.items[inc.vertex];
+            if (o != @as(u2, 1) << inc.face.operand) return false;
+        }
+        for (0..2) |k| {
+            for (self.edge_paves[k]) |list| if (list.items.len > 2) return false;
+            for (self.sections[k]) |list| if (list.items.len > 0) return false;
+        }
+        return true;
+    }
+
     /// The faces of the other operand that face `face` of `operand` lies in one plane with.
     pub fn coplanarWith(self: *const Paves, operand: u1, face: u32, out: *std.ArrayList(u32)) Error!void {
         out.clearRetainingCapacity();

@@ -66,9 +66,13 @@ pub const Options = struct {
     /// The host's number for this operation, in the tag rows the result's faces get (D14,
     /// `topology/tags.zig`: a face split from an operand's, two coincident faces merged).
     tag_op: u32 = 0,
+    /// The fast paths in front of the general one (the containment table); false runs the
+    /// general path alone, which they must agree with (D17), for tests and for tracing it.
+    fast_paths: bool = true,
 };
 
-/// How a result face came from an input face.
+/// How a result face came from an input face, the weaker first: through a chain's steps
+/// the stronger stands.
 pub const Role = enum {
     /// The whole face, alone: not split, nothing merged into it.
     preserved,
@@ -81,8 +85,8 @@ pub const Role = enum {
 
 /// An input face and a result face made from it.
 pub const FaceMap = struct {
-    /// 0 for the first operand, 1 for the second.
-    operand: u1,
+    /// The operand's place: 0 for the first, 1 for the second (in a chain, its index).
+    operand: u32,
     /// The face's index in its operand and in the result.
     input: u32,
     result: u32,
@@ -108,6 +112,10 @@ pub const Report = struct {
     /// Sorted by operand, input face, result face.
     faces: std.ArrayList(FaceMap) = .empty,
     failed_in: ?Stage = null,
+    /// In a chain, the operand whose step failed.
+    failed_step: ?u32 = null,
+    /// Answered by the containment table: the operands met nowhere.
+    by_containment: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Report {
         return .{ .allocator = allocator };
@@ -126,17 +134,17 @@ pub const Report = struct {
     }
 
     /// The result faces made from face `input` of `operand`, in order.
-    pub fn resultsOf(self: *const Report, operand: u1, input: u32, out: *std.ArrayList(u32)) error{OutOfMemory}!void {
+    pub fn resultsOf(self: *const Report, operand: u32, input: u32, out: *std.ArrayList(u32)) error{OutOfMemory}!void {
         out.clearRetainingCapacity();
         for (self.faces.items) |m| if (m.operand == operand and m.input == input) try out.append(self.allocator, m.result);
     }
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -170,11 +178,15 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var paves = try pave.run(allocator, a, b, tol, common, diag, &stage);
     defer paves.deinit();
     try common.checkCancel();
+    // Operands that met nowhere: the containment table, each shell whole and classified
+    // once (the general path's answer, without the overlay and a ray per face)
+    const table = options.fast_paths and paves.apart();
+    r.by_containment = table;
     stage = .imprint;
-    var fragments = try imprint.run(allocator, &paves, common, diag);
+    var fragments = if (table) try imprint.wholeFaces(allocator, &paves, diag) else try imprint.run(allocator, &paves, common, diag);
     defer fragments.deinit();
     stage = .classify;
-    const classes = try classify.run(allocator, &paves, &fragments, common, diag);
+    const classes = if (table) try classify.byShell(allocator, &paves, &fragments, common, diag) else try classify.run(allocator, &paves, &fragments, common, diag);
     defer allocator.free(classes);
     const keeps = try select.run(allocator, op, &fragments, classes);
     defer allocator.free(keeps);
@@ -203,6 +215,93 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     try warnTouching(allocator, &result, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
+}
+
+/// `operands[0] op operands[1] op …`, folded from the left as KupCAD's chains and the mesh
+/// engine's batch are (the union of all, the first less the rest, the intersection of
+/// all), each step a boolean of the running result and the next operand (§7.4: batches
+/// run as a sequence until General Fuse, D17). The report composes the steps': each
+/// operand's faces followed to the final result's (`FaceMap.operand` the operand's index),
+/// the largest gap, any coincidence, every step's contacts; a refusal's stage and step.
+/// One operand gives its copy.
+pub fn chain(allocator: std.mem.Allocator, operands: []const *const Body, op: Op, options: Options, diag: *Diagnostics, report: ?*Report) Error!Body {
+    if (operands.len == 0) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "a chain's operands" });
+    var own = Report.init(allocator);
+    defer own.deinit();
+    const r = report orelse &own;
+    r.op = op;
+    // The first operand's faces, each its own so far
+    var map: std.ArrayList(FaceMap) = .empty;
+    defer map.deinit(allocator);
+    for (operands[0].faces.items, 0..) |f, i| {
+        if (!f.flags.tombstone) try map.append(allocator, .{ .operand = 0, .input = @intCast(i), .result = @intCast(i), .role = .preserved, .reversed = false });
+    }
+    var held: ?Body = null;
+    errdefer if (held) |*h| h.deinit();
+    for (operands[1..], 1..) |next, k| {
+        var step = Report.init(allocator);
+        defer step.deinit();
+        const current = if (held) |*h| h else operands[0];
+        var made = boolean(allocator, current, next, op, options, diag, &step) catch |e| {
+            r.failed_in = step.failed_in;
+            r.failed_step = @intCast(k);
+            trace.data(allocator, &options.common, "chain", "report", r.view()) catch {};
+            return e;
+        };
+        errdefer made.deinit();
+        try compose(allocator, &map, &step, @intCast(k));
+        r.max_gap = @max(r.max_gap, step.max_gap);
+        r.coincident = r.coincident or step.coincident;
+        try r.contacts.appendSlice(allocator, step.contacts.items);
+        if (held) |*h| h.deinit();
+        held = made;
+    }
+    try r.faces.appendSlice(allocator, map.items);
+    try trace.data(allocator, &options.common, "chain", "report", r.view());
+    if (held) |h| return h;
+    return operands[0].clone(allocator) catch |e| return tooMany(diag, e);
+}
+
+/// The running face map through one more step of a chain: each entry's face of the running
+/// result followed to the step's result faces, the roles composed (merged over split over
+/// preserved), and the step's second operand (the chain's operand `k`) added.
+fn compose(allocator: std.mem.Allocator, map: *std.ArrayList(FaceMap), step: *const Report, k: u32) Error!void {
+    var next: std.ArrayList(FaceMap) = .empty;
+    defer next.deinit(allocator);
+    for (map.items) |e| {
+        for (step.faces.items) |s| {
+            if (s.operand != 0 or s.input != e.result) continue;
+            try next.append(allocator, .{ .operand = e.operand, .input = e.input, .result = s.result, .role = stronger(e.role, s.role), .reversed = e.reversed or s.reversed });
+        }
+    }
+    for (step.faces.items) |s| {
+        if (s.operand == 1) try next.append(allocator, .{ .operand = k, .input = s.input, .result = s.result, .role = s.role, .reversed = s.reversed });
+    }
+    const Order = struct {
+        fn lessThan(_: void, x: FaceMap, y: FaceMap) bool {
+            if (x.operand != y.operand) return x.operand < y.operand;
+            if (x.input != y.input) return x.input < y.input;
+            return x.result < y.result;
+        }
+    };
+    std.mem.sort(FaceMap, next.items, {}, Order.lessThan);
+    // A face reaching one result face by two ways was in two pieces: split at least
+    map.clearRetainingCapacity();
+    for (next.items) |e| {
+        if (map.items.len > 0) {
+            const last = &map.items[map.items.len - 1];
+            if (last.operand == e.operand and last.input == e.input and last.result == e.result) {
+                last.role = stronger(stronger(last.role, e.role), .split);
+                last.reversed = last.reversed or e.reversed;
+                continue;
+            }
+        }
+        try map.append(allocator, e);
+    }
+}
+
+fn stronger(x: Role, y: Role) Role {
+    return @enumFromInt(@max(@intFromEnum(x), @intFromEnum(y)));
 }
 
 /// Whether the operands had coincident faces, and where they touch when no part of
@@ -450,10 +549,10 @@ fn faceMap(allocator: std.mem.Allocator, result: *Body, made: *const Made, log: 
     for (into, 0..) |*t, i| t.* = @intCast(i);
     for (log.merged.items) |m| into[m[0]] = m[1];
     const survivor = struct {
-        fn of(chain: []const u32, i: u32) u32 {
+        fn of(merged_into: []const u32, i: u32) u32 {
             var at = i;
             var steps: usize = 0;
-            while (chain[at] != at and steps < chain.len) : (steps += 1) at = chain[at];
+            while (merged_into[at] != at and steps < merged_into.len) : (steps += 1) at = merged_into[at];
             return at;
         }
     }.of;
