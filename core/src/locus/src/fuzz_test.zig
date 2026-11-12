@@ -461,6 +461,18 @@ fn runArrangement(source: anytype) !Outcome {
             }
         }
     }
+    // A failure shows its arrangement, as a chain shows itself
+    errdefer {
+        std.debug.print("the arrangement that failed:\n", .{});
+        for (given[0..n_inputs], 0..) |g, k| {
+            std.debug.print("  input {d}:\n", .{k});
+            for (g.items) |e| {
+                std.debug.print("    ({d}, {d}) -> ({d}, {d})", .{ e.a[0], e.a[1], e.b[0], e.b[1] });
+                if (e.arc) |arc| std.debug.print(" arc about ({d}, {d}) r {d} {s}", .{ arc.c[0], arc.c[1], arc.r, if (arc.ccw) "ccw" else "cw" });
+                std.debug.print("\n", .{});
+            }
+        }
+    }
     o.run() catch |err| return clean(err);
     try expectWeighed(&o, own_area[0..n_inputs], perimeter[0..n_inputs]);
     var inputs: [MAX_INPUTS][]const overlay_mod.InputEdge = undefined;

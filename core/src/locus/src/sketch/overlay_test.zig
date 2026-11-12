@@ -61,6 +61,7 @@ pub fn expectPlanar(o: *const Overlay) !void {
             }
             const wl: i32 = if (left == overlay.UNBOUNDED) 0 else o.windingOf(left, @intCast(input));
             const wr: i32 = if (right == overlay.UNBOUNDED) 0 else o.windingOf(right, @intCast(input));
+            errdefer std.debug.print("edge {d}: ({d}, {d}) -> ({d}, {d}){s}, input {d}: faces {d} | {d}, windings {d} | {d}\n", .{ ei, o.point(e.a)[0], o.point(e.a)[1], o.point(e.b)[0], o.point(e.b)[1], if (e.arc == null) "" else " (an arc)", input, left, right, wl, wr });
             try testing.expectEqual(want, wl - wr);
         }
     }
