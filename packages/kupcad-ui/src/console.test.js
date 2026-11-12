@@ -16,14 +16,13 @@ const shown = (lines) =>
 
 describe('a run in the console', () => {
   it('is a line saying how it went, then what it printed, its warnings and its error', async () => {
-    const header = await headerOf(
-      'puts "width", 20\nCAD.config(engine: :brep)\ncube(1).material(color: "#cc3333")\nraise "boom"\n',
-    );
+    const header = await headerOf('puts "width", 20\ncube(1)\nwarn("thin wall")\nraise "boom"\n');
     const lines = shown(linesOfRun(header, 'part.kup'));
     expect(lines[0]).toMatch(/^run part\.kup: Failed · \d+ ms · 1 warning$/);
-    expect(lines.slice(1, 3)).toEqual(['output width', 'output 20']);
-    expect(lines[3]).toMatch(/^warning@3 Warning: .*brep/);
-    expect(lines[4]).toBe('error@4 Error: RuntimeError: boom');
+    // warn prints its line as puts does, and keeps it as the run's warning
+    expect(lines.slice(1, 4)).toEqual(['output width', 'output 20', 'output [Warning] thin wall']);
+    expect(lines[4]).toBe('warning@3 Warning: thin wall');
+    expect(lines[5]).toBe('error@4 Error: RuntimeError: boom');
   });
 
   it('says when it printed more than a run keeps, and has no lines of output when it printed none', async () => {
