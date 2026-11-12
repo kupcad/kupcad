@@ -121,8 +121,11 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
         // Decided by the sides: halfway to the neighbouring places, or a step out
         const before_t = if (k > 0) (places.items[k - 1][0].t + place[0].t) / 2 else place[0].t - SIDE_STEP_ZONES * zone;
         const after_t = if (k + 1 < places.items.len) (place[0].t + places.items[k + 1][0].t) / 2 else place[0].t + SIDE_STEP_ZONES * zone;
-        const before = try side(allocator, body, index, vec.addScaled(origin, dir, before_t), options, diag);
-        const after = try side(allocator, body, index, vec.addScaled(origin, dir, after_t), options, diag);
+        const before_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, before_t), options, diag);
+        const after_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, after_t), options, diag);
+        // In the solid or on its boundary, within the zone, is 1
+        const before: i32 = @intFromBool(before_place != .outside);
+        const after: i32 = @intFromBool(after_place != .outside);
         const change = after - before;
         // The normal of the candidate the segment meets most squarely the right way
         var entering = place[0];
@@ -135,18 +138,19 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
             try hits.append(allocator, .{ .t = t, .point = point, .normal = entering.normal, .crossing = 1, .face = entering.face });
         } else if (change < 0) {
             try hits.append(allocator, .{ .t = t, .point = point, .normal = leaving.normal, .crossing = -1, .face = leaving.face });
-        } else {
-            // A touch: in and out at once
+        } else if (before_place != .inside or after_place != .inside) {
+            // A touch from outside (a graze's sides on the boundary too): in and out at once
             try hits.append(allocator, .{ .t = t, .point = point, .normal = entering.normal, .crossing = 1, .face = entering.face });
             try hits.append(allocator, .{ .t = t, .point = point, .normal = leaving.normal, .crossing = -1, .face = leaving.face });
+        } else {
+            // Strictly inside on both sides: out of one solid and into the one touching it
+            // there (or back across a crack), so out first, the count never above one (the
+            // fuzzer, 2026-11-12: a ray through the line two extruded regions touch along)
+            try hits.append(allocator, .{ .t = t, .point = point, .normal = leaving.normal, .crossing = -1, .face = leaving.face });
+            try hits.append(allocator, .{ .t = t, .point = point, .normal = entering.normal, .crossing = 1, .face = entering.face });
         }
     }
     return hits.toOwnedSlice(allocator);
-}
-
-/// 1 inside the solid (or on its boundary, within the zone), 0 outside.
-fn side(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!i32 {
-    return if (try point_in_body.classify(allocator, body, index, p, options, diag) == .outside) 0 else 1;
 }
 
 /// Appends to `out` every meeting of the line `origin + t·dir` (`dir` unit), `t` in

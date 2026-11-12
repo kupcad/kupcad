@@ -166,6 +166,21 @@ test "ray cast: a box crossed, left from inside, grazed at a corner and an edge,
     try testing.expectEqual(@as(usize, 0), miss.len);
 }
 
+test "ray cast: through the line two solids touch along, out of one before into the other" {
+    // The bow tie's prisms touch along x = y = 1: a ray along y = 1 leaves the first
+    // solid and enters the second there, which a touch from outside would order the other way
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var bow = try primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 2, 2 }, .{ 2, 0 }, .{ 0, 2 } }, &diag);
+    defer bow.deinit();
+    var prisms = try Indexed.of(try sweep.extrude(testing.allocator, &bow, .{ 0, 0, 3 }, .{}, &diag));
+    defer prisms.deinit();
+    const hits = try prisms.cast(.{ -1, 1, 1.5 }, .{ 3, 1, 1.5 });
+    defer testing.allocator.free(hits);
+    try expectHits(hits, &.{ 1, 2, 2, 3 }, &.{ 1, -1, 1, -1 });
+    try prisms.expectConsistent(.{ -1, 1, 1.5 }, .{ 3, 1, 1.5 });
+}
+
 test "ray cast and containment: a cylinder across, along its axis, tangent; a cone; a sphere; a torus through its hole" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
