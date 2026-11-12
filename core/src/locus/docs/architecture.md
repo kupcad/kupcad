@@ -712,10 +712,23 @@ importing only those before it, which the layering test holds):**
   tags follow D14: its table holds both operands' rows, a whole face keeps its tag, a
   piece of a split face a `split` row of it and faces made one a `merged` row, under the
   host's operation number (`Options.tag_op`).
-- Refused, each by its own finding: operands with a curved face or edge (M5); a
-  difference that leaves one shell touching itself along a line or at a point (a pocket
-  meeting a face along an edge of the cut, the degeneracy corpus's pinches, M4), which
-  Euler–Poincaré admits for no shell.
+- Refused, each by its own finding: operands with a curved face or edge (M5); and, by
+  design (decided 2026-11-13 with the degeneracy corpus), a result with one shell touching
+  itself along a line or at a point inside one solid (`pinched`, naming the shell: a
+  pocket meeting a face along an edge of its own, a V groove stopped short of the far side),
+  which no Euler–Poincaré count of one shell admits and which a shell could hold only with
+  two vertex records at one point, which the model forbids. Solids touching each other
+  are not pinched: they separate into shells of their own (a V groove right across leaves
+  two solids touching along its bottom line), as touching unions do.
+- The degeneracy corpus, planar part (`boolean/degeneracy_test.zig`, and its classes with
+  closed forms in KupCAD's case rig, compared with the mesh engine): identical boxes, a
+  box in a box and in a cavity, faces touching with equal and opposite normals, coplanar
+  overlap, an edge on a face and on an edge, a vertex on a face, an edge and a vertex,
+  cuts through three corners and along two edges, a knife edge, a mirrored copy, a flush
+  pocket, gaps and overlaps of 1e-3 and 1e-6 (within the zone the operands meet face to
+  face and the result is exact again, the moved vertices merged away), a knife-edge wedge,
+  the V grooves, walls 1e-4 apart (two solids, warned of), operands far off, two
+  1000-sided prisms and 64 pegs (the benchmark's: 390 and 480 ms).
 
 ### 7.5 The 2D kernel (sketches)
 
@@ -756,7 +769,10 @@ image sweeps about the point (its pcurve; on a plane its curve projected; on a c
 without one its curve projected onto the surface), a piece halved until it subtends under
 a quarter radian and its halves agree, so no polyline of the boundary stands in for it and
 lines, circles, ellipses and NURBS are one case; periodic parameters are moved by whole
-periods into the face's box. `raycast.zig`: the candidates are the meetings of the line
+periods into the face's box. A planar face with straight edges takes the same answer from
+the exact crossing count of a ray in its plane (`orient2d`, half-open at vertices), with
+no angle per piece: a boolean's paves ask it of every vertex near a face, and on a
+1000-sided face the angles took most of a second (2026-11-13). `raycast.zig`: the candidates are the meetings of the line
 with every face's surface whose box the segment meets, in closed form for planes,
 cylinders, cones, spheres and tori (`math/poly.zig`: the roots of the implicit equation
 along the line, degree 1, 2 or 4, by derivative isolation and bisection, the parameter
@@ -997,7 +1013,9 @@ fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-1
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
 `intersect/planar_faces.zig`, within `xsect` of an edge of each; coplanar faces cover no
 region together, by the overlay of the two), so solids touching along a line or at a
-point pass and a face passing through or lying on another does not (`faces_intersect`);
+point pass, a point of two shells' faces needing only one's boundary (a corner on a face
+splits no face; a vertex loop could record it, once the mesher and the STEP writer take
+one), and a face passing through or lying on another does not (`faces_intersect`);
 and each shell lies where the other shells' winding numbers sum to 0 for an outer shell
 and 1 for a void, at a point inside one of its faces (`shell_overlaps`): voids inside an
 outer shell and not inside each other, shells apart, any nesting right; run on every
