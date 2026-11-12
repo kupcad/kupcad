@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const surfaces = @import("../geometry/surfaces.zig");
@@ -39,7 +40,8 @@ pub const Place = enum { inside, outside, boundary };
 /// or outside by the winding of its loops.
 pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within: f64, diag: *Diagnostics) Error!Place {
     if (try nearEdge(body, f, p, within, diag)) return .boundary;
-    return if (try winds(body, f, uv, diag)) .inside else .outside;
+    const inside = try windsPlanar(body, f, uv, diag) orelse try winds(body, f, uv, diag);
+    return if (inside) .inside else .outside;
 }
 
 /// The parameters of `p` on face `f`'s surface, a periodic direction's value taken a
@@ -129,6 +131,33 @@ pub fn nearestOnEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) Vec3 {
 
 /// Whether the loops of face `f` wind about `uv`: the angle they sweep about it, a whole
 /// number of turns, is not zero (holes wind back).
+/// `winds` for a planar face with straight edges, by the exact crossing count of the ray from
+/// `uv` to +x (`orient2d`, the half-open rule at vertices): the same answer for a point off
+/// the boundary, without an angle per piece (a boolean's paves ask it of every vertex near a
+/// face; on a 1000-sided face the angles took most of a second, 2026-11-12). Null for any
+/// other face.
+fn windsPlanar(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!?bool {
+    const face = body.face(f);
+    if (face.surface.kind != .plane) return null;
+    const frame = body.geometry.planes.items[face.surface.index].frame;
+    var inside = false;
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| {
+            if (body.edge(body.coedge(c).edge).curve.kind != .line) return null;
+            const a3 = frame.toLocal(body.point(body.coedgeStart(c)));
+            const b3 = frame.toLocal(body.point(body.coedgeEnd(c)));
+            const a: Vec2 = .{ a3[0], a3[1] };
+            const b: Vec2 = .{ b3[0], b3[1] };
+            if ((a[1] > uv[1]) == (b[1] > uv[1])) continue;
+            // East of the point: left of an edge going up, right of one going down
+            if ((predicates.orient2d(a, b, uv) > 0) == (b[1] > a[1])) inside = !inside;
+        }
+    }
+    return inside;
+}
+
 fn winds(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!bool {
     const face = body.face(f);
     const surface = body.geometry.surface(face.surface);

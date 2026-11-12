@@ -1,8 +1,9 @@
 //! The benchmarks (docs/architecture.md §12): fixed inputs, timed, each against a budget
 //! set from the first measurements (ReleaseFast on an Apple M-series laptop, 2026-11-06)
 //! with a 20% margin; `zig build bench` fails on a regression past it. The §12 cases that
-//! need booleans, tessellation and ray casts join as M3–M5 land; until then the
-//! constructions, the hull, the BVH, STEP export, the JSON dump and compaction are timed.
+//! need booleans, tessellation and ray casts join as M3–M5 land; the constructions, the
+//! hull, the BVH, STEP export, the JSON dump and compaction are timed, and since M4 the
+//! degeneracy corpus's boolean cases of size.
 
 const std = @import("std");
 const locus = @import("locus");
@@ -28,6 +29,12 @@ const CASES = [_]Case{
     .{ .name = "STEP of a 2,000-face polyhedron", .run = stepCase, .budget_ms = 25, .repeat = 1 },
     .{ .name = "JSON dump and hash of a 2,000-face polyhedron", .run = jsonCase, .budget_ms = 35, .repeat = 1 },
     .{ .name = "compact of 1,000,000 entities", .run = compactCase, .budget_ms = 10, .repeat = 1 },
+    // The degeneracy corpus's two timed classes (research/solidcraft.md §1, tier 02: truck
+    // grew 4–9× per doubling of pegs), measured 2026-11-13: the prisms 390 ms (1300 before
+    // in_face's crossing count for planar faces), the pegs 480 ms, a chain of 64 steps each
+    // rebuilding the whole (General Fuse, D17, is the planned route for such batches)
+    .{ .name = "union of two 1000-sided prisms", .run = prismsCase, .budget_ms = 400, .repeat = 1 },
+    .{ .name = "64 pegs joined to a plate", .run = pegsCase, .budget_ms = 500, .repeat = 1 },
 };
 
 const tol = locus.Tolerance.fromZone(1e-5);
@@ -159,6 +166,56 @@ fn compactCase(allocator: std.mem.Allocator) !void {
     for (0..1_000_000) |i| _ = try b.addVertex(.{ .point = p, .tombstone = i % 2 == 0 });
     var remap = try b.compact();
     remap.deinit(allocator);
+}
+
+/// A regular prism of `n` sides of circumradius `r` about `(cx, 0)`, 5 high.
+fn prism(allocator: std.mem.Allocator, n: usize, r: f64, cx: f64) !locus.Body {
+    var diag = locus.Diagnostics.init(allocator);
+    defer diag.deinit();
+    const points = try allocator.alloc(locus.math.vec.Vec2, n);
+    defer allocator.free(points);
+    for (points, 0..) |*p, k| {
+        const t = 2 * std.math.pi * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(n));
+        p.* = .{ cx + r * @cos(t), r * @sin(t) };
+    }
+    var sheet = try locus.construct.primitives.polygon(allocator, tol, points, &diag);
+    defer sheet.deinit();
+    return locus.construct.sweep.extrude(allocator, &sheet, .{ 0, 0, 5 }, .{}, &diag);
+}
+
+fn prismsCase(allocator: std.mem.Allocator) !void {
+    var p = try prism(allocator, 1000, 10, 0);
+    defer p.deinit();
+    var q = try prism(allocator, 1000, 10, 5);
+    defer q.deinit();
+    var diag = locus.Diagnostics.init(allocator);
+    defer diag.deinit();
+    var u = try locus.boolean.pipeline.boolean(allocator, &p, &q, .@"union", .{}, &diag, null);
+    u.deinit();
+}
+
+fn pegsCase(allocator: std.mem.Allocator) !void {
+    var diag = locus.Diagnostics.init(allocator);
+    defer diag.deinit();
+    const P = locus.construct.primitives;
+    const T = locus.construct.transform;
+    var plate = try P.box(allocator, tol, 16, 16, 1, false, &diag);
+    defer plate.deinit();
+    var pegs: [64]locus.Body = undefined;
+    var made: usize = 0;
+    defer for (pegs[0..made]) |*g| g.deinit();
+    var operands: [65]*const locus.Body = undefined;
+    operands[0] = &plate;
+    for (0..8) |i| for (0..8) |j| {
+        var unit = try P.box(allocator, tol, 1, 1, 2, false, &diag);
+        defer unit.deinit();
+        const at: locus.math.vec.Vec3 = .{ @as(f64, @floatFromInt(2 * i)) + 0.5, @as(f64, @floatFromInt(2 * j)) + 0.5, 1 };
+        pegs[made] = try T.transform(allocator, &unit, &locus.math.mat.Affine.translate(at), .{}, &diag);
+        operands[made + 1] = &pegs[made];
+        made += 1;
+    };
+    var studded = try locus.boolean.pipeline.chain(allocator, &operands, .@"union", .{}, &diag, null);
+    studded.deinit();
 }
 
 pub fn main() !void {

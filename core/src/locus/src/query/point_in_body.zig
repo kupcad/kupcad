@@ -67,9 +67,8 @@ pub fn classify(allocator: std.mem.Allocator, body: *const Body, index: *const F
     defer found.deinit(allocator);
 
     // Along the normals of the nearest faces' feet
-    const order = try nearestFaces(allocator, index, p);
-    defer allocator.free(order);
-    for (order[0..@min(order.len, FOOT_RAYS)]) |item| {
+    var nearest: [FOOT_RAYS]u32 = undefined;
+    for (nearestFaces(index, p, &nearest)) |item| {
         const f = index.faces[item];
         const uv = in_face.uvOf(body, f, p);
         const foot = body.geometry.surface(body.face(f).surface).eval(uv[0], uv[1]);
@@ -129,22 +128,30 @@ fn collectBox(allocator: std.mem.Allocator, index: *const FaceIndex, box: Box3, 
     if (collect.failed) return error.OutOfMemory;
 }
 
-/// The items in increasing order of their box's distance from `p`, ties by item. Owned by
-/// `allocator`.
-fn nearestFaces(allocator: std.mem.Allocator, index: *const FaceIndex, p: Vec3) Error![]u32 {
-    const order = try allocator.alloc(u32, index.faces.len);
-    for (order, 0..) |*o, i| o.* = @intCast(i);
-    const Ctx = struct {
-        index: *const FaceIndex,
-        p: Vec3,
-        fn lessThan(self: @This(), a: u32, b: u32) bool {
-            const da = boxDistance(self.index.boxOf(a), self.p);
-            const db = boxDistance(self.index.boxOf(b), self.p);
-            return da < db or (da == db and a < b);
+/// The `out.len` items nearest `p` by their box's distance, nearest first, ties by item:
+/// the first of a sort of them all, found in one pass (a classification per fragment of a
+/// boolean's faces sorted every face for six, 2026-11-12). The filled part of `out`.
+fn nearestFaces(index: *const FaceIndex, p: Vec3, out: []u32) []u32 {
+    var dist: [FOOT_RAYS]f64 = undefined;
+    var n: usize = 0;
+    for (0..index.faces.len) |i| {
+        const item: u32 = @intCast(i);
+        const d = boxDistance(index.boxOf(item), p);
+        // Its place among those kept: after every one nearer, or as near and earlier
+        var at = n;
+        while (at > 0 and dist[at - 1] > d) at -= 1;
+        if (at == out.len) continue;
+        const last = @min(n, out.len - 1);
+        var k = last;
+        while (k > at) : (k -= 1) {
+            out[k] = out[k - 1];
+            dist[k] = dist[k - 1];
         }
-    };
-    std.mem.sort(u32, order, Ctx{ .index = index, .p = p }, Ctx.lessThan);
-    return order;
+        out[at] = item;
+        dist[at] = d;
+        n = @min(n + 1, out.len);
+    }
+    return out[0..n];
 }
 
 fn boxDistance(box: Box3, p: Vec3) f64 {
