@@ -460,12 +460,13 @@ about its centre (`orient2d` about the centre, never an angle: no seam, no slack
 same answer for a vertex a little off the circle whichever piece of the arc asks), which
 of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLine`,
 `compareLineX`, a point taken as a circle of no radius), and a tie there means one point,
-where the two segments meet: their order is the one at the end they share, the segment
-leaning east going up when they fan up from a vertex on or below the ray (the ray taken
-a hair above it), going down when they fan down from a vertex the welder put a rounding
-above it where their circles cross at its height (two level there and opposite, the
-lowest points of two arcs rising each way, lean as far as they can: the east one), then
-of two tangent the same way the one bending east. Each such expression has bounded depth and `f64` leaves, so squaring
+where the two segments meet, a vertex they share: their order is the overlay's own order
+of their half-edges about it, the order the cycles were walked by (2026-11-12; re-deriving
+it from tangents got a vertex a rounding above the ray and two level opposite tangents
+wrong). A tie at no vertex (an arc's two pieces at its lowest point on the ray) takes the
+ray a hair above: the piece leaning east going up, level and opposite the east one, then
+the one bending east. A cycle that runs each of its edges both ways bounds nothing, its
+area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
 arc's welded ends on its circle; those reconciliations (an arc piece within the zone of its
@@ -940,14 +941,19 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
   SMLib keeps ~60 such surface-pair files; OCCT and SolveSpace fixed each of theirs after
   a bug report, so the list is seeded from their issue history.
 - **Fuzz**: coverage-guided, as KupCAD's language is fuzzed (`std.testing.fuzz` with a
-  `Smith` choosing the input, `zig build fuzz --fuzz=<runs>` searching from a corpus
-  nightly, a plain test run replaying it): the body JSON reader and later the STEP reader
-  on any bytes; the 2D kernel on generated rings of points on a coarse grid with
-  operation chains (M2); random placements, rotations and scales of primitives combined
-  by random booleans (M4). Every result is valid or a clean error, nothing leaks, the
-  area and volume identities of booleans hold exactly, and no run hangs (every traversal
-  is bounded by entity counts). A failing input is saved as a script, so it becomes a
-  parity case.
+  `Smith` choosing the input, `zig build fuzz-run -Dfuzz-runs=<runs>` searching from a
+  corpus nightly and failing on a find, which Zig 0.17's `zig build fuzz --fuzz=<runs>`
+  reports but exits 0 on; a plain test run replaying the corpus): the body JSON reader
+  and later the STEP reader on any bytes; the 2D kernel on generated rings of points on a
+  coarse grid with operation chains (M2); the overlay alone on generated arrangements of
+  near-tangent arcs, its labels checked at a point inside each face against each input's
+  own crossings, exactly (`locus_overlay`, 2026-11-12); random placements, rotations and
+  scales of primitives combined by random booleans (M4). Every result is valid or a clean
+  error, nothing leaks, the area and volume identities of booleans hold exactly, and no
+  run hangs (every traversal is bounded by entity counts). A failing run prints its every
+  draw as a `replay:` line, and `zig build test -Dfuzz-replay=FILE` plays such lines back
+  (the bytes Zig saves do not replay through the Smith on a plain run), so a find becomes
+  a regression test.
 - **Allocation failure**: every operation under KupCAD's failing-allocator sweep leaves
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.
