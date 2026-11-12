@@ -25,7 +25,28 @@ test "B-Rep trace: a script's transforms leave a numbered body file per phase, e
     }
 
     // A failing script keeps the phases before its failure, and says why it failed
-    const before = try brep_trace.run(testing.allocator, testing.io, "cube(1).translate(1, 0, 0) + cube(2)", .none, tmp.dir, &diag);
+    const before = try brep_trace.run(testing.allocator, testing.io, "cube(1).translate(1, 0, 0) + sphere(r: 1)", .none, tmp.dir, &diag);
     try testing.expectEqual(@as(usize, 3), before);
     try testing.expect(std.mem.indexOf(u8, diag.message.?, "brep engine can't") != null);
+}
+
+test "B-Rep trace: a boolean leaves its phases' bodies and its report beside them" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+    // The translation's three phases; the boolean's arguments, its assembled and
+    // simplified bodies and its report; the chain's report; the STEP writer's
+    const phases = try brep_trace.run(testing.allocator, testing.io, "cube(2) + cube(2).translate(1, 1, 1)", .none, tmp.dir, &diag);
+    try testing.expectEqual(@as(usize, 9), phases);
+    for ([_][]const u8{ "005-boolean-assembled.json", "006-boolean-simplified.json" }) |name| {
+        const text = try tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(text);
+        var body = try locus.io.body_json.load(testing.allocator, text);
+        body.deinit();
+    }
+    const report = try tmp.dir.readFileAlloc(testing.io, "007-boolean-report.json", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(report);
+    try testing.expect(std.mem.indexOf(u8, report, "\"quality\": \"exact\"") != null);
+    try testing.expect(std.mem.indexOf(u8, report, "\"faces\"") != null);
 }

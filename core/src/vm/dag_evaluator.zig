@@ -251,7 +251,7 @@ fn executeChain(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag:
                 h.* = try geometryOf(e);
                 try vm.requireSameEngine(handles[0].engine, h.engine);
             }
-            try vm.requireFeature(handles[0].engine, .boolean);
+            try vm.requireBoolean(handles);
             const result = kernel.batchBoolean(vm.allocator, handles, op) orelse return kernelFailed(vm, tag);
             try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
         },
@@ -291,7 +291,7 @@ fn executeBatch(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag:
         h.* = try geometryOf(e);
         try vm.requireSameEngine(handles[0].engine, h.engine);
     }
-    if (is_union) try vm.requireFeature(handles[0].engine, .boolean);
+    if (is_union) try vm.requireBoolean(handles);
     if (!is_union) for (handles) |h| try requireFlatOrCurvedHull(vm, h);
 
     const result = if (is_union)
@@ -589,7 +589,7 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             const left_handle = try geometryOf(left);
             const right_handle = try geometryOf(right);
             try vm.requireSameEngine(left_handle.engine, right_handle.engine);
-            try vm.requireFeature(left_handle.engine, if (node.tag == .minkowski) .minkowski else .boolean);
+            if (node.tag == .minkowski) try vm.requireFeature(left_handle.engine, .minkowski) else try vm.requireBoolean(&.{ left_handle, right_handle });
             if (node.tag == .minkowski) {
                 try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
             }
@@ -630,6 +630,7 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             const p = b.getTrimByPlanePayload(node);
             const solid = try geometryOf(target);
             try vm.requireFeature(solid.engine, .trim_by_plane);
+            if (kernel.hasCurvedFaces(solid)) try vm.requireFeature(solid.engine, .curved_boolean);
             try pushSolid(vm, v_stack, node.tag, kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset));
         },
         .erode => {

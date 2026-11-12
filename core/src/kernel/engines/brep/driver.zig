@@ -182,16 +182,16 @@ pub fn hasCurvedEdges(handle: geom.CrossSectionHandle) bool {
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
         .transform, .sphere, .cone, .extrude, .revolve, .volume, .surface_area, .genus, .bounding_box, .sketch_measure, .sketch_boolean, .offset, .sketch_hull, .sketch_contours, .sketch_contains, .mesh, .contains_point, .ray_cast, .min_gap, .faces, .slice, .materials => true,
-        .boolean,
+        // Booleans and plane cuts of solids with flat faces (M4); a curved operand is
+        // refused by the caller (`curved_boolean`, M5)
+        .boolean, .trim_by_plane, .decompose, .empty => true,
+        .curved_boolean,
         .loft,
         .curved_hull,
         .extrude_twist,
         .extrude_scale,
         .minkowski,
-        .trim_by_plane,
         .project,
-        .decompose,
-        .empty,
         => false,
     };
 }
@@ -470,8 +470,8 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return hullOf(objs);
 }
 
-// --- not implemented for B-Rep yet: each is refused before the driver (supports), and
-// answers null here, never a stand-in ---
+// --- the empty solid and sketch; then what is not implemented for B-Rep yet: each is
+// refused before the driver (supports), and answers null here, never a stand-in ---
 
 /// The empty solid under `like`'s settings: what a sweep of the empty sketch is.
 fn emptySolidLike(like: *const BrepSolid) ?geom.GeometryHandle {
@@ -479,14 +479,20 @@ fn emptySolidLike(like: *const BrepSolid) ?geom.GeometryHandle {
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
+/// The solid with nothing in it, under `config`'s settings: a union of nothing.
 fn emptyImpl(config: *const engine_config.EngineConfig) ?geom.GeometryHandle {
-    _ = config;
-    return null;
+    var body = Body.empty(backend_allocator, tolerance(config));
+    body.kind = .solid;
+    const solid = BrepSolid.create(body, Settings.of(config)) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
+/// The sketch with nothing in it, under `config`'s settings: an empty sheet.
 fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSectionHandle {
-    _ = config;
-    return null;
+    var body = Body.empty(backend_allocator, tolerance(config));
+    body.kind = .sheet;
+    const sheet = BrepSolid.create(body, Settings.of(config)) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(sheet) };
 }
 
 /// The sketch swept up by `height`: exact, so `slices` is the mesh engine's; a twist or a
@@ -601,19 +607,41 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: 
     return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
-fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    _ = a;
-    _ = b;
-    _ = op;
-    return null;
+/// The kernel's operation as Locus's.
+fn booleanOp(op: kernel.BooleanOp) locus.boolean.pipeline.Op {
+    return switch (op) {
+        .union_op => .@"union",
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
 }
 
-/// A batch of one is that solid, copied (the caller owns the result); any more is a boolean.
+/// Two solids combined by Locus's boolean (M4: flat faces; a curved operand the caller
+/// refused, `curved_boolean`), the result under the first's settings. Its report goes to
+/// the trace beside the phases (`kupcad dev brep-trace`); its warnings are not a failure.
+fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    return batchBooleanImpl(backend_allocator, &.{ a, b }, op);
+}
+
+/// The solids folded from the left as the mesh engine's batch is (the union of all, the
+/// first less the rest, the intersection of all), Locus's chain; one is copied (the caller
+/// owns the result).
 fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    _ = allocator;
-    _ = op;
-    if (objs.len != 1 or objs[0].engine != .brep_native) return null;
-    return cloneImpl(objs[0]);
+    if (objs.len == 0) return null;
+    for (objs) |o| if (o.engine != .brep_native) return null;
+    if (objs.len == 1) return cloneImpl(objs[0]);
+    const bodies = allocator.alloc(*const Body, objs.len) catch return null;
+    defer allocator.free(bodies);
+    for (objs, bodies) |o, *body| body.* = &solidOf(o.ptr).body;
+    const first = solidOf(objs[0].ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.boolean.pipeline.chain(backend_allocator, bodies, booleanOp(op), .{ .common = first.options() }, &diag, null) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, first.settings) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
@@ -648,13 +676,19 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     return crossSectionBatchBooleanImpl(backend_allocator, &.{ a, b }, op);
 }
 
+/// The part of the solid on the side of the plane `n·p = offset` its normal points to (the
+/// normal of any length, the offset along its unit), as the mesh engine trims: the
+/// solid's intersection with that half-space (Locus `trimByPlane`, flat faces until M5).
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = nx;
-    _ = ny;
-    _ = nz;
-    _ = offset;
-    return null;
+    const src = solidOf(a.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const body = locus.boolean.trim.trimByPlane(backend_allocator, &src.body, .{ nx, ny, nz }, offset, .{ .common = src.options() }, &diag, null) catch {
+        remember(&diag);
+        return null;
+    };
+    const solid = BrepSolid.create(body, src.settings) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
@@ -665,15 +699,34 @@ fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.Cr
     return null;
 }
 
-/// Decomposition is not implemented: the one "part" is a copy of the input, because the
-/// caller takes ownership of every returned handle.
+/// The solid's parts (Locus `decompose`): each outer shell with the voids it holds, under
+/// the solid's settings; the caller owns every handle. (The mesh engine splits by its
+/// mesh's connected components, so it gives a void as a part of its own, inside out.)
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    const part = cloneImpl(handle) orelse return null;
-    const res = allocator.alloc(geom.GeometryHandle, 1) catch {
-        destructImpl(part);
+    const src = solidOf(handle.ptr);
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    const bodies = locus.construct.decompose.decompose(backend_allocator, &src.body, src.options(), &diag) catch {
+        remember(&diag);
         return null;
     };
-    res[0] = part;
+    defer backend_allocator.free(bodies);
+    const res = allocator.alloc(geom.GeometryHandle, bodies.len) catch {
+        for (bodies) |*b| b.deinit();
+        return null;
+    };
+    var made: usize = 0;
+    for (bodies) |body| {
+        // `create` frees the body it can't take; the ones after it are freed here
+        const part = BrepSolid.create(body, src.settings) catch {
+            for (res[0..made]) |p| destructImpl(p);
+            for (bodies[made + 1 ..]) |*b| b.deinit();
+            allocator.free(res);
+            return null;
+        };
+        res[made] = .{ .engine = .brep_native, .ptr = @ptrCast(part) };
+        made += 1;
+    }
     return res;
 }
 

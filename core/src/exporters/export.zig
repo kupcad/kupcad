@@ -243,7 +243,7 @@ fn exportSolids(
             defer handles.deinit(allocator);
             // Refuse parts the engine can't tessellate, or unite, before any work on them.
             for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-            if (handles.items.len > 1) try vm.requireFeature(handles.items[0].engine, .boolean);
+            if (handles.items.len > 1) try vm.requireBoolean(handles.items);
             return stl_exporter.buildStlOfParts(allocator, handles.items) catch |err| switch (err) {
                 error.UnionFailed => return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"}),
                 else => return err,

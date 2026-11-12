@@ -1906,6 +1906,14 @@ pub const VM = struct {
         return self.fail(.NotImplementedError, error_kind.UNSUPPORTED_FMT, .{ engine.scriptName(), feature.describe() });
     }
 
+    /// A boolean (or a plane's cut) of `handles`: their engine combines solids, and those
+    /// with curved faces too when any has them (`curved_boolean`).
+    pub fn requireBoolean(self: *VM, handles: []const geom.GeometryHandle) error{RuntimeError}!void {
+        if (handles.len == 0) return;
+        try self.requireFeature(handles[0].engine, .boolean);
+        for (handles) |h| if (kernel.hasCurvedFaces(h)) try self.requireFeature(h.engine, .curved_boolean);
+    }
+
     /// For a feature the result can do without (materials): warns, once per run, that
     /// `engine` lacks it, instead of dropping it silently.
     pub fn warnUnsupported(self: *VM, engine: geom.EngineType, feature: kernel.Feature) void {

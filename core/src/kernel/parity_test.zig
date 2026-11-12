@@ -105,14 +105,29 @@ const SHAPES = [_][]const u8{
     "cube(3, round_r: 0.5, segments: 64)",
     "line([0, 0], [8, 0]).arc_to([10, 2], r: 2).line_to([10, 10]).line_to([0, 10]).close.extrude(2)",
     "(line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])).close.extrude(3)",
+    // Booleans of solids with flat faces (M4): at a corner, a void, a chain, a hole through
+    // a turned slab; cuts by a plane, level and slanted
+    "cube(2) + cube(2).translate(1, 1, 1)",
+    "cube(2) - cube(2).translate(1, 1, 1)",
+    "cube(2) & cube(2).translate(1, 1, 1)",
+    "cube(4) - cube(2).translate(1, 1, 1)",
+    "cube(2) + cube(2).translate(1, 0, 0) + cube(2).translate(2, 0, 0)",
+    "(square(10).extrude(5) - cube(2, 2, 7).translate(4, 4, -1)).rotate(z: 30)",
+    "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]) - cube(3)",
+    "cube(4).trim_by_plane(0, 0, 1, 1)",
+    "cube(4).rotate(30, 40, 50).trim_by_plane(1, 1, 0, 1)",
 };
 
 /// What the B-Rep engine refuses and the mesh engine builds: a non-uniform scale of a
 /// curved part has no exact surfaces (architecture D20), so it is refused rather than
 /// approximated; the mesh engine, which has no exact surfaces to keep, scales its mesh.
+/// And booleans of curved solids, until Locus's M5.
 const BREP_REFUSES = [_][]const u8{
     "cylinder(r: 1, h: 3, segments: 64).scale(1, 2, 1)",
     "cylinder(r: 1, h: 3, segments: 64).transform([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])",
+    // A boolean or a plane's cut of a curved solid waits for M5 (`curved_boolean`)
+    "cube(2) - cylinder(r: 0.5, h: 3, segments: 64)",
+    "cylinder(r: 1, h: 3, segments: 64).trim_by_plane(0, 0, 1, 1)",
 };
 
 /// Arguments both engines must refuse, with the same error.
@@ -222,7 +237,7 @@ test "invariants on the B-Rep engine: a move or a mirror keeps the volume exactl
     }
 }
 
-test "parity: a non-uniform scale of a curved part is refused on the B-Rep engine and built on the mesh engine" {
+test "parity: a non-uniform scale of a curved part, and a boolean of one, are refused on the B-Rep engine and built on the mesh engine" {
     for (BREP_REFUSES) |source| {
         errdefer std.debug.print("script: {s}\n", .{source});
         _ = try boxOn(.manifold, source);

@@ -1,10 +1,8 @@
-37:7 W [brep-unsupported] -: the brep engine can't combine solids (union, difference, intersection) yet, so this fails when the script runs
-38:10 W [brep-unsupported] +: the brep engine can't combine solids (union, difference, intersection) yet, so this fails when the script runs
-38:16 E [shape-mismatch] extrude isn't a Solid's method (a Sketch's), so this fails when the script runs
-41:9 W [brep-unsupported] offset: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
-43:10 W [brep-unsupported] shell: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
-45:1 W [unused-variable] Unused variable 'inside'. Prefix with '_' if intentional.
-46:1 W [unused-variable] Unused variable 'drawn'. Prefix with '_' if intentional.
+40:16 E [shape-mismatch] extrude isn't a Solid's method (a Sketch's), so this fails when the script runs
+43:9 W [brep-unsupported] offset: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
+45:10 W [brep-unsupported] shell: the brep engine can't take Minkowski sums (minkowski, a solid's offset, shell) yet, so this fails when the script runs
+47:1 W [unused-variable] Unused variable 'inside'. Prefix with '_' if intentional.
+48:1 W [unused-variable] Unused variable 'drawn'. Prefix with '_' if intentional.
 --- after --fix (2 fixed) ---
 plate = cube(10).translate(5, 0, 0) # Manifold: fine
 
@@ -39,7 +37,9 @@ end
 
 holder = plate(4)
 
-# Booleans on shapes, whatever operator writes them.
+# Booleans on shapes, whatever operator writes them: B-Rep combines solids with flat faces
+# (M4), and refuses a curved operand (the cylinder here) when the script runs, which the
+# lint can't tell from the names, so none is reported.
 box = cube(10)
 hole = cylinder(r: 2, h: 20)
 cut = box - hole

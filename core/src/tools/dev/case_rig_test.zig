@@ -69,12 +69,12 @@ test "case rig: a wrong answer fails, a missing refusal fails, a refusal by desi
     try testing.expectEqual(.fail, built.verdict);
     try testing.expect(std.mem.indexOf(u8, built.message.?, "wants its closed form") != null);
 
-    const refused = cases.Case{ .tier = .booleans, .name = "refused", .script = "cube(2) + cube(2).translate(1, 1, 1)", .what = "", .method = "", .source = .analytic, .from = "this test", .expect = .{ .refused = .{ .feature = .boolean, .until = "M4" } }, .mesh_bound = null };
+    const refused = cases.Case{ .tier = .booleans, .name = "refused", .script = "cube(2) + sphere(r: 1)", .what = "", .method = "", .source = .analytic, .from = "this test", .expect = .{ .refused = .{ .feature = .curved_boolean, .until = "M5" } }, .mesh_bound = null };
     var apart = try rig.run(testing.allocator, testing.io, &refused, .brep_native, TIME_LIMIT_MS);
     defer apart.deinit(testing.allocator);
     errdefer std.debug.print("refused sample: {s}\n", .{apart.message orelse ""});
     try testing.expectEqual(.refused, apart.verdict);
-    try testing.expect(std.mem.indexOf(u8, apart.message.?, "until M4") != null);
+    try testing.expect(std.mem.indexOf(u8, apart.message.?, "until M5") != null);
 
     const slow = cases.Case{ .tier = .primitives, .name = "slow", .script = "begin\n  n = 0\n  while true\n    n += 1\n  end\nend", .what = "", .method = "", .source = .analytic, .from = "this test", .expect = .{ .measures = .{ .volume = 1 } }, .mesh_bound = null };
     var hung = try rig.run(testing.allocator, testing.io, &slow, .brep_native, 50);

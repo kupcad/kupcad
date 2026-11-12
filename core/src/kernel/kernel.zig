@@ -55,6 +55,9 @@ pub const Feature = enum {
     sketch_boolean,
     sketch_hull,
     curved_hull,
+    /// A boolean or a plane's cut of a solid with curved faces (an engine that combines
+    /// only flat-faced solids so far refuses it by the operands, not by the operation).
+    curved_boolean,
     sphere,
     cone,
     extrude_twist,
@@ -97,6 +100,7 @@ pub const Feature = enum {
             .sketch_boolean => "combine sketches (union, difference, intersection)",
             .sketch_hull => "take the hull of sketches",
             .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's) or of a sketch with arcs",
+            .curved_boolean => "combine or cut solids with curved faces (a cylinder's, a sphere's)",
             .sphere => "make exact spheres",
             .cone => "make cones (a cylinder with r1 different from r2)",
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
@@ -151,7 +155,7 @@ pub const Feature = enum {
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
             .sketch_contours => &.{ "export_svg", "export_dxf" },
-            .sketch_boolean, .sketch_hull, .sketch_contains, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
+            .sketch_boolean, .sketch_hull, .sketch_contains, .curved_hull, .curved_boolean, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };

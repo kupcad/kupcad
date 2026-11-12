@@ -2339,8 +2339,10 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
     // or surface-less copy, or a generic failure.
     const cases = [_]struct { src: []const u8, expected: []const u8 }{
         .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = "no error" }, // exact since M1
-        .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = brepLacks(.boolean) }, // kept both solids
-        .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = brepLacks(.boolean) },
+        .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = "no error" }, // kept both solids; exact since M4
+        .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("(cube(10) - cylinder(r: 2, h: 20)).simplify"), .expected = brepLacks(.curved_boolean) }, // M5
+        .{ .src = comptime rescued("union([cube(10), sphere(r: 2)]).simplify"), .expected = brepLacks(.curved_boolean) },
         .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = "no error" }, // was a 3D cube; exact since M2
         .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" }, // was a 10 mm cube; exact since M1
         .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) },
@@ -2364,10 +2366,11 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = "no error" }, // a sweep reads the profile's outline to place it; exact since M2
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.minkowski) }, // a Minkowski sum with its rounding sphere
-        .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
+        .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = "no error" }, // exact since M4
+        .{ .src = comptime rescued("sphere(r: 5).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.curved_boolean) },
         .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = "no error" }, // exact since M3
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
-        .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
+        .{ .src = comptime rescued("cube(10).decompose"), .expected = "no error" }, // was the whole solid as one part; exact since M4
         .{ .src = comptime rescued("cube(10).volume"), .expected = "no error" }, // was 0; exact since M1
         .{ .src = comptime rescued("square(10).empty?"), .expected = "no error" }, // was false
         .{ .src = comptime rescued("cube(10).surface_area"), .expected = "no error" },
@@ -3493,14 +3496,14 @@ test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform take
 
 test "Stdlib: union([]) is the empty Solid, a valid part that renders nothing" {
     // It raised an ArgumentError, though a list of optional parts all left out is an
-    // ordinary outcome of procedural generation. The B-Rep engine has no empty solid yet.
+    // ordinary outcome of procedural generation. The B-Rep engine has one since M4.
     try expectScripts(&.{
         .{ .src = "r = union([]).volume", .expected = .{ .num = 0 } },
         .{ .src = "r = (cube(1) + union([])).volume", .expected = .{ .num = 1 } },
         .{ .src = "r = (cube(1) - union([])).volume", .expected = .{ .num = 1 } },
         .{ .src = "parts = [nil, nil].compact\nr = union(parts).empty?", .expected = .{ .boolean = true } },
         .{ .src = comptime rescued("batch_hull([])"), .expected = .{ .str = "ArgumentError: batch_hull needs at least one Solid, got an empty Array" } },
-        .{ .src = comptime rescued("CAD.with_config(engine: :brep) do\n  union([]).volume\nend"), .expected = .{ .str = brepLacks(.empty) } },
+        .{ .src = "r = CAD.with_config(engine: :brep) do\n  [union([]).volume, union([]).empty?, (cube(1) + union([])).volume]\nend.inspect", .expected = .{ .str = "[0, true, 1]" } },
     });
 }
 

@@ -7,10 +7,11 @@ test "B-Rep readiness: a script that builds, one the engine refuses naming what 
     defer builds.deinit(testing.allocator);
     try testing.expectEqual(.builds, std.meta.activeTag(builds));
 
-    var refused = try readiness.check(testing.allocator, testing.io, "cube(1) + cube(2)", .none);
+    var refused = try readiness.check(testing.allocator, testing.io, "cube(1) + sphere(r: 2)", .none);
     defer refused.deinit(testing.allocator);
+    try testing.expectEqual(.refused, std.meta.activeTag(refused));
     try testing.expect(std.mem.indexOf(u8, refused.refused, "brep engine can't") != null);
-    try testing.expect(std.mem.indexOf(u8, refused.refused, "combine solids") != null);
+    try testing.expect(std.mem.indexOf(u8, refused.refused, "curved faces") != null);
 
     var broken = try readiness.check(testing.allocator, testing.io, "cube(", .none);
     defer broken.deinit(testing.allocator);

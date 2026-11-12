@@ -119,7 +119,7 @@ pub fn meshIntersects(vm: *VM, receiver: value.Value, other: value.Value) !value
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(other);
     try vm.requireSameEngine(handle.engine, other_handle.engine);
-    try vm.requireFeature(handle.engine, .boolean);
+    try vm.requireBoolean(&.{ handle, other_handle });
     try vm.requireFeature(handle.engine, .volume);
     const common = kernel.boolean(handle, other_handle, .intersection_op) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"intersects?"});
     defer kernel.destruct(common);

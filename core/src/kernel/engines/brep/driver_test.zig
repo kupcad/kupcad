@@ -472,12 +472,59 @@ test "Driver: unsupported operations report null, never a stand-in result" {
     defer driver.driver.destructCrossSectionFn(sq);
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);
-    try std.testing.expect(driver.driver.booleanFn(cube, cube, .difference_op) == null);
-    try std.testing.expect(driver.driver.batchBooleanFn(std.testing.allocator, &.{ cube, cube }, .union_op) == null);
     try std.testing.expect(driver.driver.projectFn(cube) == null);
-    try std.testing.expect(driver.driver.trimByPlaneFn(cube, 0, 0, 1, 5) == null);
-    try std.testing.expect(!driver.supports(.boolean));
+    try std.testing.expect(!driver.supports(.curved_boolean));
     try std.testing.expect(driver.driver.problemFn(cube) == null);
+}
+
+test "Driver: booleans, a chain, a plane's trim, decompose and the empty shapes, on flat solids" {
+    const a = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(a);
+    const b = driver.driver.translateFn(a, 5, 5, 5) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(b);
+    const c = driver.driver.translateFn(a, 30, 0, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(c);
+    try std.testing.expect(driver.supports(.boolean) and driver.supports(.trim_by_plane) and driver.supports(.decompose) and driver.supports(.empty));
+    const volume = driver.driver.volumeFn;
+    const u = driver.driver.booleanFn(a, b, .union_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(u);
+    try std.testing.expectApproxEqAbs(@as(f64, 2000 - 125), volume(u), 1e-9);
+    const d = driver.driver.booleanFn(a, b, .difference_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(d);
+    try std.testing.expectApproxEqAbs(@as(f64, 1000 - 125), volume(d), 1e-9);
+    const i = driver.driver.booleanFn(a, b, .intersection_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(i);
+    try std.testing.expectApproxEqAbs(@as(f64, 125), volume(i), 1e-9);
+    // A chain of three, the third apart: two parts
+    const chain = driver.driver.batchBooleanFn(std.testing.allocator, &.{ a, b, c }, .union_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(chain);
+    try std.testing.expectApproxEqAbs(@as(f64, 3000 - 125), volume(chain), 1e-9);
+    const parts = driver.driver.decomposeFn(std.testing.allocator, chain) orelse return error.KernelFailed;
+    defer {
+        for (parts) |p| driver.driver.destructFn(p);
+        std.testing.allocator.free(parts);
+    }
+    try std.testing.expectEqual(@as(usize, 2), parts.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 3000 - 125), volume(parts[0]) + volume(parts[1]), 1e-9);
+    // The top half, by a normal of any length
+    const top = driver.driver.trimByPlaneFn(a, 0, 0, 2, 5) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(top);
+    try std.testing.expectApproxEqAbs(@as(f64, 500), volume(top), 1e-9);
+    const none = driver.driver.emptyFn(&TEST_CONFIG) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(none);
+    try std.testing.expectEqual(@as(f64, 0), volume(none));
+    const nothing = driver.driver.emptySketchFn(&TEST_CONFIG) orelse return error.KernelFailed;
+    driver.driver.destructCrossSectionFn(nothing);
+}
+
+test "Driver: a boolean Locus refuses answers null with its reason (a curved operand, M5)" {
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 15, false, 32) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    try std.testing.expect(driver.driver.booleanFn(cube, cyl, .difference_op) == null);
+    const reason = driver.driver.takeFailureFn() orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, reason, "curved") != null);
 }
 
 test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh engine's circle grid, closed; a swept face refused" {
