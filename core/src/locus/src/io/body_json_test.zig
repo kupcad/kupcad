@@ -118,3 +118,30 @@ test "every geometry kind survives the round trip" {
     const rev = loaded.geometry.surface(geometry.SurfaceRef.of(.revolution, 0));
     try testing.expectApproxEqAbs(@as(f64, 0), rev.eval(0, 0)[1], 1e-12);
 }
+
+test "dump and load: a face's attribute round-trips, and a file written before it reads as none" {
+    const a = testing.allocator;
+    var b = try check_test.tetrahedron(a);
+    defer b.deinit();
+    for (b.faces.items, 0..) |*f, i| f.attribute = @intCast(10 * i);
+    const text = try body_json.dump(a, &b);
+    defer a.free(text);
+    var back = try body_json.load(a, text);
+    defer back.deinit();
+    for (b.faces.items, back.faces.items) |x, y| try testing.expectEqual(x.attribute, y.attribute);
+    // The same file without the field: every face's attribute is 0
+    var old: std.ArrayList(u8) = .empty;
+    defer old.deinit(a);
+    var rest: []const u8 = text;
+    while (std.mem.indexOf(u8, rest, "\"attribute\"")) |at| {
+        // From the comma ending the line before to the end of the field's line
+        const comma = std.mem.lastIndexOfScalar(u8, rest[0..at], ',').?;
+        try old.appendSlice(a, rest[0..comma]);
+        rest = rest[std.mem.indexOfScalarPos(u8, rest, at, '\n').?..];
+    }
+    try old.appendSlice(a, rest);
+    try testing.expect(std.mem.indexOf(u8, old.items, "attribute") == null);
+    var older = try body_json.load(a, old.items);
+    defer older.deinit();
+    for (older.faces.items) |f| try testing.expectEqual(@as(u32, 0), f.attribute);
+}

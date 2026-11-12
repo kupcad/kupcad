@@ -410,7 +410,8 @@
         3.141592653589793
       ],
       "approx": false,
-      "tag": 0
+      "tag": 0,
+      "attribute": 0
     },
     {
       "surface": {
@@ -428,7 +429,8 @@
         6.283185307179586
       ],
       "approx": false,
-      "tag": 0
+      "tag": 0,
+      "attribute": 0
     },
     {
       "surface": {
@@ -446,7 +448,8 @@
         3.141592653589793
       ],
       "approx": false,
-      "tag": 0
+      "tag": 0,
+      "attribute": 0
     },
     {
       "surface": {
@@ -464,7 +467,8 @@
         6.283185307179586
       ],
       "approx": false,
-      "tag": 0
+      "tag": 0,
+      "attribute": 0
     }
   ],
   "shells": [

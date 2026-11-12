@@ -52,6 +52,7 @@ pub const FaceSpec = struct {
     loops: []const LoopSpec,
     uv_box: geometry.Box2 = geometry.Box2.empty,
     tag: types.Tag = .untagged,
+    attribute: u32 = 0,
 };
 
 /// What identifies an edge: its curve, its vertices, and its range (two halves of a circle
@@ -75,7 +76,7 @@ pub fn sew(body: *Body, faces: []const FaceSpec, kind: types.ShellKind) Error!ty
     const shell = try body.addShell(.{ .kind = kind });
     body.appendShell(shell);
     for (faces) |spec| {
-        const face = try body.addFace(.{ .surface = spec.surface, .same_sense = spec.same_sense, .shell = shell, .uv_box = spec.uv_box, .tag = spec.tag });
+        const face = try body.addFace(.{ .surface = spec.surface, .same_sense = spec.same_sense, .shell = shell, .uv_box = spec.uv_box, .tag = spec.tag, .attribute = spec.attribute });
         body.appendFace(shell, face);
         for (spec.loops) |loop_spec| {
             if (loop_spec.edges.len == 0) return error.NotManifold;

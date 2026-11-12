@@ -343,7 +343,8 @@ pub fn mef(body: *Body, a: CoedgeIndex, b: CoedgeIndex, geom: EdgeGeometry, surf
     const va = body.coedgeStart(a);
     const vb = body.coedgeStart(b);
     try body.reserve(1);
-    const face = body.addFace(.{ .surface = surface, .same_sense = same_sense, .shell = shell }) catch unreachable;
+    // The new face is a piece of the old one: it keeps its attribute
+    const face = body.addFace(.{ .surface = surface, .same_sense = same_sense, .shell = shell, .attribute = body.face(old_face).attribute }) catch unreachable;
     body.appendFace(shell, face);
     const loop = body.addLoop(.{ .face = face }) catch unreachable;
     body.appendLoop(face, loop);
@@ -534,7 +535,7 @@ pub fn mfkrh(body: *Body, loop: LoopIndex, surface: geometry.SurfaceRef, same_se
     if (body.face(old_face).first_loop == loop) return error.Invalid;
     try body.reserve(1);
     const shell = body.face(old_face).shell;
-    const face = body.addFace(.{ .surface = surface, .same_sense = same_sense, .shell = shell }) catch unreachable;
+    const face = body.addFace(.{ .surface = surface, .same_sense = same_sense, .shell = shell, .attribute = body.face(old_face).attribute }) catch unreachable;
     body.appendFace(shell, face);
     body.removeLoop(old_face, loop);
     body.loop(loop).face = face;

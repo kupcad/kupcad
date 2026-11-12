@@ -149,3 +149,18 @@ test "transform: the cancel flag is honoured before any work" {
     try testing.expectError(error.Canceled, transform.transform(testing.allocator, &b, &Affine.identity, .{ .cancel = &flag }, &diag));
     try testing.expectEqual(@as(usize, 0), diag.failures());
 }
+
+test "transform: every face keeps its attribute through a move, a turn, a scale and a mirror" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box = try primitives.box(testing.allocator, tol, 1, 2, 3, false, &diag);
+    defer box.deinit();
+    for (box.faces.items, 0..) |*f, i| f.attribute = @intCast(i + 1);
+    const moves = [_]Affine{ Affine.translate(.{ 1, 2, 3 }), Affine.rotate(vec.normalized(.{ 1, 1, 0 }).?, 0.4), Affine.scaleBy(.{ 2, 2, 2 }), Affine.mirror(vec.X3) };
+    for (moves) |affine| {
+        var moved = try transform.transform(testing.allocator, &box, &affine, .{}, &diag);
+        defer moved.deinit();
+        try testing.expectEqual(box.faces.items.len, moved.faces.items.len);
+        for (box.faces.items, moved.faces.items) |a, b| try testing.expectEqual(a.attribute, b.attribute);
+    }
+}

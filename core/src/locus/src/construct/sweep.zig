@@ -133,6 +133,7 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                     specs[fi] = try sideFace(&b, curve, low, high, ends, pa, pb, direction, d_hat, outward, &side_edges[ci]);
                     side_loops[ci] = .{.{ .edges = &side_edges[ci] }};
                     specs[fi].loops = &side_loops[ci];
+                    specs[fi].attribute = face.attribute;
                     fi += 1;
                 }
                 const bottom_edges = cap_edges[first..ci];
@@ -141,8 +142,8 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                 cap_loops[li] = .{ .edges = bottom_edges };
                 cap_loops[counts.loops + li] = .{ .edges = top_edges };
             }
-            specs[fi] = .{ .surface = bottom_plane, .loops = cap_loops[first_loop..li], .uv_box = bottom_box, .tag = face.tag };
-            specs[fi + 1] = .{ .surface = top_plane, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = top_box, .tag = face.tag };
+            specs[fi] = .{ .surface = bottom_plane, .loops = cap_loops[first_loop..li], .uv_box = bottom_box, .tag = face.tag, .attribute = face.attribute };
+            specs[fi + 1] = .{ .surface = top_plane, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = top_box, .tag = face.tag, .attribute = face.attribute };
             fi += 2;
         }
     }
@@ -288,6 +289,7 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
                         side_loops[si] = .{.{ .edges = side_edges[SIDE_EDGES * si ..][0..side.edge_count] }};
                         specs[fi] = side.spec;
                         specs[fi].loops = &side_loops[si];
+                        specs[fi].attribute = face.attribute;
                         si += 1;
                         fi += 1;
                     }
@@ -301,8 +303,8 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
                 }
             }
             if (caps) |cap| {
-                specs[fi] = .{ .surface = cap.start, .loops = cap_loops[first_loop..li], .uv_box = cap.start_box, .tag = face.tag };
-                specs[fi + 1] = .{ .surface = cap.end, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = cap.end_box, .tag = face.tag };
+                specs[fi] = .{ .surface = cap.start, .loops = cap_loops[first_loop..li], .uv_box = cap.start_box, .tag = face.tag, .attribute = face.attribute };
+                specs[fi + 1] = .{ .surface = cap.end, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = cap.end_box, .tag = face.tag, .attribute = face.attribute };
                 fi += 2;
             }
         }

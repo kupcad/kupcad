@@ -341,7 +341,7 @@ Coedge  { edge: EdgeIndex, same_sense: bool, partner: CoedgeIndex /* NULL on a s
           next, prev: CoedgeIndex, loop: LoopIndex, pcurve: PCurveRef /* NULL on planes */ }
 Loop    { face: FaceIndex, first: CoedgeIndex, next_in_face: LoopIndex }   // first loop = outer
 Face    { surface: SurfaceRef, same_sense: bool, first_loop: LoopIndex, shell: ShellIndex,
-          next_in_shell: FaceIndex, uv_box: [2][2]f64, flags, tag }
+          next_in_shell: FaceIndex, uv_box: [2][2]f64, flags, tag, attribute: u32 }
 Shell   { first_face: FaceIndex, next_in_body: ShellIndex, kind: {outer, void, sheet} }
 Body    { tol: Tolerance, shells: first ShellIndex, arenas…, bbox cache }
 ```
@@ -831,6 +831,16 @@ parent's tag, a merged face the union (S p.262–270). Each operation returns a 
 the "bulletin board" (S p.262). Locus guarantees stability of tags, not of indices:
 `compact()` renumbers freely. Materials are KupCAD's business; Locus stores a `u32`
 attribute per face through the same mechanism.
+
+As built (2026-11-12): `Face.attribute`, 0 for none, passive data Locus never reads (Stroud's
+rule for it: copy on split, keep both on merge). It goes with the face wherever the face goes:
+a clone or a move (the body copied index for index), a face's split (`mef`, and `mfkrh` making
+a ring a face), a sweep (a sheet face's caps and sides take its attribute), the body JSON (a
+file without the field reads as 0). M4's simplify merges two faces only when their attributes
+agree, so a red face and a blue one on one plane stay two. KupCAD stores its material slot
+there (`kernel.materialSlot`), and its driver writes the slot as each mesh vertex's fourth
+property, a vertex shared by faces of different materials split into one per material, as
+Manifold's meshes carry it.
 
 ---
 

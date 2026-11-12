@@ -149,6 +149,10 @@ pub const Face = struct {
     uv_box: geometry.Box2 = geometry.Box2.empty,
     flags: FaceFlags = .{},
     tag: Tag = .untagged,
+    /// The host's value for the face, 0 for none (KupCAD's material slot; architecture §8):
+    /// passive data, copied wherever the face goes or is split (a move, a split of its
+    /// loop, a sweep's faces of a sheet's face), never read by Locus.
+    attribute: u32 = 0,
 };
 
 pub const Shell = struct {

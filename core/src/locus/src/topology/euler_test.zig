@@ -532,3 +532,29 @@ test "sliceEdge and mergeVertices" {
     try testing.expectEqual(kit.vertexAt(2), b.coedgeEnd(spur.out));
     try testing.expectError(error.Invalid, euler.mergeVertices(b, kit.vertexAt(2), kit.vertexAt(2)));
 }
+
+test "mef and mfkrh: a face split off another keeps its attribute" {
+    var kit = try Kit.init(testing.allocator);
+    defer kit.deinit();
+    const b = &kit.body;
+    // The lamina's closing mef splits the face mvfs made
+    const start = try euler.mvfs(b, kit.points[0], kit.planes[Kit.BOTTOM], true, .outer);
+    b.face(start.face).attribute = 7;
+    var after: CoedgeIndex = .none;
+    var from = start.vertex;
+    for (1..4) |i| {
+        const r = try euler.mevSpur(b, start.loop, after, from, kit.points[i], try kit.line(i - 1, i));
+        after = r.out;
+        from = r.vertex;
+    }
+    const split = try euler.mef(b, kit.coedgeFromTo(0, 1), kit.coedgeFromTo(3, 2), try kit.line(0, 3), kit.planes[Kit.TOP], true);
+    try testing.expectEqual(@as(u32, 7), b.face(split.face).attribute);
+    try testing.expectEqual(@as(u32, 7), b.face(start.face).attribute);
+    // A ring made a face again takes the attribute of the face it was a ring of
+    b.face(start.face).attribute = 9;
+    const ring = b.face(split.face).first_loop;
+    try euler.kfmrh(b, start.face, split.face);
+    const again = try euler.mfkrh(b, ring, kit.planes[Kit.TOP], true);
+    try testing.expectEqual(@as(u32, 9), b.face(again).attribute);
+    try expectValid(b, .structural);
+}

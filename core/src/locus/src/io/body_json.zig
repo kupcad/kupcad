@@ -54,7 +54,8 @@ pub const Schema = struct {
     pub const Edge = struct { curve: Ref, t0: f64, t1: f64, start: u32, end: u32, gap: f64, coedge: ?u32, degenerate: bool, seam: bool, approx: bool, regularity: []const u8, tag: u32 };
     pub const Coedge = struct { edge: u32, same_sense: bool, partner: ?u32, next: ?u32, prev: ?u32, loop: u32, pcurve: ?Ref };
     pub const Loop = struct { face: u32, first: ?u32, vertex: ?u32, next_in_face: ?u32 };
-    pub const Face = struct { surface: Ref, same_sense: bool, first_loop: ?u32, shell: u32, next_in_shell: ?u32, uv_box: ?[4]f64, approx: bool, tag: u32 };
+    /// `attribute` is new since 2026-11-12: a file without it reads as 0.
+    pub const Face = struct { surface: Ref, same_sense: bool, first_loop: ?u32, shell: u32, next_in_shell: ?u32, uv_box: ?[4]f64, approx: bool, tag: u32, attribute: u32 = 0 };
     pub const Shell = struct { first_face: ?u32, next_in_body: ?u32, kind: []const u8 };
     pub const Frame = struct { origin: Vec3, x: Vec3, y: Vec3, z: Vec3 };
     pub const Geometry = struct {
@@ -185,7 +186,7 @@ fn toSchema(allocator: std.mem.Allocator, body: *const Body) Error!Schema {
     var faces: std.ArrayList(Schema.Face) = .empty;
     for (body.faces.items) |f| {
         if (f.flags.tombstone) continue;
-        try faces.append(allocator, .{ .surface = refOf(f.surface), .same_sense = f.same_sense, .first_loop = rl.get(f.first_loop), .shell = rs.must(f.shell), .next_in_shell = rf.get(f.next_in_shell), .uv_box = if (f.uv_box.isEmpty()) null else .{ f.uv_box.min[0], f.uv_box.min[1], f.uv_box.max[0], f.uv_box.max[1] }, .approx = f.flags.approx, .tag = @backingInt(f.tag) });
+        try faces.append(allocator, .{ .surface = refOf(f.surface), .same_sense = f.same_sense, .first_loop = rl.get(f.first_loop), .shell = rs.must(f.shell), .next_in_shell = rf.get(f.next_in_shell), .uv_box = if (f.uv_box.isEmpty()) null else .{ f.uv_box.min[0], f.uv_box.min[1], f.uv_box.max[0], f.uv_box.max[1] }, .approx = f.flags.approx, .tag = @backingInt(f.tag), .attribute = f.attribute });
     }
     var shells: std.ArrayList(Schema.Shell) = .empty;
     for (body.shells.items) |s| {
@@ -387,6 +388,7 @@ pub fn load(allocator: std.mem.Allocator, text: []const u8) Error!Body {
             .uv_box = if (f.uv_box) |b| .{ .min = .{ b[0], b[1] }, .max = .{ b[2], b[3] } } else geometry.Box2.empty,
             .flags = .{ .approx = f.approx },
             .tag = @fromBackingInt(@intCast(f.tag)),
+            .attribute = f.attribute,
         });
     }
     for (s.shells) |sh| {

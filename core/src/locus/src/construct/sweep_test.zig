@@ -405,3 +405,28 @@ test "revolve: a profile arc across its torus's seam is split there and the ring
     defer r2.deinit(testing.allocator);
     try testing.expect(r2.ok());
 }
+
+test "extrude and revolve: every face swept from a sheet's face keeps its attribute, and a clone keeps them" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var square = try primitives.square(testing.allocator, tol, 2, 3, false, &diag);
+    defer square.deinit();
+    for (square.faces.items) |*f| f.attribute = 5;
+    var prism = try sweep.extrude(testing.allocator, &square, .{ 0, 0, 4 }, .{}, &diag);
+    defer prism.deinit();
+    var lathe = try sweep.revolve(testing.allocator, &square, vec.ZERO3, vec.Y3, std.math.pi / 2.0, .{}, &diag);
+    defer lathe.deinit();
+    for ([_]*const Body{ &prism, &lathe }) |solid| {
+        try expectValid(solid);
+        var live: usize = 0;
+        for (solid.faces.items) |f| {
+            try testing.expectEqual(@as(u32, 5), f.attribute);
+            live += 1;
+        }
+        // A prism's six faces; the quarter turn's caps and three sides (its edge on the axis sweeps none)
+        try testing.expect(live >= 5);
+        var copy = try solid.clone(testing.allocator);
+        defer copy.deinit();
+        for (copy.faces.items) |f| try testing.expectEqual(@as(u32, 5), f.attribute);
+    }
+}
