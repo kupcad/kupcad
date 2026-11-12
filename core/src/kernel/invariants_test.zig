@@ -1,7 +1,9 @@
-//! Geometry invariants on what the Manifold kernel makes: every solid's mesh is closed and
+//! Geometry invariants on what the kernels make: every solid's mesh is closed and
 //! consistently oriented, and its own signed volume, area, bounds and Euler characteristic
-//! agree with what the kernel reports; booleans, moves and scales keep the volumes they
-//! must (inclusion-exclusion, a rigid move keeps volume, scaling by s multiplies it by s³).
+//! agree with what the kernel reports (the mesh engine's to float precision, the B-Rep
+//! engine's exact measures within its chords); booleans, moves and scales keep the volumes
+//! they must (inclusion-exclusion, a rigid move keeps volume, scaling by s multiplies it by
+//! s³).
 
 const std = @import("std");
 const testing = std.testing;
@@ -12,6 +14,32 @@ const support = @import("../test_support.zig");
 
 /// The kernel measures in doubles, the exported mesh's positions are floats (about 7 digits).
 const RELATIVE_TOLERANCE = 1e-6;
+/// What the B-Rep scripts start with: the exact engine, every circle cut into 64 segments.
+const BREP_PRELUDE = "CAD.config(engine: :brep, resolution: {segments: 64})\n";
+/// How far a mesh's measures are from the exact solid's at 64 segments a turn: a polygon
+/// of n sides holds (n / 2π) sin(2π / n) of its circle's disc, a share ε short; a surface
+/// curved both ways is a polygon revolved, its section's area, its centroid's distance
+/// from the axis and the turn each at most ε short (a sphere's mesh is 2.5ε short).
+const CHORDS_64: f64 = 3.0 * (1.0 - 64.0 / (2.0 * std.math.pi) * @sin(2.0 * std.math.pi / 64.0));
+
+/// What the B-Rep engine builds (M1–M3): its exact measures against its own mesh's.
+const BREP_SHAPES = [_][]const u8{
+    "cube(2)",
+    "cube(2, center: true).rotate(x: 30, y: 20)",
+    "sphere(3)",
+    "cylinder(r: 1, h: 4)",
+    "cylinder(r1: 2, r2: 0.5, h: 3)",
+    "torus(major_r: 5, minor_r: 1)",
+    "(circle(3) - circle(1)).extrude(2)",
+    "square(2).translate(x: 3).revolve(270)",
+    "square(2).sweep(arc(center: [10, 0], r: 10, start: 180, sweep: 90))",
+    "(square(10) - circle(r: 2).translate(5, 5)).offset(1).extrude(1)",
+    "polygon([[0, 0], [4, 0], [4, 3]], round_r: 0.5).extrude(2)",
+    "cube(2).mirror([1, 0, 0])",
+    "sphere(2).scale(2).translate(1, 2, 3)",
+    "cube(1).hull(cube(1).translate(x: 3, y: 1))",
+    "text(\"Hi\", size: 5).extrude(1)",
+};
 
 /// One of each kind of operation the kernel performs.
 const SHAPES = [_][]const u8{
@@ -92,6 +120,22 @@ test "invariants: every solid is closed, and its mesh measures what the kernel r
     }
 }
 
+test "invariants on the B-Rep engine: every solid's mesh is closed, its measures the exact ones within its chords" {
+    for (BREP_SHAPES) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        var script: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer script.deinit();
+        try script.writer.print("{s}r = {s}", .{ BREP_PRELUDE, source });
+        errdefer if (vm.last_error) |m| std.debug.print("error: {s}\n", .{m});
+        try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+        const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+        try testing.expectEqual(.brep_native, handle.engine);
+        try expectConsistentWithin(handle, CHORDS_64);
+    }
+}
+
 test "invariants: booleans, moves and scales keep the volumes they must" {
     // a ∪ b + a ∩ b = a + b; a - b = a - a ∩ b; a rigid move keeps volume; scale 2 is 8x.
     try support.expectScripts(&.{
@@ -119,6 +163,12 @@ test "invariants: booleans, moves and scales keep the volumes they must" {
 
 /// The mesh is closed and oriented, and its volume, area, bounds and genus are the kernel's.
 fn expectConsistent(handle: geom.GeometryHandle) !void {
+    return expectConsistentWithin(handle, RELATIVE_TOLERANCE);
+}
+
+/// `expectConsistent`, the mesh's volume and area within `relative` of the kernel's and its
+/// box within that share of the box's diagonal (a chord's sagitta is less).
+fn expectConsistentWithin(handle: geom.GeometryHandle, relative: f64) !void {
     const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.NoMesh;
     defer testing.allocator.free(mesh.vert_props);
     defer testing.allocator.free(mesh.tri_verts);
@@ -154,12 +204,16 @@ fn expectConsistent(handle: geom.GeometryHandle) !void {
 
     const volume = kernel.volume(handle);
     try testing.expect(volume > 0);
-    try testing.expectApproxEqRel(volume, signed_volume, RELATIVE_TOLERANCE);
-    try testing.expectApproxEqRel(kernel.surfaceArea(handle), area, RELATIVE_TOLERANCE);
+    errdefer std.debug.print("volume {d} against the mesh's {d}, area {d} against {d}\n", .{ volume, signed_volume, kernel.surfaceArea(handle), area });
+    try testing.expectApproxEqRel(volume, signed_volume, relative);
+    try testing.expectApproxEqRel(kernel.surfaceArea(handle), area, relative);
     const kernel_box = kernel.boundingBox(handle) orelse return error.NoBounds;
+    var diagonal: f64 = 0;
+    for (0..3) |k| diagonal += (kernel_box.max[k] - kernel_box.min[k]) * (kernel_box.max[k] - kernel_box.min[k]);
+    const reach = @max(1e-6, relative * @sqrt(diagonal));
     for (0..3) |k| {
-        try testing.expectApproxEqAbs(kernel_box.min[k], box.min[k], 1e-6);
-        try testing.expectApproxEqAbs(kernel_box.max[k], box.max[k], 1e-6);
+        try testing.expectApproxEqAbs(kernel_box.min[k], box.min[k], reach);
+        try testing.expectApproxEqAbs(kernel_box.max[k], box.max[k], reach);
     }
     // Euler: V - E + F = 2 - 2g for one closed surface, each edge shared by two triangles.
     const vertices: i64 = @intCast(used.count());

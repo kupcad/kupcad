@@ -973,7 +973,20 @@ raises on Manifold, so never on Locus).
 
 *Properties.* The invariants suite (closed mesh, measures consistent with the mesh,
 inclusion–exclusion, rigid moves keep volume, `scale(s)` multiplies it by `s³`) runs its
-`SHAPES` on both engines; a property that holds on one and not the other is a bug.
+`SHAPES` on both engines; a property that holds on one and not the other is a bug. On the
+B-Rep engine (`BREP_SHAPES`, since M3) the mesh's volume, area and box are held to Locus's
+exact measures within the chords at 64 segments a turn (3ε, ε = 1 − sin θ/θ: a doubly
+curved surface is a polygon revolved, its section's area, centroid and turn each ε short).
+
+*Meshes compared* (M3, `kernel/mesh_compare.zig`, research/solidcraft.md §1): two closed
+meshes without booleans, by the sampled symmetric distance (each surface sampled at its
+corners and at most `spacing` apart, each sample's distance to the other surface through a
+triangle tree) and the volume inside exactly one (lines along z over both, each triangle a
+step in or out by its normal's side, the edge test computed from the edge's lesser end so
+the two triangles of an edge get opposite values). The case rig compares the two engines'
+meshes of every corpus case both build, both at 64 segments a turn: within the diagonal
+times `1 − cos(π/64)` of each other, what only one holds within a shell of that thickness
+over the surface.
 
 *Allowed differences.* Two, and only two: exactness itself (Locus's circle is a circle,
 Manifold's the polygon; the bound above is that difference) and what `supports` says is

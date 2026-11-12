@@ -184,6 +184,39 @@ test "3mf: a Solid on its own is placed too, and its colour is its triangles' ma
     try testing.expectEqual(@as(usize, 12), got.model.colored_triangles);
 }
 
+test "3mf: B-Rep parts are placed as the kernel has them, their materials kept, each object closed" {
+    // The exact engine's parts (M3): a copy an item of one object, a curved part's mesh
+    // its gridded faces, a material its triangles'
+    var got = try exportAndCheck(
+        \\CAD.config(engine: :brep)
+        \\bolt = cylinder(r: 1, h: 6).named("bolt").material(color: "#FF8000")
+        \\ball = sphere(2).named("ball")
+        \\assemble(name: "Exact", parts: [bolt, bolt.translate(5, 0, 0), ball.translate(0, 8, 0)])
+    );
+    defer got.model.deinit();
+    defer testing.allocator.free(got.xml);
+    try testing.expectEqual(@as(u32, 2), got.model.vertices.count());
+    try testing.expectEqual(@as(usize, 3), got.model.items.items.len);
+    try testing.expect(std.mem.find(u8, got.xml, "displaycolor=\"#ff8000ff\"") != null);
+
+    // Read back as the importer reads a 3MF: every placed mesh closed
+    const threemf_read = @import("threemf_read.zig");
+    const mesh_check = @import("../../kernel/mesh_check.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm,
+        \\CAD.config(engine: :brep)
+        \\[cylinder(r: 1, h: 6), sphere(2).translate(0, 8, 0), torus(major_r: 4, minor_r: 1).translate(10, 0, 0)]
+    ));
+    const archive = try api.exportModelFromVm(testing.allocator, &vm, .@"3mf", .{});
+    defer testing.allocator.free(archive);
+    var diag: threemf_read.Diagnostic = .{};
+    var model = try threemf_read.read(testing.allocator, archive, .{}, &diag);
+    defer model.deinit();
+    try testing.expectEqual(@as(usize, 3), model.meshes.len);
+    for (model.meshes) |mesh| try mesh_check.expectClosed(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces });
+}
+
 test "3mf: every part is written whole with a collection at every allocation" {
     // export.zig makes and evaluates every part (new Solids, with their materials) before
     // the package is written, holding them rooted; each still comes out whole and coloured

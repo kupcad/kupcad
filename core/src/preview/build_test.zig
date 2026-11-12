@@ -86,6 +86,38 @@ test "preview: a model's Solids as GLB, its parts named as the GLB's nodes, with
     try testing.expect(h.timing.runMs >= 0 and h.timing.renderMs >= 0);
 }
 
+test "preview: B-Rep parts are shown as the mesh engine's, named, coloured and counted, their volumes exact" {
+    // The viewer's frame of the exact engine's parts (M3): a GLB of their meshes, each part
+    // a node per copy, its material's colour, its measures the kernel's own
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\CAD.config(engine: :brep)
+        \\bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
+        \\[sphere(r: 3).named("ball"), bolt.translate(x: 30), bolt.translate(x: 40)]
+    ;
+    const read = try preview(arena.allocator(), source, "");
+    const h = read.header;
+    if (h.@"error") |e| std.debug.print("preview error: {s}\n", .{e.message});
+    try testing.expect(h.@"error" == null);
+    try testing.expectEqualStrings("3d", h.kind);
+    try testing.expectEqual(@as(usize, 0), h.warnings.len);
+    try testing.expectEqual(@as(usize, 2), h.parts.len);
+    try testing.expectEqualStrings("ball", h.parts[0].name);
+    try testing.expect(!h.parts[0].provisional);
+    try testing.expectApproxEqRel(4.0 / 3.0 * std.math.pi * 27.0, h.parts[0].volume.?, 1e-12);
+    try testing.expectEqualStrings("bolt", h.parts[1].name);
+    try testing.expectEqual(@as(u32, 2), h.parts[1].count);
+    try testing.expectEqualStrings("#cc3333", h.parts[1].color.?);
+    try testing.expectApproxEqRel(std.math.pi * 4 * 5, h.parts[1].volume.?, 1e-12);
+    const nodes = try glbNodeNames(arena.allocator(), read.body);
+    for (h.parts) |part| for (part.nodes) |node| {
+        for (nodes) |n| {
+            if (std.mem.eql(u8, n, node)) break;
+        } else return error.TestNodeMissing;
+    };
+}
+
 test "preview: a model of Sketches and Paths as SVG" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

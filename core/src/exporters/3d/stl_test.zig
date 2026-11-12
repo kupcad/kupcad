@@ -155,6 +155,31 @@ test "STL: every exported solid reads back closed and consistently oriented" {
     }
 }
 
+test "STL: every exported B-Rep solid reads back closed and consistently oriented" {
+    // The exact engine's meshes (M3): curved faces gridded between their edges, welded
+    const api = @import("../../api.zig");
+    const mesh_check = @import("../../kernel/mesh_check.zig");
+    for ([_][]const u8{
+        "cube(10)",
+        "sphere(5)",
+        "cylinder(r: 3, h: 8)",
+        "cylinder(r1: 3, r2: 1, h: 4)",
+        "torus(major_r: 6, minor_r: 2)",
+        "(square(10) - circle(r: 2).translate(5, 5)).offset(1).extrude(2)",
+        "square(2).translate(x: 3).revolve(270)",
+        // Not several parts: an STL writes them as their union, a solid boolean (M4)
+    }) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        const script = try std.mem.concat(testing.allocator, u8, &.{ "CAD.config(engine: :brep)\n", source });
+        defer testing.allocator.free(script);
+        const bytes = try api.buildModel(testing.allocator, testing.io, script, .{ .format = .stl });
+        defer testing.allocator.free(bytes);
+        var mesh = try parse(bytes);
+        defer mesh.deinit(testing.allocator);
+        try mesh_check.expectClosed(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces });
+    }
+}
+
 test "STL: a vertex that is NaN or infinite is an error, in either format" {
     // The parser took any float, and the mesh it made crashed the build where the DAG
     // checks its points (found by the importer fuzz test).
