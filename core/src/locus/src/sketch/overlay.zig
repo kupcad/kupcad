@@ -676,6 +676,13 @@ pub const Overlay = struct {
                 try self.cycle_halves.append(allocator, h);
                 area += self.areaTerm(h);
             }
+            // A cycle that runs each of its edges both ways (a tree of edges: collinear
+            // points, a slit standing alone) bounds nothing, its area exactly 0; the sum's
+            // rounding gave it a sign, and a positive one made it a face (the fuzzer,
+            // 2026-11-12: three collinear points, a face of area 2e-16)
+            var bounds_nothing = true;
+            for (self.cycle_halves.items[first..]) |half| bounds_nothing = bounds_nothing and self.cycle_of.items[half ^ 1] == id;
+            if (bounds_nothing) area = 0;
             try self.cycles.append(allocator, .{ .first_half = first, .count = @intCast(self.cycle_halves.items.len - first), .area = area / 2.0 });
         }
     }
@@ -730,7 +737,7 @@ pub const Overlay = struct {
             starts[i] = c.first_half;
             areas[i] = c.area;
             for (self.halvesOf(@intCast(i)), c.first_half..) |h, k| {
-                segments[k] = .{ .a = self.point(self.origin(h)), .b = self.point(self.target(h)), .arc = self.arcOf(h), .cycle = @intCast(i), .beyond = self.cycle_of.items[h ^ 1] };
+                segments[k] = .{ .a = self.point(self.origin(h)), .b = self.point(self.target(h)), .arc = self.arcOf(h), .cycle = @intCast(i), .beyond = self.cycle_of.items[h ^ 1], .slot_a = self.slot.items[h], .slot_b = self.slot.items[h ^ 1] };
             }
         }
         starts[n] = @intCast(self.cycle_halves.items.len);
@@ -1028,7 +1035,16 @@ pub const Segment = struct {
     arc: ?Arc = null,
     cycle: u32,
     beyond: u32 = UNBOUNDED,
+    /// Where the segment leaves `a` and `b` in the overlay's order about each (`slot` of
+    /// the half-edge leaving the vertex along it), when it is the overlay's: two segments
+    /// tied on the nesting ray at a vertex they share are ordered by these, the order the
+    /// cycles were walked by. `NO_SLOT` when unknown.
+    slot_a: u32 = NO_SLOT,
+    slot_b: u32 = NO_SLOT,
 };
+
+/// A segment end with no place in the overlay's order (`Segment.slot_a`).
+pub const NO_SLOT: u32 = std.math.maxInt(u32);
 
 /// The cycle each clockwise cycle lies in, into `owner`: the index of a counter-clockwise
 /// cycle, or `UNBOUNDED` for a hole of the plane (and for the counter-clockwise cycles
@@ -1084,12 +1100,15 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     const at: Vec2 = .{ crossingX(where, v[1]), v[1] };
                     const top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
                     const bottom: Vec2 = if (descending) .{ piece.x1, piece.y1 } else .{ piece.x0, piece.y0 };
+                    // A piece's end is the arc's own end or an extreme (no vertex there)
+                    const slot_top = slotAt(s, top);
+                    const slot_bottom = slotAt(s, bottom);
                     const radial = vec.sub2(at, arc.c);
                     var up = Vec2{ -radial[1], radial[0] };
                     if (up[1] < 0 or (up[1] == 0 and vec.dot2(up, vec.sub2(top, at)) < 0)) up = vec.scale2(up, -1);
                     const up_ccw = if (descending) !arc.ccw else arc.ccw;
                     const bend = if (up_ccw) -1 / arc.r else 1 / arc.r;
-                    consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
+                    consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .slot_top = slot_top, .slot_bottom = slot_bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
                 }
                 continue;
             }
@@ -1100,7 +1119,7 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
             const up = if (descending) vec.sub2(s.a, s.b) else vec.sub2(s.b, s.a);
             const top = if (descending) s.a else s.b;
             const bottom = if (descending) s.b else s.a;
-            consider(&best, .{ .at = where, .up = up, .bend = 0, .top = top, .bottom = bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
+            consider(&best, .{ .at = where, .up = up, .bend = 0, .top = top, .bottom = bottom, .slot_top = if (descending) s.slot_a else s.slot_b, .slot_bottom = if (descending) s.slot_b else s.slot_a, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
         }
         if (best) |hit| parent[i] = hit.cycle;
     }
@@ -1176,26 +1195,27 @@ const Hit = struct {
     /// given: two segments that tie meet at one of them.
     top: Vec2,
     bottom: Vec2,
+    /// Where the segment leaves each of those ends in the overlay's order about it, or
+    /// `NO_SLOT` (an arc piece's end at an extreme, a segment not the overlay's).
+    slot_top: u32 = NO_SLOT,
+    slot_bottom: u32 = NO_SLOT,
     /// The cycle whose region is just east of the crossing.
     cycle: u32,
 };
 
 /// Keeps the hit nearer the vertex: the greater x, exactly. At one x the two segments
 /// pass through one point of the ray, and as the segments of an arrangement cross nowhere
-/// but at their ends, their order there is their order at the end they share: a vertex on
-/// the ray (the ray taken a hair above it) or below it, which they fan up from, the
-/// segment leaning east going up the nearer; or a vertex the welder put a rounding above
-/// the ray, where their circles truly cross at its height, which they fan down from, the
-/// segment leaning east going down (west going up) the nearer. Two level there and
-/// opposite (two arcs whose lowest point is the vertex, one rising each way) lean as far
-/// as they can, the east one the nearer. Of two tangent there the same way, the one
-/// bending east is the nearer either way (the bend is the same going down). (The
-/// earlier rule for a vertex a rounding above the ray, by where the up-directions led,
-/// stood in for an x comparison that rounded; the comparison is exact now, and a tie is
-/// one point; and taking every tie as a fan up nested a hole beyond two arcs meeting a
-/// rounding above its ray, and two level opposite tangents, whose cross product is 0, were
-/// taken as tangent the same way and decided by their bends, both fuzz finds of
-/// 2026-11-12.)
+/// but at their ends, they share a vertex there, and their order is the overlay's order
+/// about it (`orderAtSharedVertex`), the order its cycles were walked by. A tie with no
+/// shared vertex the order knows takes the ray a hair above, the segments fanning up from
+/// the point: the one leaning east going up, then, level and opposite (an arc's two pieces
+/// at its lowest point on the ray, an extreme and no vertex), the one pointing east, then
+/// of two tangent the same way the one bending east. (Re-deriving the order at a shared
+/// vertex from tangents got two cases wrong, both fuzz finds of 2026-11-12: a vertex a
+/// rounding above the ray, which the segments fan down from, and two arcs level and
+/// opposite at their common lowest point, whose cross product is 0. A tie at an extreme
+/// on the ray fans up only: pieces from an extreme at the ray's height and down are not
+/// crossings, by the half-open rule.)
 fn consider(best: *?Hit, hit: Hit, y: f64) void {
     const b = best.* orelse {
         best.* = hit;
@@ -1206,28 +1226,49 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
         if (order > 0) best.* = hit;
         return;
     }
-    // Leaning east going up: turned clockwise of the other, or, both level and opposite
-    // (two arcs whose lowest point is the vertex on the ray, one rising each way), the one
-    // pointing east
+    if (orderAtSharedVertex(hit, b, y)) |hit_nearer| {
+        if (hit_nearer) best.* = hit;
+        return;
+    }
     const turn = vec.cross2(hit.up, b.up);
-    const opposite = turn == 0 and vec.dot2(hit.up, b.up) < 0;
-    if (turn != 0 or opposite) {
-        const east = if (opposite) hit.up[0] > 0 else turn > 0;
-        if (east != fanDown(hit, b, y)) best.* = hit;
+    if (turn != 0) {
+        if (turn > 0) best.* = hit;
+        return;
+    }
+    if (vec.dot2(hit.up, b.up) < 0) {
+        if (hit.up[0] > 0) best.* = hit;
         return;
     }
     if (hit.bend > b.bend) best.* = hit;
 }
 
-/// Whether two hits tied at height `y` meet above the ray, at their shared top, rather
-/// than at or below it: when they share both ends (two arcs between one pair of
-/// vertices), the end nearer the ray, where the tie came from.
-fn fanDown(p: Hit, q: Hit, y: f64) bool {
-    const shared_top = p.top[0] == q.top[0] and p.top[1] == q.top[1];
-    const shared_bottom = p.bottom[0] == q.bottom[0] and p.bottom[1] == q.bottom[1];
-    if (!shared_top) return false;
-    if (!shared_bottom) return true;
-    return p.top[1] - y < y - p.bottom[1];
+/// Two hits tied at height `y` that share a vertex, ordered as the overlay ordered their
+/// half-edges about it (the slots, counter-clockwise from east by the direction to a point
+/// a few zones along each, `order()`): fanning up from a vertex on or below the ray, the
+/// one leaving it further east (the lower slot) is the nearer just above; fanning down
+/// from one above it (a rounding above, where their circles cross at its height), the one
+/// leaving it further east going down (the higher slot, the lower half running from west
+/// round to east) is the nearer. When they share both ends, the end nearer the ray. Null
+/// when they share no vertex the order knows: the lean and the bend decide.
+fn orderAtSharedVertex(p: Hit, q: Hit, y: f64) ?bool {
+    const shared_top = p.slot_top != NO_SLOT and q.slot_top != NO_SLOT and p.top[0] == q.top[0] and p.top[1] == q.top[1];
+    const shared_bottom = p.slot_bottom != NO_SLOT and q.slot_bottom != NO_SLOT and p.bottom[0] == q.bottom[0] and p.bottom[1] == q.bottom[1];
+    const down = if (shared_top and shared_bottom) p.top[1] - y < y - p.bottom[1] else shared_top;
+    if (!shared_top and !shared_bottom) return null;
+    if (down) {
+        if (p.slot_top == q.slot_top) return null;
+        return p.slot_top > q.slot_top;
+    }
+    if (p.slot_bottom == q.slot_bottom) return null;
+    return p.slot_bottom < q.slot_bottom;
+}
+
+/// The slot of segment `s` at its end `at` (exactly `s.a` or `s.b`), or `NO_SLOT` at a
+/// point between them (an arc's extreme).
+fn slotAt(s: Segment, at: Vec2) u32 {
+    if (at[0] == s.a[0] and at[1] == s.a[1]) return s.slot_a;
+    if (at[0] == s.b[0] and at[1] == s.b[1]) return s.slot_b;
+    return NO_SLOT;
 }
 
 /// Whether `p` is left of `q`: by x, then by y.

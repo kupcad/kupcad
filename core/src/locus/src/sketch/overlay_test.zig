@@ -30,7 +30,7 @@ fn circle(o: *Overlay, c: Vec2, r: f64) !void {
 /// The arrangement is a planar map whose labels are consistent: Euler's formula over its
 /// vertices, edges, bounded faces and connected components (`V − E + F = C`), and across
 /// every edge the windings differ by what the inputs contributed to it.
-fn expectPlanar(o: *const Overlay) !void {
+pub fn expectPlanar(o: *const Overlay) !void {
     const n = o.points.items.len;
     var used = try testing.allocator.alloc(bool, n);
     defer testing.allocator.free(used);
@@ -439,4 +439,61 @@ test "overlay: two arcs meeting a rounding above the ray, where their circles cr
     try testing.expectEqual(@as(usize, 1), both.faces);
     try testing.expectApproxEqAbs(@as(f64, 0.8), both.area, 1e-12);
     try testing.expectEqual(@as(usize, 0), areaWhere(&o, 0, 1).faces);
+}
+
+test "overlay: a hole's ray through a circle's lowest point, an extreme and no vertex, passes the circle by" {
+    // The overlay fuzz target's find (2026-11-12): a component's leftmost vertex at y = 1,
+    // and to its west a circle of radius 0.5 about (0.5, 1.5) whose lowest point is at
+    // y = 1 exactly, between its two arcs' ends at (0, 1.5) and (1, 1.5). The ray meets the
+    // circle's two pieces at x = 0.5, level and opposite, a tie at no vertex; a hair above,
+    // the east piece is nearer and the region east of it is outside the circle. The bend
+    // chose the west piece and nested the component inside the circle, offsetting all its
+    // labels by the circle's winding
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 1, 1.5 }, .b = .{ 0, 1.5 }, .arc = .{ .c = .{ 0.5, 1.5 }, .r = 0.5, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 0, 1.5 }, .b = .{ 1, 1.5 }, .arc = .{ .c = .{ 0.5, 1.5 }, .r = 0.5, .ccw = false } });
+    _ = try o.addInput();
+    try polygon(&o, &.{ .{ 1.75, 1 }, .{ 3, 0 }, .{ 4, 1 }, .{ 3, 2 } });
+    try o.run();
+    try expectPlanar(&o);
+    // The diamond is outside the circle: wound by its own input alone
+    const diamond = areaWhere(&o, 0, 1);
+    try testing.expectEqual(@as(usize, 1), diamond.faces);
+    try testing.expectApproxEqAbs(@as(f64, 2.25), diamond.area, 1e-12);
+    try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces + areaWhere(&o, -1, 1).faces);
+}
+
+test "overlay: a cycle that runs each of its edges both ways bounds nothing, whatever its area's rounding" {
+    // The overlay fuzz target's find (2026-11-12): three collinear points, one a rounding
+    // off the grid, closed into a ring of no area. Its cycle runs both edges each way; the
+    // area's sum rounded to 2e-16 and made it a face, and Euler's formula counted a
+    // component too many. A slit standing alone and a tree of three edges likewise
+    for ([_][]const Vec2{
+        &.{ .{ 0.5, 2 }, .{ 1.2500000000000002, 2 }, .{ 4, 2 } },
+        &.{ .{ 0.1, 0.3 }, .{ 2.7, 1.9 }, .{ 0.1, 0.3 } },
+    }) |ring| {
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        _ = try o.addInput();
+        for (ring, 0..) |a, i| {
+            const b = ring[(i + 1) % ring.len];
+            if (a[0] != b[0] or a[1] != b[1]) try o.addEdge(.{ .a = a, .b = b });
+        }
+        try o.run();
+        try expectPlanar(&o);
+        try testing.expectEqual(@as(usize, 0), o.faces.items.len);
+    }
+    // A tree of three edges, traced there and back (an input is closed)
+    var tree = Overlay.init(testing.allocator, tol);
+    defer tree.deinit();
+    _ = try tree.addInput();
+    for ([_][2]Vec2{ .{ .{ 0, 0 }, .{ 1, 0 } }, .{ .{ 1, 0 }, .{ 2, 1 } }, .{ .{ 1, 0 }, .{ 2, -1 } } }) |e| {
+        try tree.addEdge(.{ .a = e[0], .b = e[1] });
+        try tree.addEdge(.{ .a = e[1], .b = e[0] });
+    }
+    try tree.run();
+    try expectPlanar(&tree);
+    try testing.expectEqual(@as(usize, 0), tree.faces.items.len);
 }

@@ -212,7 +212,7 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     defer allocator.free(segments);
     for (0..n_cycles) |ci| {
         for (pieces[piece_starts[ci]..piece_starts[ci + 1]], piece_starts[ci]..) |piece, k| {
-            segments[k] = .{ .a = o.point(piece.a), .b = o.point(piece.b), .arc = piece.arc, .cycle = @intCast(ci) };
+            segments[k] = .{ .a = o.point(piece.a), .b = o.point(piece.b), .arc = piece.arc, .cycle = @intCast(ci), .slot_a = o.slot.items[piece.first], .slot_b = o.slot.items[piece.last ^ 1] };
         }
     }
     const owner = try allocator.alloc(u32, n_cycles);
@@ -254,7 +254,9 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
 
 /// A piece of a cycle's boundary: from vertex `a` to `b` of the overlay, straight or an
 /// arc the way the cycle runs it; what consecutive half-edges on one curve merge into.
-const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc };
+/// A run of boundary half-edges on one curve from vertex `a` to `b`: the first leaves `a`,
+/// the last arrives at `b`.
+const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc, first: u32, last: u32 };
 
 /// The cycle's half-edges as pieces, consecutive ones on one line (collinear, the same
 /// way) or on one circle (the same centre, radius and sense) merged where the boundary
@@ -263,9 +265,10 @@ const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc };
 fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, uses: []const u32, tol: Tolerance) u32 {
     var n: u32 = 0;
     for (halves) |h| {
-        const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h) };
+        const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h), .first = h, .last = h };
         if (n > 0 and uses[piece.a] == 1 and continues(o, out[n - 1], piece, tol)) {
             out[n - 1].b = piece.b;
+            out[n - 1].last = h;
         } else {
             out[n] = piece;
             n += 1;
@@ -274,6 +277,7 @@ fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, uses: []con
     // The last and the first
     while (n > 1 and uses[out[0].a] == 1 and continues(o, out[n - 1], out[0], tol)) {
         out[0].a = out[n - 1].a;
+        out[0].first = out[n - 1].first;
         n -= 1;
     }
     return n;
