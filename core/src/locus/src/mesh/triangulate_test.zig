@@ -363,3 +363,23 @@ test "triangulateWith: random points in a square are inserted in any order and t
         try expectInserted(&square, &.{ 0, 4 }, &extra, extra.len);
     }
 }
+
+test "triangulate: the area refusal reports areas of any size or sign" {
+    // The fuzzer's find (2026-11-12): the refusal scaled both areas by 10⁶ into integers,
+    // which panicked for an area past 2⁶⁴ / 10⁶ or below zero. A polygon pinched at a
+    // point (so the triangles are not counted) with a hole outside its outer ring is
+    // refused by its area: once at a scale of 10¹¹, once with a hole larger than the
+    // ring, so the polygon's area is negative
+    const huge = [_]Vec2{ .{ 0, 0 }, .{ 1e12, 0 }, .{ 5e11, 5e11 }, .{ 1e12, 1e12 }, .{ 0, 1e12 }, .{ 5e11, 5e11 }, .{ 2e12, 2e11 }, .{ 2e12, 8e11 }, .{ 2.8e12, 8e11 }, .{ 2.8e12, 2e11 } };
+    const negative = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 5, 5 }, .{ 10, 10 }, .{ 0, 10 }, .{ 5, 5 }, .{ 20, 2 }, .{ 20, 8 }, .{ 40, 8 }, .{ 40, 2 } };
+    const expected = [_]f64{ 5e23 - 4.8e23, 50 - 120 };
+    for ([_][]const Vec2{ &huge, &negative }, expected) |points, area| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.InvalidInput, triangulate.triangulate(testing.allocator, .{ .points = points, .starts = &.{ 0, 6, 10 } }, &diag));
+        const finding = diag.first().?;
+        try testing.expectEqual(.not_simple, finding.code);
+        try testing.expectApproxEqRel(area, finding.threshold, 1e-9);
+        try testing.expect(finding.measured != finding.threshold);
+    }
+}

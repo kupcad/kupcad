@@ -75,11 +75,11 @@ pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagno
     // twice
     if (woven.simple) {
         const expected = polygon.points.len + 2 * (polygon.rings() - 1) - 2;
-        if (triangles.items.len + skipped != expected) return notSimple(diag, triangles.items.len + skipped, expected);
+        if (triangles.items.len + skipped != expected) return notSimpleCount(diag, triangles.items.len + skipped, expected);
     }
     const covered = trianglesArea(rings.points, triangles.items);
     const area = polygonArea(polygon);
-    if (@abs(covered - area) > AREA_SLACK * @max(area, 1)) return notSimple(diag, @intFromFloat(@round(covered * 1e6)), @intFromFloat(@round(area * 1e6)));
+    if (@abs(covered - area) > AREA_SLACK * @max(area, 1)) return notSimple(diag, covered, area);
     try delaunay(allocator, rings, triangles.items);
     for (triangles.items) |*t| for (t) |*corner| {
         corner.* = woven.source[corner.*];
@@ -195,17 +195,17 @@ fn reweave(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) E
         var at: u32 = @intCast(h);
         while (!visited[at]) {
             visited[at] = true;
-            if (filled == n) return notSimple(diag, h, 0);
+            if (filled == n) return notSimpleCount(diag, h, 0);
             const o = graph.origin[at];
             points[filled] = polygon.points[o];
             source[filled] = o;
             filled += 1;
             at = graph.next[at];
         }
-        if (at != h) return notSimple(diag, h, 0);
-        if (filled - starts.items[starts.items.len - 1] < 3) return notSimple(diag, h, 0);
+        if (at != h) return notSimpleCount(diag, h, 0);
+        if (filled - starts.items[starts.items.len - 1] < 3) return notSimpleCount(diag, h, 0);
     }
-    if (filled != n) return notSimple(diag, filled, n);
+    if (filled != n) return notSimpleCount(diag, filled, n);
     try starts.append(allocator, @intCast(filled));
     return .{ .points = points, .starts = try starts.toOwnedSlice(allocator), .source = source, .simple = graph.welded == n };
 }
@@ -245,8 +245,16 @@ fn validate(polygon: Polygon, diag: *Diagnostics) Error!void {
     }
 }
 
-fn notSimple(diag: *Diagnostics, measured: usize, threshold: usize) Error {
-    return diag.fail(error.InvalidInput, .{ .code = .not_simple, .label = "the polygon", .measured = @floatFromInt(measured), .threshold = @floatFromInt(threshold) });
+/// The refusal of a polygon that is not simple, with what was measured against what was
+/// expected: counts, or the triangles' area against the polygon's (any size or sign, so
+/// floats: an area past 2⁶⁴ / 10⁶, or a negative one, made the refusal itself panic when it
+/// was scaled into an integer, a fuzz find of 2026-11-12).
+fn notSimple(diag: *Diagnostics, measured: f64, threshold: f64) Error {
+    return diag.fail(error.InvalidInput, .{ .code = .not_simple, .label = "the polygon", .measured = measured, .threshold = threshold });
+}
+
+fn notSimpleCount(diag: *Diagnostics, measured: usize, threshold: usize) Error {
+    return notSimple(diag, @floatFromInt(measured), @floatFromInt(threshold));
 }
 
 /// The sweep's order (BKOS p. 50): `a` is above `b` when higher, or as high and further
@@ -461,14 +469,14 @@ const Partition = struct {
                 return;
             }
         }
-        return notSimple(diag, e, 0);
+        return notSimpleCount(diag, e, 0);
     }
 
     /// The status edge directly west of vertex `v`, `down` the direction standing for the
     /// vertex among edges starting at its point.
     fn leftOf(self: *const Partition, v: u32, down: Vec2, diag: *Diagnostics) Error!u32 {
         const at = self.position(v, down);
-        if (at == 0) return notSimple(diag, v, 0);
+        if (at == 0) return notSimpleCount(diag, v, 0);
         return self.status.items[at - 1];
     }
 };
@@ -625,7 +633,7 @@ const Graph = struct {
                 try ring.append(allocator, self.origin[at]);
                 at = self.next[at];
             }
-            if (at != h) return notSimple(diag, h, 0);
+            if (at != h) return notSimpleCount(diag, h, 0);
             skipped += try self.triangulateMonotone(allocator, ring.items, &merged, &stack, triangles, diag);
         }
         return skipped;
@@ -639,7 +647,7 @@ const Graph = struct {
     /// triangles of no area were left out.
     fn triangulateMonotone(self: *const Graph, allocator: std.mem.Allocator, ring: []const u32, merged: *std.ArrayList(Chained), stack: *std.ArrayList(Chained), triangles: *std.ArrayList([3]u32), diag: *Diagnostics) Error!usize {
         const m = ring.len;
-        if (m < 3) return notSimple(diag, ring[0], 0);
+        if (m < 3) return notSimpleCount(diag, ring[0], 0);
         var top: usize = 0;
         var bottom: usize = 0;
         for (1..m) |i| {
