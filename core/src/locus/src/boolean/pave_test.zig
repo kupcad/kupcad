@@ -22,6 +22,8 @@ const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
+/// Where each run of the paves is; the refusal test reads it.
+var stage: pave.Stage = .vertex_vertex;
 
 fn box(lo: Vec3, hi: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -47,7 +49,7 @@ test "paves: two boxes at a corner, sixteen vertices and six crossings, two sect
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag);
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage);
     defer p.deinit();
     // Each of the three edges of `b` from its corner inside `a` leaves through a face of
     // `a`, and each of `a`'s from its corner inside `b` enters through a face of `b`
@@ -81,8 +83,8 @@ test "paves: two boxes at a corner, sixteen vertices and six crossings, two sect
     defer testing.allocator.free(classes);
     var inside = [2]usize{ 0, 0 };
     for (fragments.items.items, classes) |f, c| {
-        try testing.expect(c == .inside or c == .outside);
-        inside[f.operand] += @intFromBool(c == .inside);
+        try testing.expect(c.class == .inside or c.class == .outside);
+        inside[f.operand] += @intFromBool(c.class == .inside);
     }
     try testing.expectEqual([2]usize{ 3, 3 }, inside);
 }
@@ -94,7 +96,7 @@ test "paves: boxes on one plane pair their faces there, and the shared part is t
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag);
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage);
     defer p.deinit();
     // Tops with tops and bottoms with bottoms; no side lies in another's plane
     try testing.expectEqual(@as(usize, 2), p.coplanar.items.len);
@@ -105,8 +107,10 @@ test "paves: boxes on one plane pair their faces there, and the shared part is t
     // Each top and bottom: the shared unit square, on the other's face facing the same way
     var same: usize = 0;
     for (classes) |c| {
-        try testing.expect(c != .on_opposite);
-        same += @intFromBool(c == .on_same);
+        try testing.expect(c.class != .on_opposite);
+        same += @intFromBool(c.class == .on_same);
+        // A coincident piece names the face it lies on
+        try testing.expectEqual(c.class == .on_same, c.partner != classify.NONE);
     }
     try testing.expectEqual(@as(usize, 4), same);
 }
@@ -118,7 +122,7 @@ test "paves: a box resting on another meets it face to face, the same domain fac
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag);
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage);
     defer p.deinit();
     try testing.expectEqual(@as(usize, 1), p.coplanar.items.len);
     // The resting box's corners lie on the top's face, inside it
@@ -128,7 +132,7 @@ test "paves: a box resting on another meets it face to face, the same domain fac
     const classes = try classify.run(testing.allocator, &p, &fragments, .{}, &diag);
     defer testing.allocator.free(classes);
     var opposite: usize = 0;
-    for (classes) |c| opposite += @intFromBool(c == .on_opposite);
+    for (classes) |c| opposite += @intFromBool(c.class == .on_opposite);
     // The square under the resting box, and the resting box's bottom
     try testing.expectEqual(@as(usize, 2), opposite);
 }
@@ -140,7 +144,7 @@ test "paves: boxes overlapping along four edges have four common blocks; at a co
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag);
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage);
     defer p.deinit();
     // Each of the four edges along x where y and z are 0 or 2: from x = 1 to 2 in both
     try testing.expectEqual(@as(usize, 4), p.common.items.len);
@@ -149,7 +153,7 @@ test "paves: boxes overlapping along four edges have four common blocks; at a co
     }
     var c = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
     defer c.deinit();
-    var q = try pave.run(testing.allocator, &a, &c, tol, .{}, &diag);
+    var q = try pave.run(testing.allocator, &a, &c, tol, .{}, &diag, &stage);
     defer q.deinit();
     try testing.expectEqual(@as(usize, 0), q.common.items.len);
 }
@@ -164,8 +168,11 @@ test "paves: an edge whose shrunk range is under twice the tolerance is not spli
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    try testing.expectError(error.TooSmallEdge, pave.run(testing.allocator, &a, &b, tol, .{}, &diag));
+    try testing.expectError(error.TooSmallEdge, pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage));
     const f = diag.first().?;
     try testing.expectEqual(diagnostics.Code.edge_too_short, f.code);
     try testing.expectEqual(diagnostics.EntityKind.edge, f.entity.kind);
+    // Refused in the class that would have split it, which the finding names
+    try testing.expectEqual(pave.Stage.edge_face, stage);
+    try testing.expect(std.mem.indexOf(u8, f.label, "(edge–face)") != null);
 }

@@ -144,18 +144,18 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
         if (winding != 1 and winding != -1) return diag.fail(error.InvalidInput, .{ .code = .faces_overlap, .entity = .of(.face, @backingInt(f)), .label = "a face of an operand", .measured = @floatFromInt(winding), .threshold = 1 });
         const first_loop: u32 = @intCast(out.loops.items.len);
         const region = o.faces.items[r];
-        try cycle(&o, &lookup, region.outer, winding < 0, out, f, diag);
-        for (o.holesOf(@intCast(r))) |hole| try cycle(&o, &lookup, hole, winding < 0, out, f, diag);
+        try cycle(&o, &lookup, region.outer, winding < 0, out, k, f, diag);
+        for (o.holesOf(@intCast(r))) |hole| try cycle(&o, &lookup, hole, winding < 0, out, k, f, diag);
         try out.items.append(out.allocator, .{ .operand = k, .face = @backingInt(f), .first_loop = first_loop, .loop_count = @intCast(out.loops.items.len - first_loop) });
     }
 }
 
 /// Overlay cycle `c` as a loop of merged vertices, reversed when the face's loops run
 /// clockwise in its plane's coordinates (its outward normal against the plane's).
-fn cycle(o: *const Overlay, lookup: *const std.AutoHashMapUnmanaged(Key, u32), c: u32, reverse: bool, out: *Fragments, f: types.FaceIndex, diag: *Diagnostics) Error!void {
+fn cycle(o: *const Overlay, lookup: *const std.AutoHashMapUnmanaged(Key, u32), c: u32, reverse: bool, out: *Fragments, k: u1, f: types.FaceIndex, diag: *Diagnostics) Error!void {
     const start: u32 = @intCast(out.vertices.items.len);
     for (o.halvesOf(c)) |half| {
-        const v = lookup.get(keyOf(o.point(o.origin(half)))) orelse return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, @backingInt(f)) });
+        const v = lookup.get(keyOf(o.point(o.origin(half)))) orelse return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand, imprinted with what the second leaves on it (face–face)" else "a face of the second operand, imprinted with what the first leaves on it (face–face)" });
         try out.vertices.append(out.allocator, v);
     }
     const count: u32 = @intCast(out.vertices.items.len - start);

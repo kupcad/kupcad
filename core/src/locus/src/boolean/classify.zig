@@ -35,14 +35,23 @@ pub const Class = enum {
     on_opposite,
 };
 
+/// A fragment's class, and for one lying on a face of the other operand, that face.
+pub const Classified = struct {
+    class: Class,
+    /// The other operand's face a coincident fragment lies on, `NONE` for another.
+    partner: u32 = NONE,
+};
+
+pub const NONE: u32 = std.math.maxInt(u32);
+
 /// Each fragment's class, by index; owned by `allocator`.
-pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, options: diagnostics.Options, diag: *Diagnostics) Error![]Class {
+pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, options: diagnostics.Options, diag: *Diagnostics) Error![]Classified {
     var indexes: [2]index_mod.FaceIndex = undefined;
     indexes[0] = try index_mod.FaceIndex.build(allocator, paves.operands[0], diag);
     defer indexes[0].deinit(allocator);
     indexes[1] = try index_mod.FaceIndex.build(allocator, paves.operands[1], diag);
     defer indexes[1].deinit(allocator);
-    const classes = try allocator.alloc(Class, fragments.items.items.len);
+    const classes = try allocator.alloc(Classified, fragments.items.items.len);
     errdefer allocator.free(classes);
     var partners: std.ArrayList(u32) = .empty;
     defer partners.deinit(allocator);
@@ -53,21 +62,22 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         const f = types.FaceIndex.of(fragment.face);
         const p = try sample(allocator, paves, fragments, i) orelse return diag.fail(error.Degenerate, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a piece of a face with no area" });
         try paves.coplanarWith(fragment.operand, fragment.face, &partners);
-        const same_domain: ?Class = for (partners.items) |g| {
+        const same_domain: ?Classified = for (partners.items) |g| {
             const face_g = types.FaceIndex.of(g);
             if (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag) != .inside) continue;
             const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
             const n_g = in_face.outwardNormal(paves.operands[other], face_g, .{ 0, 0 });
-            break if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite;
+            break .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
         } else null;
-        if (same_domain) |class| {
-            classes[i] = class;
+        if (same_domain) |classified| {
+            classes[i] = classified;
             continue;
         }
-        classes[i] = switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
+        classes[i].partner = NONE;
+        classes[i].class = switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
             .inside => .inside,
             .outside => .outside,
-            .boundary => return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face) }),
+            .boundary => return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" }),
         };
     }
     return classes;

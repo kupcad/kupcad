@@ -38,12 +38,28 @@ const Error = diagnostics.Error;
 /// them; this bounds a body whose operators refuse every change after the first.
 const MAX_PASSES: usize = 64;
 
-/// Simplifies `body` in place and compacts it.
-pub fn run(body: *Body, diag: *Diagnostics) Error!void {
+/// What simplification did to the faces, for a caller following them (the boolean's
+/// face map): each merge, and the renumbering.
+pub const Log = struct {
+    /// Faces merged away, as `{gone, into}` in the order merged, before compaction.
+    merged: std.ArrayList([2]u32) = .empty,
+    /// Each face's index after compaction, `Body.Remap.NONE` for one removed; owned.
+    faces: []u32 = &.{},
+
+    pub fn deinit(self: *Log, allocator: std.mem.Allocator) void {
+        self.merged.deinit(allocator);
+        allocator.free(self.faces);
+        self.* = undefined;
+    }
+};
+
+/// Simplifies `body` in place and compacts it, its face merges and renumbering in `log`
+/// when given.
+pub fn run(body: *Body, diag: *Diagnostics, log: ?*Log) Error!void {
     var pass: usize = 0;
     while (pass < MAX_PASSES) : (pass += 1) {
         var changed = false;
-        changed = try mergeFaces(body, diag) or changed;
+        changed = try mergeFaces(body, diag, log) or changed;
         changed = try removeInnerEdges(body, diag) or changed;
         changed = try joinEdges(body, diag) or changed;
         changed = try collapseShortEdges(body, diag) or changed;
@@ -53,7 +69,8 @@ pub fn run(body: *Body, diag: *Diagnostics) Error!void {
         error.OutOfMemory => error.OutOfMemory,
         error.TooMany => diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "entities" }),
     };
-    remap.deinit(body.allocator);
+    defer remap.deinit(body.allocator);
+    if (log) |l| l.faces = try body.allocator.dupe(u32, remap.faces);
 }
 
 /// Whether faces `f` and `g` may be one face.
@@ -66,7 +83,7 @@ fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex) bool {
 /// Merges across edges between faces that may be one, but not across an edge with a copy
 /// (another edge between its vertices: two solids touching along it, assembled as one edge
 /// per solid), whose line the touching solid needs as a boundary of this face.
-fn mergeFaces(body: *Body, diag: *Diagnostics) Error!bool {
+fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
     const Pair = struct { lo: u32, hi: u32 };
     var copies: std.AutoHashMapUnmanaged(Pair, u32) = .empty;
     defer copies.deinit(body.allocator);
@@ -103,6 +120,7 @@ fn mergeFaces(body: *Body, diag: *Diagnostics) Error!bool {
         }
         body.face(keep).uv_box = body.face(keep).uv_box.merge(body.face(dying).uv_box);
         euler.kef(body, dying_coedge) catch |err| return eulerError(diag, err);
+        if (log) |l| try l.merged.append(body.allocator, .{ @backingInt(dying), @backingInt(keep) });
         changed = true;
     }
     return changed;

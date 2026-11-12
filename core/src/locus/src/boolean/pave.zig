@@ -50,6 +50,25 @@ const Error = diagnostics.Error;
 /// No merged vertex.
 pub const NONE: u32 = std.math.maxInt(u32);
 
+/// Where a boolean is: the interference classes of this phase in their order, then the
+/// later phases. A refusal is reported with the stage it came from (the result report's
+/// `failed_in`), and the findings of this phase name their class in their label.
+pub const Stage = enum {
+    /// The operands' own checks (solids, planar faces), before any interference.
+    operands,
+    vertex_vertex,
+    vertex_edge,
+    edge_edge,
+    vertex_face,
+    edge_face,
+    face_face,
+    imprint,
+    classify,
+    assemble,
+    simplify,
+    check,
+};
+
 /// A face of an operand: 0 for `a`, 1 for `b`.
 pub const FaceRef = struct {
     operand: u1,
@@ -160,8 +179,9 @@ pub const Paves = struct {
     }
 };
 
-/// The paves of `a` and `b` (solids with planar faces and straight edges) at `tol`.
-pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics) Error!Paves {
+/// The paves of `a` and `b` (solids with planar faces and straight edges) at `tol`;
+/// `stage` follows the interference classes as they are found, so a refusal's is there.
+pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics, stage: *Stage) Error!Paves {
     var p: Paves = .{ .allocator = allocator, .tol = tol, .operands = .{ a, b }, .welder = grid.PointWelder.init(tol.xsect) };
     errdefer p.deinit();
     for (0..2) |k| {
@@ -173,17 +193,23 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
         p.sections[k] = try allocator.alloc(std.ArrayList([2]u32), body.faces.items.len);
         @memset(p.sections[k], .empty);
     }
-    var filler: Filler = .{ .p = &p, .allocator = allocator, .options = options, .diag = diag };
+    var filler: Filler = .{ .p = &p, .allocator = allocator, .options = options, .diag = diag, .stage = stage };
     defer filler.deinit();
+    stage.* = .vertex_vertex;
     try filler.vertexVertex();
     try filler.buildTrees();
     try options.checkCancel();
+    stage.* = .vertex_edge;
     try filler.vertexEdge();
+    stage.* = .edge_edge;
     try filler.edgeEdge();
     try options.checkCancel();
+    stage.* = .vertex_face;
     try filler.vertexFace();
+    stage.* = .edge_face;
     try filler.edgeFace();
     try options.checkCancel();
+    stage.* = .face_face;
     try filler.collectIncidences();
     try filler.commonBlocks();
     try filler.faceFace();
@@ -196,6 +222,7 @@ const Filler = struct {
     allocator: std.mem.Allocator,
     options: diagnostics.Options,
     diag: *Diagnostics,
+    stage: *Stage,
     /// Per operand: its live edges and faces, and a tree over each's box grown by the
     /// intersection tolerance.
     edges: [2][]types.EdgeIndex = .{ &.{}, &.{} },
@@ -383,7 +410,7 @@ const Filler = struct {
     /// Merged vertex `v` as a pave of edge `e` of operand `k` at `at`; `TooSmallEdge`,
     /// naming the edge, when the edge cannot be split.
     fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
-        if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = if (k == 0) "an edge of the first operand, too short to split where the second meets it" else "an edge of the second operand, too short to split where the first meets it", .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
+        if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
         try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
     }
 
@@ -766,6 +793,16 @@ fn sortUnique(comptime T: type, list: *std.ArrayList(T), comptime lessThan: fn (
         kept += 1;
     }
     list.shrinkRetainingCapacity(kept);
+}
+
+/// What a refusal of an edge too short to split says, naming the operand and the
+/// interference class that would have split it.
+fn tooSmallLabel(k: usize, stage: Stage) []const u8 {
+    return switch (stage) {
+        .vertex_edge => if (k == 0) "an edge of the first operand, too short to split at a vertex of the second on it (vertex–edge)" else "an edge of the second operand, too short to split at a vertex of the first on it (vertex–edge)",
+        .edge_edge => if (k == 0) "an edge of the first operand, too short to split where an edge of the second crosses it (edge–edge)" else "an edge of the second operand, too short to split where an edge of the first crosses it (edge–edge)",
+        else => if (k == 0) "an edge of the first operand, too short to split where it crosses a face of the second (edge–face)" else "an edge of the second operand, too short to split where it crosses a face of the first (edge–face)",
+    };
 }
 
 fn welderError(diag: *Diagnostics, err: grid.Error) Error {

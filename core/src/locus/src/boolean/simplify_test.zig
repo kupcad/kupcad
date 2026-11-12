@@ -84,7 +84,16 @@ test "simplify: two faces on one plane become one, and the vertices left on stra
     try testing.expectEqual(@as(usize, 7), body.counts().faces);
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    try simplify.run(&body, &diag);
+    var log: simplify.Log = .{};
+    defer log.deinit(testing.allocator);
+    try simplify.run(&body, &diag, &log);
+    // One merge, of the two halves of the top (faces 1 and 2, built in that order); the
+    // face merged away gone in the renumbering, the other six kept in their order
+    try testing.expectEqual(@as(usize, 1), log.merged.items.len);
+    const merge = log.merged.items[0];
+    try testing.expect((merge[0] == 1 and merge[1] == 2) or (merge[0] == 2 and merge[1] == 1));
+    try testing.expectEqual(@as(usize, 7), log.faces.len);
+    try testing.expectEqual(@import("../topology/body.zig").Body.Remap.NONE, log.faces[merge[0]]);
     try expectValid(&body);
     // A cube: the split's edge and its two vertices gone
     const counts = body.counts();
@@ -98,7 +107,7 @@ test "simplify: two faces on one plane of different attributes stay two" {
     defer body.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    try simplify.run(&body, &diag);
+    try simplify.run(&body, &diag, null);
     try expectValid(&body);
     const counts = body.counts();
     try testing.expectEqual(@as(usize, 7), counts.faces);
@@ -154,7 +163,7 @@ test "simplify: an edge shorter than the minimum feature size collapses into its
     var before = try check.run(testing.allocator, &body, .geometric);
     defer before.deinit(testing.allocator);
     try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
-    try simplify.run(&body, &diag);
+    try simplify.run(&body, &diag, null);
     try expectValid(&body);
     const counts = body.counts();
     try testing.expectEqual(@as(usize, 6), counts.faces);

@@ -43,8 +43,8 @@ pub fn keep(op: Op, operand: u1, class: Class) Keep {
 }
 
 /// Each fragment's fate, by index; owned by `allocator`.
-pub fn run(allocator: std.mem.Allocator, op: Op, fragments: *const imprint.Fragments, classes: []const Class) error{OutOfMemory}![]Keep {
+pub fn run(allocator: std.mem.Allocator, op: Op, fragments: *const imprint.Fragments, classes: []const classify.Classified) error{OutOfMemory}![]Keep {
     const out = try allocator.alloc(Keep, classes.len);
-    for (fragments.items.items, classes, out) |fragment, class, *k| k.* = keep(op, fragment.operand, class);
+    for (fragments.items.items, classes, out) |fragment, c, *k| k.* = keep(op, fragment.operand, c.class);
     return out;
 }

@@ -33,15 +33,19 @@ fn box(lo: Vec3, hi: Vec3) !Body {
     return transform.transform(testing.allocator, &unit, &mat.Affine.translate(lo), .{}, &diag);
 }
 
-/// `a op b`, checked: every rule of the checker and the overlap rules pass it.
+/// `a op b`, checked: every rule of the checker and the overlap rules pass it, and its
+/// report fits it.
 fn sound(a: *const Body, b: *const Body, op: Op) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var result = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag) catch |e| {
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var result = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, &r) catch |e| {
         std.debug.print("boolean {s}: {f}\n", .{ @tagName(op), diag });
         return e;
     };
     errdefer result.deinit();
+    try expectReportFits(&r, a, b, &result, op);
     var report = try check.run(testing.allocator, &result, .global);
     defer report.deinit(testing.allocator);
     if (report.first()) |f| {
@@ -53,6 +57,31 @@ fn sound(a: *const Body, b: *const Body, op: Op) !Body {
         return e;
     };
     return result;
+}
+
+/// The report of a boolean that succeeded: its operation, no refusal's stage, every face
+/// of the result made from some input face, every entry naming live faces, an input face
+/// preserved in one result face alone, and a reversed face only from the second operand of
+/// a difference.
+fn expectReportFits(r: *const pipeline.Report, a: *const Body, b: *const Body, result: *const Body, op: Op) !void {
+    try testing.expectEqual(op, r.op);
+    try testing.expectEqual(@as(?pipeline.Stage, null), r.failed_in);
+    const covered = try testing.allocator.alloc(bool, result.faces.items.len);
+    defer testing.allocator.free(covered);
+    @memset(covered, false);
+    for (r.faces.items) |m| {
+        const input = if (m.operand == 0) a else b;
+        try testing.expect(m.input < input.faces.items.len and !input.faces.items[m.input].flags.tombstone);
+        try testing.expect(m.result < result.faces.items.len and !result.faces.items[m.result].flags.tombstone);
+        covered[m.result] = true;
+        if (m.reversed) try testing.expect(op == .difference and m.operand == 1);
+        if (m.role == .preserved) {
+            var results: usize = 0;
+            for (r.faces.items) |n| results += @intFromBool(n.operand == m.operand and n.input == m.input);
+            try testing.expectEqual(@as(usize, 1), results);
+        }
+    }
+    for (result.faces.items, covered) |f, c| if (!f.flags.tombstone) try testing.expect(c);
 }
 
 fn volume(body: *const Body) !f64 {
@@ -217,7 +246,7 @@ test "boolean: an empty operand answers at once; a curved one is refused naming 
     defer diag.deinit();
     var cylinder = try primitives.cylinder(testing.allocator, tol, 1, 1, false, &diag);
     defer cylinder.deinit();
-    try testing.expectError(error.NotImplemented, pipeline.boolean(testing.allocator, &a, &cylinder, .@"union", .{}, &diag));
+    try testing.expectError(error.NotImplemented, pipeline.boolean(testing.allocator, &a, &cylinder, .@"union", .{}, &diag, null));
     try testing.expectEqual(diagnostics.EntityKind.face, diag.first().?.entity.kind);
 }
 
@@ -319,7 +348,7 @@ test "boolean: a box touching another's face along a line from inside; the diffe
     // corpus's pinches, M4)
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    try testing.expectError(error.NotValid, pipeline.boolean(testing.allocator, &a, &b, .difference, .{}, &diag));
+    try testing.expectError(error.NotValid, pipeline.boolean(testing.allocator, &a, &b, .difference, .{}, &diag, null));
     try testing.expectEqual(diagnostics.Code.euler_poincare, diag.first().?.code);
 }
 
@@ -331,7 +360,7 @@ test "boolean: warnings name what they concern: faces a hair from one plane, sol
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var u = try pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag);
+    var u = try pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag, null);
     defer u.deinit();
     var near: usize = 0;
     for (diag.findings.items) |f| {
@@ -346,11 +375,212 @@ test "boolean: warnings name what they concern: faces a hair from one plane, sol
     var corner = try box(.{ 1, 1, 0 }, .{ 2, 2, 1 });
     defer corner.deinit();
     diag.clear();
-    var pair = try pipeline.boolean(testing.allocator, &a, &corner, .@"union", .{}, &diag);
+    var pair = try pipeline.boolean(testing.allocator, &a, &corner, .@"union", .{}, &diag, null);
     defer pair.deinit();
     try testing.expectEqual(@as(usize, 1), diag.warnings());
     const w = diag.findings.items[0];
     try testing.expectEqual(diagnostics.Code.solids_touch, w.code);
     try testing.expectEqual(diagnostics.EntityKind.edge, w.entity.kind);
     try testing.expect(w.entity.index < pair.edges.items.len);
+}
+
+/// `a op b` with its report.
+fn reported(a: *const Body, b: *const Body, op: Op, options: pipeline.Options, r: *pipeline.Report) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return pipeline.boolean(testing.allocator, a, b, op, options, &diag, r);
+}
+
+fn roleOf(r: *const pipeline.Report, operand: u1, input: u32) ?pipeline.Role {
+    for (r.faces.items) |m| if (m.operand == operand and m.input == input) return m.role;
+    return null;
+}
+
+/// The face of `body` facing along `normal`.
+fn facing(body: *const Body, normal: Vec3) u32 {
+    for (body.faces.items, 0..) |f, i| {
+        if (f.flags.tombstone) continue;
+        if (vec.dot(@import("../query/in_face.zig").outwardNormal(body, @import("../topology/types.zig").FaceIndex.of(i), .{ 0, 0 }), normal) > 0.5) return @intCast(i);
+    }
+    unreachable;
+}
+
+test "report: overlapping at a corner, the faces away from the other preserved, the rest split, exact, no contact" {
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var b = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer b.deinit();
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try reported(&a, &b, .@"union", .{}, &r);
+    defer u.deinit();
+    try testing.expectEqual(pipeline.Report.Quality.exact, r.quality());
+    try testing.expect(!r.coincident);
+    try testing.expectEqual(@as(usize, 0), r.contacts.items.len);
+    for ([_]Vec3{ vec.X3, vec.Y3, vec.Z3 }) |n| {
+        try testing.expectEqual(pipeline.Role.preserved, roleOf(&r, 0, facing(&a, vec.neg(n))).?);
+        try testing.expectEqual(pipeline.Role.split, roleOf(&r, 0, facing(&a, n)).?);
+        try testing.expectEqual(pipeline.Role.preserved, roleOf(&r, 1, facing(&b, n)).?);
+    }
+    // Every result face from one input face here: twelve entries, one per face
+    try testing.expectEqual(@as(usize, 12), r.faces.items.len);
+    // In a difference the second's notch faces are its faces inside the first, reversed
+    var d_report = pipeline.Report.init(testing.allocator);
+    defer d_report.deinit();
+    var d = try reported(&a, &b, .difference, .{}, &d_report);
+    defer d.deinit();
+    var reversed: usize = 0;
+    for (d_report.faces.items) |m| reversed += @intFromBool(m.reversed);
+    try testing.expectEqual(@as(usize, 3), reversed);
+}
+
+test "report: boxes touching face to face, coincident, their contacts the shared square's corners, the tops merged" {
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var b = try box(.{ 1, 0, 0 }, .{ 2, 1, 1 });
+    defer b.deinit();
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try reported(&a, &b, .@"union", .{}, &r);
+    defer u.deinit();
+    try testing.expect(r.coincident);
+    try testing.expectEqual(@as(usize, 4), r.contacts.items.len);
+    for (r.contacts.items) |p| try testing.expectEqual(@as(f64, 1), p[0]);
+    try testing.expectEqual(pipeline.Role.merged, roleOf(&r, 0, facing(&a, vec.Z3)).?);
+    try testing.expectEqual(pipeline.Role.preserved, roleOf(&r, 0, facing(&a, vec.neg(vec.X3))).?);
+    // The faces they touched by are in no face of the result
+    try testing.expectEqual(@as(?pipeline.Role, null), roleOf(&r, 0, facing(&a, vec.X3)));
+    try testing.expectEqual(@as(?pipeline.Role, null), roleOf(&r, 1, facing(&b, vec.neg(vec.X3))));
+}
+
+test "report: boxes touching along an edge, and at a corner a hair apart, approximate by the gap" {
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var edge = try box(.{ 1, 1, 0 }, .{ 2, 2, 1 });
+    defer edge.deinit();
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try reported(&a, &edge, .@"union", .{}, &r);
+    defer u.deinit();
+    try testing.expect(!r.coincident);
+    try testing.expectEqual(@as(usize, 2), r.contacts.items.len);
+    try testing.expectEqual(pipeline.Report.Quality.exact, r.quality());
+    // A corner five millionths off the other's: one vertex at their middle
+    var corner = try box(.{ 1 + 5e-6, 1, 1 }, .{ 2, 2, 2 });
+    defer corner.deinit();
+    var q = pipeline.Report.init(testing.allocator);
+    defer q.deinit();
+    var v = try reported(&a, &corner, .@"union", .{}, &q);
+    defer v.deinit();
+    try testing.expectEqual(@as(usize, 1), q.contacts.items.len);
+    switch (q.quality()) {
+        .exact => return error.TestUnexpectedResult,
+        .approximate => |gap| try testing.expectApproxEqAbs(@as(f64, 2.5e-6), gap, 1e-12),
+    }
+}
+
+/// The host names at the roots of `tag` in `table`, through splits, merges and pairs.
+fn rootNames(table: *const @import("../topology/tags.zig").Table, tag: @import("../topology/types.zig").Tag, out: *std.ArrayList(u32)) !void {
+    const row = table.row(tag) orelse return;
+    switch (row.source) {
+        .named => |n| try out.append(testing.allocator, n),
+        .split => |parent| try rootNames(table, parent, out),
+        .merged, .pair => |parents| for (parents) |t| try rootNames(table, t, out),
+    }
+}
+
+test "report: the result's faces carry their input faces' tags, split and merged under the host's operation" {
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 1 });
+    defer a.deinit();
+    var b = try box(.{ 1, 1, 0 }, .{ 3, 3, 1 });
+    defer b.deinit();
+    for ([2]*Body{ &a, &b }, [2]u32{ 100, 200 }) |body, base| {
+        for (body.faces.items, 0..) |*f, i| f.tag = try body.tags.named(testing.allocator, 1, base + @as(u32, @intCast(i)));
+    }
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try reported(&a, &b, .@"union", .{ .tag_op = 7 }, &r);
+    defer u.deinit();
+    var names: std.ArrayList(u32) = .empty;
+    defer names.deinit(testing.allocator);
+    for (r.faces.items) |m| {
+        names.clearRetainingCapacity();
+        try rootNames(&u.tags, u.face(@import("../topology/types.zig").FaceIndex.of(m.result)).tag, &names);
+        const want: u32 = (if (m.operand == 0) @as(u32, 100) else 200) + m.input;
+        try testing.expect(std.mem.indexOfScalar(u32, names.items, want) != null);
+        // A row the boolean made is under its operation
+        const row = u.tags.row(u.face(@import("../topology/types.zig").FaceIndex.of(m.result)).tag).?;
+        if (row.source != .named) try testing.expectEqual(@as(u32, 7), row.op);
+    }
+    // The merged top names both tops
+    names.clearRetainingCapacity();
+    const top = for (r.faces.items) |m| {
+        if (m.operand == 0 and m.input == facing(&a, vec.Z3)) break m.result;
+    } else unreachable;
+    try rootNames(&u.tags, u.face(@import("../topology/types.zig").FaceIndex.of(top)).tag, &names);
+    try testing.expect(std.mem.indexOfScalar(u32, names.items, 100 + facing(&a, vec.Z3)) != null);
+    try testing.expect(std.mem.indexOfScalar(u32, names.items, 200 + facing(&b, vec.Z3)) != null);
+}
+
+/// A trace sink keeping the phases' names, and the report's text.
+const Sink = struct {
+    var phases: [16][32]u8 = undefined;
+    var lengths: [16]usize = undefined;
+    var count: usize = 0;
+    var report: [4096]u8 = undefined;
+    var report_len: usize = 0;
+
+    fn write(_: ?*anyopaque, _: []const u8, phase: []const u8, text: []const u8) void {
+        if (count < phases.len) {
+            const n = @min(phase.len, 32);
+            @memcpy(phases[count][0..n], phase[0..n]);
+            lengths[count] = n;
+            count += 1;
+        }
+        if (std.mem.eql(u8, phase, "report")) {
+            report_len = @min(text.len, report.len);
+            @memcpy(report[0..report_len], text[0..report_len]);
+        }
+    }
+
+    fn has(phase: []const u8) bool {
+        for (0..count) |i| if (std.mem.eql(u8, phases[i][0..lengths[i]], phase)) return true;
+        return false;
+    }
+};
+
+test "report: the trace gets it beside the phases; a refusal's names the stage it failed in" {
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var b = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer b.deinit();
+    Sink.count = 0;
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try reported(&a, &b, .@"union", .{ .common = .{ .trace = .{ .write = Sink.write } } }, &r);
+    defer u.deinit();
+    for ([_][]const u8{ "arguments", "assembled", "simplified", "report" }) |phase| try testing.expect(Sink.has(phase));
+    try testing.expect(std.mem.indexOf(u8, Sink.report[0..Sink.report_len], "\"quality\": \"exact\"") != null);
+    // A slab too thin to split where the other's face crosses it: refused in edge–face,
+    // which the report and the trace's report say
+    const xsect = tol.xsect;
+    var slab = try box(.{ 0, 0, 0 }, .{ 1, 1, 3 * xsect });
+    defer slab.deinit();
+    var cut = try box(.{ 0.25, 0.25, 1.5 * xsect }, .{ 2, 2, 1 });
+    defer cut.deinit();
+    Sink.count = 0;
+    var refused = pipeline.Report.init(testing.allocator);
+    defer refused.deinit();
+    try testing.expectError(error.TooSmallEdge, reported(&slab, &cut, .difference, .{ .common = .{ .trace = .{ .write = Sink.write } } }, &refused));
+    try testing.expectEqual(@as(?pipeline.Stage, .edge_face), refused.failed_in);
+    try testing.expect(std.mem.indexOf(u8, Sink.report[0..Sink.report_len], "\"failed_in\": \"edge_face\"") != null);
+    // A curved operand, refused before any interference
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var cylinder = try primitives.cylinder(testing.allocator, tol, 1, 1, false, &diag);
+    defer cylinder.deinit();
+    var curved = pipeline.Report.init(testing.allocator);
+    defer curved.deinit();
+    try testing.expectError(error.NotImplemented, reported(&a, &cylinder, .@"union", .{}, &curved));
+    try testing.expectEqual(@as(?pipeline.Stage, .operands), curved.failed_in);
 }

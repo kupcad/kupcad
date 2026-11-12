@@ -56,43 +56,170 @@ const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 
 pub const Op = select.Op;
+pub const Stage = pave.Stage;
 
 /// The milestone of booleans on curved operands.
 const CURVED_MILESTONE = 5;
 
-/// `a op b`, a new solid; the operands untouched.
-pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op: Op, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
-    try options.checkCancel();
-    try trace.arguments(allocator, &options, "boolean", .{ .op = op });
+pub const Options = struct {
+    common: diagnostics.Options = .{},
+    /// The host's number for this operation, in the tag rows the result's faces get (D14,
+    /// `topology/tags.zig`: a face split from an operand's, two coincident faces merged).
+    tag_op: u32 = 0,
+};
+
+/// How a result face came from an input face.
+pub const Role = enum {
+    /// The whole face, alone: not split, nothing merged into it.
+    preserved,
+    /// A part of it, or it with other parts of its own operand.
+    split,
+    /// Made one with a face of the other operand: lying on it (the operands coincident
+    /// there) or beside it in one plane.
+    merged,
+};
+
+/// An input face and a result face made from it.
+pub const FaceMap = struct {
+    /// 0 for the first operand, 1 for the second.
+    operand: u1,
+    /// The face's index in its operand and in the result.
+    input: u32,
+    result: u32,
+    role: Role,
+    /// Facing the other way: the second operand's inside of a difference.
+    reversed: bool,
+};
+
+/// What a boolean did, for the host (research/opengeometry.md §4; the typed warnings made
+/// concrete): the operation, its quality (exact, or approximate with the largest gap: how
+/// far a vertex of the result was moved to meet the other operand), whether the operands
+/// had coincident faces, their contacts when they touch without overlapping, each input
+/// face's result faces, and for a refusal the stage it came from (an interference class
+/// or a later phase). Filled even when the operation fails; sent to the trace as the
+/// phase "report".
+pub const Report = struct {
+    allocator: std.mem.Allocator,
+    op: Op = .@"union",
+    max_gap: f64 = 0,
+    coincident: bool = false,
+    /// The points where the operands touch, when no part of either lies inside the other.
+    contacts: std.ArrayList(Vec3) = .empty,
+    /// Sorted by operand, input face, result face.
+    faces: std.ArrayList(FaceMap) = .empty,
+    failed_in: ?Stage = null,
+
+    pub fn init(allocator: std.mem.Allocator) Report {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Report) void {
+        self.contacts.deinit(self.allocator);
+        self.faces.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub const Quality = union(enum) { exact, approximate: f64 };
+
+    pub fn quality(self: *const Report) Quality {
+        return if (self.max_gap == 0) .exact else .{ .approximate = self.max_gap };
+    }
+
+    /// The result faces made from face `input` of `operand`, in order.
+    pub fn resultsOf(self: *const Report, operand: u1, input: u32, out: *std.ArrayList(u32)) error{OutOfMemory}!void {
+        out.clearRetainingCapacity();
+        for (self.faces.items) |m| if (m.operand == operand and m.input == input) try out.append(self.allocator, m.result);
+    }
+
+    /// The report as the trace takes it (plain data for std.json).
+    fn view(self: *const Report) View {
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in };
+    }
+
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage };
+};
+
+/// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
+/// given (and to the trace either way), a refusal's stage among it.
+pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op: Op, options: Options, diag: *Diagnostics, report: ?*Report) Error!Body {
+    var own = Report.init(allocator);
+    defer own.deinit();
+    const r = report orelse &own;
+    r.op = op;
+    r.failed_in = null;
+    var stage: Stage = .operands;
+    errdefer {
+        r.failed_in = stage;
+        trace.data(allocator, &options.common, "boolean", "report", r.view()) catch {};
+    }
+    const common = options.common;
+    try common.checkCancel();
+    try trace.arguments(allocator, &common, "boolean", .{ .op = op });
     for ([2]*const Body{ a, b }) |operand| {
         if (operand.kind != .solid) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "an operand: a solid" });
         try planarOnly(operand, diag);
     }
-    const tol = options.tolerance orelse Tolerance.merge(a.tol, b.tol);
+    const tol = common.tolerance orelse Tolerance.merge(a.tol, b.tol);
     try diagnostics.input.tolerance(diag, tol);
-    if (a.isEmpty() or b.isEmpty()) return emptyOperand(allocator, a, b, op, tol, diag);
+    if (a.isEmpty() or b.isEmpty()) {
+        const result = try emptyOperand(allocator, a, b, op, tol, diag, r);
+        try trace.data(allocator, &common, "boolean", "report", r.view());
+        return result;
+    }
 
-    var paves = try pave.run(allocator, a, b, tol, options, diag);
+    var paves = try pave.run(allocator, a, b, tol, common, diag, &stage);
     defer paves.deinit();
-    try options.checkCancel();
-    var fragments = try imprint.run(allocator, &paves, options, diag);
+    try common.checkCancel();
+    stage = .imprint;
+    var fragments = try imprint.run(allocator, &paves, common, diag);
     defer fragments.deinit();
-    const classes = try classify.run(allocator, &paves, &fragments, options, diag);
+    stage = .classify;
+    const classes = try classify.run(allocator, &paves, &fragments, common, diag);
     defer allocator.free(classes);
     const keeps = try select.run(allocator, op, &fragments, classes);
     defer allocator.free(keeps);
-    try options.checkCancel();
+    try contacts(&paves, classes, r);
+    try common.checkCancel();
 
-    var result = try assemble(allocator, &paves, &fragments, keeps, tol, diag);
+    stage = .assemble;
+    var made = try assemble(allocator, &paves, &fragments, classes, keeps, tol, options.tag_op, diag);
+    defer made.deinit(allocator);
+    var result = made.body;
     errdefer result.deinit();
-    try trace.phase(allocator, &options, &result, "boolean", "assembled");
-    try simplify.run(&result, diag);
-    try trace.phase(allocator, &options, &result, "boolean", "simplified");
-    var report = try check.run(allocator, &result, .geometric);
-    defer report.deinit(allocator);
-    if (report.first()) |f| return diag.fail(error.NotValid, f);
+    try trace.phase(allocator, &common, &result, "boolean", "assembled");
+    stage = .simplify;
+    var log: simplify.Log = .{};
+    defer log.deinit(allocator);
+    try simplify.run(&result, diag, &log);
+    try trace.phase(allocator, &common, &result, "boolean", "simplified");
+    stage = .check;
+    var checked = try check.run(allocator, &result, .geometric);
+    defer checked.deinit(allocator);
+    if (checked.first()) |f| return diag.fail(error.NotValid, f);
+    try faceMap(allocator, &result, &made, &log, options.tag_op, r, diag);
+    for (result.vertices.items) |v| if (!v.tombstone) {
+        r.max_gap = @max(r.max_gap, v.gap);
+    };
     try warnTouching(allocator, &result, diag);
+    try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
+}
+
+/// Whether the operands had coincident faces, and where they touch when no part of
+/// either lies inside the other: the merged vertices on faces of both.
+fn contacts(paves: *const pave.Paves, classes: []const classify.Classified, r: *Report) Error!void {
+    var overlap = false;
+    for (classes) |c| {
+        overlap = overlap or c.class == .inside;
+        r.coincident = r.coincident or c.class == .on_same or c.class == .on_opposite;
+    }
+    if (overlap) return;
+    // Each merged vertex's operands, from the faces it lies on
+    const on = try r.allocator.alloc(u2, paves.points.items.len);
+    defer r.allocator.free(on);
+    @memset(on, 0);
+    for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
+    for (on, 0..) |operands, v| if (operands == 3) try r.contacts.append(r.allocator, paves.point(@intCast(v)));
 }
 
 /// A warning (`solids_touch`) for each place the result's solids touch along a line: two
@@ -133,13 +260,22 @@ fn planarOnly(body: *const Body, diag: *Diagnostics) Error!void {
     }
 }
 
-fn emptyOperand(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op: Op, tol: Tolerance, diag: *Diagnostics) Error!Body {
+/// An empty operand's answer: the other operand's copy, each of its faces preserved, or the
+/// empty solid.
+fn emptyOperand(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op: Op, tol: Tolerance, diag: *Diagnostics, r: *Report) Error!Body {
     const keep: ?*const Body = switch (op) {
         .@"union" => if (a.isEmpty()) b else a,
         .difference => a,
         .intersection => null,
     };
-    if (keep) |body| if (!body.isEmpty()) return body.clone(allocator) catch |e| return tooMany(diag, e);
+    if (keep) |body| if (!body.isEmpty()) {
+        const operand: u1 = if (body == a) 0 else 1;
+        for (body.faces.items, 0..) |f, i| {
+            if (f.flags.tombstone) continue;
+            try r.faces.append(allocator, .{ .operand = operand, .input = @intCast(i), .result = @intCast(i), .role = .preserved, .reversed = false });
+        }
+        return body.clone(allocator) catch |e| return tooMany(diag, e);
+    };
     var empty = Body.empty(allocator, tol);
     empty.kind = .solid;
     return empty;
@@ -152,11 +288,54 @@ const Use = struct {
     face: u32,
 };
 
-/// The kept fragments as a body: see the file's comment, step 5.
-fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, keeps: []const select.Keep, tol: Tolerance, diag: *Diagnostics) Error!Body {
+/// The assembled body and where its faces came from, for the face map.
+const Made = struct {
+    body: Body,
+    /// Each face of the body as built (before simplification): its fragment and its tag.
+    face_fragment: []u32,
+    face_tag: []types.Tag,
+    operands: [2]*const Body,
+    /// How many fragments each operand's face split into, by face index.
+    pieces: [2][]u32,
+    /// Where the second operand's tags start in the body's tag table.
+    tag_offset: u32,
+    fragments: *const imprint.Fragments,
+    classes: []const classify.Classified,
+    keeps: []const select.Keep,
+
+    fn deinit(self: *Made, allocator: std.mem.Allocator) void {
+        allocator.free(self.face_fragment);
+        allocator.free(self.face_tag);
+        allocator.free(self.pieces[0]);
+        allocator.free(self.pieces[1]);
+    }
+
+    /// Operand `operand`'s tag `tag` in the body's table.
+    fn tagIn(self: *const Made, operand: u1, tag: types.Tag) types.Tag {
+        if (tag == .untagged or operand == 0) return tag;
+        return types.Tag.of(@backingInt(tag) + self.tag_offset);
+    }
+};
+
+/// The kept fragments as a body: see the file's comment, step 5. The body's tag table
+/// holds both operands' rows (the second's after the first's), and each face the tag of
+/// its operand's face, a `split` row of it when that face became several fragments.
+fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, classes: []const classify.Classified, keeps: []const select.Keep, tol: Tolerance, tag_op: u32, diag: *Diagnostics) Error!Made {
     var b = try primitives.Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
     errdefer b.body.deinit();
+    var made: Made = .{ .body = undefined, .face_fragment = &.{}, .face_tag = &.{}, .operands = paves.operands, .pieces = .{ &.{}, &.{} }, .tag_offset = 0, .fragments = fragments, .classes = classes, .keeps = keeps };
+    errdefer made.deinit(allocator);
+    for (0..2) |k| {
+        made.pieces[k] = try allocator.alloc(u32, paves.operands[k].faces.items.len);
+        @memset(made.pieces[k], 0);
+    }
+    for (fragments.items.items) |f| made.pieces[f.operand][f.face] += 1;
+    try adoptTags(allocator, &b.body, paves.operands, &made);
+    var face_fragment: std.ArrayList(u32) = .empty;
+    defer face_fragment.deinit(allocator);
+    var face_tag: std.ArrayList(types.Tag) = .empty;
+    defer face_tag.deinit(allocator);
     const vertex_of = try allocator.alloc(types.VertexIndex, paves.points.items.len);
     defer allocator.free(vertex_of);
     @memset(vertex_of, .none);
@@ -203,7 +382,11 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         }
         try face_loops.append(allocator, .{ first_loop, @intCast(loop_ranges.items.len - first_loop) });
         try normals.append(allocator, normal);
-        try faces.append(allocator, .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .attribute = body.face(f).attribute });
+        const own = made.tagIn(fragment.operand, body.face(f).tag);
+        const tag = if (made.pieces[fragment.operand][fragment.face] > 1) b.body.tags.split(allocator, tag_op, own) catch |e| return tooMany(diag, e) else own;
+        try faces.append(allocator, .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .attribute = body.face(f).attribute, .tag = tag });
+        try face_fragment.append(allocator, @intCast(i));
+        try face_tag.append(allocator, tag);
     }
     try pairTouching(allocator, &b.body, edge_specs.items, uses.items, normals.items, diag);
 
@@ -221,14 +404,112 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         };
         spec.uv_box = uv;
     }
-    if (faces.items.len == 0) return b.body;
-    _ = sew.sew(&b.body, faces.items, .outer) catch |e| return b.fail(e);
-    // A shell enclosing negative volume bounds a void
-    var shells = traverse.Shells.init(&b.body);
-    while (shells.next() catch return corrupt(diag)) |s| {
-        if (try shellVolume(&b.body, s, diag) < 0) b.body.shell(s).kind = .void;
+    made.face_fragment = try face_fragment.toOwnedSlice(allocator);
+    made.face_tag = try face_tag.toOwnedSlice(allocator);
+    if (faces.items.len > 0) {
+        _ = sew.sew(&b.body, faces.items, .outer) catch |e| return b.fail(e);
+        // A shell enclosing negative volume bounds a void
+        var shells = traverse.Shells.init(&b.body);
+        while (shells.next() catch return corrupt(diag)) |s| {
+            if (try shellVolume(&b.body, s, diag) < 0) b.body.shell(s).kind = .void;
+        }
     }
-    return b.body;
+    made.body = b.body;
+    return made;
+}
+
+/// Both operands' tag rows into `body`'s table, the second's parents moved past the
+/// first's rows.
+fn adoptTags(allocator: std.mem.Allocator, body: *Body, operands: [2]*const Body, made: *Made) Error!void {
+    const table = &body.tags;
+    table.rows.appendSlice(allocator, operands[0].tags.rows.items) catch return error.OutOfMemory;
+    made.tag_offset = @intCast(operands[0].tags.rows.items.len);
+    for (operands[1].tags.rows.items) |row| {
+        var moved = row;
+        switch (moved.source) {
+            .named => {},
+            .split => |*parent| parent.* = made.tagIn(1, parent.*),
+            .merged, .pair => |*parents| for (parents) |*t| {
+                t.* = made.tagIn(1, t.*);
+            },
+        }
+        table.rows.append(allocator, moved) catch return error.OutOfMemory;
+    }
+}
+
+/// The report's face map, and each result face's tag the union of its sources': each face
+/// as built followed through the merges of simplification to its face in the result; its
+/// sources its fragment's face and, for a fragment kept for two coincident faces (`on_same`),
+/// the other operand's face it lies on.
+fn faceMap(allocator: std.mem.Allocator, result: *Body, made: *const Made, log: *const simplify.Log, tag_op: u32, r: *Report, diag: *Diagnostics) Error!void {
+    const n = made.face_fragment.len;
+    if (n == 0) return;
+    // Each built face's survivor: the face it was merged into, followed
+    const into = try allocator.alloc(u32, n);
+    defer allocator.free(into);
+    for (into, 0..) |*t, i| t.* = @intCast(i);
+    for (log.merged.items) |m| into[m[0]] = m[1];
+    const survivor = struct {
+        fn of(chain: []const u32, i: u32) u32 {
+            var at = i;
+            var steps: usize = 0;
+            while (chain[at] != at and steps < chain.len) : (steps += 1) at = chain[at];
+            return at;
+        }
+    }.of;
+    // The sources of every result face, and its tag
+    const Source = struct { operand: u1, input: u32, reversed: bool, result: u32 };
+    var sources: std.ArrayList(Source) = .empty;
+    defer sources.deinit(allocator);
+    // Each result face's tag, folded over its sources' by `merged` (an untagged one adds
+    // nothing, one tag alone stays itself)
+    const tags = try allocator.alloc(types.Tag, result.faces.items.len);
+    defer allocator.free(tags);
+    @memset(tags, .untagged);
+    for (0..n) |j| {
+        const res = log.faces[survivor(into, @intCast(j))];
+        if (res == body_mod.Body.Remap.NONE) continue;
+        const i = made.face_fragment[j];
+        const fragment = made.fragments.items.items[i];
+        try sources.append(allocator, .{ .operand = fragment.operand, .input = fragment.face, .reversed = made.keeps[i] == .flip, .result = res });
+        tags[res] = result.tags.merged(result.allocator, tag_op, tags[res], made.face_tag[j]) catch |e| return tooMany(diag, e);
+        const c = made.classes[i];
+        if (c.class == .on_same and c.partner != classify.NONE) {
+            const other: u1 = 1 - fragment.operand;
+            try sources.append(allocator, .{ .operand = other, .input = c.partner, .reversed = false, .result = res });
+            const partner_tag = made.tagIn(other, made.operands[other].face(types.FaceIndex.of(c.partner)).tag);
+            tags[res] = result.tags.merged(result.allocator, tag_op, tags[res], partner_tag) catch |e| return tooMany(diag, e);
+        }
+    }
+    for (tags, 0..) |tag, f| {
+        if (!result.faces.items[f].flags.tombstone) result.faces.items[f].tag = tag;
+    }
+    // Each source once per result face, in order
+    const Order = struct {
+        fn lessThan(_: void, x: Source, y: Source) bool {
+            if (x.operand != y.operand) return x.operand < y.operand;
+            if (x.input != y.input) return x.input < y.input;
+            return x.result < y.result;
+        }
+    };
+    std.mem.sort(Source, sources.items, {}, Order.lessThan);
+    for (sources.items, 0..) |src, k| {
+        if (k > 0) {
+            const prev = sources.items[k - 1];
+            if (prev.operand == src.operand and prev.input == src.input and prev.result == src.result) continue;
+        }
+        // Merged when the result face has a source of each operand; preserved when its
+        // only source is this face, whole
+        var both = false;
+        var alone = true;
+        for (sources.items) |other| if (other.result == src.result) {
+            both = both or other.operand != src.operand;
+            alone = alone and other.operand == src.operand and other.input == src.input;
+        };
+        const whole = made.pieces[src.operand][src.input] == 1;
+        const role: Role = if (both) .merged else if (alone and whole) .preserved else .split;
+        try r.faces.append(r.allocator, .{ .operand = src.operand, .input = src.input, .result = src.result, .role = role, .reversed = src.reversed });
+    }
 }
 
 /// The builder's vertex for merged vertex `m`, made on its first use with the merged
