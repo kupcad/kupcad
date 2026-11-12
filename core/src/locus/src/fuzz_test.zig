@@ -26,6 +26,7 @@ const predicates = @import("math/predicates.zig");
 const trig = @import("math/trig.zig");
 const test_bodies = @import("construct/test_bodies.zig");
 const overlap = @import("sketch/overlap.zig");
+const solid_overlap = @import("query/overlap.zig");
 const mass = @import("measure/mass.zig");
 const tessellate = @import("mesh/tessellate.zig");
 const validate = @import("mesh/validate.zig");
@@ -907,7 +908,8 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
 }
 
-/// The sheet extruded by `height` is a solid whose mesh is closed (every directed edge
+/// The sheet extruded by `height` is a solid that passes the checker and the overlap rules
+/// (query/overlap.zig), whose mesh is closed (every directed edge
 /// once each way), has no degenerate triangle, every face meshed, and whose volume is the
 /// exact one within the chords' share (the sides' quads run between the caps' chords); a
 /// refusal of the extrusion is clean.
@@ -923,6 +925,12 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
         std.debug.print("the checker on the extrusion: {f}\n", .{report.first().?});
         return error.ResultNotValid;
     }
+    // Its faces meet only on their boundaries and its solids lie apart (the planar pairs:
+    // curved ones are M5's)
+    solid_overlap.check(testing.allocator, &solid, .{}, diag) catch |err| {
+        std.debug.print("the overlap rules on the extrusion: {f}\n", .{diag});
+        return err;
+    };
     var mesh = try tessellate.tessellate(testing.allocator, &solid, .{}, .{}, diag);
     defer mesh.deinit(testing.allocator);
     errdefer {

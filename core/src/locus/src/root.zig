@@ -86,13 +86,16 @@ pub const query = struct {
     pub const raycast = @import("query/raycast.zig");
     pub const distance = @import("query/distance.zig");
     pub const faces = @import("query/faces.zig");
+    pub const overlap = @import("query/overlap.zig");
 };
 
 /// Intersections: a curve against a plane, a plane against each surface kind (M3, what a
-/// plane section needs; the general surface pairs in M5).
+/// plane section needs), what two planar faces share (M4, the overlap rules; the general
+/// surface pairs in M5).
 pub const intersect = struct {
     pub const curve_surface = @import("intersect/curve_surface.zig");
     pub const surface_surface = @import("intersect/surface_surface.zig");
+    pub const planar_faces = @import("intersect/planar_faces.zig");
 };
 /// Operations on solids through the overlay: the plane section (M3; the booleans in M4).
 pub const boolean = struct {
@@ -154,6 +157,7 @@ test {
     _ = @import("query/raycast_test.zig");
     _ = @import("query/distance_test.zig");
     _ = @import("query/faces_test.zig");
+    _ = @import("query/overlap_test.zig");
     _ = @import("intersect/curve_surface_test.zig");
     _ = @import("intersect/surface_surface_test.zig");
     _ = @import("boolean/section_test.zig");
