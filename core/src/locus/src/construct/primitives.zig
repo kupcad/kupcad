@@ -91,6 +91,20 @@ pub const Builder = struct {
         return self.interner.plane(self.body.allocator, &self.body.geometry, .{ .frame = frame }) catch |e| return self.fail(e);
     }
 
+    /// A planar face's surface and sense: the plane of `frame` interned, which may be a
+    /// record of the same plane facing the other way (the interner keeps one per plane),
+    /// and whether the face, facing along `frame.z`, faces the record's way. A face that
+    /// took the record's normal for its own was inside out when a coplanar face facing the
+    /// other way had made the record first (two sides of a sweep on one line, a groove's
+    /// walls; `polyhedron` and the sweeps, 2026-11-12).
+    pub fn facingPlane(self: *Builder, frame: Frame) Error!Facing {
+        const surface = try self.plane(frame);
+        const record = self.body.geometry.planes.items[surface.index];
+        return .{ .surface = surface, .same_sense = vec.dot(record.frame.z, frame.z) > 0 };
+    }
+
+    pub const Facing = struct { surface: geometry.SurfaceRef, same_sense: bool };
+
     /// The straight edge from vertex `a` to `b`, in a loop's direction. The line is
     /// interned, so it may run the other way: the edge's own range follows the line, and
     /// `forward` says which way the loop runs it.
@@ -572,10 +586,9 @@ pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const 
             edges[f][k] = try b.straight(vertices[t[k]], vertices[t[(k + 1) % 3]]);
         }
         loops[f] = .{.{ .edges = &edges[f] }};
-        const surface = try b.plane(frame);
         // The plane record is shared whichever way a coplanar triangle faces
-        const shared = b.body.geometry.planes.items[surface.index];
-        specs[f] = .{ .surface = surface, .same_sense = vec.dot(shared.normal(0, 0), n) > 0, .loops = &loops[f], .uv_box = uv };
+        const facing = try b.facingPlane(frame);
+        specs[f] = .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &loops[f], .uv_box = uv };
     }
     // The plane a face was given has its own x; the UV box must be in that plane's frame
     for (specs) |*spec| {

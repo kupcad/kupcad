@@ -430,3 +430,72 @@ test "extrude and revolve: every face swept from a sheet's face keeps its attrib
         for (copy.faces.items) |f| try testing.expectEqual(@as(u32, 5), f.attribute);
     }
 }
+
+test "extrude and revolve: regions touching at a corner sweep solids touching along a line or a circle, each with its own edge" {
+    // KupCAD's parabolic_dish example (2026-11-12): a profile whose outline crosses itself
+    // fills regions that touch at the crossings. The edge swept from such a vertex was
+    // one edge of four faces (an irregular shell); now each passage of the profile through
+    // the vertex sweeps its own edge. A bow tie: two triangles touching at (1, 1), whose
+    // crossing diagonals put pieces of one line on either side of it, so the sides they
+    // sweep are coplanar planes (extruded) or one cone (revolved) facing opposite ways
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var bow = try primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 2, 2 }, .{ 2, 0 }, .{ 0, 2 } }, &diag);
+    defer bow.deinit();
+    try testing.expectEqual(@as(usize, 2), bow.counts().faces);
+    var prism = try sweep.extrude(testing.allocator, &bow, .{ 0, 0, 3 }, .{}, &diag);
+    defer prism.deinit();
+    try expectValid(&prism);
+    try testing.expectEqual(@as(usize, 2), prism.counts().shells);
+    // Six vertical edges: one per corner of each triangle, the shared corner's two apart
+    var vertical: usize = 0;
+    for (prism.edges.items) |e| {
+        const c = prism.geometry.curve(e.curve);
+        if (c == .line and @abs(c.line.d[2]) > 0.5) vertical += 1;
+    }
+    try testing.expectEqual(@as(usize, 6), vertical);
+    const m = try mass.mass(&prism, .{}, &diag);
+    try testing.expectApproxEqRel(@as(f64, 6), m.volume, 1e-12);
+    try testing.expectApproxEqRel(4 + 3 * 2 * (2 + 2 * @sqrt(2.0)), m.area, 1e-12);
+    // Off the axis and stood up, turned about it: two rings touching along a circle, by
+    // Pappus each triangle's area times its centroid's path, 2π (3 + 1/3) and 2π (3 + 5/3)
+    var moved = try @import("transform.zig").transform(testing.allocator, &bow, &@import("../math/mat.zig").Affine.translate(.{ 3, 0, 0 }), .{}, &diag);
+    defer moved.deinit();
+    var lathe = try sweep.revolve(testing.allocator, &moved, vec.ZERO3, vec.Y3, 2 * std.math.pi, .{}, &diag);
+    defer lathe.deinit();
+    try expectValid(&lathe);
+    try testing.expectEqual(@as(usize, 2), lathe.counts().shells);
+    try testing.expectApproxEqRel(16 * std.math.pi, (try mass.mass(&lathe, .{}, &diag)).volume, 1e-9);
+}
+
+test "extrude: two blocks whose sides lie in one plane facing opposite ways are each the right way out" {
+    // KupCAD's planetary_gearbox example (2026-11-12): an even-toothed gear's opposite
+    // teeth have their flanks on one line through the centre, their material on opposite
+    // sides. The interner keeps one record of a plane, so the second side took the first
+    // one's normal and its loop ran the wrong way round; a planar face now takes the
+    // record's sense against its own normal (`Builder.facingPlane`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var two = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &.{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 0, 1 } }, &.{ .{ 3, -1 }, .{ 5, -1 }, .{ 5, 0 }, .{ 3, 0 } } }, &diag);
+    defer two.deinit();
+    var blocks = try sweep.extrude(testing.allocator, &two, .{ 0, 0, 2 }, .{}, &diag);
+    defer blocks.deinit();
+    try expectValid(&blocks);
+    const m = try mass.mass(&blocks, .{}, &diag);
+    try testing.expectApproxEqRel(@as(f64, 8), m.volume, 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 2 * (2 * 2 + 2 * 6)), m.area, 1e-12);
+    // The two faces on y = 0 share a plane record and face apart
+    var on_y0: usize = 0;
+    var senses: [2]bool = undefined;
+    var record: ?u32 = null;
+    for (blocks.faces.items) |f| {
+        if (f.surface.kind != .plane) continue;
+        const plane = blocks.geometry.surface(f.surface).plane;
+        if (@abs(plane.frame.z[1]) < 0.5 or @abs(plane.frame.origin[1]) > 1e-12) continue;
+        if (record) |r| try testing.expectEqual(r, f.surface.index) else record = f.surface.index;
+        senses[on_y0] = f.same_sense;
+        on_y0 += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), on_y0);
+    try testing.expect(senses[0] != senses[1]);
+}

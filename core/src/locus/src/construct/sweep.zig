@@ -100,8 +100,10 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
             // The cap facing the sheet's way keeps its loops' direction; the other one
             // reverses them
             const n_bottom = if (along > 0) vec.neg(n_sheet) else n_sheet;
-            const bottom_plane = try b.plane(Frame.init(plane.frame.origin, plane.frame.x, n_bottom));
-            const top_plane = try b.plane(Frame.init(vec.add(plane.frame.origin, direction), plane.frame.x, vec.neg(n_bottom)));
+            const bottom_cap = try b.facingPlane(Frame.init(plane.frame.origin, plane.frame.x, n_bottom));
+            const top_cap = try b.facingPlane(Frame.init(vec.add(plane.frame.origin, direction), plane.frame.x, vec.neg(n_bottom)));
+            const bottom_plane = bottom_cap.surface;
+            const top_plane = top_cap.surface;
             var bottom_box = geometry.Box2.empty;
             var top_box = geometry.Box2.empty;
             const first_loop = li;
@@ -120,7 +122,7 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                     const curve = sheet.geometry.curve(edge.curve);
                     const low = try copyCurve(&b, curve, &Affine.identity, pa, pb, coedge.same_sense);
                     const high = try copyCurve(&b, curve, &Affine.translate(direction), vec.add(pa, direction), vec.add(pb, direction), coedge.same_sense);
-                    const ends = Ends{ .bottom_a = bottom[@backingInt(va)], .bottom_b = bottom[@backingInt(vb)], .top_a = top[@backingInt(va)], .top_b = top[@backingInt(vb)] };
+                    const ends = Ends{ .bottom_a = bottom[@backingInt(va)], .bottom_b = bottom[@backingInt(vb)], .top_a = top[@backingInt(va)], .top_b = top[@backingInt(vb)], .passage_a = passageAt(c), .passage_b = passageAt(coedge.next) };
                     cap_edges[ci] = .{ .start = ends.bottom_a, .end = ends.bottom_b, .curve = low.curve, .t0 = low.t0, .t1 = low.t1, .forward = low.forward };
                     cap_edges[counts.coedges + ci] = .{ .start = ends.top_a, .end = ends.top_b, .curve = high.curve, .t0 = high.t0, .t1 = high.t1, .forward = high.forward };
                     growByCurve(&bottom_box, b.body.geometry.surface(bottom_plane).plane, b.body.geometry.curve(low.curve), low.t0, low.t1);
@@ -142,8 +144,8 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                 cap_loops[li] = .{ .edges = bottom_edges };
                 cap_loops[counts.loops + li] = .{ .edges = top_edges };
             }
-            specs[fi] = .{ .surface = bottom_plane, .loops = cap_loops[first_loop..li], .uv_box = bottom_box, .tag = face.tag, .attribute = face.attribute };
-            specs[fi + 1] = .{ .surface = top_plane, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = top_box, .tag = face.tag, .attribute = face.attribute };
+            specs[fi] = .{ .surface = bottom_plane, .same_sense = bottom_cap.same_sense, .loops = cap_loops[first_loop..li], .uv_box = bottom_box, .tag = face.tag, .attribute = face.attribute };
+            specs[fi + 1] = .{ .surface = top_plane, .same_sense = top_cap.same_sense, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = top_box, .tag = face.tag, .attribute = face.attribute };
             fi += 2;
         }
     }
@@ -233,10 +235,9 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
             if (!turn.full) {
                 const start = Affine.rotate(z, turn.start);
                 const end = Affine.rotate(z, turn.end);
-                caps = .{
-                    .start = try b.plane(Frame.init(origin, start.vector(frame.r_dir), start.vector(frame.normal))),
-                    .end = try b.plane(Frame.init(origin, end.vector(frame.r_dir), vec.neg(end.vector(frame.normal)))),
-                };
+                const start_cap = try b.facingPlane(Frame.init(origin, start.vector(frame.r_dir), start.vector(frame.normal)));
+                const end_cap = try b.facingPlane(Frame.init(origin, end.vector(frame.r_dir), vec.neg(end.vector(frame.normal))));
+                caps = .{ .start = start_cap.surface, .start_same = start_cap.same_sense, .end = end_cap.surface, .end_same = end_cap.same_sense };
             }
             var face_loops = traverse.Loops.init(sheet, f);
             while (face_loops.next() catch return corrupt(diag)) |l| : (li += 1) {
@@ -282,7 +283,7 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
                             .low = gens[k * counts.coedges + ci],
                             .high = gens[k_end * counts.coedges + ci],
                             .base = gens[turn.zeroSplit() * counts.coedges + ci],
-                            .ends = .{ .bottom_a = verts[k * n_vertices + ia], .bottom_b = verts[k * n_vertices + ib], .top_a = verts[k_end * n_vertices + ia], .top_b = verts[k_end * n_vertices + ib] },
+                            .ends = .{ .bottom_a = verts[k * n_vertices + ia], .bottom_b = verts[k * n_vertices + ib], .top_a = verts[k_end * n_vertices + ia], .top_b = verts[k_end * n_vertices + ib], .passage_a = passageAt(c), .passage_b = passageAt(coedge.next) },
                             .place_a = places[ia],
                             .place_b = places[ib],
                         }, outward, side_edges[SIDE_EDGES * si ..][0..SIDE_EDGES]);
@@ -303,8 +304,8 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
                 }
             }
             if (caps) |cap| {
-                specs[fi] = .{ .surface = cap.start, .loops = cap_loops[first_loop..li], .uv_box = cap.start_box, .tag = face.tag, .attribute = face.attribute };
-                specs[fi + 1] = .{ .surface = cap.end, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = cap.end_box, .tag = face.tag, .attribute = face.attribute };
+                specs[fi] = .{ .surface = cap.start, .same_sense = cap.start_same, .loops = cap_loops[first_loop..li], .uv_box = cap.start_box, .tag = face.tag, .attribute = face.attribute };
+                specs[fi + 1] = .{ .surface = cap.end, .same_sense = cap.end_same, .loops = cap_loops[counts.loops + first_loop .. counts.loops + li], .uv_box = cap.end_box, .tag = face.tag, .attribute = face.attribute };
                 fi += 2;
             }
         }
@@ -469,6 +470,9 @@ fn outwardNormal(sheet: *const Body, f: types.FaceIndex) Vec3 {
 const Caps = struct {
     start: geometry.SurfaceRef,
     end: geometry.SurfaceRef,
+    /// Whether each cap faces its plane record's way (`Builder.facingPlane`).
+    start_same: bool,
+    end_same: bool,
     start_box: geometry.Box2 = geometry.Box2.empty,
     end_box: geometry.Box2 = geometry.Box2.empty,
 };
@@ -509,10 +513,10 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
     const seam_flags: types.EdgeFlags = if (r.seam) primitives.SEAM else .{};
     const seam_regularity: types.Regularity = if (r.seam) .g1 else .c0;
     edges[0] = specOf(r.low, r.ends.bottom_a, r.ends.bottom_b);
-    edges[1] = .{ .start = r.ends.bottom_b, .end = r.ends.top_b, .curve = try directorArc(b, frame, r.place_b), .t0 = r.u0, .t1 = r.u1, .flags = if (r.place_b.radius <= tol.zone) primitives.DEGENERATE else .{} };
+    edges[1] = .{ .start = r.ends.bottom_b, .end = r.ends.top_b, .curve = try directorArc(b, frame, r.place_b), .t0 = r.u0, .t1 = r.u1, .flags = if (r.place_b.radius <= tol.zone) primitives.DEGENERATE else .{}, .copy = r.ends.passage_b };
     edges[2] = specOf(r.high, r.ends.top_b, r.ends.top_a);
     edges[2].forward = !r.high.forward;
-    edges[3] = .{ .start = r.ends.top_a, .end = r.ends.bottom_a, .curve = try directorArc(b, frame, r.place_a), .t0 = r.u0, .t1 = r.u1, .forward = false, .flags = if (r.place_a.radius <= tol.zone) primitives.DEGENERATE else .{} };
+    edges[3] = .{ .start = r.ends.top_a, .end = r.ends.bottom_a, .curve = try directorArc(b, frame, r.place_a), .t0 = r.u0, .t1 = r.u1, .forward = false, .flags = if (r.place_a.radius <= tol.zone) primitives.DEGENERATE else .{}, .copy = r.ends.passage_a };
     edges[0].flags = seam_flags;
     edges[2].flags = seam_flags;
     edges[0].regularity = seam_regularity;
@@ -528,20 +532,26 @@ fn revolvedFace(b: *Builder, curve: curves.Curve, r: RevolvedEdge, outward: Vec3
     var v_a: f64 = undefined;
     var v_b: f64 = undefined;
     switch (curve) {
+        // v is read off the surface record the interner gives, whose frame may be another
+        // generator's on the same cylinder or cone (two collinear pieces of a profile, as
+        // where an outline crosses itself): its origin is where that one's v began
         .line => if (@abs(d_radial) <= tol.zone) {
             // Along the axis: a cylinder, v the axial coordinate
             surface = b.interner.cylinder(b.allocator, g, .{ .frame = Frame.init(frame.origin, frame.r_dir, frame.z), .r = r.place_a.radius }) catch |e| return b.fail(e);
-            v_a = r.place_a.axial;
-            v_b = r.place_b.axial;
+            const record = g.surface(surface).cylinder.frame;
+            v_a = vec.dot(vec.sub(frame.onAxis(r.place_a.axial), record.origin), record.z);
+            v_b = vec.dot(vec.sub(frame.onAxis(r.place_b.axial), record.origin), record.z);
         } else {
             // Oblique: a cone from the lower end, v the distance along the generator
             const low_is_a = r.place_a.axial < r.place_b.axial;
             const low_place = if (low_is_a) r.place_a else r.place_b;
             const half_angle = trig.atan2(if (low_is_a) d_radial else -d_radial, @abs(d_axial));
             surface = b.interner.cone(b.allocator, g, .{ .frame = Frame.init(frame.onAxis(low_place.axial), frame.r_dir, frame.z), .r = low_place.radius, .half_angle = half_angle }) catch |e| return b.fail(e);
-            const length = @sqrt(d_axial * d_axial + d_radial * d_radial);
-            v_a = if (low_is_a) 0 else length;
-            v_b = if (low_is_a) length else 0;
+            // The height along the axis is v·cos α from the record's origin
+            const record = g.surface(surface).cone;
+            const cos_a = @cos(record.half_angle);
+            v_a = vec.dot(vec.sub(frame.onAxis(r.place_a.axial), record.frame.origin), record.frame.z) / cos_a;
+            v_b = vec.dot(vec.sub(frame.onAxis(r.place_b.axial), record.frame.origin), record.frame.z) / cos_a;
         },
         .circle => |c| {
             // Centred on the axis a sphere, off it a torus; v is the angle about the
@@ -609,8 +619,8 @@ fn planeSector(b: *Builder, r: RevolvedEdge, outward: Vec3, edges: []sew.EdgeSpe
     const g = &b.body.geometry;
     const frame = r.frame;
     const normal = if (vec.dot(outward, frame.z) > 0) frame.z else vec.neg(frame.z);
-    const surface = try b.plane(Frame.init(frame.onAxis(r.place_a.axial), frame.r_dir, normal));
-    const plane = g.surface(surface).plane;
+    const facing = try b.facingPlane(Frame.init(frame.onAxis(r.place_a.axial), frame.r_dir, normal));
+    const plane = g.surface(facing.surface).plane;
     var kept: usize = 0;
     for (0..SIDE_EDGES) |i| {
         if (edges[i].flags.degenerate) continue;
@@ -628,8 +638,10 @@ fn planeSector(b: *Builder, r: RevolvedEdge, outward: Vec3, edges: []sew.EdgeSpe
         winding += start[0] * mid[1] - mid[0] * start[1] + mid[0] * end[1] - end[0] * mid[1];
         growByCurve(&box, plane, c, e.t0, e.t1);
     }
-    if (winding < 0) reverseLoop(loop);
-    return .{ .spec = .{ .surface = surface, .loops = &.{}, .uv_box = box }, .edge_count = kept };
+    // Counter-clockwise about the face's own normal: about the record's when it faces the
+    // record's way, clockwise about it when not
+    if ((winding < 0) == facing.same_sense) reverseLoop(loop);
+    return .{ .spec = .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .uv_box = box }, .edge_count = kept };
 }
 
 /// The circle a point of the profile sweeps about the axis, the angle its parameter; a
@@ -666,7 +678,24 @@ fn countSheet(sheet: *const Body, diag: *Diagnostics) Error!Counts {
 }
 
 /// The vertices of one swept edge: its ends at the bottom and at the top.
-const Ends = struct { bottom_a: types.VertexIndex, bottom_b: types.VertexIndex, top_a: types.VertexIndex, top_b: types.VertexIndex };
+/// A side face's corners, and which passage of the profile through its two vertices the
+/// face is at (`passageAt`): the edges swept from them are that passage's.
+const Ends = struct {
+    bottom_a: types.VertexIndex,
+    bottom_b: types.VertexIndex,
+    top_a: types.VertexIndex,
+    top_b: types.VertexIndex,
+    passage_a: u32,
+    passage_b: u32,
+};
+
+/// The passage of the profile through the vertex coedge `c` leaves, as an edge copy
+/// (`sew.EdgeSpec.copy`): the coedge's own number plus one. The side faces of `c` and of
+/// the coedge before it meet there and share the edge swept from it; another passage
+/// through the same vertex (two regions touching at a corner) is another edge.
+fn passageAt(c: types.CoedgeIndex) u32 {
+    return @backingInt(c) + 1;
+}
 
 /// A curve of the sheet in the new body under `map` (a move, a turn), as the edge from
 /// `pa` to `pb` (already mapped) runs it: `t0 < t1` its range, `forward` whether the edge
@@ -737,9 +766,9 @@ fn sideFace(b: *Builder, curve: curves.Curve, low: Copied, high: Copied, ends: E
     // The natural order: along the bottom, up at b, back along the top, down at a
     edges.* = .{
         .{ .start = ends.bottom_a, .end = ends.bottom_b, .curve = low.curve, .t0 = low.t0, .t1 = low.t1, .forward = low.forward },
-        .{ .start = ends.bottom_b, .end = ends.top_b, .curve = up_b, .t0 = @min(tb0, tb1), .t1 = @max(tb0, tb1), .forward = tb0 < tb1 },
+        .{ .start = ends.bottom_b, .end = ends.top_b, .curve = up_b, .t0 = @min(tb0, tb1), .t1 = @max(tb0, tb1), .forward = tb0 < tb1, .copy = ends.passage_b },
         .{ .start = ends.top_b, .end = ends.top_a, .curve = high.curve, .t0 = high.t0, .t1 = high.t1, .forward = !high.forward },
-        .{ .start = ends.top_a, .end = ends.bottom_a, .curve = up_a, .t0 = @min(ta0, ta1), .t1 = @max(ta0, ta1), .forward = ta1 < ta0 },
+        .{ .start = ends.top_a, .end = ends.bottom_a, .curve = up_a, .t0 = @min(ta0, ta1), .t1 = @max(ta0, ta1), .forward = ta1 < ta0, .copy = ends.passage_a },
     };
     switch (curve) {
         .line => {
@@ -747,12 +776,12 @@ fn sideFace(b: *Builder, curve: curves.Curve, low: Copied, high: Copied, ends: E
             // sheet's normal, so the loop is counter-clockwise when the sweep rises
             const tangent = vec.normalized(vec.sub(pb, pa)).?;
             const frame = Frame.init(pa, tangent, outward);
-            const surface = try b.plane(frame);
-            const plane = g.surface(surface).plane;
+            const facing = try b.facingPlane(frame);
+            const plane = g.surface(facing.surface).plane;
             var box = geometry.Box2.empty;
             for ([_]Vec3{ pa, pb, vec.add(pa, direction), vec.add(pb, direction) }) |p| box.grow(plane.project(p));
             if (vec.dot(direction, frame.y) < 0) reverseLoop(edges);
-            return .{ .surface = surface, .loops = &.{}, .uv_box = box };
+            return .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .uv_box = box };
         },
         else => {},
     }

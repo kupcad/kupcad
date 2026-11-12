@@ -497,6 +497,13 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
 - Revolve builds in one step from exact periodic surfaces, split at the seam per D7; a
   partial angle adds two planar end faces; a full turn is closed by exact face matching,
   never by stepping around the circle (S p.142, 758).
+- A profile's regions may touch at a vertex (an outline crossing itself): the line or
+  circle swept from it bounds two solids, each with an edge of its own there, one per
+  passage of the profile through the vertex (`sew.EdgeSpec.copy`), never one edge of
+  four faces. A swept face takes its surface record as the interner gives it, which may
+  be another face's facing the other way (a plane, `Builder.facingPlane`) or placed
+  from another generator (a cone's or a cylinder's `v` read from the record's origin)
+  (2026-11-12: the examples `parabolic_dish` and `planetary_gearbox`).
 - Loft and sweep along a path (later): NURBS skinning (A10, §10.3) and the exact
   translational sweep (10.17); the general sweep is approximated by skinning placed
   profiles with the projection-normal frame (A10.1).

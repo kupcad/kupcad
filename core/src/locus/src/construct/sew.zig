@@ -39,6 +39,12 @@ pub const EdgeSpec = struct {
     regularity: types.Regularity = .c0,
     /// The coedge's image in the face's UV box; `none` on a plane.
     pcurve: geometry.PCurveRef = geometry.PCurveRef.none,
+    /// Which of several edges with this curve, these vertices and this range it is, 0 for
+    /// the only one: a sweep keeps apart the edges it sweeps from a vertex its profile
+    /// passes more than once (two regions touching at a corner, a face pinched there), one
+    /// per passage, so two solids touching along the line or the circle each have an edge
+    /// of their own there.
+    copy: u32 = 0,
 };
 
 pub const LoopSpec = struct {
@@ -55,9 +61,9 @@ pub const FaceSpec = struct {
     attribute: u32 = 0,
 };
 
-/// What identifies an edge: its curve, its vertices, and its range (two halves of a circle
-/// share the curve and the vertices).
-const EdgeKey = struct { curve: u32, a: u32, b: u32, t0: u64, t1: u64 };
+/// What identifies an edge: its curve, its vertices, its range (two halves of a circle
+/// share the curve and the vertices), and which copy it is (`EdgeSpec.copy`).
+const EdgeKey = struct { curve: u32, a: u32, b: u32, t0: u64, t1: u64, copy: u32 };
 
 /// Sews `faces` into new shells of `kind` in `body`, one per connected set of faces;
 /// returns the first.
@@ -86,7 +92,7 @@ pub fn sew(body: *Body, faces: []const FaceSpec, kind: types.ShellKind) Error!ty
             var prev: CoedgeIndex = .none;
             for (loop_spec.edges) |e| {
                 // The edge, made the first time its curve and vertices are seen
-                const key = EdgeKey{ .curve = @bitCast(e.curve), .a = @min(@backingInt(e.start), @backingInt(e.end)), .b = @max(@backingInt(e.start), @backingInt(e.end)), .t0 = @bitCast(e.t0), .t1 = @bitCast(e.t1) };
+                const key = EdgeKey{ .curve = @bitCast(e.curve), .a = @min(@backingInt(e.start), @backingInt(e.end)), .b = @max(@backingInt(e.start), @backingInt(e.end)), .t0 = @bitCast(e.t0), .t1 = @bitCast(e.t1), .copy = e.copy };
                 const entry = edges.getOrPutAssumeCapacity(key);
                 var edge: EdgeIndex = undefined;
                 var same_sense: bool = undefined;
