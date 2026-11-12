@@ -669,6 +669,22 @@ importing only those before it, which the layering test holds):**
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
   `compact`, the checker; a warning (`solids_touch`) names each edge where two of the
   result's solids touch along a line.
+- The containment table (§7.4 step 0, as built): when the paves find the operands met
+  nowhere (no vertex merged or lying on the other, no crossing, no coplanar or cut face
+  pair: `Paves.apart`), every face is one whole fragment and each shell is classified once,
+  by one vertex against the other operand (`classify.byShell`), then the same selection,
+  assembly and simplification: a box inside another, around it, apart, in a cavity, a
+  shell of a multi-shell operand inside. It agrees with the general path (`Options.
+  fast_paths = false` runs that alone; a test holds the two to the same counts, shells,
+  volume and face map on every operation), and the report says it answered
+  (`by_containment`).
+- Chains (`pipeline.chain`): the operands folded from the left, as KupCAD's chains and the
+  mesh engine's batch are (the union of all, the first less the rest, the intersection of
+  all), one boolean per step until General Fuse (D17); the report composed through the
+  steps, each operand's faces followed to the final result's (`FaceMap.operand` its
+  index, roles composed, the stronger standing), and a refusal's step (`failed_step`) and
+  stage. An empty step goes on (an empty operand answers at once); one operand gives its
+  copy.
 - The result report (`pipeline.Report`, research/opengeometry.md §4, filled even when the
   operation fails and sent to the trace as the phase "report" beside the bodies of the
   phases): the operation; its quality, exact or approximate with the largest gap of a
