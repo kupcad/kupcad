@@ -208,11 +208,11 @@ locus/
     spatial/          aabb.zig grid.zig (hashed welding grid) bvh.zig (preorder flat)
     sketch/           region.zig overlay.zig offset.zig hull.zig contours.zig
     construct/        primitives.zig sweep.zig (extrude, revolve) loft.zig sew.zig
-    intersect/        curve_surface.zig surface_surface.zig march.zig events.zig
-    boolean/          pipeline.zig pave.zig imprint.zig classify.zig select.zig simplify.zig
+    intersect/        curve_surface.zig surface_surface.zig planar_faces.zig march.zig events.zig
+    boolean/          pave.zig imprint.zig classify.zig select.zig simplify.zig pipeline.zig section.zig
     local/            offset.zig shell.zig chamfer.zig fillet.zig
     measure/          bbox.zig mass.zig genus.zig
-    query/            point_in_body.zig raycast.zig distance.zig faces.zig
+    query/            point_in_body.zig raycast.zig distance.zig faces.zig overlap.zig
     mesh/             edges.zig triangulate.zig tessellate.zig
     io/               step_write.zig step_read.zig body_json.zig debug_obj.zig
     parallel.zig
@@ -611,6 +611,53 @@ Batch unions and differences (KupCAD's chains) run as a sequence; a disjoint uni
 multi-shell body, an empty intersection an empty body (not an error). Materials and tags
 flow through step 3 (copied) and 7 (unioned).
 
+**The general path first (D17, restated 2026-11-12 with OpenGeometry as the evidence,
+`backups/locus-plan/research/opengeometry.md` §4):** OpenGeometry grew a table of handlers
+by operand family before its general path, which reached 25k lines and refuses in 5–27 s.
+Locus has the one general imprint–classify–assemble pipeline; a fast path (the containment
+table of non-overlapping operands, a box against a box) may sit in front of it only as an
+optimisation giving the same answer, and a refusal always comes from the general path's
+own analysis, naming the entity, never from a missing handler.
+
+**As built for planar solids (M4, 2026-11-12; `boolean/`, the phases in this order, each
+importing only those before it, which the layering test holds):**
+- `pave.zig`: `a`'s vertices each a merged vertex, `b`'s merged with the first of `a`'s
+  within `xsect` (the centre of their points' box, the gap reaching the furthest);
+  vertex–edge for every merged vertex against the edges of the operand it holds no vertex
+  of (on the segment within `xsect` plus its gap, beyond `xsect` from either end);
+  edge–edge by the closest points of the two lines (parallel lines skipped: their overlaps
+  are made of vertex–edge's paves), the point welded to a merged vertex within `xsect` or
+  new, then tried against every other edge; vertex–face; edge–face where an edge's ends lie
+  beyond `xsect` on either side of a face's plane and the crossing is in the face (one on
+  its boundary tried against the other's edges, which edge–edge should have split);
+  then each face's merged vertices (its edges' paves and what the face stages found), and
+  face–face from those alone: the vertices both faces lie on, sorted along their planes'
+  line, each gap whose middle is in both a section segment of each face it is inside of.
+  Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
+  one's pave blocks inside the other its section segments.
+- `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its
+  section segments there and back (input 1); each region input 0 winds about is a fragment,
+  its cycles read back as merged vertices by their coordinates. A vertex the overlay made
+  itself is a crossing the paves missed and is refused (`imprint_unmatched`), never sewn.
+- `classify.zig`: per fragment a point strictly inside it, the triangle centroid of its
+  triangulation (spurs taken out) furthest from its edges, spurs included (a centroid once
+  fell on a slit's tip, where the other operand touched the face); inside a coplanar face
+  of the other operand it is `on_same` or `on_opposite` by their outward normals, else
+  inside or outside by `point_in_body`; a sample on the other's boundary is `unclassified`.
+- `select.zig`: Mäntylä's table, a coincident face kept once, from `a`.
+- `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
+  fragment's loops reversed, coplanar fragments on one interned plane record); an edge
+  more than two fragments use, where solids touch along it, is paired by the wedges of
+  material about it into one edge per solid (`EdgeSpec.copy`); a shell of negative volume
+  a void. Then `simplify.zig` (`kef` across edges between faces on one plane record of one
+  sense and attribute, never across an edge with a copy, whose line the touching solid
+  needs; spurs whose far vertex nothing else uses, bridges by `kemr`; `kevJoin` at
+  vertices of two edges on one line, counted over the whole body), `compact`, the checker.
+- Refused, each by its own finding: operands with a curved face or edge (M5); a
+  difference that leaves one shell touching itself along a line or at a point (a pocket
+  meeting a face along an edge of the cut, the degeneracy corpus's pinches, M4), which
+  Euler–Poincaré admits for no shell.
+
 ### 7.5 The 2D kernel (sketches)
 
 A sketch is a body of planar faces on `z = 0`, bounded by lines and circular arcs (conics
@@ -663,7 +710,10 @@ another are one place; a place that is one candidate strictly inside its face, n
 tangent, crosses by the sign of its normal; any other (edge, vertex, tangency) is decided
 by classifying the points halfway to its neighbours, the difference being the crossing, no
 difference a touch reported as an entry and an exit at one distance (as the mesh engine
-reports a grazed corner). `point_in_body.zig`: outside the body's box is outside; within the
+reports a grazed corner), the entry first, but where both sides are strictly inside (the
+line two solids of the body touch along, crossed from one into the other) the exit first,
+so the running count of entries less exits stays 0 or 1 (the fuzzer, 2026-11-12).
+`point_in_body.zig`: outside the body's box is outside; within the
 zone of a face (its foot in the face) or of an edge is the boundary; else a ray from the
 point to its foot on one of the six nearest faces (along that face's normal, met squarely),
 then along a table of twelve skewed directions, the nearest meeting deciding when it is
@@ -884,9 +934,17 @@ other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ 
 (the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:
 the sheet overlaid with itself winds once about every region of it, a rule beside the
 overlay since the checker imports no operation (§4), run where sheets are graded, the
-fuzzer's chains and the sketch tests; for solids M4 and M5); hole loops inside their outer loop and not inside
-each other; the point at infinity is outside every outer shell; void shells inside the
-outer shell and not inside each other; singular vertices of a solid (its faces about a
+fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-11-12,
+`query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
+`intersect/planar_faces.zig`, within `xsect` of an edge of each; coplanar faces cover no
+region together, by the overlay of the two), so solids touching along a line or at a
+point pass and a face passing through or lying on another does not (`faces_intersect`);
+and each shell lies where the other shells' winding numbers sum to 0 for an outer shell
+and 1 for a void, at a point inside one of its faces (`shell_overlaps`): voids inside an
+outer shell and not inside each other, shells apart, any nesting right; run on every
+boolean result in the tests and on the fuzzer's extruded solids; curved face pairs M5);
+hole loops inside their outer loop and not inside each other; the point at infinity is
+outside every outer shell; void shells inside the outer shell and not inside each other; singular vertices of a solid (its faces about a
 vertex not one fan, a solid touching itself at a point) as warnings; and OpenGeometry's two pcurve rules
 (research/opengeometry.md §6, 2026-11-11): every coedge's pcurve, at nine parameters from
 the edge's start to its end, lifts onto the edge's curve within `approx` and lies in its
@@ -1104,7 +1162,7 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D14 | Tags and a change log for naming | Stable indices | Indices renumber on compaction; tags copy on split and union on merge |
 | D15 | A checker that returns findings, run after every operation in tests | Boolean `isValid`, repair | The test oracle must say what and where |
 | D16 | Interferences resolved in dimension order (V–V … E–F) before face–face curves | Face–face first, then repair | Coincidences are found where they are cheap and exact; OCCT's order, 20 years of fixes behind it |
-| D17 | Two-body Mäntylä selection first; General Fuse cell algebra later for N-ary batches | General Fuse from the start | The two-body pipeline is debuggable on planes in M4; cells generalise it without changing phases 0–3 |
+| D17 | Two-body Mäntylä selection first; General Fuse cell algebra later for N-ary batches; the general imprint–classify–assemble path first, fast paths only as optimisations in front of it, refusals from its own analysis | General Fuse from the start; handlers per operand family | The two-body pipeline is debuggable on planes in M4; cells generalise it without changing phases 0–3; OpenGeometry's family handlers grew a 25k-line general path that refuses in seconds (research/opengeometry.md §4; restated 2026-11-12, §7.4) |
 | D18 | A mirror leaves a surface's frame left-handed; normals carry the frame's sign | Reparameterizing mirrored faces (`u → −u`, loops and pcurves remapped) | Every parameter, pcurve and edge range stays as it was; STEP and OCCT allow indirect placements (2026-11-06) |
 | D19 | NURBS knots stored as the full vector; multiplicities derived on export | Distinct knots plus multiplicities | The book's algorithms index the full vector; repeated knots are exact copies made by insertion (2026-11-06) |
 | D20 | A non-uniform scale keeps planes, lines and NURBS; the other curved kinds are `NotRepresentable` and the driver refuses them as a feature | Converting them to NURBS | A circle's NURBS form has another parameterization: the stored pcurves would not fit it (2026-11-06) |
