@@ -358,7 +358,8 @@ fn coplanarForgotten(cov: *Coverage) !void {
     paves.coplanar.clearRetainingCapacity();
     var fragments = try imprint.run(testing.allocator, &paves, .{}, &diag);
     defer fragments.deinit();
-    const classes = classify.run(testing.allocator, &paves, &fragments, .{}, &diag);
+    var stats: classify.Stats = .{};
+    const classes = classify.run(testing.allocator, &paves, &fragments, .{}, true, &diag, &stats);
     if (classes) |c| {
         testing.allocator.free(c);
         return error.TestUnexpectedResult;

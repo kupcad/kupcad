@@ -655,6 +655,54 @@ test "containment: operands that meet nowhere are answered by the table as the g
     try testing.expect(none.isEmpty());
 }
 
+test "boolean: classification by contagion agrees with a ray from every fragment, and casts fewer" {
+    // research/truck.md §3: a component of fragments the other operand touches nowhere
+    // takes one ray's class, a second ray checking it; the general path alone (no table),
+    // with contagion and without, must give one result
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var b = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer b.deinit();
+    var slab = try box(.{ -2, -2, 0 }, .{ 6, 6, 1 });
+    defer slab.deinit();
+    var post0 = try box(.{ 0, 0, -1 }, .{ 1, 1, 2 });
+    defer post0.deinit();
+    var post = try turned(&post0, .{ 0.5, 0.5, 0 }, .{ 0, 0, 1 }, 0.3);
+    defer post.deinit();
+    var twins = try box(.{ 3, 3, -1 }, .{ 4, 4, 2 });
+    defer twins.deinit();
+    var posts = try sound(&post, &twins, .@"union");
+    defer posts.deinit();
+    var coplanar = try box(.{ 1, 1, 0 }, .{ 3, 3, 2 });
+    defer coplanar.deinit();
+    const pairs = [_][2]*const Body{ .{ &a, &b }, .{ &slab, &posts }, .{ &a, &coplanar } };
+    var contagion_used = false;
+    var checked = false;
+    for (pairs) |pair| for ([_]Op{ .@"union", .difference, .intersection }) |op| {
+        var by_component = pipeline.Report.init(testing.allocator);
+        defer by_component.deinit();
+        var with = try reported(pair[0], pair[1], op, .{ .fast_paths = false }, &by_component);
+        defer with.deinit();
+        var by_fragment = pipeline.Report.init(testing.allocator);
+        defer by_fragment.deinit();
+        var without = try reported(pair[0], pair[1], op, .{ .fast_paths = false, .contagion = false }, &by_fragment);
+        defer without.deinit();
+        errdefer std.debug.print("{s}: rays {d} + by contagion {d} against {d}\n", .{ @tagName(op), by_component.rays, by_component.by_contagion, by_fragment.rays });
+        try testing.expectEqual(without.counts(), with.counts());
+        try testing.expectEqual(shellKinds(&without), shellKinds(&with));
+        try testing.expectApproxEqAbs(try volume(&without), try volume(&with), CLOSE);
+        try testing.expectEqualSlices(pipeline.FaceMap, by_fragment.faces.items, by_component.faces.items);
+        // Every fragment the plain run cast a ray from is a ray or contagion's here
+        try testing.expectEqual(by_fragment.rays, by_component.rays + by_component.by_contagion);
+        try testing.expectEqual(@as(u32, 0), by_fragment.by_contagion);
+        try testing.expectEqual(@as(u32, 0), by_fragment.checks);
+        contagion_used = contagion_used or by_component.by_contagion > 0;
+        checked = checked or by_component.checks > 0;
+    };
+    try testing.expect(contagion_used);
+    try testing.expect(checked);
+}
+
 test "boolean: operands with several shells and voids: a cavity filled, two solids joined, a wall cut" {
     var outer = try box(.{ 0, 0, 0 }, .{ 4, 4, 4 });
     defer outer.deinit();

@@ -79,7 +79,8 @@ test "paves: two boxes at a corner, sixteen vertices and six crossings, two sect
     defer fragments.deinit();
     try testing.expectEqual(@as(usize, 2 * (3 + 3 * 2)), fragments.items.items.len);
     // Classified: of each box, the three unit squares inside the other
-    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, &diag);
+    var stats: classify.Stats = .{};
+    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, true, &diag, &stats);
     defer testing.allocator.free(classes);
     var inside = [2]usize{ 0, 0 };
     for (fragments.items.items, classes) |f, c| {
@@ -102,7 +103,8 @@ test "paves: boxes on one plane pair their faces there, and the shared part is t
     try testing.expectEqual(@as(usize, 2), p.coplanar.items.len);
     var fragments = try imprint.run(testing.allocator, &p, .{}, &diag);
     defer fragments.deinit();
-    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, &diag);
+    var stats: classify.Stats = .{};
+    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, true, &diag, &stats);
     defer testing.allocator.free(classes);
     // Each top and bottom: the shared unit square, on the other's face facing the same way
     var same: usize = 0;
@@ -129,7 +131,8 @@ test "paves: a box resting on another meets it face to face, the same domain fac
     try testing.expectEqual(@as(usize, 16), p.points.items.len);
     var fragments = try imprint.run(testing.allocator, &p, .{}, &diag);
     defer fragments.deinit();
-    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, &diag);
+    var stats: classify.Stats = .{};
+    const classes = try classify.run(testing.allocator, &p, &fragments, .{}, true, &diag, &stats);
     defer testing.allocator.free(classes);
     var opposite: usize = 0;
     for (classes) |c| opposite += @intFromBool(c.class == .on_opposite);

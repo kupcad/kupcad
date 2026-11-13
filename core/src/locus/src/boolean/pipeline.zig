@@ -108,6 +108,9 @@ pub const Options = struct {
     /// The fast paths in front of the general one (the containment table); false runs the
     /// general path alone, which they must agree with (D17), for tests and for tracing it.
     fast_paths: bool = true,
+    /// Classification by contagion over connected components (`classify.run`); false casts
+    /// a ray from every fragment, which contagion must agree with, for tests.
+    contagion: bool = true,
 };
 
 /// How a result face came from an input face, the weaker first: through a chain's steps
@@ -160,6 +163,12 @@ pub const Report = struct {
     /// Each operand's fragments (`a`, `b`) by class (`classify.Class`): with `op`, the rows
     /// of the selection table (`select.keep`) that decided the result.
     fragments: [2][CLASSES]u32 = @splat(@splat(0)),
+    /// The rays classification cast, the fragments their component's ray decided without
+    /// one of their own (contagion), and the components a second ray checked (each agreed:
+    /// a disagreement is refused).
+    rays: u32 = 0,
+    by_contagion: u32 = 0,
+    checks: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) Report {
         return .{ .allocator = allocator };
@@ -185,10 +194,10 @@ pub const Report = struct {
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32 };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32 };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -231,7 +240,11 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var fragments = if (table) try imprint.wholeFaces(allocator, &paves, diag) else try imprint.run(allocator, &paves, common, diag);
     defer fragments.deinit();
     stage = .classify;
-    const classes = if (table) try classify.byShell(allocator, &paves, &fragments, common, diag) else try classify.run(allocator, &paves, &fragments, common, diag);
+    var stats: classify.Stats = .{};
+    const classes = if (table) try classify.byShell(allocator, &paves, &fragments, common, diag, &stats) else try classify.run(allocator, &paves, &fragments, common, options.contagion, diag, &stats);
+    r.rays = stats.rays;
+    r.by_contagion = stats.by_contagion;
+    r.checks = stats.checks;
     defer allocator.free(classes);
     for (fragments.items.items, classes) |fragment, c| r.fragments[fragment.operand][@intFromEnum(c.class)] += 1;
     const keeps = try select.run(allocator, op, &fragments, classes);
@@ -301,6 +314,9 @@ pub fn chain(allocator: std.mem.Allocator, operands: []const *const Body, op: Op
         r.max_gap = @max(r.max_gap, step.max_gap);
         r.coincident = r.coincident or step.coincident;
         for (&r.interferences, step.interferences) |*total, n| total.* += n;
+        r.rays += step.rays;
+        r.by_contagion += step.by_contagion;
+        r.checks += step.checks;
         for (&r.fragments, step.fragments) |*row, step_row| for (row, step_row) |*total, n| {
             total.* += n;
         };
