@@ -1111,7 +1111,11 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
   run hangs (every traversal is bounded by entity counts). A failing run prints its every
   draw as a `replay:` line, and `zig build test -Dfuzz-replay=FILE` plays such lines back
   (the bytes Zig saves do not replay through the Smith on a plain run), so a find becomes
-  a regression test.
+  a regression test. A run that panics prints nothing (Zig lets a test install no panic
+  handler), so a fuzz worker also writes each run's line into the cache's
+  `f/draws-<kind>.txt` as it draws, one write per draw, and clears it when the run ends;
+  `zig build fuzz-run` prints a file left with a line as the run a crash interrupted
+  (`-Dfuzz-draws`, which core's build sets; plain and wasm runs write nothing).
 - **Allocation failure**: every operation under KupCAD's failing-allocator sweep leaves
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.
