@@ -752,7 +752,10 @@ importing only those before it, which the layering test holds):**
   are not pinched: they separate into shells of their own (a V groove right across leaves
   two solids touching along its bottom line), as touching unions do.
 - The degeneracy corpus, planar part (`boolean/degeneracy_test.zig`, and its classes with
-  closed forms in KupCAD's case rig, compared with the mesh engine): identical boxes, a
+  closed forms in KupCAD's case rig, compared with the mesh engine; its box configurations
+  again in `boolean/corpus_test.zig` as OCCT states its cases, per operation the counts,
+  area, volume and largest gap worked out by hand, and the volume identities on every
+  case that makes a result): identical boxes, a
   box in a box and in a cavity, faces touching with equal and opposite normals, coplanar
   overlap, an edge on a face and on an edge, a vertex on a face, an edge and a vertex,
   cuts through three corners and along two edges, a knife edge, a mirrored copy, a flush
