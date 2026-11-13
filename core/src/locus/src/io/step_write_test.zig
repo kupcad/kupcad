@@ -8,11 +8,56 @@ const step_write = @import("step_write.zig");
 const vec = @import("../math/vec.zig");
 const types = @import("../topology/types.zig");
 const Body = @import("../topology/body.zig").Body;
+const helpers = @import("../boolean/pipeline_test.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
 fn count(text: []const u8, needle: []const u8) usize {
     return std.mem.count(u8, text, needle);
+}
+
+test "step: the header's FILE_NAME has ISO 10303-21's seven parameters, its author and organization lists" {
+    // name, time stamp, author (a list), organization (a list), preprocessor, originating
+    // system, authorization: written as strings, the author and organization were two
+    // unresolved references to OpenCascade's reader (its check list, every file)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+    defer b.deinit();
+    const text = try step_write.write(testing.allocator, &.{&b});
+    defer testing.allocator.free(text);
+    const start = (std.mem.indexOf(u8, text, "\nFILE_NAME(") orelse return error.TestUnexpectedResult) + "\nFILE_NAME(".len;
+    const end = std.mem.indexOfPos(u8, text, start, ");\n") orelse return error.TestUnexpectedResult;
+    // The parameters, split at the commas outside parentheses and strings
+    var params: [8][]const u8 = undefined;
+    var n: usize = 0;
+    var depth: usize = 0;
+    var quoted = false;
+    var from = start;
+    for (text[start..end], start..) |c, i| {
+        switch (c) {
+            '\'' => quoted = !quoted,
+            '(' => depth += @intFromBool(!quoted),
+            ')' => depth -= @intFromBool(!quoted),
+            ',' => if (!quoted and depth == 0) {
+                if (n == params.len) return error.TestUnexpectedResult;
+                params[n] = text[from..i];
+                n += 1;
+                from = i + 1;
+            },
+            else => {},
+        }
+    }
+    if (n == params.len) return error.TestUnexpectedResult;
+    params[n] = text[from..end];
+    n += 1;
+    try testing.expectEqual(7, n);
+    for (params[0..n], 0..) |param, k| {
+        const list = k == 2 or k == 3;
+        errdefer std.debug.print("parameter {d}: {s}\n", .{ k, param });
+        try testing.expectEqual(list, std.mem.startsWith(u8, param, "(") and std.mem.endsWith(u8, param, ")"));
+        if (!list) try testing.expect(std.mem.startsWith(u8, param, "'") and std.mem.endsWith(u8, param, "'"));
+    }
 }
 
 test "step: a box is one solid of eight vertices, twelve edges, six faces, written once each" {
@@ -50,6 +95,44 @@ test "step: a box is one solid of eight vertices, twelve edges, six faces, writt
         max_id = @max(max_id, try std.fmt.parseInt(u32, line[1..eq], 10));
     }
     try testing.expectEqual(@as(usize, max_id), count(text, "\n#") + 1);
+}
+
+test "step: a solid with a void is a BREP_WITH_VOIDS, the void its cavity's own shell reversed; a solid apart is a MANIFOLD_SOLID_BREP" {
+    // Written as a plain solid, the void's shell was referenced by nothing: OpenCascade
+    // read the box whole (6 faces, volume 64; `pnpm check:step`)
+    var outer = try helpers.box(.{ 0, 0, 0 }, .{ 4, 4, 4 });
+    defer outer.deinit();
+    var cavity = try helpers.box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer cavity.deinit();
+    var hollow = try helpers.sound(&outer, &cavity, .difference);
+    defer hollow.deinit();
+    var apart = try helpers.box(.{ 6, 0, 0 }, .{ 7, 1, 1 });
+    defer apart.deinit();
+    var parts = try helpers.sound(&apart, &hollow, .@"union");
+    defer parts.deinit();
+    const written = try step_write.writeReported(testing.allocator, &.{&parts});
+    defer testing.allocator.free(written.text);
+    const text = written.text;
+    try testing.expectEqual(@as(usize, 1), count(text, "=BREP_WITH_VOIDS("));
+    try testing.expectEqual(@as(usize, 1), count(text, "=MANIFOLD_SOLID_BREP("));
+    try testing.expectEqual(@as(usize, 3), count(text, "=CLOSED_SHELL("));
+    // The void under its orientation, false
+    try testing.expectEqual(@as(usize, 1), countLines(text, "=ORIENTED_CLOSED_SHELL('',*,#", ",.F.);"));
+    // The void's six faces, and theirs alone, bounded the other way round
+    try testing.expectEqual(@as(usize, 6), countLines(text, "=FACE_OUTER_BOUND('',#", ",.F.);"));
+    try testing.expectEqual(@as(usize, 12), countLines(text, "=FACE_OUTER_BOUND('',#", ",.T.);"));
+    try testing.expectEqual(@as(usize, 2), written.report.solids);
+    try testing.expectEqual(@as(usize, 3), written.report.shells);
+}
+
+/// How many lines of `text` hold `entity` and end in `ending`.
+fn countLines(text: []const u8, entity: []const u8, ending: []const u8) usize {
+    var n: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.indexOf(u8, line, entity) != null and std.mem.endsWith(u8, line, ending)) n += 1;
+    }
+    return n;
 }
 
 test "step: a cylinder writes its circles and cylindrical surface; two bodies; a sheet is refused" {

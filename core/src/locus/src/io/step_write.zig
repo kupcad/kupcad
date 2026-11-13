@@ -1,5 +1,9 @@
 //! The STEP writer (AP214, docs/architecture.md §7.9): one `MANIFOLD_SOLID_BREP` per
-//! outer shell of each solid body (a body of two pieces is two solids), its vertices and edges written once, every curve and surface as its own
+//! outer shell of each solid body (a body of two pieces is two solids), a `BREP_WITH_VOIDS`
+//! for one holding voids (each void the innermost outer shell's around it, as `decompose`
+//! finds; written as the cavity's own closed shell, reversed, under an
+//! `ORIENTED_CLOSED_SHELL` of orientation `.F.`, ISO 10303-42's form), its vertices and
+//! edges written once, every curve and surface as its own
 //! STEP entity (a plane as `PLANE`, a circle as `CIRCLE`, …) in Part 42's parameterization,
 //! which is Locus's own, and every number at full `f64` precision (the shortest text that
 //! reads back to the same double, never rounded). The file's uncertainty is the first
@@ -26,6 +30,8 @@ const nurbs = @import("../geometry/nurbs.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
+const diagnostics = @import("../diagnostics.zig");
+const decompose = @import("../construct/decompose.zig");
 const Body = body_mod.Body;
 const Vec3 = vec.Vec3;
 
@@ -37,6 +43,8 @@ pub const Error = error{
     NotImplemented,
     /// A traversal did not close.
     Corrupt,
+    /// A void inside no outer shell (the checker's `shell_overlaps`): no solid to write it in.
+    NotValid,
 };
 
 /// The entity ids of the header; bodies start after them.
@@ -149,7 +157,7 @@ pub fn writeReported(allocator: std.mem.Allocator, bodies: []const *const Body) 
         \\ISO-10303-21;
         \\HEADER;
         \\FILE_DESCRIPTION(('KupCAD B-Rep export','{d} solids, {d} shells, {d} faces, {d} edges, {d} vertices, error bound {e}'),'2;1');
-        \\FILE_NAME('kupcad_export.step','','','','','','');
+        \\FILE_NAME('kupcad_export.step','',(''),(''),'','','');
         \\FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 1 1 1 1 }}'));
         \\ENDSEC;
         \\DATA;
@@ -258,10 +266,13 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
     // Faces: their loops of oriented edges, their surface, their bounds
     var face_ids = std.ArrayList(u32).empty;
     defer face_ids.deinit(allocator);
+    const shell_ids = try allocator.alloc(u32, body.shells.items.len);
+    defer allocator.free(shell_ids);
     var shells = traverse.Shells.init(body);
-    var solid_id = first_solid_id;
     while (try shells.next()) |s| {
         face_ids.clearRetainingCapacity();
+        // A void is written as the cavity's own boundary: every face turned
+        const reversed = body.shell(s).kind == .void;
         var faces = traverse.Faces.init(body, s);
         while (try faces.next()) |f| {
             const face = body.face(f);
@@ -283,13 +294,13 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
                 w.out.writer.print("#{d}=EDGE_LOOP('',(", .{loop_id}) catch return error.OutOfMemory;
                 for (oriented.items, 0..) |id, k| w.out.writer.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
                 w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
-                try bound_ids.append(allocator, try w.emit("{s}('',#{d},.T.)", .{ if (first) "FACE_OUTER_BOUND" else "FACE_BOUND", loop_id }));
+                try bound_ids.append(allocator, try w.emit("{s}('',#{d},.{s}.)", .{ if (first) "FACE_OUTER_BOUND" else "FACE_BOUND", loop_id, if (reversed) "F" else "T" }));
                 first = false;
             }
             const surface = body.geometry.surface(face.surface);
             const written = try writeSurface(w, surface);
             // A left-handed frame is written right-handed: its normal turns, so the sense does
-            const sense = face.same_sense != written.flipped;
+            const sense = (face.same_sense != written.flipped) != reversed;
             w.next += 1;
             const face_id = w.next;
             w.out.writer.print("#{d}=ADVANCED_FACE('',(", .{face_id}) catch return error.OutOfMemory;
@@ -304,8 +315,32 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
         for (face_ids.items, 0..) |id, k| w.out.writer.print("{s}#{d}", .{ if (k > 0) "," else "", id }) catch return error.OutOfMemory;
         w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
         w.report.shells += 1;
-        if (body.shell(s).kind != .outer) continue;
-        w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_id }) catch return error.OutOfMemory;
+        shell_ids[@backingInt(s)] = shell_id;
+    }
+    // The solids, in the order of the shells' table: each outer shell with the voids it holds
+    var diag = diagnostics.Diagnostics.init(allocator);
+    defer diag.deinit();
+    var owned = decompose.owners(allocator, body, .{}, &diag) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.NotValid,
+    };
+    defer owned.deinit(allocator);
+    var void_ids = std.ArrayList(u32).empty;
+    defer void_ids.deinit(allocator);
+    var solid_id = first_solid_id;
+    for (owned.outers, 0..) |outer, k| {
+        if (body.shell(outer).kind != .outer) continue;
+        void_ids.clearRetainingCapacity();
+        for (owned.voids, owned.owner) |v, o| if (o == k) {
+            try void_ids.append(allocator, try w.emit("ORIENTED_CLOSED_SHELL('',*,#{d},.F.)", .{shell_ids[@backingInt(v)]}));
+        };
+        if (void_ids.items.len == 0) {
+            w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_ids[@backingInt(outer)] }) catch return error.OutOfMemory;
+        } else {
+            w.out.writer.print("#{d}=BREP_WITH_VOIDS('',#{d},(", .{ solid_id, shell_ids[@backingInt(outer)] }) catch return error.OutOfMemory;
+            for (void_ids.items, 0..) |id, i| w.out.writer.print("{s}#{d}", .{ if (i > 0) "," else "", id }) catch return error.OutOfMemory;
+            w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
+        }
         solid_id += 1;
         w.report.solids += 1;
     }

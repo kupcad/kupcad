@@ -18,10 +18,25 @@ const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 
-/// The parts of `body`, in the order of their outer shells in its table; owned by `allocator`, each
-/// part too. The empty body has none.
-pub fn decompose(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error![]Body {
-    try options.checkCancel();
+/// A body's shells sorted: its outer shells (and a sheet's) in the order of its shells'
+/// table, its voids in that order too, and for each void the index in `outers` of the
+/// outer shell that holds it.
+pub const Owners = struct {
+    outers: []types.ShellIndex,
+    voids: []types.ShellIndex,
+    owner: []usize,
+
+    pub fn deinit(self: *Owners, allocator: std.mem.Allocator) void {
+        allocator.free(self.outers);
+        allocator.free(self.voids);
+        allocator.free(self.owner);
+    }
+};
+
+/// Which outer shell of `body` holds each of its voids (the innermost around it); owned by
+/// `allocator`. Shared by `decompose` and the STEP writer, which writes a solid with its
+/// voids.
+pub fn owners(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!Owners {
     var outers: std.ArrayList(types.ShellIndex) = .empty;
     defer outers.deinit(allocator);
     var voids: std.ArrayList(types.ShellIndex) = .empty;
@@ -37,10 +52,10 @@ pub fn decompose(allocator: std.mem.Allocator, body: *const Body, options: diagn
         }
     };
     std.mem.sort(types.ShellIndex, outers.items, {}, ByIndex.lessThan);
+    std.mem.sort(types.ShellIndex, voids.items, {}, ByIndex.lessThan);
 
-    // Each void's outer shell
     const owner = try allocator.alloc(usize, voids.items.len);
-    defer allocator.free(owner);
+    errdefer allocator.free(owner);
     if (voids.items.len > 0) {
         const indexes = try allocator.alloc(index_mod.FaceIndex, outers.items.len);
         var built: usize = 0;
@@ -54,6 +69,20 @@ pub fn decompose(allocator: std.mem.Allocator, body: *const Body, options: diagn
         }
         for (voids.items, owner) |v, *o| o.* = try innermost(allocator, body, v, outers.items, indexes, options, diag);
     }
+    const outer_slice = try outers.toOwnedSlice(allocator);
+    errdefer allocator.free(outer_slice);
+    return .{ .outers = outer_slice, .voids = try voids.toOwnedSlice(allocator), .owner = owner };
+}
+
+/// The parts of `body`, in the order of their outer shells in its table; owned by `allocator`, each
+/// part too. The empty body has none.
+pub fn decompose(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error![]Body {
+    try options.checkCancel();
+    var shells = try owners(allocator, body, options, diag);
+    defer shells.deinit(allocator);
+    const outers = shells.outers;
+    const voids = shells.voids;
+    const owner = shells.owner;
 
     var parts: std.ArrayList(Body) = .empty;
     errdefer {
@@ -62,11 +91,11 @@ pub fn decompose(allocator: std.mem.Allocator, body: *const Body, options: diagn
     }
     const keep = try allocator.alloc(bool, body.shells.items.len);
     defer allocator.free(keep);
-    for (outers.items, 0..) |s, k| {
+    for (outers, 0..) |s, k| {
         try options.checkCancel();
         @memset(keep, false);
         keep[@backingInt(s)] = true;
-        for (voids.items, owner) |v, o| if (o == k) {
+        for (voids, owner) |v, o| if (o == k) {
             keep[@backingInt(v)] = true;
         };
         var part = body.clone(allocator) catch |e| return tooMany(diag, e);
