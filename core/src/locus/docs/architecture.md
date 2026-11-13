@@ -1026,7 +1026,9 @@ the sheet overlaid with itself winds once about every region of it, a rule besid
 overlay since the checker imports no operation (§4), run where sheets are graded, the
 fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-11-12,
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
-`intersect/planar_faces.zig`, within `xsect` of an edge of each; coplanar faces cover no
+`intersect/planar_faces.zig`, within `xsect` of an edge of each, a piece a run of
+crossings in both faces, an edge's end within `xsect` and its gap of the other's plane
+being its crossing there, as the boolean's vertex–face has it; coplanar faces cover no
 region together, by the overlay of the two), so solids touching along a line or at a
 point pass, a point of two shells' faces needing only one's boundary (a corner on a face
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take
