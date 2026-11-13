@@ -7,7 +7,9 @@
 //! triangulation's area is the sheet's, and no run can hang: the counts bound every loop.
 //! A failing chain is printed as its rings and operations, so it can become a parity case.
 //! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
-//! points, placed by turns, scales and half-steps (an extreme one time in sixteen), put
+//! points and plates 50 times wider, placed by turns, scales and half-steps (an extreme one
+//! time in sixteen), each at the tolerance of its own size (`Tolerance.fromSize`: a plate's
+//! zone is ten times a box's, so a chain mixes zones), put
 //! through chains of booleans and cuts by planes; every result through the checker, the
 //! overlap rules and its report, the volume identities holding, and the chain moved whole
 //! by a drawn rigid move (near or far out) giving the same result. A fuzz worker writes each
@@ -36,6 +38,7 @@ const test_bodies = @import("construct/test_bodies.zig");
 const overlap = @import("sketch/overlap.zig");
 const solid_overlap = @import("query/overlap.zig");
 const mass = @import("measure/mass.zig");
+const bbox = @import("measure/bbox.zig");
 const tessellate = @import("mesh/tessellate.zig");
 const validate = @import("mesh/validate.zig");
 const condition = @import("topology/condition.zig");
@@ -1465,10 +1468,13 @@ const PLAIN_RUN_SOLIDS = 40;
 /// The shifts a chain is moved whole by, after a turn from `TURNS` about one of
 /// `TURN_AXES`: near, and far out (coordinates of 1e5, where one's ulp is 1.5e-11).
 const MOVE_SHIFTS = [_]vec.Vec3{ .{ 0.5, -1, 2 }, .{ 1e3, -2e3, 500 }, .{ 1e5, -2e5, 3e5 } };
-/// How far a chain's solids reach from the origin before the move, at most: the grid
+/// How much a plate is stretched across (x and y, about the grid's middle): 4 to 200 wide,
+/// at KupCAD's zone by size 1e-4 where the other solids' is 1e-5 or 1e-6.
+const PLATE_STRETCH: f64 = 50;
+/// How far a chain's solids reach from the origin before the move, at most: a plate
 /// scaled by the largest scale, corner to corner (a placement past the tolerance's reach
 /// is refused before the chain starts).
-const SOLID_REACH: f64 = 2 * @as(f64, SOLID_GRID) * @sqrt(3.0);
+const SOLID_REACH: f64 = 2 * @as(f64, SOLID_GRID) * PLATE_STRETCH * @sqrt(3.0);
 /// A measure's rounding where a move takes it, in ulps of the distance times the area:
 /// mass sums terms that size (as D27 reckons, 64).
 const MOVE_ROUNDING_ULPS = 64;
@@ -1590,7 +1596,7 @@ fn runSolids(source: anytype) !Outcome {
             try expectSolid(&front, &diag);
             try expectSolid(&back, &diag);
             const whole = try mass.mass(&current, .{}, &diag);
-            try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + tol.xsect * whole.area);
+            try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area);
             continue;
         }
         var other = (try generatedSolid(source, &log, &diag)) orelse continue;
@@ -1618,7 +1624,7 @@ fn runSolids(source: anytype) !Outcome {
         const vd = try solidVolume(&results[2], &diag);
         // Faces closer than the intersection tolerance are one plane: the slab between them,
         // at most the tolerance times the smaller operand's area, may count either way
-        const close = IDENTITY_CLOSE * @max(va + vb, 1) + tol.xsect * @min(ma.area, mb.area);
+        const close = IDENTITY_CLOSE * @max(va + vb, 1) + tolerance.Tolerance.merge(current.tol, other.tol).xsect * @min(ma.area, mb.area);
         errdefer std.debug.print("volumes: a {d}, b {d}, union {d}, intersection {d}, difference {d}\n", .{ va, vb, vu, vi, vd });
         try testing.expectApproxEqAbs(va + vb, vu + vi, close);
         try testing.expectApproxEqAbs(va - vi, vd, close);
@@ -1675,7 +1681,7 @@ fn expectMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []con
     const m = try mass.mass(result, .{}, diag);
     const mm = try mass.mass(&moved, .{}, diag);
     const distance = vec.length(shift) + SOLID_REACH;
-    const close = IDENTITY_CLOSE * @max(m.volume, 1) + tol.xsect * m.area + MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * distance * @max(m.area, 1);
+    const close = IDENTITY_CLOSE * @max(m.volume, 1) + result.tol.xsect * m.area + MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * distance * @max(m.area, 1);
     errdefer std.debug.print("moved whole: area {d}, volume {d}; the chain's: area {d}, volume {d}\n", .{ mm.area, mm.volume, m.area, m.volume });
     try testing.expectApproxEqAbs(m.area, mm.area, close);
     try testing.expectApproxEqAbs(m.volume, mm.volume, close);
@@ -1695,13 +1701,34 @@ fn cleanSolid(err: anyerror) anyerror!Outcome {
     };
 }
 
+/// A drawn solid before its placement: a box from `lo` to `hi`, or the hull of points.
+const SolidShape = union(enum) {
+    box: [2]vec.Vec3,
+    hull: struct { points: [MAX_HULL_POINTS]vec.Vec3, n: usize },
+
+    /// The shape built at the tolerance `t`.
+    fn build(self: *const SolidShape, t: tolerance.Tolerance, diag: *Diagnostics) !Body {
+        switch (self.*) {
+            .box => |b| {
+                var unit = try primitives.box(testing.allocator, t, b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2], false, diag);
+                defer unit.deinit();
+                return transform.transform(testing.allocator, &unit, &Affine.translate(b[0]), .{}, diag);
+            },
+            .hull => |h| return solid_hull.hull(testing.allocator, t, h.points[0..h.n], diag),
+        }
+    }
+};
+
 /// A box or the hull of grid points, placed: sometimes turned about an axis through the
 /// grid's middle, sometimes scaled per axis, moved by half-steps; one time in
-/// `EXTREME_ONE_IN` a placement takes a value a script would never write. Null for a clean
-/// refusal (a hull of points in a plane, an extreme placement refused).
+/// `EXTREME_ONE_IN` a placement takes a value a script would never write. Built at the
+/// tolerance of its own size (`Tolerance.fromSize` of its largest extent, placed: a chain
+/// mixes zones, which each boolean merges to the larger). Null for a clean refusal (a hull
+/// of points in a plane, an extreme placement refused).
 fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
-    var shape: Body = undefined;
-    if (source.valueRangeAtMost(u8, 0, 1) == 0) {
+    var drawn: SolidShape = undefined;
+    const kind = source.valueRangeAtMost(u8, 0, 2);
+    if (kind != 1) {
         var lo: vec.Vec3 = undefined;
         var hi: vec.Vec3 = undefined;
         for (0..3) |k| {
@@ -1709,23 +1736,29 @@ fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
             lo[k] = @floatFromInt(a);
             hi[k] = @floatFromInt(source.valueRangeAtMost(i32, a + 1, SOLID_GRID));
         }
-        try log.add("box ({d}, {d}, {d}) to ({d}, {d}, {d})", .{ lo[0], lo[1], lo[2], hi[0], hi[1], hi[2] });
-        var unit = primitives.box(testing.allocator, tol, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, diag) catch |err| return refusedSolid(err);
-        defer unit.deinit();
-        shape = transform.transform(testing.allocator, &unit, &Affine.translate(lo), .{}, diag) catch |err| return refusedSolid(err);
+        if (kind == 2) {
+            // A plate: stretched across about the grid's middle, its top and bottom on the grid
+            const middle: f64 = @as(f64, @floatFromInt(SOLID_GRID)) / 2;
+            for (0..2) |k| {
+                lo[k] = middle + (lo[k] - middle) * PLATE_STRETCH;
+                hi[k] = middle + (hi[k] - middle) * PLATE_STRETCH;
+            }
+        }
+        try log.add("{s} ({d}, {d}, {d}) to ({d}, {d}, {d})", .{ if (kind == 2) "plate" else "box", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2] });
+        drawn = .{ .box = .{ lo, hi } };
     } else {
-        var points: [MAX_HULL_POINTS]vec.Vec3 = undefined;
-        const n = source.valueRangeAtMost(u8, MIN_HULL_POINTS, MAX_HULL_POINTS);
+        drawn = .{ .hull = .{ .points = undefined, .n = source.valueRangeAtMost(u8, MIN_HULL_POINTS, MAX_HULL_POINTS) } };
         try log.add("hull of", .{});
-        for (points[0..n]) |*p| {
+        for (drawn.hull.points[0..drawn.hull.n]) |*p| {
             for (p) |*c| c.* = @floatFromInt(source.valueRangeAtMost(i32, 0, SOLID_GRID));
             try log.add(" ({d}, {d}, {d})", .{ p[0], p[1], p[2] });
         }
-        shape = solid_hull.hull(testing.allocator, tol, points[0..n], diag) catch |err| {
-            try log.add(": refused\n", .{});
-            return refusedSolid(err);
-        };
     }
+    // Built before the placement is drawn: a refusal ends the draws here
+    var shape = drawn.build(tol, diag) catch |err| {
+        try log.add(": refused\n", .{});
+        return refusedSolid(err);
+    };
     defer shape.deinit();
     // The placement
     const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
@@ -1745,10 +1778,27 @@ fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
     var move: vec.Vec3 = undefined;
     for (&move) |*c| c.* = @as(f64, @floatFromInt(source.valueRangeAtMost(i32, -2, 2))) * 0.5;
     if (source.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1) move[source.index(3)] = EXTREMES[source.index(EXTREMES.len)];
-    try log.add(", moved ({d}, {d}, {d})\n", .{ move[0], move[1], move[2] });
+    try log.add(", moved ({d}, {d}, {d})", .{ move[0], move[1], move[2] });
     place = Affine.translate(move).compose(&place);
-    const placed = transform.transform(testing.allocator, &shape, &place, .{}, diag) catch |err| return refusedSolid(err);
-    return placed;
+    var placed = transform.transform(testing.allocator, &shape, &place, .{}, diag) catch |err| {
+        try log.add("\n", .{});
+        return refusedSolid(err);
+    };
+    // Again at the tolerance of its own size, when that is not the one it was built at
+    const own = tolerance.Tolerance.fromSize(largestExtent(&placed));
+    try log.add(", zone {e}\n", .{own.zone});
+    if (own.zone == tol.zone) return placed;
+    placed.deinit();
+    var resized = drawn.build(own, diag) catch |err| return refusedSolid(err);
+    defer resized.deinit();
+    return transform.transform(testing.allocator, &resized, &place, .{}, diag) catch |err| refusedSolid(err);
+}
+
+/// The largest side of the body's box.
+fn largestExtent(body: *const Body) f64 {
+    const box = bbox.bodyBounds(body) catch return 0;
+    const size = vec.sub(box.max, box.min);
+    return @max(size[0], size[1], size[2]);
 }
 
 fn refusedSolid(err: anyerror) anyerror!?Body {

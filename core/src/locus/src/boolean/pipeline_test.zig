@@ -26,9 +26,14 @@ const CLOSE = 1e-9;
 
 /// A box from `lo` to `hi`.
 pub fn box(lo: Vec3, hi: Vec3) !Body {
+    return boxAt(tol, lo, hi);
+}
+
+/// A box from `lo` to `hi` at the tolerance `t`.
+pub fn boxAt(t: Tolerance, lo: Vec3, hi: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var unit = try primitives.box(testing.allocator, tol, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, &diag);
+    var unit = try primitives.box(testing.allocator, t, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, &diag);
     defer unit.deinit();
     return transform.transform(testing.allocator, &unit, &mat.Affine.translate(lo), .{}, &diag);
 }
@@ -821,4 +826,89 @@ test "chain: an empty step goes on; a refusal names its step and stage" {
     try testing.expectError(error.TooSmallEdge, pipeline.chain(testing.allocator, &.{ &slab, &big, &cut }, .intersection, .{}, &diag, &failed));
     try testing.expectEqual(@as(?u32, 2), failed.failed_step);
     try testing.expectEqual(@as(?pipeline.Stage, .edge_face), failed.failed_in);
+}
+
+/// The volume identities of `a` and `b` to the slab of the merged tolerance: faces closer
+/// than its `xsect` are one plane, so up to `xsect` times the smaller operand's area may
+/// count either way. Every result passes `sound` and carries the merged tolerance.
+fn expectIdentitiesMerged(a: *const Body, b: *const Body) !void {
+    const merged = Tolerance.merge(a.tol, b.tol);
+    var results: [3]Body = undefined;
+    var made: usize = 0;
+    defer for (results[0..made]) |*r| r.deinit();
+    for ([_]Op{ .@"union", .intersection, .difference }) |op| {
+        results[made] = try sound(a, b, op);
+        made += 1;
+        try testing.expectEqual(merged.zone, results[made - 1].tol.zone);
+    }
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const ma = try mass.mass(a, .{}, &diag);
+    const mb = try mass.mass(b, .{}, &diag);
+    const slab = merged.xsect * @min(ma.area, mb.area) + CLOSE * (ma.volume + mb.volume);
+    const vi = try volume(&results[1]);
+    try testing.expectApproxEqAbs(ma.volume + mb.volume, try volume(&results[0]) + vi, slab);
+    try testing.expectApproxEqAbs(ma.volume - vi, try volume(&results[2]), slab);
+}
+
+test "boolean: operands of different tolerances merge to the larger: a 200 mm plate with 5 mm pegs, valid, the identities to the merged slab" {
+    // KupCAD's zone by size: the plate's 1e-4, a peg's 1e-5
+    const plate_tol = Tolerance.fromSize(200);
+    const peg_tol = Tolerance.fromSize(15);
+    try testing.expect(plate_tol.zone > peg_tol.zone);
+    var plate = try boxAt(plate_tol, .{ 0, 0, 0 }, .{ 200, 200, 10 });
+    defer plate.deinit();
+    // A peg sunk 5 into the plate, one standing on it, and one standing 5e-5 above it:
+    // within the plate's zone, past the peg's own, so on the merged tolerance it stands on
+    // the plate too
+    const PEG_GAP = 5e-5;
+    var sunk = try boxAt(peg_tol, .{ 20, 20, 5 }, .{ 25, 25, 20 });
+    defer sunk.deinit();
+    var standing = try boxAt(peg_tol, .{ 100, 100, 10 }, .{ 105, 105, 25 });
+    defer standing.deinit();
+    var hovering = try boxAt(peg_tol, .{ 150, 40, 10 + PEG_GAP }, .{ 155, 45, 25 + PEG_GAP });
+    defer hovering.deinit();
+    try testing.expect(PEG_GAP < plate_tol.zone and PEG_GAP > peg_tol.zone);
+    for ([_]*const Body{ &sunk, &standing, &hovering }) |peg| {
+        errdefer std.debug.print("peg at {any}\n", .{peg.point(.of(0))});
+        try expectIdentitiesMerged(&plate, peg);
+        try expectIdentitiesMerged(peg, &plate);
+    }
+    // All of them on the plate: one solid, its volume the plate's and the pegs' above it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var report = pipeline.Report.init(testing.allocator);
+    defer report.deinit();
+    var all = try pipeline.chain(testing.allocator, &.{ &plate, &sunk, &standing, &hovering }, .@"union", .{}, &diag, &report);
+    defer all.deinit();
+    try testing.expectEqual(plate_tol.zone, all.tol.zone);
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&all));
+    const above = 25.0 * 10 + 25.0 * 15 + 25.0 * 15;
+    try testing.expectApproxEqAbs(200 * 200 * 10 + above, try volume(&all), plate_tol.xsect * 25);
+}
+
+test "boolean: operands of different tolerances merge to the larger: a 1 m beam with a 50 mm bracket, valid, the identities to the merged slab" {
+    const beam_tol = Tolerance.fromSize(1000);
+    const bracket_tol = Tolerance.fromSize(50);
+    try testing.expect(beam_tol.zone > bracket_tol.zone);
+    var beam = try boxAt(beam_tol, .{ 0, 0, 0 }, .{ 1000, 50, 50 });
+    defer beam.deinit();
+    // A bracket against the beam's side, and one let into it 5 deep
+    var against = try boxAt(bracket_tol, .{ 400, -10, 0 }, .{ 450, 0, 50 });
+    defer against.deinit();
+    var let_in = try boxAt(bracket_tol, .{ 600, -10, 10 }, .{ 650, 5, 40 });
+    defer let_in.deinit();
+    for ([_]*const Body{ &against, &let_in }) |bracket| {
+        errdefer std.debug.print("bracket at {any}\n", .{bracket.point(.of(0))});
+        try expectIdentitiesMerged(&beam, bracket);
+        try expectIdentitiesMerged(bracket, &beam);
+    }
+    // Against the side, the union is one solid; the bracket let in notches the beam
+    var joined = try sound(&beam, &against, .@"union");
+    defer joined.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+    try testing.expectApproxEqAbs(1000 * 50 * 50 + 50 * 10 * 50, try volume(&joined), beam_tol.xsect * 2500);
+    var notched = try sound(&beam, &let_in, .difference);
+    defer notched.deinit();
+    try testing.expectApproxEqAbs(1000 * 50 * 50 - 50 * 5 * 30, try volume(&notched), CLOSE * 1e6);
 }
