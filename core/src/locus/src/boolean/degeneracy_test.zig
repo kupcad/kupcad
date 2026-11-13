@@ -632,3 +632,25 @@ test "degeneracy: a hole that was a lone slit leaves no point in the face; a poi
     defer away.deinit();
     try expectTableAgrees(&dotted, &away);
 }
+
+test "degeneracy: a corner touching a triangular face at its centroid" {
+    // The nightly solids fuzzer's find (2026-11-13), reduced: the box's corner (1.5, 3, 3)
+    // touches the hull's face (0.5, 3, 2), (3.5, 5, 3), (0.5, 1, 4) from outside at the
+    // triangle's centroid, the only point classification sampled the face at: on the
+    // box's boundary, the face was unclassified. A triangle now offers three samples
+    // besides its centroid, the next tried
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0.5, 5, 4 }, .{ 0.5, 1, 4 }, .{ 3.5, 5, 3 }, .{ 0.5, 3, 2 }, .{ 0.5, 5, 2 } };
+    var a = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer a.deinit();
+    var b = try box(.{ 1.5, 1, 2 }, .{ 3.5, 3, 3 });
+    defer b.deinit();
+    var u = try sound(&a, &b, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+    var i = try sound(&a, &b, .intersection);
+    defer i.deinit();
+    try testing.expect(i.isEmpty());
+    try expectIdentities(&a, &b);
+}

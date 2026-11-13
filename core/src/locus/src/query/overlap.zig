@@ -273,10 +273,13 @@ pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points
     return if (candidates.items.len > 0) candidates.items[0] else null;
 }
 
-/// Every centroid of the triangles of the polygon's triangulation (as `interiorPoint` finds
-/// them), the furthest from the rings' edges and `avoid` first, appended to `out`: a caller
-/// whose first point lands where it can decide nothing (on another body's boundary) tries
-/// the next. None when the triangulator refuses the rings.
+/// Points strictly inside the polygon, the furthest from the rings' edges and `avoid` first,
+/// appended to `out`: of each triangle of its triangulation the centroid, then the
+/// centroids of the three triangles that centroid makes with its sides. A caller whose
+/// first point lands where it can decide nothing (on another body's boundary) tries the
+/// next: a single triangle's centroid, on the corner of a solid touching the face there,
+/// was once the only candidate (the solids fuzzer, 2026-11-13). None when the triangulator
+/// refuses the rings.
 pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, points: []Vec2, starts: []const u32, avoid: []const [2]Vec2, out: *std.ArrayList(Vec3)) Error!void {
     if (starts.len < 2) return;
     // Counter-clockwise outer ring: mirrored when it runs the other way
@@ -302,21 +305,23 @@ pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, point
         const b = points[t[1]];
         const c = points[t[2]];
         if (vec.cross2(vec.sub2(b, a), vec.sub2(c, a)) <= 0) continue;
-        const centroid: Vec2 = .{ (a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0 };
-        // In the rings' own coordinates, where `avoid` is given
-        const q: Vec2 = .{ centroid[0], if (mirror) -centroid[1] else centroid[1] };
-        var clearance = std.math.inf(f64);
-        for (0..starts.len - 1) |r| {
-            const ring = points[starts[r]..starts[r + 1]];
-            for (ring, 0..) |p, i| {
-                const u: Vec2 = .{ p[0], if (mirror) -p[1] else p[1] };
-                const w0 = ring[(i + 1) % ring.len];
-                const w: Vec2 = .{ w0[0], if (mirror) -w0[1] else w0[1] };
-                clearance = @min(clearance, segmentDistance(q, u, w));
+        const g = centroidOf(a, b, c);
+        for ([_]Vec2{ g, centroidOf(a, b, g), centroidOf(b, c, g), centroidOf(c, a, g) }) |centroid| {
+            // In the rings' own coordinates, where `avoid` is given
+            const q: Vec2 = .{ centroid[0], if (mirror) -centroid[1] else centroid[1] };
+            var clearance = std.math.inf(f64);
+            for (0..starts.len - 1) |r| {
+                const ring = points[starts[r]..starts[r + 1]];
+                for (ring, 0..) |p, i| {
+                    const u: Vec2 = .{ p[0], if (mirror) -p[1] else p[1] };
+                    const w0 = ring[(i + 1) % ring.len];
+                    const w: Vec2 = .{ w0[0], if (mirror) -w0[1] else w0[1] };
+                    clearance = @min(clearance, segmentDistance(q, u, w));
+                }
             }
+            for (avoid) |segment| clearance = @min(clearance, segmentDistance(q, segment[0], segment[1]));
+            try found.append(allocator, .{ .at = q, .clearance = clearance });
         }
-        for (avoid) |segment| clearance = @min(clearance, segmentDistance(q, segment[0], segment[1]));
-        try found.append(allocator, .{ .at = q, .clearance = clearance });
     }
     // The clearest first; ties in the triangulation's order
     const Order = struct {
@@ -326,6 +331,10 @@ pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, point
     };
     std.mem.sort(Candidate, found.items, {}, Order.lessThan);
     for (found.items) |c| try out.append(allocator, frame.toWorld(.{ c.at[0], c.at[1], 0 }));
+}
+
+fn centroidOf(a: Vec2, b: Vec2, c: Vec2) Vec2 {
+    return .{ (a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0 };
 }
 
 /// The distance from `p` to the segment from `a` to `b`.

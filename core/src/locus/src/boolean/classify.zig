@@ -138,13 +138,14 @@ fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").
     return null;
 }
 
-/// Points strictly inside fragment `i`, the centroids of its triangles, the furthest from
-/// its edges first, into `out`; none when it has no area. Its loops are triangulated without their spurs: a
-/// section segment ending inside the face (the other operand touching it along a line from
-/// one side) is an edge the loop runs there and back, which bounds no area and which the
-/// triangulator, rightly, takes for a ring touching itself; the point keeps clear of it
-/// all the same, since the other operand touches the face there (a centroid on the slit's
-/// tip was found on the other's boundary, 2026-11-12).
+/// Points strictly inside fragment `i` (`overlap.interiorPoints`: the centroids of its
+/// triangles and of their thirds), the furthest from its edges first, into `out`; none
+/// when it has no area. Its loops are triangulated without their spurs: a section segment
+/// ending inside the face (the other operand touching it along a line from one side) is
+/// an edge the loop runs there and back, which bounds no area and which the triangulator,
+/// rightly, takes for a ring touching itself; the point keeps clear of it all the same, since the
+/// other operand touches the face there (a centroid on the slit's tip was found on the
+/// other's boundary, 2026-11-12).
 fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, i: usize, out: *std.ArrayList(Vec3)) Error!void {
     const fragment = fragments.items.items[i];
     const frame = planar_faces.frameOf(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face)).?;
