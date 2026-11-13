@@ -681,7 +681,13 @@ importing only those before it, which the layering test holds):**
   of the other operand it is `on_same` or `on_opposite` by their outward normals, else
   inside or outside by `point_in_body`; a sample on the other's boundary gives way to the
   next centroid in order of clearance (a sliver one `xsect` wide has its clearest within the
-  zone of the face bounding it), and the fragment is `unclassified` only when all are.
+  zone of the face bounding it), then to the centroids of each triangle's thirds, and the
+  fragment is `unclassified` only when all are. By contagion (M4's exit, research/truck.md
+  §3): fragments of one operand sharing an edge piece neither end of which lies on the
+  other operand are one component, which one ray classifies and a second, from its second
+  fragment, checks (a disagreement is refused); the report counts rays, fragments by
+  contagion and checks, and `Options.contagion = false` casts a ray from every fragment.
+  A coplanar fragment's first sample on no partner's boundary decides it.
 - `select.zig`: Mäntylä's table, a coincident face kept once, from `a`.
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
