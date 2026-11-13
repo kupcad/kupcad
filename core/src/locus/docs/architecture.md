@@ -1188,9 +1188,12 @@ meshes of every corpus case both build, both at 64 segments a turn: within the d
 times `1 − cos(π/64)` of each other, what only one holds within a shell of that thickness
 over the surface.
 
-*Allowed differences.* Two, and only two: exactness itself (Locus's circle is a circle,
-Manifold's the polygon; the bound above is that difference) and what `supports` says is
-missing. Where the mesh engine approximates by design (offset by shrink-then-grow,
+*Allowed differences.* Exactness itself (Locus's circle is a circle, Manifold's the
+polygon; the bound above is that difference) and what `supports` says is missing; and,
+each a decision of Leo's and in the parity tables, what Locus refuses by design where the
+mesh engine builds (a pinch one shell cannot hold, M4's degeneracy corpus; operands the
+intersection tolerance apart to rounding, D27) and `decompose` keeping each solid with its
+voids where Manifold's components make a void a part of its own, inside out (2026-11-12). Where the mesh engine approximates by design (offset by shrink-then-grow,
 curved hull as a polyhedron), the approximation is documented and the exact result is
 allowed to differ by the documented amount. A third kind of difference is a bug on one
 side; Locus is presumed right only once its oracle tests (§9.2) pass on the case.
@@ -1199,11 +1202,14 @@ side; Locus is presumed right only once its oracle tests (§9.2) pass on the cas
 cone, extrude, revolve and the measures; M2 the sketch operations and contours; M3 ray
 casts, `contains_point`, `min_gap` and face queries with the same answers; M4–M5 the
 booleans and the degeneracy corpus run on both engines; M6–M7 lofts, sweeps, offsets,
-fillets. `kupcad dev brep-readiness` (§12) runs every example and documentation snippet on
-both engines and compares box and volume within the chordal bound, so parity holds over
-the whole corpus and not only the table. Today the parity test reads Locus's box from its
-STEP export at `1e-5` (six decimals); with M0's full-precision writer that drops to
-floating point, and with M1's `bounding_box` the box is read directly.
+fillets. `kupcad dev brep-readiness` (§12) runs every example on the B-Rep engine and lists
+what each still lacks; every example it builds is held, in `examples_test.zig`, to the mesh
+engine's parts, boxes and mesh volumes (the B-Rep engine's own mesh, cut on the same grid,
+encloses the mesh engine's volume to its floats), so parity holds over the corpus and not
+only the tables (M4: the phone stand, the planetary gearbox and the text). The parity test
+reads Locus's box from the kernel (M1's `bounding_box`), and holds a STEP export's box,
+for the shapes its vertices and circles reach, to it at `1e-9` (M0's full-precision
+writer).
 
 *The case rig.* Beside the tables, `tools/dev/cases.zig` is a rig of cases with their own
 right answers (research: SolidCraft's kernel-cases): each a script, what it is, its
