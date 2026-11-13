@@ -15,6 +15,7 @@ const testing = std.testing;
 const vec = @import("../math/vec.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const diagnostics = @import("../diagnostics.zig");
+const mat = @import("../math/mat.zig");
 const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
 const pipeline = @import("pipeline.zig");
@@ -731,6 +732,31 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
         try testing.expect(try planar_faces.place(&floor, top, end, tol, &diag) != .outside);
         try testing.expect(try planar_faces.place(&b, side, end, tol, &diag) != .outside);
     }
+}
+
+test "degeneracy: a hull's vertex the zone from a box's edge, near where a hull's edge crosses it, is refused" {
+    // The nightly solids fuzzer's find (2026-11-14, run 43515591144): a hull moved by the
+    // zone in y has its vertex (2.5, 4.00001, 1) the zone from the box's edge x = 2.5,
+    // y = 4, and a hull edge from it crosses that edge 4.1e-5 along: both points within the
+    // intersection tolerance of both edges, the edges shared the piece between them, 14
+    // degrees off each, and the faces about it were ordered by noise (an edge of four
+    // coedges that did not pair). Two edges at an angle share no piece: refused
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 2, 2, 3 }, .{ 4, 3, 4 }, .{ 2, 3, 3 }, .{ 1, 0, 3 }, .{ 1, 1, 2 }, .{ 4, 4, 0 }, .{ 3, 2, 3 }, .{ 4, 1, 4 } };
+    var h0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h0.deinit();
+    const place = mat.Affine.translate(.{ 0.5, 1e-5, 1 }).compose(&mat.Affine.scaleBy(.{ 0.5, 1, 1 }));
+    var h = try @import("../construct/transform.zig").transform(testing.allocator, &h0, &place, .{}, &diag);
+    defer h.deinit();
+    var slab = try box(.{ 1, 3, 1 }, .{ 5, 7, 3 });
+    defer slab.deinit();
+    var piece = try sound(&h, &slab, .intersection);
+    defer piece.deinit();
+    var post = try box(.{ 2.5, 0, -1 }, .{ 3.5, 4, 3 });
+    defer post.deinit();
+    try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, &piece, &post, .@"union", .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
 }
 
 test "degeneracy: a vertex the intersection tolerance off a face, its edge leaving it at a shallow angle" {

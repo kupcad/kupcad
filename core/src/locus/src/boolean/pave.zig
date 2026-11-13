@@ -31,6 +31,7 @@ const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
+const canonical = @import("../geometry/canonical.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
@@ -782,8 +783,32 @@ const Filler = struct {
             for (list[0 .. list.len - 1], list[1..]) |x, y| {
                 const key: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
                 const ea = of_a.get(key) orelse continue;
+                try self.alongEachOther(ea, @backingInt(e), key);
                 try p.common.append(self.allocator, .{ .vertices = key, .edges = .{ ea, @backingInt(e) } });
             }
+        }
+    }
+
+    /// Edge `ea` of `a` and `eb` of `b` sharing the piece between merged vertices `key` run
+    /// along each other. Two edges at an angle share no piece: one found is their crossing
+    /// stretched by the tolerance (a vertex of one within it of the other, near where they
+    /// cross, and the crossing past the welding distance from it), which one vertex could
+    /// not hold without a gap past the zone, and whose direction is the tolerance's: the
+    /// faces about it would be ordered by noise (the nightly's find, run 43515591144, an
+    /// edge 4.1e-5 long 14 degrees off both). Refused, `edge_too_short`: the piece against
+    /// the most the tolerance stretches a crossing at their angle.
+    fn alongEachOther(self: *Filler, ea: u32, eb: u32, key: [2]u32) Error!void {
+        const ca = self.body(0).geometry.curve(self.body(0).edge(types.EdgeIndex.of(ea)).curve);
+        const cb = self.body(1).geometry.curve(self.body(1).edge(types.EdgeIndex.of(eb)).curve);
+        if (ca != .line or cb != .line) return;
+        const cos = @abs(vec.dot(ca.line.d, cb.line.d));
+        switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - cos, self.p.tol.angle)})) {
+            .same => return,
+            .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, eb), .label = "an edge of the second operand along one of the first or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+            .apart => {
+                const sin = @sqrt(@max(1.0 - cos * cos, 0));
+                return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, eb), .label = "a piece an edge of the second operand shares with one of the first at an angle: their crossing, which the tolerance stretched past the welding distance (a vertex of one within it of the other near the crossing)", .measured = vec.distance(self.p.point(key[0]), self.p.point(key[1])), .threshold = 2 * self.p.tol.xsect / sin });
+            },
         }
     }
 

@@ -1551,6 +1551,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 1 6 1 1 0 2 2 3 4 4 4 3 1 4 4 3 3 0 3 1 3 3 0 1 0 2 2 2 0 3 4 3 4 0 1 3 1 1 2 1 7 1 2 1 4 3 3 0 3 4 2 2 2 4 3 0 0 0 0 3 1 1 -2 2 10 2 1 2 2",
         "solids 0 2 3 3 4 0 1 0 3 1 1 1 0 2 12 3 1 1 6 3 0 2 0 0 1 2 3 1 1 4 2 3 3 4 3 1 0 1 0 0 1 2 2 -1 0 13 1 3 0 3 4 2 3 3 4 2 1 -1 1 1 11 0 0 1 0 -1 14 4 1 3 2",
         "solids 0 3 4 0 1 3 4 3 2 -2 0 -1 10 2 3 1 8 4 3 0 4 1 4 4 0 3 3 4 3 4 4 0 3 2 3 1 2 3 2 0 2 2 0 0 2 2 2 -1 -2 13 1 0 -1 1 0 8 8 1 2 2",
+        // The nightly's (run 43515591144, locus_solids): a hull's vertex the zone from a box's edge near where a hull edge crosses it, the two edges sharing a piece at an angle
+        "solids 1 8 2 2 3 4 3 4 2 3 3 1 0 3 1 1 2 4 4 0 3 2 3 4 1 4 3 0 0 1 1 1 2 2 1 1 9 3 2 0 0 4 1 3 1 3 2 0 1 2 1 2 2 0 11 2 3 0 3 4 0 4 0 4 1 3 -1 0 -2 6 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
