@@ -8,8 +8,8 @@
 //! `curve_surface.curvePlane`, an edge lying in the plane giving its ends) are every
 //! point where "in both faces" can change along `L`. Sorted along `L`, each crossing and
 //! the middle of each gap between two is classified against both faces
-//! (`query/in_face.zig`); the gaps whose middle is in both are the segments, the crossings
-//! in both and next to no segment the points. Tolerant classification of 3D points
+//! (`query/in_face.zig`); a run of crossings in both, each gap between them in both by its
+//! middle, is a segment, and a crossing in both next to no such gap is a point. Tolerant classification of 3D points
 //! (§6's second tier), never an angle: two faces are coplanar when every edge of one lies
 //! within the zone of the other's plane, decided at the faces' own size.
 
@@ -95,21 +95,23 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     }
     const points = marks.items[0..kept];
 
+    // A piece is a run of crossings each in both faces, every gap between them in both by
+    // its middle: a gap's middle can be within the zone of a face whose end of it is twice
+    // that outside, and a piece reaching that end put a point of one face's boundary on
+    // the other face (the overlap rules' find in the solids fuzzer, 2026-11-13: a box's
+    // corner the intersection tolerance and a rounding from a triangle's corner)
     const first = pieces.items.len;
     var open: ?Vec3 = null;
     for (points, 0..) |p, i| {
-        const here = try inBoth(a, fa, b, fb, p, tol, diag);
-        const next_in = i + 1 < points.len and try inBoth(a, fa, b, fb, vec.lerp(p, points[i + 1], 0.5), tol, diag);
-        if (next_in) {
-            if (open == null) open = p;
+        if (!try inBoth(a, fa, b, fb, p, tol, diag)) {
+            if (open) |start| try pieces.append(allocator, .{ .a = start, .b = points[i - 1] });
+            open = null;
             continue;
         }
-        if (open) |start| {
-            try pieces.append(allocator, .{ .a = start, .b = p });
-            open = null;
-        } else if (here) {
-            try pieces.append(allocator, .{ .a = p, .b = p });
-        }
+        if (open == null) open = p;
+        if (i + 1 < points.len and try inBoth(a, fa, b, fb, vec.lerp(p, points[i + 1], 0.5), tol, diag)) continue;
+        try pieces.append(allocator, .{ .a = open.?, .b = p });
+        open = null;
     }
     return if (pieces.items.len > first) .crossing else .apart;
 }

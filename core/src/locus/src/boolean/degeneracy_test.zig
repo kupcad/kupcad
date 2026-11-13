@@ -654,3 +654,38 @@ test "degeneracy: a corner touching a triangular face at its centroid" {
     try testing.expect(i.isEmpty());
     try expectIdentities(&a, &b);
 }
+
+test "degeneracy: a hull's edge across a box's floor, ending the intersection tolerance from its corner" {
+    // The nightly solids fuzzer's find (2026-11-13), reduced: a hull moved by the zone
+    // touches the box from below along its edge (2.00001, 5, 2)–(4.00001, 1, 2), which
+    // crosses the floor from its y = 5 edge to its x = 3 edge at (3, 3.00002, 2), the
+    // intersection tolerance and a rounding from the corner (3, 3, 2). The overlap rules
+    // took the floor's piece by that crossing and the side x = 3 to meet from (3, 5, 2) to
+    // the corner: the gap's middle is within the zone of the piece, its end is not, and the
+    // end was taken all the same. A piece of two faces' meet ends at crossings in both
+    var b = try box(.{ 1, 3, 2 }, .{ 3, 5, 4 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 1, 1, 0 }, .{ 0, 3, 0 }, .{ 2, 2, 1 }, .{ 2, 3, 0 }, .{ 4, 0, 2 }, .{ 0, 2, 0 }, .{ 1, 0, 1 }, .{ 2, 4, 2 } };
+    var c0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer c0.deinit();
+    var c = try helpers.moved(&c0, .{ 1e-5, 1, 0 });
+    defer c.deinit();
+    var u = try sound(&b, &c, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+    var i = try sound(&b, &c, .intersection);
+    defer i.deinit();
+    var d = try sound(&b, &c, .difference);
+    defer d.deinit();
+    // Moved by the zone, the hull's faces near the floor count either way within the slab
+    // the fuzzer allows: the intersection tolerance times the smaller operand's area
+    const mass = @import("../measure/mass.zig");
+    const mb = try mass.mass(&b, .{}, &diag);
+    const mc = try mass.mass(&c, .{}, &diag);
+    const slab = tol.xsect * @min(mb.area, mc.area);
+    const vi = try volume(&i);
+    try testing.expectApproxEqAbs(mb.volume + mc.volume, try volume(&u) + vi, slab);
+    try testing.expectApproxEqAbs(mb.volume - vi, try volume(&d), slab);
+}
