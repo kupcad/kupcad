@@ -17,6 +17,8 @@ const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 /// How close the quadrature gets to a closed form, relative.
 const CLOSE = 1e-9;
+/// Far from the origin: coordinates of 1e5, where one's ulp is 1.5e-11.
+const FAR: vec.Vec3 = .{ 1e5, -2e5, 3e5 };
 
 fn expectMeasures(body: *const Body, volume: f64, area: f64) !void {
     var diag = Diagnostics.init(testing.allocator);
@@ -131,6 +133,25 @@ test "mass: sweeps measure their closed forms, and a move keeps them while a sca
     var scaled = try transform.transform(testing.allocator, &ring, &mat.Affine.scaleBy(.{ 2, 2, 2 }), .{}, &diag);
     defer scaled.deinit();
     try expectMeasures(&scaled, 8 * ring_volume, 4 * ring_area);
+}
+
+test "mass: a body far from the origin measures what it does at the origin" {
+    // About the origin, a 2-unit box out here measured 4.5e-7 off: its faces' terms were
+    // the size of the distance times the face, cancelling to the box's volume
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const far = mat.Affine.translate(FAR).compose(&mat.Affine.rotate(vec.normalized(.{ 1, 1, 0 }).?, PI / 4.0));
+    var cube = try primitives.box(testing.allocator, tol, 2, 2, 2, true, &diag);
+    defer cube.deinit();
+    var far_cube = try transform.transform(testing.allocator, &cube, &far, .{}, &diag);
+    defer far_cube.deinit();
+    try expectMeasures(&far_cube, 8, 24);
+    // Curved faces and arcs: a cylinder
+    var drum = try primitives.cylinder(testing.allocator, tol, 2, 5, true, &diag);
+    defer drum.deinit();
+    var far_drum = try transform.transform(testing.allocator, &drum, &far, .{}, &diag);
+    defer far_drum.deinit();
+    try expectMeasures(&far_drum, PI * 4 * 5, 2 * PI * 2 * 5 + 2 * PI * 4);
 }
 
 test "genus: a sphere 0, a torus 1, a slab with a hole 1, as the mesh engine counts them" {

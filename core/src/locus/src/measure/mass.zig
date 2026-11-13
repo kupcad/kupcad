@@ -4,8 +4,11 @@
 //! quadrature along a free-form edge), and `p · n` is one number on a plane. A curved face
 //! is integrated over its UV region, the polygon of its loops' pcurves (or projections),
 //! as signed fans of triangles from a corner, each triangle by Gauss quadrature refined
-//! until two rules agree; what they still differ by is the error estimate. Independent of
-//! any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
+//! until two rules agree; what they still differ by is the error estimate. Every `p` is
+//! taken from the centre of the body's box: a closed surface's `∮ n dA` is zero, so the
+//! volume is the same about any point, and about one inside the body its terms are the
+//! body's size, not its distance from the origin (a 2-unit box 3.7e5 out measured 4.5e-7
+//! off about the origin). Independent of any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
 //! it: `1 − χ/2`.
 
 const std = @import("std");
@@ -47,8 +50,9 @@ pub const Mass = struct {
 /// The mass properties of `body`.
 pub fn mass(body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!Mass {
     try options.checkCancel();
-    const extent = extentOf(body);
-    var total = Totals{ .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
+    const place = placeOf(body);
+    const extent = place.extent;
+    var total = Totals{ .centre = place.centre, .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
     var shells = traverse.Shells.init(body);
     while (shells.next() catch return corrupt(diag)) |s| {
         var faces = traverse.Faces.init(body, s);
@@ -110,9 +114,10 @@ fn shellCharacteristic(body: *const Body, s: types.ShellIndex) !i64 {
     return v - e + faces_n - (loops_n - faces_n);
 }
 
-/// The running sums: `volume` is `∮ p · n dA` (a third of it is the volume), `area` is
-/// `∮ dA`, each with the quadrature's disagreement.
+/// The running sums: `volume` is `∮ (p − centre) · n dA` (a third of it is the volume),
+/// `area` is `∮ dA`, each with the quadrature's disagreement.
 const Totals = struct {
+    centre: Vec3,
     volume: f64 = 0,
     area: f64 = 0,
     volume_error: f64 = 0,
@@ -122,16 +127,19 @@ const Totals = struct {
     max_splits: u32,
 };
 
-/// The body's size, what the quadrature's agreement is measured against.
-fn extentOf(body: *const Body) f64 {
-    const box = bbox.bodyBounds(body) catch return 1;
-    if (box.isEmpty()) return 1;
+/// Where the body is: the centre of its box, which the integrals are taken from, and its
+/// size, what the quadrature's agreement is measured against.
+const Place = struct { centre: Vec3, extent: f64 };
+
+fn placeOf(body: *const Body) Place {
+    const box = bbox.bodyBounds(body) catch return .{ .centre = vec.ZERO3, .extent = 1 };
+    if (box.isEmpty()) return .{ .centre = vec.ZERO3, .extent = 1 };
     const extent = vec.length(vec.sub(box.max, box.min));
-    return if (extent > 0) extent else 1;
+    return .{ .centre = vec.scale(vec.add(box.min, box.max), 0.5), .extent = if (extent > 0) extent else 1 };
 }
 
-/// A planar face: its vector area from its loops' boundary integrals, its `p · n` the
-/// plane's.
+/// A planar face: its vector area from its loops' boundary integrals, its `(p − centre) · n`
+/// the plane's.
 fn planarFace(body: *const Body, f: types.FaceIndex, total: *Totals, diag: *Diagnostics) Error!void {
     const face = body.face(f);
     const plane = body.geometry.planes.items[face.surface.index];
@@ -143,23 +151,23 @@ fn planarFace(body: *const Body, f: types.FaceIndex, total: *Totals, diag: *Diag
         while (it.next() catch return corrupt(diag)) |c| {
             const coedge = body.coedge(c);
             const e = body.edge(coedge.edge);
-            const integral = crossIntegral(body.geometry.curve(e.curve), e.t0, e.t1);
+            const integral = crossIntegral(body.geometry.curve(e.curve), e.t0, e.t1, total.centre);
             twice_area = vec.addScaled(twice_area, integral, sense(coedge.same_sense));
         }
     }
     const area = vec.dot(twice_area, outward) / 2.0;
     total.area += area;
-    total.volume += vec.dot(plane.frame.origin, outward) * area;
+    total.volume += vec.dot(vec.sub(plane.frame.origin, total.centre), outward) * area;
 }
 
-/// `∫ p × p' dt` over `[t0, t1]` of a curve: closed for a line, a circle and an ellipse
-/// (`c × (p(t1) − p(t0))` plus the swept sector's `ab (t1 − t0) x × y`), by composite
-/// Gauss quadrature for a free-form curve.
-fn crossIntegral(curve: curves.Curve, t0: f64, t1: f64) Vec3 {
+/// `∫ (p − centre) × p' dt` over `[t0, t1]` of a curve: closed for a line, a circle and an
+/// ellipse (`(c − centre) × (p(t1) − p(t0))` plus the swept sector's `ab (t1 − t0) x × y`),
+/// by composite Gauss quadrature for a free-form curve.
+fn crossIntegral(curve: curves.Curve, t0: f64, t1: f64, centre: Vec3) Vec3 {
     switch (curve) {
-        .line => |l| return vec.scale(vec.cross(l.o, l.d), t1 - t0),
-        .circle => |c| return vec.add(vec.cross(c.c, vec.sub(c.eval(t1), c.eval(t0))), vec.scale(vec.cross(c.x, c.y), c.r * c.r * (t1 - t0))),
-        .ellipse => |e| return vec.add(vec.cross(e.c, vec.sub(e.eval(t1), e.eval(t0))), vec.scale(vec.cross(e.x, e.y), e.a * e.b * (t1 - t0))),
+        .line => |l| return vec.scale(vec.cross(vec.sub(l.o, centre), l.d), t1 - t0),
+        .circle => |c| return vec.add(vec.cross(vec.sub(c.c, centre), vec.sub(c.eval(t1), c.eval(t0))), vec.scale(vec.cross(c.x, c.y), c.r * c.r * (t1 - t0))),
+        .ellipse => |e| return vec.add(vec.cross(vec.sub(e.c, centre), vec.sub(e.eval(t1), e.eval(t0))), vec.scale(vec.cross(e.x, e.y), e.a * e.b * (t1 - t0))),
         .nurbs => {
             var sum = vec.ZERO3;
             const step = (t1 - t0) / @as(f64, @floatFromInt(EDGE_SPANS));
@@ -167,7 +175,7 @@ fn crossIntegral(curve: curves.Curve, t0: f64, t1: f64) Vec3 {
                 const a = t0 + step * @as(f64, @floatFromInt(k));
                 for (GAUSS_10.nodes, GAUSS_10.weights) |x, w| {
                     const t = a + step * (x + 1.0) / 2.0;
-                    sum = vec.addScaled(sum, vec.cross(curve.eval(t), curve.d1(t)), w * step / 2.0);
+                    sum = vec.addScaled(sum, vec.cross(vec.sub(curve.eval(t), centre), curve.d1(t)), w * step / 2.0);
                 }
             }
             return sum;
@@ -191,7 +199,7 @@ fn curvedFace(body: *const Body, f: types.FaceIndex, total: *Totals, diag: *Diag
         if (polygon.items.len < 3) continue;
         const apex = polygon.items[0];
         for (1..polygon.items.len - 1) |i| {
-            var q = Quadrature{ .surface = surface, .max_splits = total.max_splits, .scale_volume = total.scale_volume, .scale_area = total.scale_area };
+            var q = Quadrature{ .surface = surface, .centre = total.centre, .max_splits = total.max_splits, .scale_volume = total.scale_volume, .scale_area = total.scale_area };
             q.triangle(apex, polygon.items[i], polygon.items[i + 1], 0);
             total.volume += q.volume;
             total.area += s * q.area;
@@ -230,6 +238,7 @@ fn sense(same_sense: bool) f64 {
 /// a 10-point rule (tensor Gauss–Legendre on the collapsed square) agree.
 const Quadrature = struct {
     surface: surfaces.Surface,
+    centre: Vec3,
     max_splits: u32,
     scale_volume: f64,
     scale_area: f64,
@@ -276,7 +285,7 @@ const Quadrature = struct {
                 const sample = self.surface.sample(u, v);
                 const n = vec.cross(sample.du, sample.dv);
                 const weight = ws * wt / 4.0 * twice_signed_area * s;
-                volume += weight * vec.dot(sample.p, n);
+                volume += weight * vec.dot(vec.sub(sample.p, self.centre), n);
                 area += weight * vec.length(n);
             }
         }
