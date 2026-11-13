@@ -1,6 +1,9 @@
-//! The primitives as body JSON, each against its fixture in src/fixtures: a change to a
-//! primitive's bytes without a change to its geometry is a determinism bug; a meant change
-//! is rewritten with `zig build test -Dupdate-snapshots` and reviewed like code.
+//! The primitives and a few boolean results as body JSON, each against its fixture in
+//! src/fixtures, natively and under wasmtime (§6: the same bytes on every target): a change
+//! to the bytes without a change to the geometry is a determinism bug; a meant change is
+//! rewritten with `zig build test -Dupdate-snapshots` and reviewed like code. The booleans
+//! are a corner union, a void, a chain and a cut by a slanted plane, whose vertices are
+//! rounded: the arithmetic the targets must agree on to the last bit.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -14,6 +17,8 @@ const transform = @import("../construct/transform.zig");
 const mat = @import("../math/mat.zig");
 const vec = @import("../math/vec.zig");
 const body_json = @import("body_json.zig");
+const pipeline = @import("../boolean/pipeline.zig");
+const trim = @import("../boolean/trim.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -32,7 +37,18 @@ const FIXTURES = [_]Fixture{
     .{ .name = "polygon", .expected = @embedFile("../fixtures/polygon.json") },
     .{ .name = "even_odd", .expected = @embedFile("../fixtures/even_odd.json") },
     .{ .name = "polyhedron", .expected = @embedFile("../fixtures/polyhedron.json") },
+    .{ .name = "corner_union", .expected = @embedFile("../fixtures/corner_union.json") },
+    .{ .name = "void", .expected = @embedFile("../fixtures/void.json") },
+    .{ .name = "chain", .expected = @embedFile("../fixtures/chain.json") },
+    .{ .name = "slanted_cut", .expected = @embedFile("../fixtures/slanted_cut.json") },
 };
+
+/// A box from `lo` to `hi`.
+fn box(allocator: std.mem.Allocator, lo: vec.Vec3, hi: vec.Vec3, diag: *Diagnostics) !Body {
+    var unit = try primitives.box(allocator, tol, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, diag);
+    defer unit.deinit();
+    return transform.transform(allocator, &unit, &mat.Affine.translate(lo), .{}, diag);
+}
 
 /// The primitive named `name`, as the fixtures build it.
 pub fn build(allocator: std.mem.Allocator, name: []const u8) !Body {
@@ -72,10 +88,41 @@ pub fn build(allocator: std.mem.Allocator, name: []const u8) !Body {
         const tris = [_][3]u32{ .{ 0, 3, 2 }, .{ 0, 2, 1 }, .{ 0, 1, 4 }, .{ 1, 2, 4 }, .{ 2, 3, 4 }, .{ 3, 0, 4 } };
         return primitives.polyhedron(allocator, tol, &pts, &tris, &diag);
     }
+    if (std.mem.eql(u8, name, "corner_union")) {
+        var a = try box(allocator, .{ 0, 0, 0 }, .{ 2, 2, 2 }, &diag);
+        defer a.deinit();
+        var b = try box(allocator, .{ 1, 1, 1 }, .{ 3, 3, 3 }, &diag);
+        defer b.deinit();
+        return pipeline.boolean(allocator, &a, &b, .@"union", .{}, &diag, null);
+    }
+    if (std.mem.eql(u8, name, "void")) {
+        var outer = try box(allocator, .{ 0, 0, 0 }, .{ 4, 4, 4 }, &diag);
+        defer outer.deinit();
+        var cavity = try box(allocator, .{ 1, 1, 1 }, .{ 3, 3, 3 }, &diag);
+        defer cavity.deinit();
+        return pipeline.boolean(allocator, &outer, &cavity, .difference, .{}, &diag, null);
+    }
+    if (std.mem.eql(u8, name, "chain")) {
+        // Three boxes in a row, each overlapping the next, and a post on the middle one
+        var a = try box(allocator, .{ 0, 0, 0 }, .{ 2, 1, 1 }, &diag);
+        defer a.deinit();
+        var b = try box(allocator, .{ 1.5, 0, 0 }, .{ 3.5, 1, 1 }, &diag);
+        defer b.deinit();
+        var c = try box(allocator, .{ 3, 0, 0 }, .{ 5, 1, 1 }, &diag);
+        defer c.deinit();
+        var post = try box(allocator, .{ 2.25, 0.25, 0.5 }, .{ 2.75, 0.75, 3 }, &diag);
+        defer post.deinit();
+        return pipeline.chain(allocator, &.{ &a, &b, &c, &post }, .@"union", .{}, &diag, null);
+    }
+    if (std.mem.eql(u8, name, "slanted_cut")) {
+        var a = try box(allocator, .{ 0, 0, 0 }, .{ 3, 2, 1 }, &diag);
+        defer a.deinit();
+        return trim.trimByPlane(allocator, &a, .{ 1, 2, 3 }, 1.3, .{}, &diag, null);
+    }
     unreachable;
 }
 
-test "fixtures: each primitive's body JSON is its fixture, byte for byte" {
+test "fixtures: each primitive's and boolean result's body JSON is its fixture, byte for byte" {
     const update = @import("test_paths").update_snapshots;
     if (update and builtin.cpu.arch == .wasm32) return error.SkipZigTest;
     for (FIXTURES) |f| {
