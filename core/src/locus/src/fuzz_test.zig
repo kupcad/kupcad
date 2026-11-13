@@ -9,7 +9,8 @@
 //! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
 //! points, placed by turns, scales and half-steps (an extreme one time in sixteen), put
 //! through chains of booleans and cuts by planes; every result through the checker, the
-//! overlap rules and its report, the volume identities holding. A fuzz worker writes each
+//! overlap rules and its report, the volume identities holding, and the chain moved whole
+//! by a drawn rigid move (near or far out) giving the same result. A fuzz worker writes each
 //! run's draws down as it draws them and runs a watchdog: a run that panics or passes its
 //! wall-clock bound (`RUN_BUDGET_S`) leaves its `replay:` line for `zig build fuzz-run`.
 
@@ -1461,6 +1462,16 @@ const TURN_AXES = [_]vec.Vec3{ vec.X3, vec.Y3, vec.Z3, .{ 1, 2, 3 } };
 const SCALES = [_]f64{ 0.5, 1, 2 };
 /// Chains of a plain test run, and how many must reach their checks.
 const PLAIN_RUN_SOLIDS = 40;
+/// The shifts a chain is moved whole by, after a turn from `TURNS` about one of
+/// `TURN_AXES`: near, and far out (coordinates of 1e5, where one's ulp is 1.5e-11).
+const MOVE_SHIFTS = [_]vec.Vec3{ .{ 0.5, -1, 2 }, .{ 1e3, -2e3, 500 }, .{ 1e5, -2e5, 3e5 } };
+/// How far a chain's solids reach from the origin before the move, at most: the grid
+/// scaled by the largest scale, corner to corner (a placement past the tolerance's reach
+/// is refused before the chain starts).
+const SOLID_REACH: f64 = 2 * @as(f64, SOLID_GRID) * @sqrt(3.0);
+/// A measure's rounding where a move takes it, in ulps of the distance times the area:
+/// mass sums terms that size (as D27 reckons, 64).
+const MOVE_ROUNDING_ULPS = 64;
 
 const solid_boolean = struct {
     const pipeline = @import("boolean/pipeline.zig");
@@ -1524,6 +1535,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 0 1 3 1 3 0 4 1 2 2 0 1 9 3 1 1 8 0 2 2 4 0 3 0 2 2 3 1 3 1 2 0 0 3 3 1 2 1 4 4 3 2 2 0 0 2 11 0 3 1 5 0 2 3 0 1 4 3 1 0 4 1 2 0 2 0 0 2 1 1 2 1 2 1 1 9 0",
         // The 10K session's panic (2026-11-13), its line from its draws file: kevJoin given a reverse coedge removed a vertex two solids shared
         "solids 1 8 2 3 4 1 2 2 4 0 0 4 3 4 2 4 1 2 0 3 4 0 2 2 0 0 0 1 0 1 0 -1 2 6 3 3 1 8 1 2 2 4 2 4 1 0 4 1 4 1 2 1 0 3 4 0 2 0 0 4 0 3 1 2 -1 0 2 3 1 1 0 2 4 0 1 2 3 0 0 2 1 0 2 -2 15 0 2 1 7 2 2 1 2 1 0 2 4 0 2 1 2 4 3 4 2 1 4 4 0 0 0 2 2 2 -1 -2 2 2 0",
+        // The plain run's first chain moved whole far out (2026-11-13): pieces of one line split, their lines' keys taken from the world's origin
+        "solids 1 6 2 3 0 1 2 2 1 2 4 1 0 2 2 0 0 3 0 2 3 0 1 2 2 0 1 -1 13 3 1 1 5 1 3 1 0 4 1 0 2 1 3 1 2 1 3 4 0 0 3 3 1 0 0 15 0 1 1 8 2 1 0 4 2 1 1 4 2 3 1 1 4 1 0 4 0 2 0 4 3 2 0 3 1 2 -2 0 2 9 0 2 1 4 0 4 2 0 2 0 3 0 2 1 3 4 2 2 -1 0 1 11 1 1 1 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
@@ -1550,6 +1563,14 @@ fn runSolids(source: anytype) !Outcome {
     var current = (try generatedSolid(source, &log, &diag)) orelse return .refused;
     defer current.deinit();
     try expectSolid(&current, &diag);
+    // The chain's first solid and its boolean steps, for the chain moved whole
+    var first = try current.clone(testing.allocator);
+    defer first.deinit();
+    var steps: std.ArrayList(SolidStep) = .empty;
+    defer {
+        for (steps.items) |*step| step.other.deinit();
+        steps.deinit(testing.allocator);
+    }
 
     const ops = source.valueRangeAtMost(u8, 1, MAX_SOLID_OPS);
     for (0..ops) |_| {
@@ -1606,13 +1627,63 @@ fn runSolids(source: anytype) !Outcome {
             .intersection => 1,
             .difference => 2,
         };
+        try steps.ensureUnusedCapacity(testing.allocator, 1);
+        steps.appendAssumeCapacity(.{ .other = try other.clone(testing.allocator), .op = op });
         current.deinit();
         current = results[keep];
         // The kept result is the chain's now; the others are freed
         results[keep] = results[made - 1];
         made -= 1;
     }
+    try expectMovedWhole(source, &log, &first, steps.items, &current, &diag);
     return .checked;
+}
+
+/// A boolean step of a solid chain: its other operand and the operation the chain kept.
+const SolidStep = struct { other: Body, op: solid_boolean.pipeline.Op };
+
+/// The chain again with its first solid and every other operand under one drawn rigid move
+/// (§9.2's invariance of measures): the same counts and shells as the chain's result, its
+/// area and volume to the slab the identities allow and the rounding where the move took
+/// them. A step the moved chain refuses is clean: a distance near the tolerance moves by a
+/// rounding, at most onto the refused side (D27); a failure is a find.
+fn expectMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []const SolidStep, result: *const Body, diag: *Diagnostics) !void {
+    const axis = vec.normalized(TURN_AXES[source.index(TURN_AXES.len)]).?;
+    const angle = TURNS[source.index(TURNS.len)];
+    const shift = MOVE_SHIFTS[source.index(MOVE_SHIFTS.len)];
+    try log.add("moved whole: turned {d} about ({d}, {d}, {d}), shifted ({d}, {d}, {d})\n", .{ angle, axis[0], axis[1], axis[2], shift[0], shift[1], shift[2] });
+    const move = Affine.translate(shift).compose(&Affine.rotate(axis, angle));
+    var moved = transform.transform(testing.allocator, first, &move, .{}, diag) catch |err| return refusedMove(err);
+    defer moved.deinit();
+    for (steps) |step| {
+        var other = transform.transform(testing.allocator, &step.other, &move, .{}, diag) catch |err| return refusedMove(err);
+        defer other.deinit();
+        var report = solid_boolean.pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        var next = solid_boolean.pipeline.boolean(testing.allocator, &moved, &other, step.op, .{}, diag, &report) catch |err| {
+            _ = try cleanSolid(err);
+            return;
+        };
+        defer next.deinit();
+        try expectSolid(&next, diag);
+        try solid_boolean.tests.expectReportFits(&report, &moved, &other, &next, step.op);
+        std.mem.swap(Body, &moved, &next);
+    }
+    errdefer std.debug.print("moved whole: {any}, shells {any}; the chain's: {any}, shells {any}\n", .{ moved.counts(), solid_boolean.tests.shellKinds(&moved), result.counts(), solid_boolean.tests.shellKinds(result) });
+    try testing.expectEqual(result.counts(), moved.counts());
+    try testing.expectEqual(solid_boolean.tests.shellKinds(result), solid_boolean.tests.shellKinds(&moved));
+    const m = try mass.mass(result, .{}, diag);
+    const mm = try mass.mass(&moved, .{}, diag);
+    const distance = vec.length(shift) + SOLID_REACH;
+    const close = IDENTITY_CLOSE * @max(m.volume, 1) + tol.xsect * m.area + MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * distance * @max(m.area, 1);
+    errdefer std.debug.print("moved whole: area {d}, volume {d}; the chain's: area {d}, volume {d}\n", .{ mm.area, mm.volume, m.area, m.volume });
+    try testing.expectApproxEqAbs(m.area, mm.area, close);
+    try testing.expectApproxEqAbs(m.volume, mm.volume, close);
+}
+
+/// A move refused (a solid past the tolerance's reach once moved) ends the check cleanly.
+fn refusedMove(err: anyerror) anyerror!void {
+    if (err == error.OutOfMemory) return err;
 }
 
 /// A refusal by design is clean; the general path failing on valid planar operands is a

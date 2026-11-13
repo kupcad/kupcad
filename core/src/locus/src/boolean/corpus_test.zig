@@ -2,8 +2,11 @@
 //! `checkprops -s -v`, `checkmaxtol`; M4's exit, architecture §9.2): per case, per
 //! operation, the result's vertices, edges, faces, solids and voids, its area, its volume
 //! and the largest gap the boolean recorded, each answer worked out by hand (in the case's
-//! comment), never read off the kernel; and the volume identities on every case,
-//! V(A ∪ B) + V(A ∩ B) = V(A) + V(B), V(A − B) = V(A) − V(A ∩ B). The operands are boxes,
+//! comment), never read off the kernel; the volume identities on every case,
+//! V(A ∪ B) + V(A ∩ B) = V(A) + V(B), V(A − B) = V(A) − V(A ∩ B); and rigid moves commuting
+//! with the boolean on every case and a few hulls (§9.2's invariance of measures: both
+//! operands under one turn and move give the counts, area and volume of the boolean
+//! moved, the move far out among them). The operands of the hand-worked cases are boxes,
 //! so each answer has a closed form; the corpus's other configurations (a vertex on a face,
 //! a knife edge, a V groove, slivers, the fuzzer's finds) are degeneracy_test.zig's, with
 //! the identities there too.
@@ -11,9 +14,12 @@
 const std = @import("std");
 const testing = std.testing;
 const vec = @import("../math/vec.zig");
+const mat = @import("../math/mat.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Body = @import("../topology/body.zig").Body;
 const mass = @import("../measure/mass.zig");
+const transform = @import("../construct/transform.zig");
+const solid_hull = @import("../construct/hull.zig");
 const diagnostics = @import("../diagnostics.zig");
 const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
@@ -26,6 +32,14 @@ const CLOSE = 1e-9;
 /// A merged vertex's centre is rounded at its coordinates: its gap may pass half the
 /// distance it merged by that much (64 ulps of the largest coordinate, 2, as D27 reckons).
 const GAP_ROUNDING = 64 * std.math.floatEps(f64) * 2;
+/// Where the far rigid move takes the operands: coordinates of 1e5, a hundredth of what the
+/// tolerance takes (`SCALE_GUARD`), where a coordinate's ulp is 1.5e-11.
+const FAR: Vec3 = .{ 1e5, -2e5, 3e5 };
+/// How far the operands reach from the origin before a move, at most (the hulls' 4 × √3).
+const REACH = 7;
+/// A measure's rounding at a distance, in ulps: the divergence theorem sums terms the size
+/// of the distance times a face's area, each rounded (64, as D27 reckons).
+const ROUNDING_ULPS = 64;
 
 /// What one operation must give. `vertices` and `edges` are null where solids touch along
 /// an edge or at a corner: each solid keeps its own edge there (`EdgeSpec.copy`), a
@@ -255,5 +269,97 @@ test "corpus: the volume identities hold on every case" {
         const vi = try helpers.volume(&i);
         try testing.expectApproxEqAbs(va + vb, try helpers.volume(&u) + vi, slack);
         try testing.expectApproxEqAbs(va - vi, try helpers.volume(&d), slack);
+    }
+}
+
+/// The rigid moves the corpus is held under: a turn off every axis with a short move, a
+/// quarter turn with a move, and an eighth turn with the move far out (`FAR`).
+fn rigidMoves() [3]mat.Affine {
+    return .{
+        mat.Affine.translate(.{ 0.5, -1, 2 }).compose(&mat.Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, 0.3)),
+        mat.Affine.translate(.{ -3, 1, 0.5 }).compose(&mat.Affine.rotate(vec.X3, std.math.pi / 2.0)),
+        mat.Affine.translate(FAR).compose(&mat.Affine.rotate(vec.normalized(.{ 1, 1, 0 }).?, std.math.pi / 4.0)),
+    };
+}
+
+fn movedBy(body: *const Body, move: *const mat.Affine) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return transform.transform(testing.allocator, body, move, .{}, &diag);
+}
+
+/// `a op b` and the boolean of `a` and `b` under each rigid move: the same counts and
+/// shells, the same area and volume to `slack` and the measures' rounding where the move
+/// took them.
+fn expectCommutes(a: *const Body, b: *const Body, op: pipeline.Op, slack: f64) !void {
+    var result = try helpers.sound(a, b, op);
+    defer result.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const m = try mass.mass(&result, .{}, &diag);
+    for (rigidMoves(), 0..) |move, k| {
+        errdefer std.debug.print("{s}, under rigid move {d}\n", .{ @tagName(op), k });
+        var moved_a = try movedBy(a, &move);
+        defer moved_a.deinit();
+        var moved_b = try movedBy(b, &move);
+        defer moved_b.deinit();
+        var moved = try helpers.sound(&moved_a, &moved_b, op);
+        defer moved.deinit();
+        try testing.expectEqual(result.counts(), moved.counts());
+        try testing.expectEqual(helpers.shellKinds(&result), helpers.shellKinds(&moved));
+        const mm = try mass.mass(&moved, .{}, &diag);
+        const distance = vec.length(move.translation) + REACH;
+        const close = slack + ROUNDING_ULPS * std.math.floatEps(f64) * distance * @max(m.area, 1);
+        try testing.expectApproxEqAbs(m.area, mm.area, close);
+        try testing.expectApproxEqAbs(m.volume, mm.volume, close);
+    }
+}
+
+/// Pairs of hulls of grid points, each pair meeting where boxes cannot: slanted faces
+/// touching, corners on faces, edges crossing slanted faces.
+const HULLS = [_]struct { name: []const u8, a: []const Vec3, b: []const Vec3 }{
+    .{
+        // Two tetrahedra sharing a slanted face whole
+        .name = "tetrahedra face to face",
+        .a = &.{ .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 0, 2, 0 }, .{ 0, 0, 2 } },
+        .b = &.{ .{ 2, 0, 0 }, .{ 0, 2, 0 }, .{ 0, 0, 2 }, .{ 2, 2, 2 } },
+    },
+    .{
+        // An octahedron in a cube, each corner on a face of the cube
+        .name = "an octahedron's corners on a cube's faces",
+        .a = &.{ .{ 0, 0, 0 }, .{ 4, 0, 0 }, .{ 0, 4, 0 }, .{ 4, 4, 0 }, .{ 0, 0, 4 }, .{ 4, 0, 4 }, .{ 0, 4, 4 }, .{ 4, 4, 4 } },
+        .b = &.{ .{ 2, 2, 0 }, .{ 2, 2, 4 }, .{ 2, 0, 2 }, .{ 2, 4, 2 }, .{ 0, 2, 2 }, .{ 4, 2, 2 } },
+    },
+    .{
+        // A pyramid through a wedge: edges crossing slanted faces
+        .name = "a pyramid through a wedge",
+        .a = &.{ .{ 0, 0, 0 }, .{ 4, 0, 0 }, .{ 4, 4, 0 }, .{ 0, 4, 0 }, .{ 2, 2, 4 } },
+        .b = &.{ .{ 1, -1, 1 }, .{ 3, -1, 1 }, .{ 1, 5, 1 }, .{ 3, 5, 1 }, .{ 2, -1, 3 }, .{ 2, 5, 3 } },
+    },
+};
+
+test "corpus: rigid moves commute with the boolean on every case, every operation" {
+    for (CASES) |case| {
+        errdefer std.debug.print("case \"{s}\"\n", .{case.name});
+        var a = try helpers.box(case.a[0], case.a[1]);
+        defer a.deinit();
+        var b = try helpers.box(case.b[0], case.b[1]);
+        defer b.deinit();
+        try expectCommutes(&a, &b, .@"union", case.@"union".slack);
+        try expectCommutes(&a, &b, .intersection, case.intersection.slack);
+        try expectCommutes(&a, &b, .difference, case.difference.slack);
+    }
+}
+
+test "corpus: rigid moves commute with the boolean on hulls, every operation" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (HULLS) |pair| {
+        errdefer std.debug.print("hulls \"{s}\"\n", .{pair.name});
+        var a = try solid_hull.hull(testing.allocator, tol, pair.a, &diag);
+        defer a.deinit();
+        var b = try solid_hull.hull(testing.allocator, tol, pair.b, &diag);
+        defer b.deinit();
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectCommutes(&a, &b, op, CLOSE);
     }
 }
