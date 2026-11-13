@@ -34,8 +34,8 @@ fn splitTop(left: u32, right: u32) !Body {
     defer b.deinit();
     errdefer b.body.deinit();
     const corners = [_]Vec3{
-        .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 0, 1, 0 },
-        .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 },
+        .{ 0, 0, 0 },   .{ 1, 0, 0 },   .{ 1, 1, 0 }, .{ 0, 1, 0 },
+        .{ 0, 0, 1 },   .{ 1, 0, 1 },   .{ 1, 1, 1 }, .{ 0, 1, 1 },
         .{ 0.5, 0, 1 }, .{ 0.5, 1, 1 },
     };
     var v: [10]types.VertexIndex = undefined;

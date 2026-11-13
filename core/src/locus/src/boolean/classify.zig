@@ -113,7 +113,7 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         const root = find(parent, @intCast(i));
         classes[i].partner = NONE;
         if (class_of[root] != NO_CLASS and checked[root]) {
-            classes[i].class = @enumFromInt(class_of[root]);
+            classes[i].class = @fromBackingInt(@intCast(class_of[root]));
             stats.by_contagion += 1;
             continue;
         }
@@ -122,13 +122,13 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         stats.rays += 1;
         classes[i].class = class;
         if (class_of[root] == NO_CLASS) {
-            class_of[root] = @intFromEnum(class);
+            class_of[root] = @backingInt(class);
             continue;
         }
         // The component's second ray: the consistency check
         stats.checks += 1;
         checked[root] = true;
-        if (@intFromEnum(class) != class_of[root]) return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a fragment whose ray disagrees with the first ray of its component (fragments joined across pieces the other operand does not touch)" });
+        if (@backingInt(class) != class_of[root]) return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a fragment whose ray disagrees with the first ray of its component (fragments joined across pieces the other operand does not touch)" });
     }
     return classes;
 }

@@ -46,8 +46,8 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
         const lo = spec.lo;
         const hi = spec.hi;
         const corners = [8]Vec3{
-            lo,                   .{ hi[0], lo[1], lo[2] }, .{ hi[0], hi[1], lo[2] }, .{ lo[0], hi[1], lo[2] },
-            .{ lo[0], lo[1], hi[2] }, .{ hi[0], lo[1], hi[2] }, hi,                   .{ lo[0], hi[1], hi[2] },
+            lo,                       .{ hi[0], lo[1], lo[2] }, .{ hi[0], hi[1], lo[2] }, .{ lo[0], hi[1], lo[2] },
+            .{ lo[0], lo[1], hi[2] }, .{ hi[0], lo[1], hi[2] }, hi,                       .{ lo[0], hi[1], hi[2] },
         };
         var v: [8]types.VertexIndex = undefined;
         for (corners, 0..) |p, i| v[i] = try b.vertex(p);
@@ -161,8 +161,8 @@ test "overlap: a shell folded through itself crosses its own faces, which no rul
     defer diag.deinit();
     // A unit cube whose top is a pyramid with its apex pushed down through the bottom
     const points = [_]Vec3{
-        .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 0, 1, 0 },
-        .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 },
+        .{ 0, 0, 0 },        .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 0, 1, 0 },
+        .{ 0, 0, 1 },        .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 },
         .{ 0.5, 0.5, -0.5 },
     };
     const triangles = [_][3]u32{

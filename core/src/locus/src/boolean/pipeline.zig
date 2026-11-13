@@ -246,7 +246,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     r.by_contagion = stats.by_contagion;
     r.checks = stats.checks;
     defer allocator.free(classes);
-    for (fragments.items.items, classes) |fragment, c| r.fragments[fragment.operand][@intFromEnum(c.class)] += 1;
+    for (fragments.items.items, classes) |fragment, c| r.fragments[fragment.operand][@backingInt(c.class)] += 1;
     const keeps = try select.run(allocator, op, &fragments, classes);
     defer allocator.free(keeps);
     try contacts(&paves, classes, r);
@@ -369,7 +369,7 @@ fn compose(allocator: std.mem.Allocator, map: *std.ArrayList(FaceMap), step: *co
 }
 
 fn stronger(x: Role, y: Role) Role {
-    return @enumFromInt(@max(@intFromEnum(x), @intFromEnum(y)));
+    return @fromBackingInt(@intCast(@max(@backingInt(x), @backingInt(y))));
 }
 
 /// Whether the operands had coincident faces, and where they touch when no part of

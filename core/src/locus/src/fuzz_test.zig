@@ -512,7 +512,7 @@ fn fuzzDrawLog(kind: ReplayKind) !?*DrawLog {
     const State = struct {
         var logs: [std.enums.values(ReplayKind).len]?DrawLog = @splat(null);
     };
-    const slot = &State.logs[@intFromEnum(kind)];
+    const slot = &State.logs[@backingInt(kind)];
     if (slot.* == null) {
         const io = testing.io;
         try std.Io.Dir.cwd().createDirPath(io, FUZZ_DRAWS_DIR);
@@ -1425,9 +1425,9 @@ test "Fuzz chords: generated free-form curves on a plain test run are certified 
     // for the curve's own rounding, so such a curve's edge is refused
     const knots = [_]f64{ 0, 0, 0, 0, 0.2, 0.4, 0.6, 0.8, 1, 1, 1, 1 };
     const points = [_]vec.Vec4{
-        .{ -3.4e-2, 5.33e3, -5.8e3, 42.4 },  .{ 1.81, -0.978, -6.02e-2, 2.86e3 },   .{ 8.4e-3, -9.74e3, -4.2e3, 0.683 },
+        .{ -3.4e-2, 5.33e3, -5.8e3, 42.4 },      .{ 1.81, -0.978, -6.02e-2, 2.86e3 }, .{ 8.4e-3, -9.74e3, -4.2e3, 0.683 },
         .{ -6.45e-3, -0.216, 5.36e-2, 3.98e-2 }, .{ 0.993, 0.291, 4.94e-2, 7.45e-3 }, .{ -8.53, -6.83, -268, 4.57e3 },
-        .{ -4.17e-3, 21.3, 5.48, 2.81e-3 },  .{ -0.451, 0.936, 51.2, 0.903 },
+        .{ -4.17e-3, 21.3, 5.48, 2.81e-3 },      .{ -0.451, 0.936, 51.2, 0.903 },
     };
     const curve: curves.Curve = .{ .nurbs = .{ .degree = 3, .knots = &knots, .points = &points } };
     var diag = Diagnostics.init(testing.allocator);

@@ -119,4 +119,3 @@ test "parameters: a boolean's operand moved, turned and scaled by every extreme"
         }
     }
 }
-

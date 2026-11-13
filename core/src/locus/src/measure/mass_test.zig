@@ -154,4 +154,3 @@ test "genus: a sphere 0, a torus 1, a slab with a hole 1, as the mesh engine cou
     try testing.expectEqual(@as(i32, 1), try mass.genus(&slab, &diag));
     try testing.expectEqual(@as(i32, 0), try mass.genus(&plate, &diag));
 }
-

@@ -418,4 +418,3 @@ test "offset: a shrunk sheet lies within its sheet where two arcs meet a roundin
     defer outside.deinit();
     try testing.expectEqual(@as(usize, 0), outside.counts().faces);
 }
-

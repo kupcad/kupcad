@@ -52,7 +52,7 @@ const Coverage = struct {
     fn record(self: *Coverage, report: *const pipeline.Report, diag: *const Diagnostics) void {
         for (report.interferences, 0..) |n, i| self.interferences[i] = self.interferences[i] or n > 0;
         for (report.fragments, 0..) |row, operand| for (row, 0..) |n, class| {
-            if (n > 0) self.rules[@intFromEnum(report.op)][operand][class] = true;
+            if (n > 0) self.rules[@backingInt(report.op)][operand][class] = true;
         };
         self.findings(diag);
     }
@@ -444,8 +444,8 @@ test "coverage: every interference class, selection rule, refusal reason, warnin
 
 test "coverage: every finding code the boolean's files raise is a refusal reason, a warning or a guard" {
     const sources = [_][]const u8{
-        @embedFile("pave.zig"),     @embedFile("imprint.zig"),  @embedFile("classify.zig"),
-        @embedFile("select.zig"),   @embedFile("simplify.zig"), @embedFile("pipeline.zig"),
+        @embedFile("pave.zig"),   @embedFile("imprint.zig"),  @embedFile("classify.zig"),
+        @embedFile("select.zig"), @embedFile("simplify.zig"), @embedFile("pipeline.zig"),
         @embedFile("trim.zig"),
     };
     const marker = ".code = .";

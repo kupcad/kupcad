@@ -332,7 +332,6 @@ test "revolve: a partial turn has caps, a long one is split, a negative one turn
     try testing.expectError(error.InvalidInput, sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 0, .{}, &diag));
 }
 
-
 test "extrude: a sheet whose arc crosses its circle's seam sweeps two cylinder faces, not a periodic one" {
     // A stadium from outlines: its right arc runs from −90° through 0° to 90° about
     // (4, 1), split at the seam into two edges, so the extrusion has two side faces

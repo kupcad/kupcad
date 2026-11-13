@@ -32,11 +32,11 @@ pub const Condition = enum(u8) {
 
     /// The lower of two conditions: what a set of edges is when each is graded alone.
     pub fn meet(a: Condition, b: Condition) Condition {
-        return if (@intFromEnum(a) <= @intFromEnum(b)) a else b;
+        return if (@backingInt(a) <= @backingInt(b)) a else b;
     }
 
     pub fn atLeast(self: Condition, other: Condition) bool {
-        return @intFromEnum(self) >= @intFromEnum(other);
+        return @backingInt(self) >= @backingInt(other);
     }
 
     /// The word, for a finding or a report.

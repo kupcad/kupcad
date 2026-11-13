@@ -167,7 +167,6 @@ test "step: a face on a B-spline surface, and a rational curve's weights" {
     try testing.expectEqual(@as(usize, 0), count(wedge_text, "=B_SPLINE_CURVE_WITH_KNOTS("));
 }
 
-
 test "step: the report counts what was written and bounds what a reader may find off" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
