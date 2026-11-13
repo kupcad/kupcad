@@ -1099,7 +1099,12 @@ still pruned past the doubling limit.) The edge findings name their
 condition (`edge_coedge_count`: irregular; `partner_same_sense`: regular, not oriented;
 `open_edge_in_closed_shell`: oriented, not closed).
 
-One negative fixture per rule lives in `test/corpus/invalid/`.
+One negative fixture per rule: `topology/check_test.zig`'s `MALFORMED` table builds each
+defect in code and names its rule, and the same defects are a JSON corpus of malformed
+bodies with their verdicts (`src/fixtures/malformed/`, M4; research/opengeometry.md §6):
+each file the reader refuses (an index past its table, an unknown version or kind) or the
+checker names first at its level, as its `.verdict.json` says; the files are written from
+the table (`-Dupdate-snapshots`) and are the body reader's fuzz seeds too.
 
 ### 9.2 Tests every operation carries
 
