@@ -22,7 +22,9 @@ const BREP_PRELUDE = "CAD.config(engine: :brep, resolution: {segments: 64})\n";
 /// from the axis and the turn each at most ε short (a sphere's mesh is 2.5ε short).
 const CHORDS_64: f64 = 3.0 * (1.0 - 64.0 / (2.0 * std.math.pi) * @sin(2.0 * std.math.pi / 64.0));
 
-/// What the B-Rep engine builds (M1–M3): its exact measures against its own mesh's.
+/// What the B-Rep engine builds (M1–M4): its exact measures against its own mesh's. One
+/// closed surface each (the genus check counts one): a void's two surfaces are checked by
+/// the volumes below.
 const BREP_SHAPES = [_][]const u8{
     "cube(2)",
     "cube(2, center: true).rotate(x: 30, y: 20)",
@@ -39,6 +41,13 @@ const BREP_SHAPES = [_][]const u8{
     "sphere(2).scale(2).translate(1, 2, 3)",
     "cube(1).hull(cube(1).translate(x: 3, y: 1))",
     "text(\"Hi\", size: 5).extrude(1)",
+    // Booleans of flat solids (M4): exact, so their meshes are the solids
+    "cube(2) + cube(2).translate(1, 1, 1)",
+    "(cube(2) & cube(2).translate(1, 1, 1)).rotate(30, 40, 50)",
+    "cube(4) - cube(2).translate(1, 1, -1)",
+    "(square(10).extrude(5) - cube(2, 2, 7).translate(4, 4, -1)).rotate(z: 30)",
+    "union([cube(2), cube(2).translate(1, 1, 1), cube(2).translate(2, 2, 2)])",
+    "cube(4).rotate(30, 40, 50).trim_by_plane(1, 1, 0, 1)",
 };
 
 /// One of each kind of operation the kernel performs.
@@ -157,6 +166,36 @@ test "invariants: booleans, moves and scales keep the volumes they must" {
         .{ .src =
         \\a = cylinder(r: 1, h: 2) + cube(1)
         \\r = (a.scale(2).volume - 8 * a.volume).abs < 1e-9 * a.volume
+        , .expected = .{ .boolean = true } },
+    });
+}
+
+test "invariants on the B-Rep engine: booleans of flat solids keep the volumes they must, exactly" {
+    // As on the mesh engine above, on Locus's own booleans (M4), to rounding: a void, a
+    // chain, a turned operand, a cut and its other side
+    try support.expectScripts(&.{
+        .{ .src = BREP_PRELUDE ++
+        \\a = cube(3)
+        \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
+        \\r = ((a + b).volume + (a & b).volume - a.volume - b.volume).abs < 1e-9 * a.volume
+        , .expected = .{ .boolean = true } },
+        .{ .src = BREP_PRELUDE ++
+        \\a = cube(3)
+        \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
+        \\r = ((a - b).volume - (a.volume - (a & b).volume)).abs < 1e-9 * a.volume
+        , .expected = .{ .boolean = true } },
+        .{ .src = BREP_PRELUDE ++
+        \\a = cube(4) - cube(2).translate(1, 1, 1)
+        \\r = (a.volume - 56).abs < 1e-9 && (a.rotate(37, 11, 5).translate(3, -2, 9).mirror([1, 1, 0]).volume - 56).abs < 1e-9
+        , .expected = .{ .boolean = true } },
+        .{ .src = BREP_PRELUDE ++
+        \\a = union([cube(2), cube(2).translate(1, 1, 1), cube(2).translate(2, 2, 2)])
+        \\r = (a.scale(2).volume - 8 * a.volume).abs < 1e-9 * a.volume
+        , .expected = .{ .boolean = true } },
+        .{ .src = BREP_PRELUDE ++
+        \\a = cube(4).rotate(30, 40, 50)
+        \\parts = a.split_by_plane(1, 1, 0, 1)
+        \\r = (parts[0].volume + parts[1].volume - a.volume).abs < 1e-9 * a.volume
         , .expected = .{ .boolean = true } },
     });
 }

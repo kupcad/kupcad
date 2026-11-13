@@ -116,6 +116,25 @@ const SHAPES = [_][]const u8{
     "polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]) - cube(3)",
     "cube(4).trim_by_plane(0, 0, 1, 1)",
     "cube(4).rotate(30, 40, 50).trim_by_plane(1, 1, 0, 1)",
+    // M4's degeneracy corpus (architecture §7.4), on both engines: identical operands,
+    // faces touching with one normal, a coplanar overlap, an edge on a face, solids touching
+    // at a corner and along an edge, a near-tangent gap and overlap, a chain of a list, a
+    // cut along a face, a split's back, operands far from the origin
+    "cube(2) + cube(2)",
+    "cube(2) & cube(2)",
+    "cube(2) + cube(2).translate(2, 0, 0)",
+    "cube(2) + cube(2).translate(1, 1, 0)",
+    "cube(2) - cube(2).translate(1, 1, 0)",
+    "cube(2) + cube(2).rotate(x: 45).translate(1, 1, 2)",
+    "cube(2) + cube(2).translate(2, 2, 2)",
+    "cube(2) + cube(2).translate(2, 2, 0)",
+    "cube(2) + cube(2).translate(2.001, 0, 0)",
+    "cube(2) + cube(2).translate(1.999, 0, 0)",
+    "union([cube(2), cube(2).translate(1, 1, 1), cube(2).translate(2, 2, 2), cube(1).translate(5, 0, 0)])",
+    "cube(4) - cube(1).translate(0.5, 0.5, -1) - cube(1).translate(2.5, 2.5, 3.5)",
+    "cube(4).trim_by_plane(0, 0, -1, -4)",
+    "cube(4).split_by_plane(0, 0, 1, 1)[1]",
+    "(cube(2) + cube(2).translate(1, 1, 1)).translate(1000, -700, 300)",
 };
 
 /// What the B-Rep engine refuses and the mesh engine builds: a non-uniform scale of a
@@ -128,6 +147,12 @@ const BREP_REFUSES = [_][]const u8{
     // A boolean or a plane's cut of a curved solid waits for M5 (`curved_boolean`)
     "cube(2) - cylinder(r: 0.5, h: 3, segments: 64)",
     "cylinder(r: 1, h: 3, segments: 64).trim_by_plane(0, 0, 1, 1)",
+    // Refused by design (§9.3's allowed differences): a result one solid would hold
+    // touching itself along a line, a pinch, which one shell cannot hold (M4's degeneracy
+    // corpus); operands the intersection tolerance apart to rounding (D27), which the mesh
+    // engine decides one way
+    "cube(2, 2, 1) - polygon([[1, 0], [2, 2], [0, 2]]).extrude(2).rotate(x: 90).translate(y: 1)",
+    "cube(2) + cube(2).translate(2.00002, 0, 0)",
 };
 
 /// Arguments both engines must refuse, with the same error.
@@ -156,6 +181,18 @@ const REFUSED = [_][]const u8{
     "cube(10).min_gap(square(1))",
     "cube(10).material(color: \"red\")",
     "cube(10).material(alpha: 2)",
+    // M4's: the plane of a cut or a split, and the operands of a boolean
+    "cube(4).trim_by_plane(0, 0, 0, 1)",
+    "cube(4).trim_by_plane(0, 0, 1, Number::NAN)",
+    "cube(4).trim_by_plane(0, 0, Number::INFINITY, 1)",
+    "cube(4).trim_by_plane(1, 2)",
+    "cube(4).trim_by_plane(\"a\")",
+    "cube(4).trim_by_plane",
+    "cube(4).split_by_plane(0, 0, 0)",
+    "cube(4).split_by_plane([0, 0], 1)",
+    "cube(4) - 3",
+    "cube(4) + square(2)",
+    "union([cube(1), 3])",
 };
 
 test "parity: each shape both engines build has the same box on each" {
@@ -626,4 +663,53 @@ test "parity: a material is every vertex's on both engines, moved or not; none i
         try testing.expectEqualSlices(u32, case.slots, try slotsOn(.manifold, case.source, &mesh_buf));
         try testing.expectEqualSlices(u32, case.slots, try slotsOn(.brep_native, case.source, &brep_buf));
     }
+}
+
+test "parity: M4's booleans give the same parts, empties and volumes on both engines" {
+    const setup =
+        \\a = cube(2)
+        \\b = cube(2).translate(1, 1, 1)
+        \\apart = cube(2) + cube(2).translate(3, 0, 0)
+        \\slab = cube(4)
+    ;
+    const cases = [_][]const u8{
+        // An empty result is empty on both, never an error (`empty`)
+        "[(a - cube(4).translate(-1, -1, -1)).volume, (a & cube(1).translate(5, 5, 5)).volume]",
+        // Parts: two solids apart are two parts, each its volume
+        "[apart.decompose.size, apart.decompose.map { |p| p.volume }].flatten",
+        // A split's two sides, the whole between them; a cut past the solid keeps none
+        "slab.split_by_plane(0, 0, 1, 1).map { |p| p.volume }",
+        "[slab.trim_by_plane(0, 0, 1, 5).volume, slab.trim_by_plane(0, 0, -1, 5).volume, slab.trim_by_plane(0, 0, 1, 4).volume]",
+        // The operations, and a chain of a list, by their volumes
+        "[(a + b).volume, (a - b).volume, (a & b).volume, union([a, b, cube(2).translate(2, 2, 2)]).volume]",
+        // The identities on what both engines make
+        "[(a + b).volume + (a & b).volume - a.volume - b.volume, (a - b).volume - (a.volume - (a & b).volume)]",
+    };
+    for (cases) |expr| {
+        errdefer std.debug.print("expression: {s}\n", .{expr});
+        var mesh_buf: [16]f64 = undefined;
+        var brep_buf: [16]f64 = undefined;
+        const mesh_engine = try numbersOn(.manifold, setup, expr, &mesh_buf);
+        const brep = try numbersOn(.brep_native, setup, expr, &brep_buf);
+        try testing.expectEqual(mesh_engine.len, brep.len);
+        for (mesh_engine, brep) |m, x| try testing.expectApproxEqAbs(m, x, 1e-9);
+    }
+}
+
+test "parity: a void stays with its solid in the B-Rep engine's parts, its own inside-out part in the mesh engine's" {
+    // The one difference of `decompose` (§9.3's allowed differences, Leo 2026-11-12):
+    // Manifold splits a mesh by its connected components, so a cavity comes back as a part
+    // of its own, wound inward (negative volume); Locus keeps each solid with its voids
+    const setup = "hollow = cube(4) - cube(2).translate(1, 1, 1)";
+    const expr = "hollow.decompose.map { |p| p.volume }";
+    var mesh_buf: [4]f64 = undefined;
+    var brep_buf: [4]f64 = undefined;
+    const mesh_engine = try numbersOn(.manifold, setup, expr, &mesh_buf);
+    const brep = try numbersOn(.brep_native, setup, expr, &brep_buf);
+    try testing.expectEqual(@as(usize, 1), brep.len);
+    try testing.expectApproxEqAbs(@as(f64, 56), brep[0], 1e-9);
+    try testing.expectEqual(@as(usize, 2), mesh_engine.len);
+    var total: f64 = 0;
+    for (mesh_engine) |v| total += v;
+    try testing.expectApproxEqAbs(@as(f64, 56), total, 1e-9);
 }

@@ -244,3 +244,70 @@ test "Examples: on the B-Rep engine each example builds or is refused by design,
         }
     }
 }
+
+/// Each Solid part's mesh volume and box, as `source` builds it (on the engine its config
+/// picks): the volume its mesh encloses, so both engines' are of their polygons.
+fn partMeasures(allocator: std.mem.Allocator, source: []const u8, out: *std.ArrayList([7]f64)) !void {
+    var vm = try test_support.initVm();
+    defer vm.deinit();
+    if (try test_support.runOn(&vm, source) != .ok) return error.ExampleFailed;
+    var model = try model_mod.collectModel(allocator, &vm);
+    defer model.deinit(allocator);
+    var parts = try model_mod.handlesOf(allocator, &vm, model.solids.items, model.ghosts);
+    defer parts.deinit(allocator);
+    for (parts.items) |h| {
+        const b = kernel.boundingBox(h) orelse return error.NoBounds;
+        const mesh = kernel.getMesh(allocator, h) orelse return error.NoMesh;
+        defer allocator.free(mesh.vert_props);
+        defer allocator.free(mesh.tri_verts);
+        var volume: f64 = 0;
+        var t: usize = 0;
+        while (t < mesh.tri_verts.len) : (t += 3) {
+            var p: [3]@Vector(3, f64) = undefined;
+            for (&p, 0..) |*corner, k| {
+                const q = mesh.vert_props[mesh.tri_verts[t + k] * mesh.num_prop ..][0..3];
+                corner.* = .{ q[0], q[1], q[2] };
+            }
+            const c: @Vector(3, f64) = .{ p[1][1] * p[2][2] - p[1][2] * p[2][1], p[1][2] * p[2][0] - p[1][0] * p[2][2], p[1][0] * p[2][1] - p[1][1] * p[2][0] };
+            volume += @reduce(.Add, p[0] * c) / 6;
+        }
+        try out.append(allocator, .{ volume, b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2] });
+    }
+}
+
+/// How far two meshes' volumes of one polygon may differ: their positions are 32-bit floats.
+const MESH_VOLUME_TOLERANCE = 1e-5;
+
+test "Examples: what builds on the B-Rep engine has the mesh engine's parts, boxes and polygons" {
+    // Parity over the corpus (locus/docs/architecture.md §9.3): an example the B-Rep engine
+    // builds (`kupcad dev brep-readiness`) is the same model on both engines: as many parts,
+    // each with the mesh engine's box, and its mesh, cut on the same grid of segments as
+    // the mesh engine's, enclosing the same volume (the exact volumes differ by the chords,
+    // which the invariants hold the exact engine's own mesh to)
+    const readiness = @import("tools/dev/brep_readiness.zig");
+    const allocator = testing.allocator;
+    var compared: usize = 0;
+    inline for (examples.names) |name| {
+        const source = @embedFile("example/" ++ name);
+        var outcome = try readiness.check(allocator, testing.io, source, .none);
+        defer outcome.deinit(allocator);
+        if (outcome == .builds) {
+            errdefer std.debug.print("example {s}.kup\n", .{name});
+            var mesh: std.ArrayList([7]f64) = .empty;
+            defer mesh.deinit(allocator);
+            var exact: std.ArrayList([7]f64) = .empty;
+            defer exact.deinit(allocator);
+            try partMeasures(allocator, source, &mesh);
+            try partMeasures(allocator, "CAD.config(engine: :brep)\n" ++ source, &exact);
+            try testing.expectEqual(mesh.items.len, exact.items.len);
+            for (mesh.items, exact.items) |m, x| {
+                errdefer std.debug.print("mesh engine {any}\nB-Rep engine {any}\n", .{ m, x });
+                try testing.expectApproxEqRel(m[0], x[0], MESH_VOLUME_TOLERANCE);
+                for (1..7) |k| try testing.expectApproxEqAbs(m[k], x[k], MEASURE_TOLERANCE * @max(1, @abs(m[k])));
+            }
+            compared += 1;
+        }
+    }
+    // Three today (2026-11-13): each milestone's exit names the examples that newly build
+    try testing.expect(compared >= 3);
+}
