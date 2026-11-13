@@ -9,7 +9,9 @@
 //! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
 //! points, placed by turns, scales and half-steps (an extreme one time in sixteen), put
 //! through chains of booleans and cuts by planes; every result through the checker, the
-//! overlap rules and its report, the volume identities holding.
+//! overlap rules and its report, the volume identities holding. A fuzz worker writes each
+//! run's draws down as it draws them and runs a watchdog: a run that panics or passes its
+//! wall-clock bound (`RUN_BUDGET_S`) leaves its `replay:` line for `zig build fuzz-run`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -90,6 +92,13 @@ const FUZZ_DRAWS_DIR: []const u8 = @import("test_paths").fuzz_draws;
 /// A draws file's name, before its kind and `.txt` (core's scripts/fuzz_run.zig reads
 /// `draws-*.txt` after a crash).
 const DRAWS_FILE_PREFIX = "draws-";
+/// The wall-clock bound on one fuzz run (M4's fuzz harness): a run past it is a hang, its
+/// worker stopped with the run's draws written down. Runs take milliseconds (an
+/// arrangement) to a few seconds (a chain of booleans of solids, Debug, a slow runner):
+/// a run forty times the slowest seen does not end.
+const RUN_BUDGET_S: u32 = 120;
+/// How often the watchdog looks at the run under way.
+const WATCHDOG_PERIOD_MS: i64 = 500;
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
 const PLAIN_RUN_SEED = 0x2d_c4a1;
@@ -184,7 +193,7 @@ const BOW_SLACK = 1e-9;
 /// a clean refusal (a cusp, a loop the budget cannot hold), or spans each of which the
 /// curve, evaluated densely, keeps within the budget the enclosure certified.
 fn freeFormChords(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .init(smith, .chords, try fuzzDrawLog(.chords));
+    var recording: Recording(*Smith) = .init(smith, .chords, try fuzzRun(.chords));
     defer recording.deinit();
     errdefer recording.report("chords");
     try checkFreeFormChords(&recording);
@@ -262,7 +271,7 @@ test "fuzz: the 2D kernel takes any generated sketch chain" {
 }
 
 fn sketchChain(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .init(smith, .chain, try fuzzDrawLog(.chain));
+    var recording: Recording(*Smith) = .init(smith, .chain, try fuzzRun(.chain));
     defer recording.deinit();
     errdefer recording.report("chain");
     _ = try runChain(&recording);
@@ -292,14 +301,17 @@ fn Recording(comptime Inner: type) type {
         inner: Inner,
         draws: std.ArrayList(i64) = .empty,
         log: ?*DrawLog = null,
+        watched: bool = false,
 
         const Self = @This();
 
         /// A recording of `inner`'s draws for a run of `kind`, written down as they are
-        /// drawn into `log`'s file when there is one (it starts the run's line).
-        fn init(inner: Inner, kind: ReplayKind, log: ?*DrawLog) Self {
-            if (log) |l| l.start(kind);
-            return .{ .inner = inner, .log = log };
+        /// drawn into `run.log`'s file when there is one (it starts the run's line), and
+        /// timed by the watchdog when `run.watched`.
+        fn init(inner: Inner, kind: ReplayKind, run: FuzzRun) Self {
+            if (run.log) |l| l.start(kind);
+            if (run.watched) fuzz_watch.begin();
+            return .{ .inner = inner, .log = run.log, .watched = run.watched };
         }
 
         fn valueRangeAtMost(self: *Self, comptime T: type, at_least: T, at_most: T) T {
@@ -322,6 +334,7 @@ fn Recording(comptime Inner: type) type {
         /// The run is over, whether it passed or returned an error (whose line `report`
         /// printed): its log's file is cleared, and only a run that panicked leaves one.
         fn deinit(self: *Self) void {
+            if (self.watched) fuzz_watch.end();
             if (self.log) |l| l.clear();
             self.draws.deinit(testing.allocator);
         }
@@ -401,6 +414,91 @@ const DrawLog = struct {
     fn write(self: *DrawLog, bytes: []const u8) void {
         self.file.writePositionalAll(self.io, bytes, self.at) catch |err| std.debug.panic("writing the fuzz draws file: {t}", .{err});
         self.at += bytes.len;
+    }
+};
+
+/// What a fuzz worker gives each run: its target's draws file, and the watchdog's bound.
+const FuzzRun = struct {
+    log: ?*DrawLog = null,
+    watched: bool = false,
+};
+
+/// A fuzz target's run as the worker keeps it: its draws file (opened the first time the
+/// worker runs one) and the watchdog (started then). Nothing on a plain run.
+fn fuzzRun(kind: ReplayKind) !FuzzRun {
+    if (comptime !builtin.fuzz) return .{};
+    try fuzz_watch.start();
+    return .{ .log = try fuzzDrawLog(kind), .watched = true };
+}
+
+/// The wall-clock bound on a run, as a clock-free rule: the start of the run under way,
+/// and whether a time is past its budget. One writer (the run) and one reader (the
+/// watchdog's thread).
+const Watchdog = struct {
+    /// The start of the run under way, in milliseconds since the watchdog's own start (a
+    /// `u32`, which every target's atomics take: 49 days, longer than any session), or
+    /// `IDLE` between runs.
+    started: std.atomic.Value(u32) = .init(IDLE),
+
+    const IDLE: u32 = std.math.maxInt(u32);
+
+    fn begin(self: *Watchdog, now: u32) void {
+        self.started.store(now, .release);
+    }
+
+    fn end(self: *Watchdog) void {
+        self.started.store(IDLE, .release);
+    }
+
+    /// Whether the run under way at `now` began more than `budget` before it.
+    fn expired(self: *const Watchdog, now: u32, budget: u32) bool {
+        const at = self.started.load(.acquire);
+        return at != IDLE and now -| at > budget;
+    }
+};
+
+/// The fuzz worker's watchdog: a thread of its own, on an `Io` of its own (the test
+/// runner's is made afresh for every run), which looks at the run under way every
+/// `WATCHDOG_PERIOD_MS` and, past `RUN_BUDGET_S`, stops the worker with a panic: the run's
+/// draws are in its draws file, which `zig build fuzz-run` prints (a hang is a find, as a
+/// crash is; Zig 0.17's fuzzer has no time limit of its own). Fuzzing alone starts it.
+const fuzz_watch = struct {
+    var watchdog: Watchdog = .{};
+    var threaded: std.Io.Threaded = undefined;
+    var thread: ?std.Thread = null;
+    /// When the watchdog started, on the awake clock: its times count from here.
+    var epoch: std.Io.Timestamp = undefined;
+
+    fn start() !void {
+        if (thread != null) return;
+        threaded = .init(std.mem.Allocator.failing, .{});
+        epoch = std.Io.Clock.awake.now(threaded.io());
+        thread = try std.Thread.spawn(.{}, watch, .{});
+    }
+
+    /// Milliseconds since the watchdog started.
+    fn now() u32 {
+        const elapsed = epoch.durationTo(std.Io.Clock.awake.now(threaded.io()));
+        return @intCast(@divTrunc(elapsed.nanoseconds, std.time.ns_per_ms));
+    }
+
+    fn begin() void {
+        watchdog.begin(now());
+    }
+
+    fn end() void {
+        watchdog.end();
+    }
+
+    fn watch() void {
+        const period: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(WATCHDOG_PERIOD_MS), .clock = .awake };
+        while (true) {
+            period.sleep(threaded.io()) catch {};
+            if (watchdog.expired(now(), RUN_BUDGET_S * std.time.ms_per_s)) {
+                std.debug.print("fuzz: a run went past its wall-clock bound of {d} s, a hang: its draws are its draws file's line\n", .{RUN_BUDGET_S});
+                @panic("a fuzz run went past its wall-clock bound");
+            }
+        }
     }
 };
 
@@ -501,10 +599,26 @@ test "fuzz: the overlay labels any generated arrangement by each input's own are
 }
 
 fn overlayArrangement(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .init(smith, .overlay, try fuzzDrawLog(.overlay));
+    var recording: Recording(*Smith) = .init(smith, .overlay, try fuzzRun(.overlay));
     defer recording.deinit();
     errdefer recording.report("overlay");
     _ = try runArrangement(&recording);
+}
+
+test "Fuzz watchdog: a run past its budget has expired, one within it or ended has not" {
+    var w: Watchdog = .{};
+    const budget: u32 = RUN_BUDGET_S * std.time.ms_per_s;
+    // Between runs nothing expires, however late
+    try testing.expect(!w.expired(std.math.maxInt(u32) - 1, budget));
+    w.begin(1_000);
+    try testing.expect(!w.expired(1_000, budget));
+    try testing.expect(!w.expired(1_000 + budget, budget));
+    try testing.expect(w.expired(1_000 + budget + 1, budget));
+    // The run ended: the next one's clock starts afresh
+    w.end();
+    try testing.expect(!w.expired(1_000 + 2 * budget, budget));
+    w.begin(5 * budget);
+    try testing.expect(!w.expired(5 * budget + 1, budget));
 }
 
 test "Fuzz replay: a run's draws are written down as drawn; a run that never ended leaves its line" {
@@ -520,7 +634,7 @@ test "Fuzz replay: a run's draws are written down as drawn; a run that never end
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0xd2a5);
     var source = RandomSource{ .random = prng.random() };
     for (0..3) |_| {
-        var recording: Recording(*RandomSource) = .init(&source, .solids, &log);
+        var recording: Recording(*RandomSource) = .init(&source, .solids, .{ .log = &log });
         var ended = false;
         defer if (!ended) recording.deinit();
         _ = try runSolids(&recording);
@@ -1357,7 +1471,7 @@ test "fuzz: booleans of solids take any generated chain" {
 }
 
 fn solidChain(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .init(smith, .solids, try fuzzDrawLog(.solids));
+    var recording: Recording(*Smith) = .init(smith, .solids, try fuzzRun(.solids));
     defer recording.deinit();
     errdefer recording.report("solids");
     _ = try runSolids(&recording);

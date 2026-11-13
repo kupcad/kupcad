@@ -9,8 +9,9 @@
 //!
 //! A run that panics ends its worker before it can print its `replay:` line, so Locus's
 //! fuzz targets write each run's line into `f/draws-<kind>.txt` as the run draws, and clear
-//! it when the run ends: a file left with a line is the run a crash interrupted, and its
-//! line is printed (and kept in the output) with the failure.
+//! it when the run ends: a file left with a line is the run a crash interrupted (a hang
+//! too: a watchdog stops a run past its wall-clock bound with a panic), and its line is
+//! printed (and kept in the output) with the failure.
 //!
 //! Arguments: the zig executable, the cache directory, the run count (`--fuzz=`'s), and the
 //! fuzz target (`-Dfuzz-target=`'s), or none for every target.
@@ -92,7 +93,7 @@ pub fn main(init: std.process.Init) !void {
         defer dir.close(io);
         const interrupted = try interruptedRuns(io, arena, dir);
         if (interrupted.len > 0) {
-            const note = try std.fmt.allocPrint(arena, "fuzz-run: the run a crash interrupted, from its draws:\n{s}", .{interrupted});
+            const note = try std.fmt.allocPrint(arena, "fuzz-run: the run a crash or a hang interrupted, from its draws:\n{s}", .{interrupted});
             try std.Io.File.stderr().writeStreamingAll(io, note);
             try output_file.writeStreamingAll(io, note);
         }
