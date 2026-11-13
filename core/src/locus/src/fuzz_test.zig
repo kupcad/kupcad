@@ -1547,6 +1547,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 0 0 1 1 3 1 3 3 1 1 -2 -1 1 2 9 3 3 0 0 2 1 3 2 4 0 2 3 3 2 1 -2 7 0 1 0 1 3 3 4 0 2 1 1 1 1 -1 4 0 0 0 0 0 6 0 0 0 0",
         // The 10K session on 8964e98a's (2026-11-13): a flattened hull's two faces a fraction of a degree apart through one vertex made one plane record, an edge 0.0039 off it
         "solids 1 7 4 0 3 2 1 0 0 4 3 2 1 2 0 0 0 3 4 2 2 0 4 1 0 2 2 0 -1 0 -2 4 1 3 2 0 1 1 2 2 3 1 2 -2 1 0 14 2",
+        // The nightly's (run 43509321095, locus_solids, locus, and the plain run under wasm): chains moved whole far out, a shell's signed volume summed from the world's origin, its sign the rounding's
+        "solids 1 6 1 1 0 2 2 3 4 4 4 3 1 4 4 3 3 0 3 1 3 3 0 1 0 2 2 2 0 3 4 3 4 0 1 3 1 1 2 1 7 1 2 1 4 3 3 0 3 4 2 2 2 4 3 0 0 0 0 3 1 1 -2 2 10 2 1 2 2",
+        "solids 0 2 3 3 4 0 1 0 3 1 1 1 0 2 12 3 1 1 6 3 0 2 0 0 1 2 3 1 1 4 2 3 3 4 3 1 0 1 0 0 1 2 2 -1 0 13 1 3 0 3 4 2 3 3 4 2 1 -1 1 1 11 0 0 1 0 -1 14 4 1 3 2",
+        "solids 0 3 4 0 1 3 4 3 2 -2 0 -1 10 2 3 1 8 4 3 0 4 1 4 4 0 3 3 4 3 4 4 0 3 2 3 1 2 3 2 0 2 2 0 0 2 2 2 -1 -2 13 1 0 -1 1 0 8 8 1 2 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

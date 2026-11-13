@@ -456,6 +456,9 @@ const Checker = struct {
         var shells = traverse.Shells.init(b);
         while (shells.next() catch return) |s| {
             var volume: f64 = 0;
+            // The point the fans' volumes are taken from: the shell's first, so far from the
+            // origin they are the shell's size, not its distance (§9.2)
+            var from: ?Vec3 = null;
             var faces = traverse.Faces.init(b, s);
             while (faces.next() catch return) |f| {
                 const face = b.face(f);
@@ -468,7 +471,8 @@ const Checker = struct {
                 while (loops.next() catch return) |l| : (outer = false) {
                     if (b.loop(l).first == .none) continue;
                     const sampled = try self.sampleLoop(l, &uv, &xyz);
-                    volume += fanVolume(apex orelse xyz.items[0], xyz.items);
+                    if (from == null) from = xyz.items[0];
+                    volume += fanVolume(from.?, apex orelse xyz.items[0], xyz.items);
                     if (!sampled) continue;
                     const area = shoelace(uv.items);
                     const want_ccw = outer == face.same_sense;
@@ -730,12 +734,16 @@ fn shoelace(points: []const Vec2) f64 {
     return area;
 }
 
-/// The signed volume between the origin and the fan of a polygon about `apex`: summed
-/// over a closed surface's loops it is the volume they enclose, positive when wound
-/// outward (the fans of one face share their apex, so a hole's fan takes its share away).
-fn fanVolume(apex: Vec3, points: []const Vec3) f64 {
+/// The signed volume between `from` and the fan of a polygon about `apex`: summed over a
+/// closed surface's loops it is the volume they enclose, whatever `from` is, positive when
+/// wound outward (the fans of one face share their apex, so a hole's fan takes its share
+/// away). From the world's origin, a shell 3.7e5 out summed terms of 5e16 to a volume of
+/// 0.1, and the sign was the rounding's (the solids fuzzer's moved chains, CI run
+/// 43509321095): `from` is a point of the shell.
+fn fanVolume(from: Vec3, apex: Vec3, points: []const Vec3) f64 {
+    const a = vec.sub(apex, from);
     var volume: f64 = 0;
-    for (points, 0..) |p, i| volume += vec.dot(apex, vec.cross(p, points[(i + 1) % points.len])) / 6.0;
+    for (points, 0..) |p, i| volume += vec.dot(a, vec.cross(vec.sub(p, from), vec.sub(points[(i + 1) % points.len], from))) / 6.0;
     return volume;
 }
 
