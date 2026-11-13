@@ -65,7 +65,7 @@ pub fn offset(allocator: std.mem.Allocator, sheet: *const Body, delta: f64, join
             while (loops.next() catch return corrupt(diag)) |l| {
                 try options.checkCancel();
                 pieces.clearRetainingCapacity();
-                try loopPieces(sheet, l, &pieces, diag);
+                try loopPieces(allocator, sheet, l, &pieces, diag);
                 try band.loop(pieces.items);
             }
         }
@@ -105,8 +105,8 @@ fn arcTangent(p: Vec2, arc: Arc) Vec2 {
     return if (arc.ccw) vec.perp2(radial) else vec.scale2(vec.perp2(radial), -1);
 }
 
-/// The loop's edges as pieces in its order.
-fn loopPieces(sheet: *const Body, l: anytype, pieces: *std.ArrayList(Piece), diag: *Diagnostics) Error!void {
+/// The loop's edges as pieces in its order, appended to `pieces` (which `allocator` owns).
+fn loopPieces(allocator: std.mem.Allocator, sheet: *const Body, l: anytype, pieces: *std.ArrayList(Piece), diag: *Diagnostics) Error!void {
     var it = traverse.Coedges.init(sheet, l);
     while (it.next() catch return corrupt(diag)) |c| {
         const coedge = sheet.coedge(c);
@@ -118,7 +118,7 @@ fn loopPieces(sheet: *const Body, l: anytype, pieces: *std.ArrayList(Piece), dia
             .circle => |circle| .{ .a = a, .b = b, .arc = .{ .c = flat(circle.c), .r = circle.r, .ccw = (circle.normal()[2] > 0) == coedge.same_sense } },
             else => return diag.fail(error.NotRepresentable, .{ .code = .not_implemented, .entity = .of(.edge, @backingInt(coedge.edge)), .label = "a sketch edge that is neither a line nor an arc" }),
         };
-        try pieces.append(sheet.allocator, piece);
+        try pieces.append(allocator, piece);
     }
 }
 

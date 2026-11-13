@@ -216,12 +216,12 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
     indexes[1] = try index_mod.FaceIndex.build(allocator, paves.operands[1], diag);
     defer indexes[1].deinit(allocator);
     // Each operand's shells' classes, by shell index, decided once
-    var decided: [2][]?Class = undefined;
+    var decided: [2][]?Class = .{ &.{}, &.{} };
+    defer for (decided) |d| allocator.free(d);
     for (0..2) |k| {
         decided[k] = try allocator.alloc(?Class, paves.operands[k].shells.items.len);
         @memset(decided[k], null);
     }
-    defer for (decided) |d| allocator.free(d);
     const classes = try allocator.alloc(Classified, fragments.items.items.len);
     errdefer allocator.free(classes);
     for (fragments.items.items, classes, 0..) |fragment, *out, i| {
