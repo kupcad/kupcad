@@ -396,6 +396,38 @@ test "mevSplitEdge and kevJoin: an edge splits at a parameter and joins again" {
     try testing.expect(before.eql(&after));
 }
 
+test "kevJoin: a coedge running its edge backward is refused, whatever vertex lies beyond" {
+    // The solids fuzzer's find (2026-11-13): given the reverse coedge of the middle of a
+    // collinear chain A, B, C, arriving at the A–B vertex, kevJoin took B's forward
+    // coedge and removed the B–C vertex, the far end of B, which its caller had not asked
+    // about (two solids touched there, and an edge of the other kept pointing at it)
+    var kit = try Kit.init(testing.allocator);
+    defer kit.deinit();
+    const b = &kit.body;
+    try lamina(&kit, .{ 0, 1, 2, 3 }, Kit.BOTTOM, Kit.TOP);
+    const first = try b.geometry.addPoint(testing.allocator, .{ 0.5, 0, 0 });
+    const second = try b.geometry.addPoint(testing.allocator, .{ 0.75, 0, 0 });
+    const c = kit.coedgeFromTo(0, 1);
+    const ab = try euler.mevSplitEdge(b, c, 0.5, first);
+    const bc = try euler.mevSplitEdge(b, ab.forward, 0.75, second);
+    try expectCounts(b, 6, 6, 2, 2, 1);
+    var before = try Signature.of(testing.allocator, b);
+    defer before.deinit(testing.allocator);
+    // B's reverse coedge arrives at the A–B vertex against B's direction
+    const backward_b = b.coedge(ab.forward).partner;
+    try testing.expectEqual(ab.vertex, b.coedgeEnd(backward_b));
+    try testing.expectError(error.Invalid, euler.kevJoin(b, backward_b));
+    var after = try Signature.of(testing.allocator, b);
+    defer after.deinit(testing.allocator);
+    try testing.expect(before.eql(&after));
+    try testing.expect(!b.vertex(bc.vertex).tombstone);
+    // Its forward coedge, given, joins at the B–C vertex as asked
+    try euler.kevJoin(b, ab.forward);
+    try testing.expect(b.vertex(bc.vertex).tombstone);
+    try expectCounts(b, 5, 5, 2, 2, 1);
+    try expectValid(b, .structural);
+}
+
 test "mevSplitVertex and kevMerge: a vertex's fan moves to a new vertex and merges back" {
     var kit = try sweptCube(testing.allocator, .{ 0, 1, 2, 3 }, .{ 4, 5, 6, 7 }, .{ 0, 1, 2, 3 }, .{ 0, 1, 2, 3 }, Kit.BOTTOM, Kit.TOP, .{ Kit.FRONT, Kit.RIGHT, Kit.BACK, Kit.LEFT });
     defer kit.deinit();

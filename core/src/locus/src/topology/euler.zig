@@ -194,10 +194,14 @@ pub fn mevSplitEdge(body: *Body, coedge: CoedgeIndex, t: f64, point: geometry.Po
 }
 
 /// Kill edge, vertex, join form: the inverse of `mevSplitEdge`. `coedge` traverses the
-/// first half; the vertex at its end, of valence two with the next edge on the same curve
-/// continuing the range, goes, and the edges join.
+/// first half, its edge forward; the vertex at its end, of valence two with the next edge
+/// on the same curve continuing the range, goes, and the edges join. A coedge running its
+/// edge backward is `Invalid` (its end is the edge's start): the vertex it arrives at is
+/// the one its caller means, never the edge's other end (taken for it, the far vertex of a
+/// collinear chain went, its other edges left pointing at it: the solids fuzzer, 2026-11-13).
 pub fn kevJoin(body: *Body, coedge: CoedgeIndex) Error!void {
-    const forward = forwardCoedge(body, coedge);
+    if (!body.coedge(coedge).same_sense) return error.Invalid;
+    const forward = coedge;
     const f2 = body.coedge(forward).next;
     if (f2 == forward or !body.coedge(f2).same_sense) return error.Invalid;
     const e = body.edge(body.coedge(forward).edge);

@@ -1519,6 +1519,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // The nightly's (run 43417538617): a hull moved by the tolerance exactly, refused at it (locus_solids); a box's edge's end on a face (locus)
         "solids 1 5 4 4 2 4 4 1 3 1 2 0 1 4 3 1 2 2 0 0 2 2 -1 -2 -2 8 2 1 1 6 3 3 4 0 1 2 3 1 3 3 1 1 2 2 3 1 4 0 2 2 -1 0 0 1 0 10 0 1 0 1 3 0 2 1 3 1 3 0 2 2 12 2",
         "solids 0 1 3 1 3 0 4 1 2 2 0 1 9 3 1 1 8 0 2 2 4 0 3 0 2 2 3 1 3 1 2 0 0 3 3 1 2 1 4 4 3 2 2 0 0 2 11 0 3 1 5 0 2 3 0 1 4 3 1 0 4 1 2 0 2 0 0 2 1 1 2 1 2 1 1 9 0",
+        // The 10K session's panic (2026-11-13), its line from its draws file: kevJoin given a reverse coedge removed a vertex two solids shared
+        "solids 1 8 2 3 4 1 2 2 4 0 0 4 3 4 2 4 1 2 0 3 4 0 2 2 0 0 0 1 0 1 0 -1 2 6 3 3 1 8 1 2 2 4 2 4 1 0 4 1 4 1 2 1 0 3 4 0 2 0 0 4 0 3 1 2 -1 0 2 3 1 1 0 2 4 0 1 2 3 0 0 2 1 0 2 -2 15 0 2 1 7 2 2 1 2 1 0 2 4 0 2 1 2 4 3 4 2 1 4 4 0 0 0 2 2 2 -1 -2 2 2 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
