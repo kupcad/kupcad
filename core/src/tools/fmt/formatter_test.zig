@@ -320,6 +320,23 @@ test "Formatter: an import's names stay bare or in braces, as they mean differen
     try expectFormat(source, expected);
 }
 
+test "Formatter: empty braces of an import or export stay, as they mean no names" {
+    // The nightly fuzzer's find of 2026-11-13: `import {} from "./lib.kup"` lost its braces
+    // and became `import "./lib.kup"`, which takes the file
+    const source =
+        \\import  {  }  from  "./lib.kup"
+        \\export {}
+        \\export {  } from "./other.kup"
+    ;
+    const expected =
+        \\import {} from "./lib.kup"
+        \\export {}
+        \\export {} from "./other.kup"
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
 test "Formatter: Imports and Exports" {
     const source =
         \\import   "lib.kup"

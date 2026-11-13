@@ -1505,11 +1505,15 @@ pub const Formatter = struct {
     /// `import`/`export`, its names in braces, and `from "path"` unless `path` is null (a
     /// file's own export).
     /// `braced`: the names are in braces, which mean something else than bare ones for a
-    /// file (keys of its value, against the value), so they stay as written.
+    /// file (keys of its value, against the value), so they stay as written; empty braces
+    /// too (`import {} from "path"` takes no names, where `import "path"` takes the file:
+    /// the nightly fuzzer's find of 2026-11-13).
     fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, braced: bool, path: ?[]const u8, attrs: ast.NodeIndex) Error!void {
         try self.out.appendSlice(self.allocator, kw);
         try self.out.append(self.allocator, ' ');
-        if (symbols.len > 0) {
+        if (braced and symbols.len == 0) {
+            try self.out.appendSlice(self.allocator, "{}");
+        } else if (symbols.len > 0) {
             if (braced) try self.out.appendSlice(self.allocator, "{ ");
             for (symbols, 0..) |pair, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
@@ -1522,7 +1526,7 @@ pub const Formatter = struct {
             if (braced) try self.out.appendSlice(self.allocator, " }");
         }
         if (path) |p| {
-            if (symbols.len > 0) try self.out.appendSlice(self.allocator, " from ");
+            if (symbols.len > 0 or braced) try self.out.appendSlice(self.allocator, " from ");
             try self.out.append(self.allocator, '"');
             try self.out.appendSlice(self.allocator, p);
             try self.out.append(self.allocator, '"');
