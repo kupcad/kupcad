@@ -218,6 +218,15 @@ test "degeneracy: a cut through three vertices exactly, and along two edges" {
     defer along.deinit();
     try testing.expectApproxEqAbs(@as(f64, 4), try volume(&along), 1e-9);
     try testing.expectEqual(@as(usize, 5), along.counts().faces);
+    // The identity of a cut: its two sides make the whole
+    for ([_]struct { Vec3, f64 }{ .{ .{ 1, 1, 1 }, 2.0 / @sqrt(3.0) }, .{ .{ 1, 1, 0 }, @sqrt(2.0) } }) |plane| {
+        const sides = try trim.splitByPlane(testing.allocator, &a, plane[0], plane[1], .{}, &diag);
+        var front = sides[0];
+        defer front.deinit();
+        var back = sides[1];
+        defer back.deinit();
+        try testing.expectApproxEqAbs(@as(f64, 8), try volume(&front) + try volume(&back), CLOSE);
+    }
 }
 
 test "degeneracy: a knife edge, four faces at one line, two solids" {
@@ -234,6 +243,11 @@ test "degeneracy: a knife edge, four faces at one line, two solids" {
     defer knife.deinit();
     try expectShape(&knife, 2, 12, 2);
     try testing.expectEqual(@as(usize, 1), warned(&diag, .solids_touch));
+    // The identities on each step of the chain
+    try expectIdentities(&plate, &q1);
+    var first = try sound(&plate, &q1, .difference);
+    defer first.deinit();
+    try expectIdentities(&first, &q3);
 }
 
 test "degeneracy: a mirrored copy united with its original, and a pocket flush with the top" {
@@ -368,6 +382,7 @@ test "degeneracy: walls 1e-4 apart joined stay two solids, warned of" {
     try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&joined));
     try testing.expectApproxEqAbs(@as(f64, 2 - 1e-4), try volume(&joined), CLOSE);
     try testing.expect(warned(&diag, .nearly_coplanar) >= 1);
+    try expectIdentities(&a, &b);
 }
 
 test "degeneracy: operands moved to (1000, -700, 300)" {
@@ -383,6 +398,7 @@ test "degeneracy: operands moved to (1000, -700, 300)" {
     var i = try sound(&a, &b, .intersection);
     defer i.deinit();
     try testing.expectApproxEqAbs(@as(f64, 1), try volume(&i), 1e-8);
+    try expectIdentities(&a, &b);
 }
 
 /// A regular prism of `n` sides of circumradius `r` about `(cx, cy)`, from z = 0 to `h`.
@@ -466,6 +482,9 @@ test "degeneracy: a cut whose corner touches the face it was cut from is pinched
     var cut = try sound(&a, &outside, .difference);
     defer cut.deinit();
     try expectShape(&cut, 8, 6, 1);
+    // The identities where a result is made: the cut inside and the corner from outside
+    try expectIdentities(&a, &inside);
+    try expectIdentities(&a, &outside);
 }
 
 test "degeneracy: a sliver one intersection tolerance thick, crossed by a face, kept or collapsed" {
@@ -640,6 +659,7 @@ test "degeneracy: a hole that was a lone slit leaves no point in the face; a poi
     var joined = try sound(&a, &c, .@"union");
     defer joined.deinit();
     try testing.expect(!hasPointLoop(&joined));
+    try expectIdentities(&a, &c);
     var above = try box(.{ 1.5, 1, 4 }, .{ 2.5, 2, 5 });
     defer above.deinit();
     try expectTableAgrees(&joined, &above);

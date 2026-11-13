@@ -175,6 +175,7 @@ test {
     _ = @import("boolean/simplify_test.zig");
     _ = @import("boolean/trim_test.zig");
     _ = @import("boolean/degeneracy_test.zig");
+    _ = @import("boolean/corpus_test.zig");
     _ = @import("boolean/parameters_test.zig");
     _ = @import("construct/decompose_test.zig");
     _ = @import("construct/test_bodies.zig");
