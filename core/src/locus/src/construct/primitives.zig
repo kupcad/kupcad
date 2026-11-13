@@ -65,6 +65,7 @@ pub const Builder = struct {
             error.TooMany => self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "entities" }),
             error.OutOfRange => self.diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .label = "a coordinate" }),
             error.NotManifold => self.diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge" }),
+            error.AtTolerance => self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "a point, curve or surface the zone from a kept one to within rounding: the same record or not, either could be computed", .measured = self.interner.refused.?.measured, .threshold = self.interner.refused.?.limit }),
             else => unreachable,
         };
     }

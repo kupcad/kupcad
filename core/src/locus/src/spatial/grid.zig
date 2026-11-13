@@ -175,6 +175,35 @@ pub const PointWelder = struct {
         return if (search.best == Grid.NONE) null else search.best;
     }
 
+    const Near = struct {
+        points: []const Vec3,
+        p: Vec3,
+        reach_sq: f64,
+        found: *std.ArrayList(u32),
+        allocator: std.mem.Allocator,
+        failed: bool = false,
+
+        fn visit(self: *Near, index: u32) bool {
+            if (vec.distanceSq(self.points[index], self.p) <= self.reach_sq) {
+                self.found.append(self.allocator, index) catch {
+                    self.failed = true;
+                    return false;
+                };
+            }
+            return true;
+        }
+    };
+
+    /// Every kept point within `reach` of `p` (at most a little past `radius`), in
+    /// ascending order, into `out`.
+    pub fn near(self: *const PointWelder, allocator: std.mem.Allocator, points: []const Vec3, p: Vec3, reach: f64, out: *std.ArrayList(u32)) Error!void {
+        out.clearRetainingCapacity();
+        var search = Near{ .points = points, .p = p, .reach_sq = reach * reach, .found = out, .allocator = allocator };
+        try self.grid.query(p, reach, &search, Near.visit);
+        if (search.failed) return error.OutOfMemory;
+        std.mem.sort(u32, out.items, {}, std.sort.asc(u32));
+    }
+
     /// Registers `points[index]`, the point just appended.
     pub fn add(self: *PointWelder, allocator: std.mem.Allocator, points: []const Vec3, index: u32) Error!void {
         try self.grid.insert(allocator, index, points[index]);

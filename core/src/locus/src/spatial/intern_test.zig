@@ -153,7 +153,7 @@ test "Interner: the same line, plane and surface get one index; different ones t
     const r5 = try interner.line(testing.allocator, &g, askew, .{ 0, 0, 0 }, .{ 10, 0.1, 0 });
     try testing.expect(!r5.eql(r1));
     try testing.expectEqual(@as(usize, 4), g.lines.items.len);
-    try testing.expect(r1.eql(try interner.line(testing.allocator, &g, askew, .{ 0, 0, 0 }, .{ 0.001, 0.00001, 0 })));
+    try testing.expect(r1.eql(try interner.line(testing.allocator, &g, askew, .{ 0, 0, 0 }, .{ 0.0005, 0.000005, 0 })));
 
     // Planes: z = 1 with either normal, and its parallel at z = 1 + zone/2 is the same
     const p1 = surfaces.Plane{ .frame = Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3) };
@@ -261,4 +261,31 @@ test "Interner: pieces of one line and triangles of one plane far from the origi
         const plane_b = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[2], vec.normalized(vec.sub(corners[3], corners[2])).?, normal_b) });
         try testing.expect(plane_a.eql(plane_b));
     }
+}
+
+test "Interner: a record the zone from a kept one to within rounding is refused, just inside or past it decided" {
+    // A rigid move found it (2026-11-13): two planes 1e-5 apart, the zone, were one record
+    // moved and two in place, and the boolean's result one face more or less
+    const tol = Tolerance.fromZone(1e-5);
+    var g: Geometry = .empty;
+    defer g.deinit(testing.allocator);
+    var interner = Interner.init(tol);
+    defer interner.deinit(testing.allocator);
+    // Points
+    _ = try interner.point(testing.allocator, &g, .{ 1, 1, 1 });
+    try testing.expectError(error.AtTolerance, interner.point(testing.allocator, &g, .{ 1 + tol.zone, 1, 1 }));
+    try testing.expectEqual(tol.zone, interner.refused.?.limit);
+    try testing.expectEqual(@as(u32, 0), @backingInt(try interner.point(testing.allocator, &g, .{ 1 + 0.99 * tol.zone, 1, 1 })));
+    try testing.expectEqual(@as(u32, 1), @backingInt(try interner.point(testing.allocator, &g, .{ 1 + 1.01 * tol.zone, 1, 1 })));
+    // A line's end the zone off a kept line
+    const x_axis = try interner.line(testing.allocator, &g, curves.Line.through(.{ 0, 0, 0 }, .{ 2, 0, 0 }).?, .{ 0, 0, 0 }, .{ 2, 0, 0 });
+    const end = Vec3{ 2, tol.zone, 0 };
+    try testing.expectError(error.AtTolerance, interner.line(testing.allocator, &g, curves.Line.through(.{ 0, 0, 0 }, end).?, .{ 0, 0, 0 }, end));
+    const inside = Vec3{ 2, 0.99 * tol.zone, 0 };
+    try testing.expect(x_axis.eql(try interner.line(testing.allocator, &g, curves.Line.through(.{ 0, 0, 0 }, inside).?, .{ 0, 0, 0 }, inside)));
+    // Planes the zone apart, as the find's
+    const floor = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3) });
+    try testing.expectError(error.AtTolerance, interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + tol.zone }, vec.X3, vec.Z3) }));
+    try testing.expect(floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 0.99 * tol.zone }, vec.X3, vec.Z3) })));
+    try testing.expect(!floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 1.01 * tol.zone }, vec.X3, vec.Z3) })));
 }

@@ -7,7 +7,9 @@
 //!
 //! Every lookup visits a fixed set of cells and takes the least index, so the result is
 //! the same whatever the hash map does; the post-condition "no two kept points within
-//! zone" holds by construction.
+//! zone" holds by construction. A candidate before the first that is the same, which is
+//! the zone from the record to within rounding (`canonical.verdict`), is refused
+//! (`AtTolerance`, D27): one computation would find it the same and another not.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -18,20 +20,28 @@ const canonical = @import("../geometry/canonical.zig");
 const Geometry = @import("../geometry/arena.zig").Geometry;
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const grid = @import("grid.zig");
+const SCALE_GUARD = @import("../diagnostics.zig").SCALE_GUARD;
 const Vec3 = vec.Vec3;
 const CurveRef = types.CurveRef;
 const SurfaceRef = types.SurfaceRef;
 const PointIndex = types.PointIndex;
 
-pub const Error = error{ OutOfMemory, TooMany, OutOfRange };
+pub const Error = error{
+    OutOfMemory,
+    TooMany,
+    OutOfRange,
+    /// A record the zone from a kept one to within rounding (`Interner.refused` says what
+    /// was measured).
+    AtTolerance,
+};
 
 /// A grid over one kind's key points, with the keys it indexes.
 const KeyGrid = struct {
     welder: grid.PointWelder,
     keys: std.ArrayList(Vec3) = .empty,
 
-    fn init(radius: f64) KeyGrid {
-        return .{ .welder = grid.PointWelder.init(radius) };
+    fn init(radius: f64, margin: f64) KeyGrid {
+        return .{ .welder = grid.PointWelder.initWithMargin(radius, margin) };
     }
 
     fn deinit(self: *KeyGrid, allocator: std.mem.Allocator) void {
@@ -39,33 +49,10 @@ const KeyGrid = struct {
         self.keys.deinit(allocator);
     }
 
-    /// Every kept index whose key is within the radius of `key`, in ascending order, into
+    /// Every kept index whose key is within `reach` of `key`, in ascending order, into
     /// `out`.
-    const Candidates = struct {
-        keys: []const Vec3,
-        key: Vec3,
-        radius_sq: f64,
-        found: *std.ArrayList(u32),
-        allocator: std.mem.Allocator,
-        failed: bool = false,
-
-        fn visit(self: *Candidates, index: u32) bool {
-            if (vec.distanceSq(self.keys[index], self.key) <= self.radius_sq) {
-                self.found.append(self.allocator, index) catch {
-                    self.failed = true;
-                    return false;
-                };
-            }
-            return true;
-        }
-    };
-
-    fn candidates(self: *const KeyGrid, allocator: std.mem.Allocator, key: Vec3, out: *std.ArrayList(u32)) Error!void {
-        out.clearRetainingCapacity();
-        var c = Candidates{ .keys = self.keys.items, .key = key, .radius_sq = self.welder.radius * self.welder.radius, .found = out, .allocator = allocator };
-        try self.welder.grid.query(key, self.welder.radius, &c, Candidates.visit);
-        if (c.failed) return error.OutOfMemory;
-        std.mem.sort(u32, out.items, {}, std.sort.asc(u32));
+    fn candidates(self: *const KeyGrid, allocator: std.mem.Allocator, key: Vec3, reach: f64, out: *std.ArrayList(u32)) Error!void {
+        try self.welder.near(allocator, self.keys.items, key, reach, out);
     }
 
     fn add(self: *KeyGrid, allocator: std.mem.Allocator, key: Vec3) Error!void {
@@ -90,20 +77,26 @@ pub const Interner = struct {
     /// the first point given, so it moves with the model and the keys are the model's size
     /// from it, whatever its distance from the origin.
     at: ?Vec3 = null,
+    /// The largest coordinate of any record given: what a comparison's rounding is at most,
+    /// so a lookup that reaches the zone and that rounding misses no candidate.
+    largest: f64 = 0,
+    /// What the last `AtTolerance` measured.
+    refused: ?canonical.Comparison = null,
 
     /// An interner for an empty arena at `tol`: points weld within `zone`, records are
     /// looked up within `zone` of their key.
     pub fn init(tol: Tolerance) Interner {
+        const margin = largestBand(tol);
         return .{
             .tol = tol,
-            .points = grid.PointWelder.init(tol.zone),
-            .lines = KeyGrid.init(tol.zone),
-            .circles = KeyGrid.init(tol.zone),
-            .planes = KeyGrid.init(tol.zone),
-            .cylinders = KeyGrid.init(tol.zone),
-            .cones = KeyGrid.init(tol.zone),
-            .spheres = KeyGrid.init(tol.zone),
-            .tori = KeyGrid.init(tol.zone),
+            .points = grid.PointWelder.initWithMargin(tol.zone, margin),
+            .lines = KeyGrid.init(tol.zone, margin),
+            .circles = KeyGrid.init(tol.zone, margin),
+            .planes = KeyGrid.init(tol.zone, margin),
+            .cylinders = KeyGrid.init(tol.zone, margin),
+            .cones = KeyGrid.init(tol.zone, margin),
+            .spheres = KeyGrid.init(tol.zone, margin),
+            .tori = KeyGrid.init(tol.zone, margin),
         };
     }
 
@@ -120,10 +113,42 @@ pub const Interner = struct {
         return self.at.?;
     }
 
+    /// How far a lookup reaches for a record of `points` (and lengths up to `size`): the
+    /// zone and the rounding of the largest coordinate seen, these included; at most the
+    /// rounding at the largest coordinate the tolerance takes (`largestBand`, what the
+    /// grids' cells allow for: a coordinate past it is refused before it comes here).
+    fn reach(self: *Interner, points: []const Vec3, size: f64) f64 {
+        self.largest = @max(self.largest, @max(canonical.magnitude(points), size));
+        return self.tol.zone + @min(canonical.Comparison.distance(0, self.tol.zone, self.largest).band, largestBand(self.tol));
+    }
+
+    /// The first candidate the same, null when none is; a candidate before it at the
+    /// tolerance is refused. `comparisons(i)` are candidate `i`'s.
+    fn first(self: *Interner, context: anytype) Error!?u32 {
+        for (self.scratch.items) |i| switch (canonical.verdict(&context.comparisons(i))) {
+            .same => return i,
+            .apart => {},
+            .at_tolerance => |c| {
+                self.refused = c;
+                return error.AtTolerance;
+            },
+        };
+        return null;
+    }
+
     /// The index of `p` in the arena: the first kept point within `zone`, else `p` added.
     pub fn point(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, p: Vec3) Error!PointIndex {
         _ = self.keyOrigin(p);
-        if (try self.points.find(g.points.items, p)) |found| return PointIndex.of(found);
+        try self.points.near(allocator, g.points.items, p, self.reach(&.{p}, 0), &self.scratch);
+        const Points = struct {
+            kept: []const Vec3,
+            p: Vec3,
+            zone: f64,
+            fn comparisons(c: @This(), i: u32) [1]canonical.Comparison {
+                return .{canonical.Comparison.distance(vec.distance(c.kept[i], c.p), c.zone, canonical.magnitude(&.{ c.kept[i], c.p }))};
+            }
+        };
+        if (try self.first(Points{ .kept = g.points.items, .p = p, .zone = self.tol.zone })) |found| return PointIndex.of(found);
         const index = try g.addPoint(allocator, p);
         errdefer _ = g.points.pop();
         try self.points.add(allocator, g.points.items, @backingInt(index));
@@ -138,11 +163,19 @@ pub const Interner = struct {
     pub fn line(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Line, a: Vec3, b: Vec3) Error!CurveRef {
         const at = self.keyOrigin(a);
         const key = canonical.lineKey(item, at);
-        try self.lines.candidates(allocator, key, &self.scratch);
-        for (self.scratch.items) |i| {
-            const kept = g.lines.items[i];
-            if (canonical.sameLine(kept, item, at, self.tol) and canonical.lineHolds(kept, a, self.tol) and canonical.lineHolds(kept, b, self.tol)) return CurveRef.of(.line, i);
-        }
+        try self.lines.candidates(allocator, key, self.reach(&.{ item.o, a, b }, 0), &self.scratch);
+        const Lines = struct {
+            kept: []const curves.Line,
+            item: curves.Line,
+            at: Vec3,
+            a: Vec3,
+            b: Vec3,
+            tol: Tolerance,
+            fn comparisons(c: @This(), i: u32) [4]canonical.Comparison {
+                return canonical.sameLine(c.kept[i], c.item, c.at, c.a, c.b, c.tol);
+            }
+        };
+        if (try self.first(Lines{ .kept = g.lines.items, .item = item, .at = at, .a = a, .b = b, .tol = self.tol })) |i| return CurveRef.of(.line, i);
         const ref = try g.addLine(allocator, item);
         errdefer _ = g.lines.pop();
         try self.lines.add(allocator, key);
@@ -150,8 +183,8 @@ pub const Interner = struct {
     }
 
     pub fn circle(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Circle) Error!CurveRef {
-        try self.circles.candidates(allocator, item.c, &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameCircle(g.circles.items[i], item, self.tol)) return CurveRef.of(.circle, i);
+        try self.circles.candidates(allocator, item.c, self.reach(&.{item.c}, item.r), &self.scratch);
+        if (try self.first(Records(curves.Circle, canonical.sameCircle){ .kept = g.circles.items, .item = item, .tol = self.tol })) |i| return CurveRef.of(.circle, i);
         const ref = try g.addCircle(allocator, item);
         errdefer _ = g.circles.pop();
         try self.circles.add(allocator, item.c);
@@ -159,9 +192,10 @@ pub const Interner = struct {
     }
 
     pub fn plane(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Plane) Error!SurfaceRef {
-        const key = canonical.planeKey(item, self.keyOrigin(item.frame.origin));
-        try self.planes.candidates(allocator, key, &self.scratch);
-        for (self.scratch.items) |i| if (canonical.samePlane(g.planes.items[i], item, self.tol)) return SurfaceRef.of(.plane, i);
+        const at = self.keyOrigin(item.frame.origin);
+        const key = canonical.planeKey(item, at);
+        try self.planes.candidates(allocator, key, self.reach(&.{item.frame.origin}, 0), &self.scratch);
+        if (try self.first(Keyed(surfaces.Plane, canonical.samePlane){ .kept = g.planes.items, .item = item, .at = at, .tol = self.tol })) |i| return SurfaceRef.of(.plane, i);
         const ref = try g.addPlane(allocator, item);
         errdefer _ = g.planes.pop();
         try self.planes.add(allocator, key);
@@ -171,8 +205,8 @@ pub const Interner = struct {
     pub fn cylinder(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Cylinder) Error!SurfaceRef {
         const at = self.keyOrigin(item.frame.origin);
         const key = canonical.axisKey(item.frame, at);
-        try self.cylinders.candidates(allocator, key, &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameCylinder(g.cylinders.items[i], item, at, self.tol)) return SurfaceRef.of(.cylinder, i);
+        try self.cylinders.candidates(allocator, key, self.reach(&.{item.frame.origin}, item.r), &self.scratch);
+        if (try self.first(Keyed(surfaces.Cylinder, canonical.sameCylinder){ .kept = g.cylinders.items, .item = item, .at = at, .tol = self.tol })) |i| return SurfaceRef.of(.cylinder, i);
         const ref = try g.addCylinder(allocator, item);
         errdefer _ = g.cylinders.pop();
         try self.cylinders.add(allocator, key);
@@ -180,8 +214,8 @@ pub const Interner = struct {
     }
 
     pub fn cone(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Cone) Error!SurfaceRef {
-        try self.cones.candidates(allocator, canonical.coneKey(item), &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameCone(g.cones.items[i], item, self.tol)) return SurfaceRef.of(.cone, i);
+        try self.cones.candidates(allocator, canonical.coneKey(item), self.reach(&.{ item.frame.origin, canonical.coneKey(item) }, 0), &self.scratch);
+        if (try self.first(Records(surfaces.Cone, canonical.sameCone){ .kept = g.cones.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.cone, i);
         const ref = try g.addCone(allocator, item);
         errdefer _ = g.cones.pop();
         try self.cones.add(allocator, canonical.coneKey(item));
@@ -189,8 +223,8 @@ pub const Interner = struct {
     }
 
     pub fn sphere(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Sphere) Error!SurfaceRef {
-        try self.spheres.candidates(allocator, item.frame.origin, &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameSphere(g.spheres.items[i], item, self.tol)) return SurfaceRef.of(.sphere, i);
+        try self.spheres.candidates(allocator, item.frame.origin, self.reach(&.{item.frame.origin}, item.r), &self.scratch);
+        if (try self.first(Records(surfaces.Sphere, canonical.sameSphere){ .kept = g.spheres.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.sphere, i);
         const ref = try g.addSphere(allocator, item);
         errdefer _ = g.spheres.pop();
         try self.spheres.add(allocator, item.frame.origin);
@@ -198,11 +232,42 @@ pub const Interner = struct {
     }
 
     pub fn torus(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Torus) Error!SurfaceRef {
-        try self.tori.candidates(allocator, item.frame.origin, &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameTorus(g.tori.items[i], item, self.tol)) return SurfaceRef.of(.torus, i);
+        try self.tori.candidates(allocator, item.frame.origin, self.reach(&.{item.frame.origin}, item.major + item.minor), &self.scratch);
+        if (try self.first(Records(surfaces.Torus, canonical.sameTorus){ .kept = g.tori.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.torus, i);
         const ref = try g.addTorus(allocator, item);
         errdefer _ = g.tori.pop();
         try self.tori.add(allocator, item.frame.origin);
         return ref;
     }
 };
+
+/// The rounding of the largest coordinate `tol` takes (`zone / SCALE_GUARD`): how far past
+/// the zone a lookup may have to reach.
+fn largestBand(tol: Tolerance) f64 {
+    return canonical.Comparison.distance(0, tol.zone, tol.zone / SCALE_GUARD).band;
+}
+
+/// A lookup's candidates of type `T` compared with `same(kept, item, tol)`.
+fn Records(comptime T: type, comptime same: anytype) type {
+    return struct {
+        kept: []const T,
+        item: T,
+        tol: Tolerance,
+        fn comparisons(c: @This(), i: u32) @typeInfo(@TypeOf(same)).@"fn".return_type.? {
+            return same(c.kept[i], c.item, c.tol);
+        }
+    };
+}
+
+/// A lookup's candidates of type `T` compared with `same(kept, item, at, tol)`, keyed from `at`.
+fn Keyed(comptime T: type, comptime same: anytype) type {
+    return struct {
+        kept: []const T,
+        item: T,
+        at: Vec3,
+        tol: Tolerance,
+        fn comparisons(c: @This(), i: u32) @typeInfo(@TypeOf(same)).@"fn".return_type.? {
+            return same(c.kept[i], c.item, c.at, c.tol);
+        }
+    };
+}

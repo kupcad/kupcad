@@ -1543,6 +1543,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 1 8 2 3 4 1 2 2 4 0 0 4 3 4 2 4 1 2 0 3 4 0 2 2 0 0 0 1 0 1 0 -1 2 6 3 3 1 8 1 2 2 4 2 4 1 0 4 1 4 1 2 1 0 3 4 0 2 0 0 4 0 3 1 2 -1 0 2 3 1 1 0 2 4 0 1 2 3 0 0 2 1 0 2 -2 15 0 2 1 7 2 2 1 2 1 0 2 4 0 2 1 2 4 3 4 2 1 4 4 0 0 0 2 2 2 -1 -2 2 2 0",
         // The plain run's first chain moved whole far out (2026-11-13): pieces of one line split, their lines' keys taken from the world's origin
         "solids 1 6 2 3 0 1 2 2 1 2 4 1 0 2 2 0 0 3 0 2 3 0 1 2 2 0 1 -1 13 3 1 1 5 1 3 1 0 4 1 0 2 1 3 1 2 1 3 4 0 0 3 3 1 0 0 15 0 1 1 8 2 1 0 4 2 1 1 4 2 3 1 1 4 1 0 4 0 2 0 4 3 2 0 3 1 2 -2 0 2 9 0 2 1 4 0 4 2 0 2 0 3 0 2 1 3 4 2 2 -1 0 1 11 1 1 1 2",
+        // The 10K session on 4e0b4909's (2026-11-13): a box moved up by the zone exactly, its bottom one plane record with another's moved and two in place (the interner's decision at the zone)
+        "solids 0 0 1 1 3 1 3 3 1 1 -2 -1 1 2 9 3 3 0 0 2 1 3 2 4 0 2 3 3 2 1 -2 7 0 1 0 1 3 3 4 0 2 1 1 1 1 -1 4 0 0 0 0 0 6 0 0 0 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
