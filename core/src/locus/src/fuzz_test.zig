@@ -12,6 +12,7 @@
 //! overlap rules and its report, the volume identities holding.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const Smith = testing.Smith;
 const vec = @import("math/vec.zig");
@@ -83,6 +84,12 @@ const AREA_CLOSE = 1e-9;
 /// result's area may differ from its operands' own by the zone times their perimeters
 /// (`weldingSlack`); this is the rounding on top.
 const IDENTITY_CLOSE = 1e-9;
+/// The directory a fuzz worker writes each run's draws in (`DrawLog`), from the build's
+/// `-Dfuzz-draws`; empty, none are written.
+const FUZZ_DRAWS_DIR: []const u8 = @import("test_paths").fuzz_draws;
+/// A draws file's name, before its kind and `.txt` (core's scripts/fuzz_run.zig reads
+/// `draws-*.txt` after a crash).
+const DRAWS_FILE_PREFIX = "draws-";
 /// Generated chains a plain test run checks, each from a seeded stream of bytes.
 const PLAIN_RUN_CHAINS = 200;
 const PLAIN_RUN_SEED = 0x2d_c4a1;
@@ -177,7 +184,7 @@ const BOW_SLACK = 1e-9;
 /// a clean refusal (a cusp, a loop the budget cannot hold), or spans each of which the
 /// curve, evaluated densely, keeps within the budget the enclosure certified.
 fn freeFormChords(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .{ .inner = smith };
+    var recording: Recording(*Smith) = .init(smith, .chords, try fuzzDrawLog(.chords));
     defer recording.deinit();
     errdefer recording.report("chords");
     try checkFreeFormChords(&recording);
@@ -255,7 +262,7 @@ test "fuzz: the 2D kernel takes any generated sketch chain" {
 }
 
 fn sketchChain(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .{ .inner = smith };
+    var recording: Recording(*Smith) = .init(smith, .chain, try fuzzDrawLog(.chain));
     defer recording.deinit();
     errdefer recording.report("chain");
     _ = try runChain(&recording);
@@ -278,12 +285,22 @@ test "Fuzz chains: generated sketch chains run clean on a plain test run, most o
 /// gives, so a failing run prints them as a `replay:` line: the run's every choice, which
 /// `ScriptedSource` plays back exactly. Zig 0.17 saves the fuzzer's failing input as bytes
 /// that do not replay through the Smith on a plain run; this line does, from a CI log.
+/// With a `log`, each draw is also written down as it is drawn, so a run that panics
+/// (no `errdefer` runs then) leaves its line in the log's file.
 fn Recording(comptime Inner: type) type {
     return struct {
         inner: Inner,
         draws: std.ArrayList(i64) = .empty,
+        log: ?*DrawLog = null,
 
         const Self = @This();
+
+        /// A recording of `inner`'s draws for a run of `kind`, written down as they are
+        /// drawn into `log`'s file when there is one (it starts the run's line).
+        fn init(inner: Inner, kind: ReplayKind, log: ?*DrawLog) Self {
+            if (log) |l| l.start(kind);
+            return .{ .inner = inner, .log = log };
+        }
 
         fn valueRangeAtMost(self: *Self, comptime T: type, at_least: T, at_most: T) T {
             const v = self.inner.valueRangeAtMost(T, at_least, at_most);
@@ -299,9 +316,13 @@ fn Recording(comptime Inner: type) type {
 
         fn keep(self: *Self, v: i64) void {
             self.draws.append(testing.allocator, v) catch @panic("out of memory keeping a fuzz run's draws");
+            if (self.log) |l| l.add(v);
         }
 
+        /// The run is over, whether it passed or returned an error (whose line `report`
+        /// printed): its log's file is cleared, and only a run that panicked leaves one.
         fn deinit(self: *Self) void {
+            if (self.log) |l| l.clear();
             self.draws.deinit(testing.allocator);
         }
 
@@ -338,6 +359,68 @@ const ScriptedSource = struct {
         return @intCast(std.math.clamp(v, 0, @as(i64, @intCast(len)) - 1));
     }
 };
+
+/// A file a fuzz worker writes a run's `replay:` line into as the run draws, one write per
+/// draw (a panic can come in any call between two draws, and ends the worker before any
+/// buffer or `errdefer` is flushed), cleared when the run ends; `draws-<kind>.txt` in its
+/// directory. Zig 0.17 lets a test install no panic handler, so this is how the line of a
+/// run that panicked outlives it: `zig build fuzz-run` prints the files it finds not empty.
+const DrawLog = struct {
+    io: std.Io,
+    file: std.Io.File,
+    /// Where the next draw goes: the length of the line so far.
+    at: u64 = 0,
+
+    fn open(io: std.Io, dir: std.Io.Dir, kind: ReplayKind) !DrawLog {
+        var name: [64]u8 = undefined;
+        const path = try std.fmt.bufPrint(&name, DRAWS_FILE_PREFIX ++ "{t}.txt", .{kind});
+        return .{ .io = io, .file = try dir.createFile(io, path, .{ .truncate = true }) };
+    }
+
+    fn close(self: *DrawLog) void {
+        self.file.close(self.io);
+    }
+
+    /// A new run's line, `replay: <kind>`, the last run's gone.
+    fn start(self: *DrawLog, kind: ReplayKind) void {
+        self.clear();
+        var buf: [32]u8 = undefined;
+        self.write(std.fmt.bufPrint(&buf, "replay: {t}", .{kind}) catch unreachable);
+    }
+
+    fn add(self: *DrawLog, v: i64) void {
+        var buf: [24]u8 = undefined;
+        self.write(std.fmt.bufPrint(&buf, " {d}", .{v}) catch unreachable);
+    }
+
+    fn clear(self: *DrawLog) void {
+        self.file.setLength(self.io, 0) catch |err| std.debug.panic("clearing the fuzz draws file: {t}", .{err});
+        self.at = 0;
+    }
+
+    fn write(self: *DrawLog, bytes: []const u8) void {
+        self.file.writePositionalAll(self.io, bytes, self.at) catch |err| std.debug.panic("writing the fuzz draws file: {t}", .{err});
+        self.at += bytes.len;
+    }
+};
+
+/// The draws file of a fuzz target's runs, opened the first time the worker runs one;
+/// null on a plain run, or with no `-Dfuzz-draws`.
+fn fuzzDrawLog(kind: ReplayKind) !?*DrawLog {
+    if (comptime !builtin.fuzz or FUZZ_DRAWS_DIR.len == 0) return null;
+    const State = struct {
+        var logs: [std.enums.values(ReplayKind).len]?DrawLog = @splat(null);
+    };
+    const slot = &State.logs[@intFromEnum(kind)];
+    if (slot.* == null) {
+        const io = testing.io;
+        try std.Io.Dir.cwd().createDirPath(io, FUZZ_DRAWS_DIR);
+        var dir = try std.Io.Dir.cwd().openDir(io, FUZZ_DRAWS_DIR, .{});
+        defer dir.close(io);
+        slot.* = try DrawLog.open(io, dir, kind);
+    }
+    return &slot.*.?;
+}
 
 /// What a `replay:` line runs: its kind's target on its draws.
 const ReplayKind = enum { chain, chords, overlay, solids };
@@ -418,10 +501,45 @@ test "fuzz: the overlay labels any generated arrangement by each input's own are
 }
 
 fn overlayArrangement(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .{ .inner = smith };
+    var recording: Recording(*Smith) = .init(smith, .overlay, try fuzzDrawLog(.overlay));
     defer recording.deinit();
     errdefer recording.report("overlay");
     _ = try runArrangement(&recording);
+}
+
+test "Fuzz replay: a run's draws are written down as drawn; a run that never ended leaves its line" {
+    // The file under a fuzz worker that panicked holds the run's `replay:` line, which
+    // `zig build fuzz-run` prints: the same line `report` prints, and one that replays.
+    // Under wasmtime the tests touch no file system
+    if (builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var log = try DrawLog.open(io, tmp.dir, .solids);
+    defer log.close();
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0xd2a5);
+    var source = RandomSource{ .random = prng.random() };
+    for (0..3) |_| {
+        var recording: Recording(*RandomSource) = .init(&source, .solids, &log);
+        var ended = false;
+        defer if (!ended) recording.deinit();
+        _ = try runSolids(&recording);
+        // As a panic in the run's last call would leave it
+        const text = try tmp.dir.readFileAlloc(io, DRAWS_FILE_PREFIX ++ "solids.txt", testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(text);
+        var expected: std.ArrayList(u8) = .empty;
+        defer expected.deinit(testing.allocator);
+        try expected.appendSlice(testing.allocator, "replay: solids");
+        for (recording.draws.items) |v| try expected.print(testing.allocator, " {d}", .{v});
+        try testing.expectEqualStrings(expected.items, text);
+        try replayLine(text["replay:".len..]);
+        // The run ended: its line is gone, and the next one starts afresh
+        recording.deinit();
+        ended = true;
+        const after = try tmp.dir.readFileAlloc(io, DRAWS_FILE_PREFIX ++ "solids.txt", testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(after);
+        try testing.expectEqual(@as(usize, 0), after.len);
+    }
 }
 
 test "Fuzz overlay: generated arrangements label by their inputs' areas on a plain test run" {
@@ -1239,7 +1357,7 @@ test "fuzz: booleans of solids take any generated chain" {
 }
 
 fn solidChain(_: void, smith: *Smith) anyerror!void {
-    var recording: Recording(*Smith) = .{ .inner = smith };
+    var recording: Recording(*Smith) = .init(smith, .solids, try fuzzDrawLog(.solids));
     defer recording.deinit();
     errdefer recording.report("solids");
     _ = try runSolids(&recording);
@@ -1258,7 +1376,7 @@ test "Fuzz solids: generated chains of booleans of solids run clean on a plain t
     try testing.expect(checked >= PLAIN_RUN_SOLIDS / 2);
 }
 
-test "Fuzz solids: the finds of 2026-11-13 replay clean" {
+test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and the nightly's" {
     const finds = [_][]const u8{
         // a cut's corner on the face it was cut from, the cut open elsewhere: a pinch at a point, refused
         "solids 0 0 4 0 3 1 3 3 2 -1 1 2 14 1 1 1 7 3 3 2 1 2 4 2 1 4 2 2 0 0 1 4 1 1 2 0 2 2 2 1 1 0 2 8 1",
@@ -1274,6 +1392,11 @@ test "Fuzz solids: the finds of 2026-11-13 replay clean" {
         "solids 0 2 3 1 2 0 4 3 2 -1 -1 -1 6 2 1 1 7 1 1 3 4 0 1 0 0 4 0 1 0 4 0 3 3 3 1 0 0 4 2 2 -1 -1 2 1 2 10 1 3 1 7 2 2 4 1 0 4 0 0 4 4 2 4 2 2 1 0 1 2 4 0 0 0 2 0 0 0 1 1 2 1 1 2 1",
         // a lone slit's spur removed, its near vertex left a loop of one vertex; the containment table then sewed it
         "solids 0 1 4 1 4 1 2 3 2 -1 -2 0 12 3 3 0 0 3 0 2 3 4 2 3 2 2 -1 2 1 1 0 2 4 1 2 0 4 2 3 2 2 -1 10 0 1 0 2 3 2 3 3 4 2 3 -1 -2 2 2 1",
+        // The nightly's (run 43339802911): a box's corner at a hull triangle's centroid, the face's only sample, unclassified
+        "solids 0 3 4 1 3 2 3 2 2 -1 -1 -2 3 3 2 1 5 1 4 3 1 2 1 4 4 2 1 0 3 1 4 1 1 2 -1 2 2 15 0 1 0 1 2 2 4 3 4 2 0 2 1 1 -1 -2 -2 11 0",
+        "solids 1 7 2 0 3 0 3 0 1 2 3 4 2 0 1 4 3 2 1 4 3 4 0 1 1 -1 1 1 13 3 2 1 5 1 0 1 3 2 1 0 0 2 4 1 1 1 4 1 0 2 3 2 0 0 1 13 1 3 1 8 2 0 4 1 3 0 4 3 4 3 4 1 4 1 1 0 1 0 3 2 4 1 0 0 3 1 -1 -1 -2 14 2 3 1 4 3 3 2 4 3 0 1 1 1 1 4 2 1 1 0 2 -1 2 2",
+        // The nightly's: a circle's leftmost vertex level with an arc's lowest point, the arc's west piece ending straight above it
+        "overlay 1 2 0 8 4 8 0 1 1 1 8 13 12 1 3 18 1 19 14 5 20 23 6 0 17 8 1 20 1 11 14 7 1 24 2 3 2 1 3 2 0 2 2 0 2 3 1 2 0 1 3 2 1 1 3 0 4 2 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

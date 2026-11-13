@@ -26,6 +26,10 @@ const EXAMPLES = [_][]const u8{
 /// Variation tuples tatfi's gvar keeps on the stack before it takes the heap (its default).
 const TATFI_GVAR_STACK_TUPLES = 32;
 
+/// The fuzzer's folder in the cache, where it saves a crash, `zig build fuzz-run` keeps the
+/// session's output and Locus's fuzz workers write each run's draws.
+const FUZZ_DIR = "f";
+
 /// Manifold's version, as its CMakeLists.txt sets it (MANIFOLD_VERSION_*): the header its
 /// CMake writes from cmake/version.h.in, which manifold.cpp includes, is written from it here.
 const MANIFOLD_VERSION = .{ .major = 3, .minor = 5, .patch = 1 };
@@ -301,8 +305,10 @@ pub fn build(b: *std.Build) void {
     const sheenbidi_mod = b.createModule(.{ .root_source_file = b.path("src/bindings/sheenbidi.zig"), .target = active_target, .optimize = optimize });
 
     // Locus, the B-Rep kernel: a package of its own (src/locus/build.zig), pure Zig, built in
-    // this build's target and mode; its tests run in the `test` step below.
-    const locus = b.dependency("locus", .{ .target = active_target, .optimize = optimize });
+    // this build's target and mode; its tests run in the `test` step below. Its fuzz workers
+    // write each run's draws in the cache's `f/`, beside the fuzzer's crash, where `zig build
+    // fuzz-run` (scripts/fuzz_run.zig) finds the line of a run that panicked.
+    const locus = b.dependency("locus", .{ .target = active_target, .optimize = optimize, .@"fuzz-draws" = std.Build.LazyPath.cache_root.path(b, FUZZ_DIR) });
 
     // --- list all deps ---
     const module_imports: []const std.Build.Module.Import = &.{
@@ -787,6 +793,8 @@ pub fn build(b: *std.Build) void {
                 .optimize = .Debug,
             }),
         });
+        // Its own tests (which draws files it reads after a crash) run with the others
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fuzz_run_exe.root_module })).step);
         const fuzz_run = b.addRunArtifact(fuzz_run_exe);
         fuzz_run.addFileArg(std.Build.LazyPath.zig_exe);
         fuzz_run.addDirectoryArg(std.Build.LazyPath.cache_root);

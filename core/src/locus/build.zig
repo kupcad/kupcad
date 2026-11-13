@@ -33,6 +33,13 @@ pub fn build(b: *std.Build) void {
     const replay_path = b.option([]const u8, "fuzz-replay", "A file of fuzz finds' `replay:` lines for the replay test to run");
     const replay_text: []const u8 = if (replay_path) |path| std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, .limited(MAX_REPLAY_BYTES)) catch |err| std.debug.panic("-Dfuzz-replay={s}: {t}", .{ path, err }) else "";
     test_paths.addOption([]const u8, "fuzz_replay", replay_text);
+    // Where a fuzz worker writes each run's draws as it draws them (src/fuzz_test.zig's
+    // `DrawLog`): a panic ends the worker before the run's `replay:` line is printed, and
+    // `zig build fuzz-run` (core) prints the file instead. Core passes its cache's `f/`;
+    // empty, nothing is written. Fuzzing alone writes it, never a plain or wasm test run.
+    if (b.option(std.Build.LazyPath, "fuzz-draws", "The directory a fuzz worker writes each run's draws in (core's `zig build fuzz-run` reads them after a crash)")) |dir| {
+        test_paths.addOptionPathUntracked("fuzz_draws", dir);
+    } else test_paths.addOption([]const u8, "fuzz_draws", "");
     module.addOptions("test_paths", test_paths);
 
     const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
