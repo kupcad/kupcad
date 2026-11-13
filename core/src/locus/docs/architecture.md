@@ -1166,7 +1166,8 @@ the table (`-Dupdate-snapshots`) and are the body reader's fuzz seeds too.
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.
 - **Known issues**: `KNOWN_ISSUES.md` with an expected-failure test per entry, removed
-  with the fix (usd-brep's process).
+  with the fix (usd-brep's process); created with its first entry (Leo, 2026-11-13): a
+  finding not fixed at once is written down and tested, never left waiting silently.
 
 ### 9.3 Parity with the mesh engine
 
