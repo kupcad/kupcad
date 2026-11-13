@@ -739,7 +739,9 @@ importing only those before it, which the layering test holds):**
   it in one plane) and whether reversed (the second operand's inside of a difference),
   followed through `simplify`'s merges and renumbering; and for a refusal `failed_in`,
   the stage it came from (the operands' checks, an interference class, or a later
-  phase), the findings of the paves naming their class in their label. The result's
+  phase), the findings of the paves naming their class in their label; the interferences
+  each class found (`pave.INTERFERENCES`) and each operand's fragments by class, which
+  with the operation name the selection table's rows that decided the result. The result's
   tags follow D14: its table holds both operands' rows, a whole face keeps its tag, a
   piece of a split face a `split` row of it and faces made one a `merged` row, under the
   host's operation number (`Options.tag_op`).
@@ -751,6 +753,16 @@ importing only those before it, which the layering test holds):**
   two vertex records at one point, which the model forbids. Solids touching each other
   are not pinched: they separate into shells of their own (a V groove right across leaves
   two solids touching along its bottom line), as touching unions do.
+- The finding codes a boolean gives are closed lists, each with its meaning:
+  `pipeline.REFUSALS` (what a valid input can provoke), `WARNINGS`, and `GUARDS` (checks
+  of the operands' and the pipeline's own consistency, which no valid input reaches but
+  through a fault); a source test holds every code the boolean's files raise to one of
+  them. `boolean/coverage_test.zig` (M4's exit, research/opengeometry.md §4) runs the
+  corpus and a case per reason and per guard (a guard's case breaks what it guards) and
+  fails naming any interference class, selection rule, reason, warning or guard none
+  exercised; in KupCAD, every `Feature` the B-Rep engine refuses is refused, by name, for
+  some script of the parity test's `BREP_REFUSES`. An operand face covering its plane
+  twice is named so (`faces_overlap`) before any region of it is read back.
 - The degeneracy corpus, planar part (`boolean/degeneracy_test.zig`, and its classes with
   closed forms in KupCAD's case rig, compared with the mesh engine; its box configurations
   again in `boolean/corpus_test.zig` as OCCT states its cases, per operation the counts,
