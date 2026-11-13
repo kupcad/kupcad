@@ -103,6 +103,21 @@ traversal by construction.
 
 Each principle is a rule the code is held to, not a slogan.
 
+**Priorities: deterministic boundaries and kernel stability first** (Leo, 2026-11-13).
+Where they conflict with a feature, a speed-up or a milestone's date, these win.
+- *Deterministic boundaries*: every configuration at a tolerance's boundary is decided
+  once, by one computation, and every later step defers to it: the paves decide what lies
+  on a face's boundary, an edge meets a plane once (at the pave it already has there), the
+  checker takes "on a plane" as the boolean took it. A distance at the tolerance to
+  rounding, which two computations would decide two ways, is refused, naming the entities
+  (D27), never guessed. The same input gives the same output, the same refusal and the
+  same finding on every target (§6).
+- *Kernel stability*: no operation crashes, hangs, leaks or returns a body the checker
+  fails; every result is valid or a clean error naming its stage and entity. Every loop is
+  bounded by entity counts or `Limits`; every fuzz target runs under a wall-clock bound
+  per run, and every find, a panic or a hang among them, leaves a `replay:` line that
+  becomes a regression test (§9.2). A stability find is fixed before the next feature.
+
 **Data-oriented design**
 - Entities live in struct-of-arrays arenas addressed by typed `u32` indices (`enum(u32)`);
   no pointers between entities, ever. Relationships that are one-to-many (face → loops,
@@ -1118,7 +1133,9 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
   handler), so a fuzz worker also writes each run's line into the cache's
   `f/draws-<kind>.txt` as it draws, one write per draw, and clears it when the run ends;
   `zig build fuzz-run` prints a file left with a line as the run a crash interrupted
-  (`-Dfuzz-draws`, which core's build sets; plain and wasm runs write nothing).
+  (`-Dfuzz-draws`, which core's build sets; plain and wasm runs write nothing). The
+  wall-clock bound: a watchdog thread in the worker stops a run past 120 s (forty times
+  the slowest seen) with a panic, so a hang leaves its line as a crash does.
 - **Allocation failure**: every operation under KupCAD's failing-allocator sweep leaves
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.
