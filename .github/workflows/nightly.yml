@@ -61,6 +61,12 @@ jobs:
           # 100K took 5.5 minutes on an M-series Mac (2026-11-12), so this is about 30 there.
           - target: locus_overlay
             runs: 500K
+          # Locus's booleans of solids alone: chains of boxes and hulls on a coarse grid,
+          # each step all three booleans checked by the checker, the overlap rules and the
+          # volume identities, in Debug: about 0.6 s a run on an M-series Mac (2026-11-13),
+          # so this is about 50 minutes there.
+          - target: locus_solids
+            runs: 5K
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

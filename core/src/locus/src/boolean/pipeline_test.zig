@@ -63,7 +63,7 @@ pub fn sound(a: *const Body, b: *const Body, op: Op) !Body {
 /// of the result made from some input face, every entry naming live faces, an input face
 /// preserved in one result face alone, and a reversed face only from the second operand of
 /// a difference.
-fn expectReportFits(r: *const pipeline.Report, a: *const Body, b: *const Body, result: *const Body, op: Op) !void {
+pub fn expectReportFits(r: *const pipeline.Report, a: *const Body, b: *const Body, result: *const Body, op: Op) !void {
     try testing.expectEqual(op, r.op);
     try testing.expectEqual(@as(?pipeline.Stage, null), r.failed_in);
     const covered = try testing.allocator.alloc(bool, result.faces.items.len);

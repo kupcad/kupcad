@@ -735,8 +735,8 @@ pub fn build(b: *std.Build) void {
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts, locus, locus_overlay };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import, locus for the B-Rep kernel's body reader, 2D kernel and overlay, locus_overlay for the overlay's arrangements alone");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts, locus, locus_overlay, locus_solids };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import, locus for every fuzz test of the B-Rep kernel, locus_overlay for the overlay's arrangements alone, locus_solids for its booleans of solids alone");
         // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
             .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
@@ -751,9 +751,11 @@ pub fn build(b: *std.Build) void {
             // Locus's tests are a test of their own, below
             .locus => "fuzz:",
             .locus_overlay => "fuzz: the overlay",
+            .locus_solids => "fuzz: booleans of solids",
         } else "fuzz:";
+        const locus_target = fuzz_target == .locus or fuzz_target == .locus_overlay or fuzz_target == .locus_solids;
         const fuzz_step = b.step("fuzz", "Fuzz the front end, the runtime and Locus (with --fuzz; without it, replay the corpus)");
-        if (fuzz_target != .locus and fuzz_target != .locus_overlay) {
+        if (!locus_target) {
             const fuzz_tests = b.addTest(.{
                 .root_module = mod,
                 .filters = b.graph.dupeStrings(&.{fuzz_filter}),
@@ -763,10 +765,10 @@ pub fn build(b: *std.Build) void {
         }
         // Locus is its own module, so its fuzz tests (src/locus/src/fuzz_test.zig) are a
         // test of their own, built the same way
-        if (fuzz_target == null or fuzz_target == .locus or fuzz_target == .locus_overlay) {
+        if (fuzz_target == null or locus_target) {
             const locus_fuzz_tests = b.addTest(.{
                 .root_module = locus.module("locus"),
-                .filters = b.graph.dupeStrings(&.{if (fuzz_target == .locus_overlay) fuzz_filter else "fuzz:"}),
+                .filters = b.graph.dupeStrings(&.{if (fuzz_target == .locus_overlay or fuzz_target == .locus_solids) fuzz_filter else "fuzz:"}),
                 .use_llvm = true,
             });
             fuzz_step.dependOn(&b.addRunArtifact(locus_fuzz_tests).step);

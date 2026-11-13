@@ -6,6 +6,10 @@
 //! passes or a clean error, nothing leaks, the area identities of the booleans hold, the
 //! triangulation's area is the sheet's, and no run can hang: the counts bound every loop.
 //! A failing chain is printed as its rings and operations, so it can become a parity case.
+//! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
+//! points, placed by turns, scales and half-steps (an extreme one time in sixteen), put
+//! through chains of booleans and cuts by planes; every result through the checker, the
+//! overlap rules and its report, the volume identities holding.
 
 const std = @import("std");
 const testing = std.testing;
@@ -336,7 +340,7 @@ const ScriptedSource = struct {
 };
 
 /// What a `replay:` line runs: its kind's target on its draws.
-const ReplayKind = enum { chain, chords, overlay };
+const ReplayKind = enum { chain, chords, overlay, solids };
 
 /// Runs one `replay:` line, after the `replay:`; `error.InvalidReplay` when it is not one.
 fn replayLine(line: []const u8) !void {
@@ -350,6 +354,7 @@ fn replayLine(line: []const u8) !void {
         .chain => _ = try runChain(&source),
         .chords => try checkFreeFormChords(&source),
         .overlay => _ = try runArrangement(&source),
+        .solids => _ = try runSolids(&source),
     }
 }
 
@@ -370,7 +375,7 @@ test "Fuzz replay: the finds given with -Dfuzz-replay=FILE run clean" {
     try testing.expect(ran > 0);
 }
 
-test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve and an arrangement" {
+test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve, an arrangement and a solid chain" {
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x7e91);
     var source = RandomSource{ .random = prng.random() };
     for (std.enums.values(ReplayKind)) |kind| {
@@ -381,6 +386,7 @@ test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve and
                 .chain => _ = try runChain(&first),
                 .chords => try checkFreeFormChords(&first),
                 .overlay => _ = try runArrangement(&first),
+                .solids => _ = try runSolids(&first),
             }
             var scripted: ScriptedSource = .{ .draws = first.draws.items };
             var again: Recording(*ScriptedSource) = .{ .inner = &scripted };
@@ -389,6 +395,7 @@ test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve and
                 .chain => _ = try runChain(&again),
                 .chords => try checkFreeFormChords(&again),
                 .overlay => _ = try runArrangement(&again),
+                .solids => _ = try runSolids(&again),
             }
             try testing.expectEqualSlices(i64, first.draws.items, again.draws.items);
         }
@@ -1197,4 +1204,251 @@ test "Fuzz chords: generated free-form curves on a plain test run are certified 
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED);
     var source: RandomSource = .{ .random = prng.random() };
     for (0..PLAIN_RUN_CURVES) |_| try checkFreeFormChords(&source);
+}
+
+// --- booleans of solids (M4) ---
+
+/// The coarse grid solids are placed on: integers in [0, SOLID_GRID], so faces coincide,
+/// edges overlap and corners touch often (research/solidcraft.md §1).
+const SOLID_GRID: i32 = 4;
+/// Steps of a solid chain at most; a step is a boolean (all three, for the identities) or
+/// a cut by a plane.
+const MAX_SOLID_OPS = 3;
+/// A hull's points, at least and at most.
+const MIN_HULL_POINTS = 4;
+const MAX_HULL_POINTS = 8;
+/// A chain stops once its solid has this many faces: the work of every step is bounded.
+const SOLID_FACES_AT_MOST = 300;
+/// The turns a placement takes (radians): the grid's own, half of one, and one off it.
+const TURNS = [_]f64{ std.math.pi / 2.0, std.math.pi, std.math.pi / 4.0, 0.3 };
+const TURN_AXES = [_]vec.Vec3{ vec.X3, vec.Y3, vec.Z3, .{ 1, 2, 3 } };
+/// A scale per axis.
+const SCALES = [_]f64{ 0.5, 1, 2 };
+/// Chains of a plain test run, and how many must reach their checks.
+const PLAIN_RUN_SOLIDS = 40;
+
+const solid_boolean = struct {
+    const pipeline = @import("boolean/pipeline.zig");
+    const trim = @import("boolean/trim.zig");
+    const tests = @import("boolean/pipeline_test.zig");
+};
+const solid_hull = @import("construct/hull.zig");
+
+test "fuzz: booleans of solids take any generated chain" {
+    try testing.fuzz({}, solidChain, .{});
+}
+
+fn solidChain(_: void, smith: *Smith) anyerror!void {
+    var recording: Recording(*Smith) = .{ .inner = smith };
+    defer recording.deinit();
+    errdefer recording.report("solids");
+    _ = try runSolids(&recording);
+}
+
+test "Fuzz solids: generated chains of booleans of solids run clean on a plain test run, most of them checked" {
+    var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x5011d5);
+    var source = RandomSource{ .random = prng.random() };
+    var checked: usize = 0;
+    for (0..PLAIN_RUN_SOLIDS) |_| {
+        var recording: Recording(*RandomSource) = .{ .inner = &source };
+        defer recording.deinit();
+        errdefer recording.report("solids");
+        checked += @intFromBool(try runSolids(&recording) == .checked);
+    }
+    try testing.expect(checked >= PLAIN_RUN_SOLIDS / 2);
+}
+
+test "Fuzz solids: the finds of 2026-11-13 replay clean" {
+    const finds = [_][]const u8{
+        // a cut's corner on the face it was cut from, the cut open elsewhere: a pinch at a point, refused
+        "solids 0 0 4 0 3 1 3 3 2 -1 1 2 14 1 1 1 7 3 3 2 1 2 4 2 1 4 2 2 0 0 1 4 1 1 2 0 2 2 2 1 1 0 2 8 1",
+        // a sliver one intersection tolerance thick crossed by a face: the paves decide the boundary, a sample on the other's face gives way
+        "solids 0 0 1 3 4 1 2 3 3 2 2 0 1 0 4 3 2 1 8 1 1 1 2 3 3 3 4 2 1 4 0 1 4 2 2 3 2 2 1 0 3 1 1 1 3 -1 0 2 1 1 10 0",
+        // a contact along a line across two coplanar faces of a hull: an edge with a copy is never removed
+        "solids 0 1 2 1 3 2 4 0 0 1 3 -1 -2 2 14 1 1 1 5 1 4 1 4 0 4 0 4 2 1 3 2 1 3 4 1 2 0 -1 0 3 0",
+        // a pinched difference reaching simplification: the assembly checked structurally first, no panic
+        "solids 1 5 1 0 2 2 1 4 0 2 0 2 3 4 4 1 1 0 2 0 0 1 2 1 1 -2 -2 1 2 6 2 1 1 4 0 3 1 3 4 4 0 1 4 1 0 0 0 0 0 3 1 2 -1 8 0",
+        // an edge passing an edge within the tolerance, crossing its face at a shallow angle: an edge meets a plane once
+        "solids 0 3 4 3 4 0 1 2 0 2 0 0 2 -2 -1 16 3 1 1 7 4 3 4 4 4 4 1 4 3 0 1 0 3 3 4 0 4 0 0 4 0 1 3 -2 -1 0 1 0 10 0 1 1 4 1 1 4 0 3 0 0 2 1 4 2 2 0 1 3 2 -2 1 -1 3 1 3 0 3 4 1 3 2 3 0 1 1 0 0 0 2 0 1 -2 3 1",
+        // vertices exactly the intersection tolerance apart, merged: the ball past the zone by rounding, refused at the merge
+        "solids 0 2 3 1 2 0 4 3 2 -1 -1 -1 6 2 1 1 7 1 1 3 4 0 1 0 0 4 0 1 0 4 0 3 3 3 1 0 0 4 2 2 -1 -1 2 1 2 10 1 3 1 7 2 2 4 1 0 4 0 0 4 4 2 4 2 2 1 0 1 2 4 0 0 0 2 0 0 0 1 1 2 1 1 2 1",
+        // a lone slit's spur removed, its near vertex left a loop of one vertex; the containment table then sewed it
+        "solids 0 1 4 1 4 1 2 3 2 -1 -2 0 12 3 3 0 0 3 0 2 3 4 2 3 2 2 -1 2 1 1 0 2 4 1 2 0 4 2 3 2 2 -1 10 0 1 0 2 3 2 3 3 4 2 3 -1 -2 2 2 1",
+    };
+    for (finds) |line| {
+        errdefer std.debug.print("the replay that failed: {s}\n", .{line});
+        try replayLine(line);
+    }
+}
+
+/// One generated chain of booleans of solids (architecture §9.2's M4 fuzz): a solid, then up
+/// to `MAX_SOLID_OPS` steps, each a boolean with another solid or a cut by a plane. A
+/// boolean step makes all three of the pair: each through the checker at level 2, the
+/// overlap rules and its report (`pipeline_test.expectReportFits`), and the volume
+/// identities, V(A ∪ B) + V(A ∩ B) = V(A) + V(B) and V(A − B) = V(A) − V(A ∩ B), exactly but
+/// for a slab of faces closer than the intersection tolerance (one plane to the boolean); the
+/// chain goes on with one of them. A cut's two sides make the whole. A refusal by design (a
+/// pinch, an edge too short to split, an argument out of range) is clean; the general path
+/// failing on valid planar operands (`NotValid`, `IntersectionFailed`) is a find.
+fn runSolids(source: anytype) !Outcome {
+    var log: Log = .{};
+    defer log.text.deinit(testing.allocator);
+    errdefer std.debug.print("the solid chain that failed:\n{s}", .{log.text.items});
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    errdefer std.debug.print("the findings: {f}\n", .{diag});
+    var current = (try generatedSolid(source, &log, &diag)) orelse return .refused;
+    defer current.deinit();
+    try expectSolid(&current, &diag);
+
+    const ops = source.valueRangeAtMost(u8, 1, MAX_SOLID_OPS);
+    for (0..ops) |_| {
+        if (current.counts().faces > SOLID_FACES_AT_MOST) break;
+        if (source.valueRangeAtMost(u8, 0, 3) == 0) {
+            // A cut by a plane, the normal on the grid's directions
+            var normal: vec.Vec3 = undefined;
+            for (&normal) |*c| c.* = @floatFromInt(source.valueRangeAtMost(i32, -1, 1));
+            if (normal[0] == 0 and normal[1] == 0 and normal[2] == 0) normal = vec.Z3;
+            const extreme = source.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1;
+            const at = if (extreme) EXTREMES[source.index(EXTREMES.len)] else @as(f64, @floatFromInt(source.valueRangeAtMost(i32, -2, 2 * SOLID_GRID))) * 0.5;
+            try log.add("  trim by {d} {d} {d} at {d}\n", .{ normal[0], normal[1], normal[2], at });
+            var front = solid_boolean.trim.trimByPlane(testing.allocator, &current, normal, at, .{}, &diag, null) catch |err| return cleanSolid(err);
+            defer front.deinit();
+            var back = solid_boolean.trim.trimByPlane(testing.allocator, &current, vec.neg(normal), -at, .{}, &diag, null) catch |err| return cleanSolid(err);
+            defer back.deinit();
+            try expectSolid(&front, &diag);
+            try expectSolid(&back, &diag);
+            const whole = try mass.mass(&current, .{}, &diag);
+            try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + tol.xsect * whole.area);
+            continue;
+        }
+        var other = (try generatedSolid(source, &log, &diag)) orelse continue;
+        defer other.deinit();
+        try expectSolid(&other, &diag);
+        const op = pick(solid_boolean.pipeline.Op, source);
+        try log.add("  {s}\n", .{@tagName(op)});
+        var results: [3]Body = undefined;
+        var made: usize = 0;
+        defer for (results[0..made]) |*r| r.deinit();
+        for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |each| {
+            var report = solid_boolean.pipeline.Report.init(testing.allocator);
+            defer report.deinit();
+            results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return cleanSolid(err);
+            made += 1;
+            try expectSolid(&results[made - 1], &diag);
+            try solid_boolean.tests.expectReportFits(&report, &current, &other, &results[made - 1], each);
+        }
+        const ma = try mass.mass(&current, .{}, &diag);
+        const mb = try mass.mass(&other, .{}, &diag);
+        const va = ma.volume;
+        const vb = mb.volume;
+        const vu = try solidVolume(&results[0], &diag);
+        const vi = try solidVolume(&results[1], &diag);
+        const vd = try solidVolume(&results[2], &diag);
+        // Faces closer than the intersection tolerance are one plane: the slab between them,
+        // at most the tolerance times the smaller operand's area, may count either way
+        const close = IDENTITY_CLOSE * @max(va + vb, 1) + tol.xsect * @min(ma.area, mb.area);
+        errdefer std.debug.print("volumes: a {d}, b {d}, union {d}, intersection {d}, difference {d}\n", .{ va, vb, vu, vi, vd });
+        try testing.expectApproxEqAbs(va + vb, vu + vi, close);
+        try testing.expectApproxEqAbs(va - vi, vd, close);
+        const keep: usize = switch (op) {
+            .@"union" => 0,
+            .intersection => 1,
+            .difference => 2,
+        };
+        current.deinit();
+        current = results[keep];
+        // The kept result is the chain's now; the others are freed
+        results[keep] = results[made - 1];
+        made -= 1;
+    }
+    return .checked;
+}
+
+/// A refusal by design is clean; the general path failing on valid planar operands is a
+/// find, and out of memory is the harness's own.
+fn cleanSolid(err: anyerror) anyerror!Outcome {
+    return switch (err) {
+        error.OutOfMemory, error.NotValid, error.IntersectionFailed => err,
+        else => .refused,
+    };
+}
+
+/// A box or the hull of grid points, placed: sometimes turned about an axis through the
+/// grid's middle, sometimes scaled per axis, moved by half-steps; one time in
+/// `EXTREME_ONE_IN` a placement takes a value a script would never write. Null for a clean
+/// refusal (a hull of points in a plane, an extreme placement refused).
+fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
+    var shape: Body = undefined;
+    if (source.valueRangeAtMost(u8, 0, 1) == 0) {
+        var lo: vec.Vec3 = undefined;
+        var hi: vec.Vec3 = undefined;
+        for (0..3) |k| {
+            const a = source.valueRangeAtMost(i32, 0, SOLID_GRID - 1);
+            lo[k] = @floatFromInt(a);
+            hi[k] = @floatFromInt(source.valueRangeAtMost(i32, a + 1, SOLID_GRID));
+        }
+        try log.add("box ({d}, {d}, {d}) to ({d}, {d}, {d})", .{ lo[0], lo[1], lo[2], hi[0], hi[1], hi[2] });
+        var unit = primitives.box(testing.allocator, tol, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, diag) catch |err| return refusedSolid(err);
+        defer unit.deinit();
+        shape = transform.transform(testing.allocator, &unit, &Affine.translate(lo), .{}, diag) catch |err| return refusedSolid(err);
+    } else {
+        var points: [MAX_HULL_POINTS]vec.Vec3 = undefined;
+        const n = source.valueRangeAtMost(u8, MIN_HULL_POINTS, MAX_HULL_POINTS);
+        try log.add("hull of", .{});
+        for (points[0..n]) |*p| {
+            for (p) |*c| c.* = @floatFromInt(source.valueRangeAtMost(i32, 0, SOLID_GRID));
+            try log.add(" ({d}, {d}, {d})", .{ p[0], p[1], p[2] });
+        }
+        shape = solid_hull.hull(testing.allocator, tol, points[0..n], diag) catch |err| {
+            try log.add(": refused\n", .{});
+            return refusedSolid(err);
+        };
+    }
+    defer shape.deinit();
+    // The placement
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var place = Affine.translate(vec.ZERO3);
+    if (source.valueRangeAtMost(u8, 0, 3) == 0) {
+        const axis = vec.normalized(TURN_AXES[source.index(TURN_AXES.len)]).?;
+        const angle = TURNS[source.index(TURNS.len)];
+        try log.add(", turned {d} about ({d}, {d}, {d})", .{ angle, axis[0], axis[1], axis[2] });
+        place = Affine.rotateAbout(middle, axis, angle).compose(&place);
+    }
+    if (source.valueRangeAtMost(u8, 0, 3) == 0) {
+        var by: vec.Vec3 = undefined;
+        for (&by) |*c| c.* = SCALES[source.index(SCALES.len)];
+        try log.add(", scaled ({d}, {d}, {d})", .{ by[0], by[1], by[2] });
+        place = Affine.scaleBy(by).compose(&place);
+    }
+    var move: vec.Vec3 = undefined;
+    for (&move) |*c| c.* = @as(f64, @floatFromInt(source.valueRangeAtMost(i32, -2, 2))) * 0.5;
+    if (source.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1) move[source.index(3)] = EXTREMES[source.index(EXTREMES.len)];
+    try log.add(", moved ({d}, {d}, {d})\n", .{ move[0], move[1], move[2] });
+    place = Affine.translate(move).compose(&place);
+    const placed = transform.transform(testing.allocator, &shape, &place, .{}, diag) catch |err| return refusedSolid(err);
+    return placed;
+}
+
+fn refusedSolid(err: anyerror) anyerror!?Body {
+    if (err == error.OutOfMemory) return err;
+    return null;
+}
+
+/// A solid passes every rule of the checker and the overlap rules.
+fn expectSolid(body: *const Body, diag: *Diagnostics) !void {
+    var report = try check.run(testing.allocator, body, .global);
+    defer report.deinit(testing.allocator);
+    if (report.first()) |f| {
+        std.debug.print("the checker: {f}\n", .{f});
+        return error.ResultNotValid;
+    }
+    solid_overlap.check(testing.allocator, body, .{}, diag) catch |err| {
+        std.debug.print("the overlap rules: {f}\n", .{diag});
+        return err;
+    };
+}
+
+fn solidVolume(body: *const Body, diag: *Diagnostics) !f64 {
+    return (try mass.mass(body, .{}, diag)).volume;
 }
