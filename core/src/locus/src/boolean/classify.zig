@@ -123,17 +123,30 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
     return classes;
 }
 
-/// Coincident: the first sample strictly inside a face of the other operand lying in this
-/// face's plane (`partners`), facing the same way or the other; null when none is.
+/// Coincident: inside a face of the other operand lying in this face's plane (`partners`),
+/// facing the same way or the other; null when outside them all. The imprint cut the
+/// fragment along those faces' boundaries, so it lies on one or off them all, whole: the
+/// first sample on no partner's boundary decides (one on a boundary gives way to the
+/// next), never a scan of every sample against every partner (a thousand-sided cap's
+/// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
 fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
     for (samples) |p| {
+        var on_a_boundary = false;
         for (partners) |g| {
             const face_g = types.FaceIndex.of(g);
-            if (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag) != .inside) continue;
+            switch (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag)) {
+                .outside => continue,
+                .boundary => {
+                    on_a_boundary = true;
+                    continue;
+                },
+                .inside => {},
+            }
             const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
             const n_g = in_face.outwardNormal(paves.operands[other], face_g, .{ 0, 0 });
             return .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
         }
+        if (!on_a_boundary) return null;
     }
     return null;
 }
