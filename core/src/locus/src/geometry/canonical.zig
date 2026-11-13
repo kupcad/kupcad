@@ -1,9 +1,15 @@
 //! When two records are the same geometry (docs/architecture.md §5.1, KNOWLEDGE §5): a
-//! `keyPoint` per kind that two equal records share (the foot of a plane or a line from
-//! the origin, a sphere's centre), so a welding grid narrows the candidates, and `same`
-//! per kind, which compares the records within the tolerance (lengths within `zone`,
+//! `keyPoint` per kind that two equal records share (the foot of a plane, a line or an axis
+//! from a point `at`, a sphere's centre), so a welding grid narrows the candidates, and
+//! `same` per kind, which compares the records within the tolerance (lengths within `zone`,
 //! directions within `angle`). A rotation of a surface about its own axis is a
 //! reparameterization, not a different surface, so a cylinder's `x` is not compared.
+//!
+//! `at` is a point of the model (the interner's first), never the world's origin: a foot
+//! moves by a direction's rounding times its distance from `at`, so from the origin two
+//! pieces of one line 3.7e5 out had feet 1.5e-4 apart, past the zone, and were two lines
+//! where the same model at the origin had one (rigid moves must not change a result,
+//! architecture §9.2). From a point of the model the factor is the model's size.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -13,14 +19,15 @@ const surfaces = @import("surfaces.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Vec3 = vec.Vec3;
 
-/// The point of the line nearest the origin: the same for the same line however it is
+/// The point of the line nearest `at`, from `at`: the same for the same line however it is
 /// placed or directed.
-pub fn lineKey(line: curves.Line) Vec3 {
-    return vec.addScaled(line.o, line.d, -vec.dot(line.o, line.d));
+pub fn lineKey(line: curves.Line, at: Vec3) Vec3 {
+    const o = vec.sub(line.o, at);
+    return vec.addScaled(o, line.d, -vec.dot(o, line.d));
 }
 
-pub fn sameLine(a: curves.Line, b: curves.Line, tol: Tolerance) bool {
-    return tol.parallel(a.d, b.d) and tol.samePoint(lineKey(a), lineKey(b));
+pub fn sameLine(a: curves.Line, b: curves.Line, at: Vec3, tol: Tolerance) bool {
+    return tol.parallel(a.d, b.d) and tol.samePoint(lineKey(a, at), lineKey(b, at));
 }
 
 /// Whether `p` lies on the line within `zone`.
@@ -39,11 +46,11 @@ pub fn sameEllipse(a: curves.Ellipse, b: curves.Ellipse, tol: Tolerance) bool {
         tol.parallel(a.normal(), b.normal()) and tol.parallel(a.x, b.x);
 }
 
-/// The foot of the perpendicular from the origin: the same for the same plane whichever
-/// way its normal points.
-pub fn planeKey(plane: surfaces.Plane) Vec3 {
+/// The foot of the perpendicular from `at`, from `at`: the same for the same plane
+/// whichever way its normal points.
+pub fn planeKey(plane: surfaces.Plane, at: Vec3) Vec3 {
     const n = plane.frame.z;
-    return vec.scale(n, vec.dot(plane.frame.origin, n));
+    return vec.scale(n, vec.dot(vec.sub(plane.frame.origin, at), n));
 }
 
 pub fn samePlane(a: surfaces.Plane, b: surfaces.Plane, tol: Tolerance) bool {
@@ -52,13 +59,14 @@ pub fn samePlane(a: surfaces.Plane, b: surfaces.Plane, tol: Tolerance) bool {
     return @abs(a.height(b.frame.origin)) <= tol.zone;
 }
 
-/// The point of the axis nearest the origin.
-pub fn axisKey(frame: types.Frame) Vec3 {
-    return vec.addScaled(frame.origin, frame.z, -vec.dot(frame.origin, frame.z));
+/// The point of the axis nearest `at`, from `at`.
+pub fn axisKey(frame: types.Frame, at: Vec3) Vec3 {
+    const o = vec.sub(frame.origin, at);
+    return vec.addScaled(o, frame.z, -vec.dot(o, frame.z));
 }
 
-pub fn sameCylinder(a: surfaces.Cylinder, b: surfaces.Cylinder, tol: Tolerance) bool {
-    return @abs(a.r - b.r) <= tol.zone and tol.parallel(a.frame.z, b.frame.z) and tol.samePoint(axisKey(a.frame), axisKey(b.frame));
+pub fn sameCylinder(a: surfaces.Cylinder, b: surfaces.Cylinder, at: Vec3, tol: Tolerance) bool {
+    return @abs(a.r - b.r) <= tol.zone and tol.parallel(a.frame.z, b.frame.z) and tol.samePoint(axisKey(a.frame, at), axisKey(b.frame, at));
 }
 
 /// The apex of the cone.

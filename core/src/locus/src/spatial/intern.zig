@@ -86,6 +86,10 @@ pub const Interner = struct {
     spheres: KeyGrid,
     tori: KeyGrid,
     scratch: std.ArrayList(u32) = .empty,
+    /// The point the lines', planes' and axes' keys are taken from (`canonical.lineKey`):
+    /// the first point given, so it moves with the model and the keys are the model's size
+    /// from it, whatever its distance from the origin.
+    at: ?Vec3 = null,
 
     /// An interner for an empty arena at `tol`: points weld within `zone`, records are
     /// looked up within `zone` of their key.
@@ -110,8 +114,15 @@ pub const Interner = struct {
         self.* = undefined;
     }
 
+    /// The point keys are taken from, `p` when none was given before.
+    fn keyOrigin(self: *Interner, p: Vec3) Vec3 {
+        if (self.at == null) self.at = p;
+        return self.at.?;
+    }
+
     /// The index of `p` in the arena: the first kept point within `zone`, else `p` added.
     pub fn point(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, p: Vec3) Error!PointIndex {
+        _ = self.keyOrigin(p);
         if (try self.points.find(g.points.items, p)) |found| return PointIndex.of(found);
         const index = try g.addPoint(allocator, p);
         errdefer _ = g.points.pop();
@@ -125,14 +136,16 @@ pub const Interner = struct {
     /// are one line there and apart further along, so a line is shared only over the
     /// extent that asks for it.
     pub fn line(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Line, a: Vec3, b: Vec3) Error!CurveRef {
-        try self.lines.candidates(allocator, canonical.lineKey(item), &self.scratch);
+        const at = self.keyOrigin(a);
+        const key = canonical.lineKey(item, at);
+        try self.lines.candidates(allocator, key, &self.scratch);
         for (self.scratch.items) |i| {
             const kept = g.lines.items[i];
-            if (canonical.sameLine(kept, item, self.tol) and canonical.lineHolds(kept, a, self.tol) and canonical.lineHolds(kept, b, self.tol)) return CurveRef.of(.line, i);
+            if (canonical.sameLine(kept, item, at, self.tol) and canonical.lineHolds(kept, a, self.tol) and canonical.lineHolds(kept, b, self.tol)) return CurveRef.of(.line, i);
         }
         const ref = try g.addLine(allocator, item);
         errdefer _ = g.lines.pop();
-        try self.lines.add(allocator, canonical.lineKey(item));
+        try self.lines.add(allocator, key);
         return ref;
     }
 
@@ -146,20 +159,23 @@ pub const Interner = struct {
     }
 
     pub fn plane(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Plane) Error!SurfaceRef {
-        try self.planes.candidates(allocator, canonical.planeKey(item), &self.scratch);
+        const key = canonical.planeKey(item, self.keyOrigin(item.frame.origin));
+        try self.planes.candidates(allocator, key, &self.scratch);
         for (self.scratch.items) |i| if (canonical.samePlane(g.planes.items[i], item, self.tol)) return SurfaceRef.of(.plane, i);
         const ref = try g.addPlane(allocator, item);
         errdefer _ = g.planes.pop();
-        try self.planes.add(allocator, canonical.planeKey(item));
+        try self.planes.add(allocator, key);
         return ref;
     }
 
     pub fn cylinder(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Cylinder) Error!SurfaceRef {
-        try self.cylinders.candidates(allocator, canonical.axisKey(item.frame), &self.scratch);
-        for (self.scratch.items) |i| if (canonical.sameCylinder(g.cylinders.items[i], item, self.tol)) return SurfaceRef.of(.cylinder, i);
+        const at = self.keyOrigin(item.frame.origin);
+        const key = canonical.axisKey(item.frame, at);
+        try self.cylinders.candidates(allocator, key, &self.scratch);
+        for (self.scratch.items) |i| if (canonical.sameCylinder(g.cylinders.items[i], item, at, self.tol)) return SurfaceRef.of(.cylinder, i);
         const ref = try g.addCylinder(allocator, item);
         errdefer _ = g.cylinders.pop();
-        try self.cylinders.add(allocator, canonical.axisKey(item.frame));
+        try self.cylinders.add(allocator, key);
         return ref;
     }
 

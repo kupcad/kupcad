@@ -14,6 +14,8 @@ const Frame = types.Frame;
 
 /// Points of the differential test, and the box they fall in.
 const RANDOM_POINTS = 4000;
+/// Far from the origin: coordinates of 1e5, where one's ulp is 1.5e-11.
+const FAR: Vec3 = .{ 1e5, -2e5, 3e5 };
 const SEED = 0x9e1d;
 
 test "Grid: a query visits the cells its box overlaps and nothing farther" {
@@ -230,4 +232,33 @@ test "Geometry: references resolve to views, NURBS through the pools, and a clon
     _ = try g.addPoint(testing.allocator, .{ 9, 9, 9 });
     try testing.expectEqual(@as(usize, 1), copy.points.items.len);
     try testing.expectApproxEqAbs(@as(f64, 2), vec.length(copy.curve(c).eval(1.0)), 1e-12);
+}
+
+test "Interner: pieces of one line and triangles of one plane far from the origin are one record, as near it" {
+    // Each piece's line runs through its own rounded ends: a short piece's direction is off
+    // by the rounding over its length, 4e-10, which moved a foot taken from the origin
+    // 1.5e-4 out here, past the zone; from a point of the model it moves 1e-9
+    const tol = Tolerance.fromZone(1e-5);
+    const d = vec.normalized(.{ -0.25, -0.0476, 1 }).?;
+    for ([_]Vec3{ vec.ZERO3, FAR }) |base| {
+        errdefer std.debug.print("based at {any}\n", .{base});
+        var g: Geometry = .empty;
+        defer g.deinit(testing.allocator);
+        var interner = Interner.init(tol);
+        defer interner.deinit(testing.allocator);
+        const along = [_]f64{ 0, 0.157, 0.369, 1.253 };
+        var ends: [along.len]Vec3 = undefined;
+        for (along, &ends) |t, *p| p.* = vec.addScaled(base, d, t);
+        const first = try interner.line(testing.allocator, &g, curves.Line.through(ends[0], ends[1]).?, ends[0], ends[1]);
+        for (1..ends.len - 1) |k| try testing.expect(first.eql(try interner.line(testing.allocator, &g, curves.Line.through(ends[k], ends[k + 1]).?, ends[k], ends[k + 1])));
+        // Planes: two triangles of one plane, a tenth across, each with its own normal
+        const u = vec.normalized(.{ 1, 2, 0.3 }).?;
+        const w = vec.normalized(vec.cross(u, d)).?;
+        const corners = [_]Vec3{ base, vec.addScaled(base, u, 0.1), vec.add(vec.scale(u, 0.1), vec.addScaled(base, w, 0.1)), vec.addScaled(base, w, 0.1) };
+        const normal_a = vec.normalized(vec.cross(vec.sub(corners[1], corners[0]), vec.sub(corners[2], corners[0]))).?;
+        const normal_b = vec.normalized(vec.cross(vec.sub(corners[2], corners[0]), vec.sub(corners[3], corners[0]))).?;
+        const plane_a = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[0], vec.normalized(vec.sub(corners[1], corners[0])).?, normal_a) });
+        const plane_b = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[2], vec.normalized(vec.sub(corners[3], corners[2])).?, normal_b) });
+        try testing.expect(plane_a.eql(plane_b));
+    }
 }
