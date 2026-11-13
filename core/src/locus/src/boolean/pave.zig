@@ -126,6 +126,9 @@ pub const Paves = struct {
     gaps: std.ArrayList(f64) = .empty,
     owners: std.ArrayList(u2) = .empty,
     welder: grid.PointWelder,
+    /// The rounding a distance between the operands' points may carry: one within it of
+    /// the intersection tolerance is refused (`Filler.within`, `at_tolerance`).
+    rounding: f64,
     /// Each operand's vertex as a merged vertex (`NONE` for a tombstone).
     vertex_of: [2][]u32 = .{ &.{}, &.{} },
     /// Each operand's edge's paves, by `s`, its ends first and last.
@@ -218,7 +221,8 @@ pub const Paves = struct {
 /// The paves of `a` and `b` (solids with planar faces and straight edges) at `tol`;
 /// `stage` follows the interference classes as they are found, so a refusal's is there.
 pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics, stage: *Stage) Error!Paves {
-    var p: Paves = .{ .allocator = allocator, .tol = tol, .operands = .{ a, b }, .welder = grid.PointWelder.init(tol.xsect) };
+    const rounding = try roundingOf(a, b, tol, diag);
+    var p: Paves = .{ .allocator = allocator, .tol = tol, .operands = .{ a, b }, .rounding = rounding, .welder = grid.PointWelder.initWithMargin(tol.xsect, rounding) };
     errdefer p.deinit();
     for (0..2) |k| {
         const body = p.operands[k];
@@ -346,7 +350,7 @@ const Filler = struct {
         }
         // The welder holds the moved points
         p.welder.deinit(self.allocator);
-        p.welder = grid.PointWelder.init(p.tol.xsect);
+        p.welder = grid.PointWelder.initWithMargin(p.tol.xsect, p.rounding);
         for (0..p.points.items.len) |i| try self.register(@intCast(i));
     }
 
@@ -362,7 +366,25 @@ const Filler = struct {
 
     /// The first merged vertex within the tolerance of `q`.
     fn find(self: *Filler, q: Vec3) Error!?u32 {
-        return self.p.welder.find(self.p.points.items, q) catch |e| return welderError(self.diag, e);
+        const points = self.p.points.items;
+        if (self.p.welder.atRadius(points, q) catch |e| return welderError(self.diag, e)) |at| {
+            return self.atTolerance(vec.distance(points[at], q), self.p.tol.xsect, .of(.vertex, at));
+        }
+        return self.p.welder.find(points, q) catch |e| return welderError(self.diag, e);
+    }
+
+    /// `d ≤ limit`: a decision of the tolerance, `limit` the intersection tolerance (and a
+    /// gap). A `d` within rounding of `limit` either way is the tolerance to rounding, which
+    /// one computation of a configuration finds within and another beyond, so the
+    /// operands' topology would disagree with itself: refused (`at_tolerance`), naming
+    /// `entity`, as a merged vertex past the zone is.
+    fn within(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error!bool {
+        if (@abs(d - limit) <= self.p.rounding) return self.atTolerance(d, limit, entity);
+        return d <= limit;
+    }
+
+    fn atTolerance(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error {
+        return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = stageLabel(self.stage.*), .measured = d, .threshold = limit });
     }
 
     fn register(self: *Filler, i: u32) Error!void {
@@ -500,7 +522,7 @@ const Filler = struct {
             if (skip != null and skip.? == e) continue;
             if (self.hasPave(k, e, v)) continue;
             const at = self.along(k, e, q) orelse continue;
-            if (at.distance > self.p.tol.xsect + self.p.gaps.items[v]) continue;
+            if (!try self.within(at.distance, self.p.tol.xsect + self.p.gaps.items[v], .of(.edge, @backingInt(e)))) continue;
             try self.addPave(k, e, v, at);
         }
     }
@@ -526,7 +548,7 @@ const Filler = struct {
             const c0 = vec.addScaled(p0, d0, closest[0]);
             const c1 = vec.addScaled(q0, d1, closest[1]);
             const gap = vec.distance(c0, c1);
-            if (gap > self.p.tol.xsect) continue;
+            if (!try self.within(gap, self.p.tol.xsect, .of(.edge, @backingInt(ea)))) continue;
             const mid = vec.lerp(c0, c1, 0.5);
             // Away from both edges' ends: an end there is vertex–edge's or vertex–vertex's
             if (self.along(0, ea, mid) == null or self.along(1, eb, mid) == null) continue;
@@ -595,7 +617,7 @@ const Filler = struct {
         for (collect.out[0..collect.count]) |item| {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
-            if (@abs(planar_faces.planeOf(frame).height(q)) > self.p.tol.xsect + self.p.gaps.items[v]) continue;
+            if (!try self.within(@abs(planar_faces.planeOf(frame).height(q)), self.p.tol.xsect + self.p.gaps.items[v], .of(.face, @backingInt(f)))) continue;
             const place = try planar_faces.place(self.body(k), f, q, self.p.tol, self.diag);
             if (place == .outside) continue;
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
@@ -630,7 +652,7 @@ const Filler = struct {
                 const h0 = plane.height(p0);
                 const h1 = plane.height(p1);
                 const xsect = self.p.tol.xsect;
-                if (@abs(h0) <= xsect or @abs(h1) <= xsect or (h0 < 0) == (h1 < 0)) continue;
+                if (try self.within(@abs(h0), xsect, .of(.edge, @backingInt(e))) or try self.within(@abs(h1), xsect, .of(.edge, @backingInt(e))) or (h0 < 0) == (h1 < 0)) continue;
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
                 if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
                     try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = at });
@@ -657,7 +679,7 @@ const Filler = struct {
         var best_distance = std.math.inf(f64);
         for (self.p.edge_paves[k][@backingInt(e)].items) |pave| {
             const point = self.p.point(pave.vertex);
-            if (@abs(plane.height(point)) > self.p.tol.xsect + self.p.gaps.items[pave.vertex]) continue;
+            if (!try self.within(@abs(plane.height(point)), self.p.tol.xsect + self.p.gaps.items[pave.vertex], .of(.face, @backingInt(f)))) continue;
             const distance = vec.distance(point, q);
             if (distance >= best_distance) continue;
             if (try planar_faces.place(self.body(other), f, point, self.p.tol, self.diag) == .outside) continue;
@@ -831,7 +853,7 @@ const Filler = struct {
             const frame_b = planar_faces.frameOf(self.body(1), fb).?;
             if (!p.tol.parallel(frame_a.z, frame_b.z)) continue;
             const apart = try self.planeGap(0, fa, frame_b);
-            if (apart <= p.tol.xsect or apart > reach) continue;
+            if (try self.within(apart, p.tol.xsect, .of(.face, @backingInt(fa))) or apart > reach) continue;
             try self.diag.warn(.{ .code = .nearly_coplanar, .entity = .of(.face, @backingInt(fa)), .measured = apart, .threshold = p.tol.xsect });
         }
     }
@@ -852,7 +874,7 @@ const Filler = struct {
 
     /// Whether every vertex of face `f` of operand `k` lies on the plane of `frame` within
     /// the tolerance and its gap.
-    fn liesIn(self: *const Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!bool {
+    fn liesIn(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!bool {
         const p = self.p;
         const plane = planar_faces.planeOf(frame);
         const body_k = self.body(k);
@@ -861,7 +883,7 @@ const Filler = struct {
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const v = p.vertex_of[k][@backingInt(body_k.coedgeStart(c))];
-                if (@abs(plane.height(p.point(v))) > p.tol.xsect + p.gaps.items[v]) return false;
+                if (!try self.within(@abs(plane.height(p.point(v))), p.tol.xsect + p.gaps.items[v], .of(.face, @backingInt(f)))) return false;
             }
         }
         return true;
@@ -906,6 +928,11 @@ fn closestOnLines(p: Vec3, d: Vec3, q: Vec3, e: Vec3) ?[2]f64 {
 /// How many intersection tolerances apart two parallel faces of the operands may lie for
 /// the warning that the result will have faces that thin.
 const NEARLY_COPLANAR: f64 = 100;
+/// How near the intersection tolerance a distance may come, in rounding of the operands'
+/// largest coordinate, and still be decided: a distance within this of the tolerance is
+/// the tolerance to rounding, which one computation finds within it and another beyond
+/// (the solids fuzzer's finds of 2026-11-13, an operand moved by the tolerance exactly).
+const AT_TOLERANCE_ULPS: f64 = 64;
 
 /// The squared sine of the angle under which two edges count as parallel for edge–edge:
 /// their crossing, if any, lies along an overlap that vertex–edge already split.
@@ -928,6 +955,30 @@ fn sortUnique(comptime T: type, list: *std.ArrayList(T), comptime lessThan: fn (
 
 /// What a refusal of an edge too short to split says, naming the operand and the
 /// interference class that would have split it.
+/// What a refusal at the tolerance was deciding, by its stage.
+fn stageLabel(stage: Stage) []const u8 {
+    return switch (stage) {
+        .vertex_vertex => "a vertex of the first operand and one of the second, merged or not (vertex–vertex)",
+        .vertex_edge => "a vertex on an edge of the other operand or not (vertex–edge)",
+        .edge_edge => "two edges of the operands crossing or not (edge–edge)",
+        .vertex_face => "a vertex on a face of the other operand or not (vertex–face)",
+        .edge_face => "an edge's end on a face's plane of the other operand or not (edge–face)",
+        else => "a face in a face's plane of the other operand or not (face–face)",
+    };
+}
+
+/// The rounding a distance between points of `a` and `b` may carry: `AT_TOLERANCE_ULPS`
+/// of the largest coordinate of either (at least the tolerance's own).
+fn roundingOf(a: *const Body, b: *const Body, tol: Tolerance, diag: *Diagnostics) Error!f64 {
+    var scale = tol.xsect;
+    for ([_]*const Body{ a, b }) |body| {
+        const box = bbox.bodyBounds(body) catch return corrupt(diag);
+        if (box.isEmpty()) continue;
+        for (0..3) |k| scale = @max(scale, @max(@abs(box.min[k]), @abs(box.max[k])));
+    }
+    return AT_TOLERANCE_ULPS * std.math.floatEps(f64) * scale;
+}
+
 fn tooSmallLabel(k: usize, stage: Stage) []const u8 {
     return switch (stage) {
         .vertex_edge => if (k == 0) "an edge of the first operand, too short to split at a vertex of the second on it (vertex–edge)" else "an edge of the second operand, too short to split at a vertex of the first on it (vertex–edge)",

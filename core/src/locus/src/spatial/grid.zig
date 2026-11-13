@@ -113,13 +113,21 @@ pub const Grid = struct {
 };
 
 /// Welds points: `find` gives the first kept point within `radius` of a query, `add`
-/// keeps a new one. Points are kept by the caller in `points`; the grid indexes them.
+/// keeps a new one, `atRadius` the first whose distance is `radius` to within `margin`
+/// (neither clearly within it nor clearly beyond). Points are kept by the caller in
+/// `points`; the grid indexes them.
 pub const PointWelder = struct {
     grid: Grid,
     radius: f64,
+    margin: f64 = 0,
 
     pub fn init(radius: f64) PointWelder {
         return .{ .grid = Grid.init(2.0 * radius), .radius = radius };
+    }
+
+    /// A welder whose `atRadius` looks `margin` past `radius`: its cells that much wider.
+    pub fn initWithMargin(radius: f64, margin: f64) PointWelder {
+        return .{ .grid = Grid.init(2.0 * (radius + margin)), .radius = radius, .margin = margin };
     }
 
     pub fn deinit(self: *PointWelder, allocator: std.mem.Allocator) void {
@@ -142,6 +150,28 @@ pub const PointWelder = struct {
     pub fn find(self: *const PointWelder, points: []const Vec3, p: Vec3) Error!?u32 {
         var search = Search{ .points = points, .p = p, .radius_sq = self.radius * self.radius };
         try self.grid.query(p, self.radius, &search, Search.visit);
+        return if (search.best == Grid.NONE) null else search.best;
+    }
+
+    const Edge = struct {
+        points: []const Vec3,
+        p: Vec3,
+        radius: f64,
+        margin: f64,
+        best: u32 = Grid.NONE,
+
+        fn visit(self: *Edge, index: u32) bool {
+            const d = vec.distance(self.points[index], self.p);
+            if (@abs(d - self.radius) <= self.margin and index < self.best) self.best = index;
+            return true;
+        }
+    };
+
+    /// The index of the first kept point whose distance from `p` is within `margin` of
+    /// `radius`, or null.
+    pub fn atRadius(self: *const PointWelder, points: []const Vec3, p: Vec3) Error!?u32 {
+        var search = Edge{ .points = points, .p = p, .radius = self.radius, .margin = self.margin };
+        try self.grid.query(p, self.radius + self.margin, &search, Edge.visit);
         return if (search.best == Grid.NONE) null else search.best;
     }
 

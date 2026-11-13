@@ -113,6 +113,7 @@ pub const Code = enum(u16) {
     nearly_coplanar,
     solids_touch,
     pinched,
+    at_tolerance,
     // Triangulation (mesh/triangulate.zig)
     ring_starts,
     ring_too_small,
@@ -169,6 +170,7 @@ pub const Code = enum(u16) {
             .imprint_unmatched => "was split where the operands' interferences found no point (its pieces and its neighbours' would not meet)",
             .nearly_coplanar => "lies parallel to a face of the other operand a hair from its plane (the measured distance), not in it: the result has faces as thin as that",
             .pinched => "would touch itself along a line or at a point inside one solid (a pinch, as a pocket meeting a face along an edge of its own makes it), which one shell cannot hold: refused by design",
+            .at_tolerance => "lies the intersection tolerance from another entity to within rounding (the measured distance), neither on it nor clear of it: the operands' every decision about it could go either way, so it is refused; move one by more than the rounding",
             .solids_touch => "is where two solids of the result touch along a line: one edge for each, at one place",
             .unclassified => "has a piece that lies on the other operand's boundary but on none of its faces in this face's plane, so it is neither inside nor outside",
             .shell_overlaps => "lies where the body's other shells put this much material, not none (an outer shell) or one (a void)",

@@ -62,6 +62,27 @@ test "PointWelder: the first kept point within the radius, whatever the order of
     try testing.expectEqual(@as(?u32, 2), try welder.find(points.items, .{ 2 * zone + 0.5 * zone, 0, 0 }));
 }
 
+test "PointWelder: a kept point at the radius to within the margin, either side, and none clear of it" {
+    var points: std.ArrayList(Vec3) = .empty;
+    defer points.deinit(testing.allocator);
+    const radius = 2e-5;
+    const margin = 1e-13;
+    var welder = grid.PointWelder.initWithMargin(radius, margin);
+    defer welder.deinit(testing.allocator);
+    try points.append(testing.allocator, .{ 3, 3, 4 });
+    try welder.add(testing.allocator, points.items, 0);
+    // The solids fuzzer's pair (2026-11-13): a hull moved by the radius, 2.0000000000131e-5
+    // away as the numbers fall, a rounding past it: neither within nor clear
+    try testing.expectEqual(@as(?u32, 0), try welder.atRadius(points.items, .{ 3.00002, 3, 4 }));
+    try testing.expectEqual(@as(?u32, null), try welder.find(points.items, .{ 3.00002, 3, 4 }));
+    // A rounding inside it, and the radius exactly
+    try testing.expectEqual(@as(?u32, 0), try welder.atRadius(points.items, .{ 3, 3, 4 - radius + 0.5 * margin }));
+    // Clearly within, clearly beyond
+    try testing.expectEqual(@as(?u32, null), try welder.atRadius(points.items, .{ 3 + 0.9 * radius, 3, 4 }));
+    try testing.expectEqual(@as(?u32, null), try welder.atRadius(points.items, .{ 3 + 1.1 * radius, 3, 4 }));
+    try testing.expectEqual(@as(?u32, 0), try welder.find(points.items, .{ 3 + 0.9 * radius, 3, 4 }));
+}
+
 test "Interner: points weld to the first kept, and no two kept points are within zone (against a linear scan)" {
     const tol = Tolerance.fromZone(1e-3);
     var g: Geometry = .empty;

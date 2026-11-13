@@ -28,7 +28,8 @@ const expectIdentities = helpers.expectIdentities;
 const shellKinds = helpers.shellKinds;
 const turned = helpers.turned;
 const Vec3 = vec.Vec3;
-const VertexIndex = @import("../topology/types.zig").VertexIndex;
+const types = @import("../topology/types.zig");
+const VertexIndex = types.VertexIndex;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -47,6 +48,21 @@ fn tetrahedron(apex: Vec3, p: Vec3, q: Vec3, r: Vec3) !Body {
     const flip = vec.dot(n, vec.sub(apex, p)) > 0;
     const base: [3]u32 = if (flip) .{ 1, 3, 2 } else .{ 1, 2, 3 };
     return polyhedron(&.{ apex, p, q, r }, &.{ base, .{ 0, base[1], base[0] }, .{ 0, base[2], base[1] }, .{ 0, base[0], base[2] } });
+}
+
+/// `op` of `a` and `b` refused as lying at the intersection tolerance to rounding.
+fn expectAtTolerance(a: *const Body, b: *const Body, op: pipeline.Op) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null)) |result| {
+        var made = result;
+        made.deinit();
+        std.debug.print("boolean {s}: a result, where the tolerance to rounding was expected\n", .{@tagName(op)});
+        return error.TestUnexpectedResult;
+    } else |err| {
+        try testing.expectEqual(error.Degenerate, err);
+        try testing.expectEqual(diagnostics.Code.at_tolerance, diag.first().?.code);
+    }
 }
 
 fn warned(diag: *const Diagnostics, code: diagnostics.Code) usize {
@@ -511,7 +527,10 @@ test "degeneracy: an edge passing a box's edge within the tolerance and crossing
     // a fold the overlap rules refuse. An edge meets a plane once: the crossings are the
     // vertex the edges already have on the faces. The exact intersection's top is an edge
     // 6e-5 long that is now that vertex, 5.4e-5 above it: its volume, and the identities,
-    // hold to that displacement times the result's area, well within the fuzzer's slab
+    // hold to that displacement times the result's area, well within the fuzzer's slab.
+    // The hull as the fuzzer moved it, by the intersection tolerance exactly, puts its face
+    // that far from the box's, to rounding: refused (`at_tolerance`); moved by 1.95e-5 the
+    // crossings are as they were (moved by 1.9e-5, nothing folds even without the rule)
     var a = try box(.{ 0, 1, 1 }, .{ 0.5, 2, 3 });
     defer a.deinit();
     var diag = Diagnostics.init(testing.allocator);
@@ -519,7 +538,10 @@ test "degeneracy: an edge passing a box's edge within the tolerance and crossing
     const points = [_]Vec3{ .{ 4, 3, 4 }, .{ 4, 4, 4 }, .{ 1, 4, 3 }, .{ 0, 1, 0 }, .{ 3, 3, 4 }, .{ 0, 4, 0 } };
     var b0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
     defer b0.deinit();
-    var b = try helpers.moved(&b0, .{ 2e-5, -0.5, 0 });
+    var at = try helpers.moved(&b0, .{ 2e-5, -0.5, 0 });
+    defer at.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&at, &a, op);
+    var b = try helpers.moved(&b0, .{ 1.95e-5, -0.5, 0 });
     defer b.deinit();
     var u = try sound(&b, &a, .@"union");
     defer u.deinit();
@@ -528,7 +550,7 @@ test "degeneracy: an edge passing a box's edge within the tolerance and crossing
     var d = try sound(&b, &a, .difference);
     defer d.deinit();
     // The exact intersection, from its cross-sections in z (2026-11-13)
-    const exact = 0.016663166786673865;
+    const exact = 0.01666325428074834;
     const measured = try @import("../measure/mass.zig").mass(&i, .{}, &diag);
     const apex = 6e-5 * measured.area;
     const vi = measured.volume;
@@ -656,13 +678,15 @@ test "degeneracy: a corner touching a triangular face at its centroid" {
 }
 
 test "degeneracy: a hull's edge across a box's floor, ending the intersection tolerance from its corner" {
-    // The nightly solids fuzzer's find (2026-11-13), reduced: a hull moved by the zone
-    // touches the box from below along its edge (2.00001, 5, 2)–(4.00001, 1, 2), which
-    // crosses the floor from its y = 5 edge to its x = 3 edge at (3, 3.00002, 2), the
-    // intersection tolerance and a rounding from the corner (3, 3, 2). The overlap rules
+    // The nightly solids fuzzer's find (2026-11-13, run 43411851511), reduced: a hull moved
+    // by the zone touches the box from below along its edge (2.00001, 5, 2)–(4.00001, 1, 2),
+    // which crosses the floor from its y = 5 edge to its x = 3 edge at (3, 3.00002, 2),
+    // the intersection tolerance and a rounding from the corner (3, 3, 2). The overlap rules
     // took the floor's piece by that crossing and the side x = 3 to meet from (3, 5, 2) to
     // the corner: the gap's middle is within the zone of the piece, its end is not, and the
     // end was taken all the same. A piece of two faces' meet ends at crossings in both
+    // (`planar_faces.meet`, on those two faces as they came); the boolean itself now
+    // refuses the input, the crossing lying the tolerance from the corner to rounding
     var b = try box(.{ 1, 3, 2 }, .{ 3, 5, 4 });
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
@@ -672,22 +696,21 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     defer c0.deinit();
     var c = try helpers.moved(&c0, .{ 1e-5, 1, 0 });
     defer c.deinit();
-    var u = try sound(&b, &c, .@"union");
-    defer u.deinit();
-    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
-    var i = try sound(&b, &c, .intersection);
-    defer i.deinit();
-    var d = try sound(&b, &c, .difference);
-    defer d.deinit();
-    // Moved by the zone, the hull's faces near the floor count either way within the slab
-    // the fuzzer allows: the intersection tolerance times the smaller operand's area
-    const mass = @import("../measure/mass.zig");
-    const mb = try mass.mass(&b, .{}, &diag);
-    const mc = try mass.mass(&c, .{}, &diag);
-    const slab = tol.xsect * @min(mb.area, mc.area);
-    const vi = try volume(&i);
-    try testing.expectApproxEqAbs(mb.volume + mc.volume, try volume(&u) + vi, slab);
-    try testing.expectApproxEqAbs(mb.volume - vi, try volume(&d), slab);
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&b, &c, op);
+    // The floor's piece, a triangle (with an apex below it), against the box's side x = 3
+    var floor = try tetrahedron(.{ 2.6, 4.3, 1 }, .{ 2.00001, 5, 2 }, .{ 3, 5, 2 }, .{ 3, 3.0000200000000006, 2 });
+    defer floor.deinit();
+    const planar_faces = @import("../intersect/planar_faces.zig");
+    const top = types.FaceIndex.of(helpers.facing(&floor, .{ 0, 0, 1 }));
+    const side = types.FaceIndex.of(helpers.facing(&b, .{ 1, 0, 0 }));
+    var pieces: std.ArrayList(planar_faces.Piece) = .empty;
+    defer pieces.deinit(testing.allocator);
+    try testing.expectEqual(planar_faces.Relation.crossing, try planar_faces.meet(testing.allocator, &floor, top, &b, side, tol, &pieces, &diag));
+    try testing.expectEqual(@as(usize, 1), pieces.items.len);
+    for ([_]Vec3{ pieces.items[0].a, pieces.items[0].b }) |end| {
+        try testing.expect(try planar_faces.place(&floor, top, end, tol, &diag) != .outside);
+        try testing.expect(try planar_faces.place(&b, side, end, tol, &diag) != .outside);
+    }
 }
 
 test "degeneracy: a vertex the intersection tolerance off a face, its edge leaving it at a shallow angle" {
@@ -698,7 +721,10 @@ test "degeneracy: a vertex the intersection tolerance off a face, its edge leavi
     // crosses x = 1 exactly 2e-4 further, inside the face, where the boolean made no edge.
     // The overlap rules took that exact crossing for a point of both faces off one's
     // boundary; they now take a crossing as the boolean does, an end within the tolerance
-    // and its gap being the edge's crossing
+    // and its gap being the edge's crossing. Moved by the tolerance exactly, as the fuzzer
+    // moved it, the hull lies that far from the box to rounding: the boolean refuses
+    // (`at_tolerance`); moved by 1.9e-5 the vertices are on the face and the edge crosses
+    // as it did
     var a0 = try box(.{ 1, 1, 2 }, .{ 2, 3, 4 });
     defer a0.deinit();
     var a = try turned(&a0, .{ 2, 2, 2 }, .{ 1, 2, 3 }, std.math.pi / 4.0);
@@ -710,14 +736,56 @@ test "degeneracy: a vertex the intersection tolerance off a face, its edge leavi
     const points = [_]Vec3{ .{ 0, 4, 1 }, .{ 3, 1, 2 }, .{ 1, 1, 0 }, .{ 1, 2, 0 }, .{ 1, 1, 4 }, .{ 2, 1, 2 }, .{ 1, 0, 3 } };
     var b0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
     defer b0.deinit();
-    var b = try helpers.moved(&b0, .{ 2e-5, 1, 0 });
+    var c = try box(.{ 1, 0.5, 3 }, .{ 4, 1.5, 4 });
+    defer c.deinit();
+    var at = try helpers.moved(&b0, .{ 2e-5, 1, 0 });
+    defer at.deinit();
+    var cut_at = try sound(&a_moved, &at, .difference);
+    defer cut_at.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&cut_at, &c, op);
+    var b = try helpers.moved(&b0, .{ 1.9e-5, 1, 0 });
     defer b.deinit();
     var cut = try sound(&a_moved, &b, .difference);
     defer cut.deinit();
-    var c = try box(.{ 1, 0.5, 3 }, .{ 4, 1.5, 4 });
-    defer c.deinit();
     for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
         var r = try sound(&cut, &c, op);
         r.deinit();
     }
+}
+
+test "degeneracy: operands the intersection tolerance apart to rounding are refused, a hair either side decided" {
+    // The nightly solids fuzzer's find (2026-11-13, run 43417538617): a hull moved by the
+    // intersection tolerance exactly put its face 2.0000000000131e-5 from a box's, a
+    // rounding past the tolerance, while its vertices' heights over the box's plane came out
+    // a rounding inside it; the paves took the faces apart and the vertices on, a sliver
+    // the tolerance wide was left that no sample could classify, and the shell did not
+    // close. A distance within rounding of the tolerance is refused (`at_tolerance`), a
+    // stage of the paves named; a hair either side is decided
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var at = try box(.{ 1 + tol.xsect, 0, 0 }, .{ 2, 1, 1 });
+    defer at.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&a, &at, op);
+    // Within it: the faces touch, one solid; beyond it: two, a warned sliver of air between
+    var touching = try box(.{ 1 + 0.95 * tol.xsect, 0, 0 }, .{ 2, 1, 1 });
+    defer touching.deinit();
+    var joined = try sound(&a, &touching, .@"union");
+    defer joined.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+    var apart = try box(.{ 1 + 1.05 * tol.xsect, 0, 0 }, .{ 2, 1, 1 });
+    defer apart.deinit();
+    var both = try sound(&a, &apart, .@"union");
+    defer both.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&both));
+    // The find as it came
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 3, 3, 4 }, .{ 0, 1, 2 }, .{ 3, 1, 3 }, .{ 3, 1, 1 }, .{ 2, 2, 3 }, .{ 1, 4, 0 } };
+    var h0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h0.deinit();
+    var h = try helpers.moved(&h0, .{ 2e-5, 0, 0 });
+    defer h.deinit();
+    var c = try box(.{ 1, 1, 2 }, .{ 3, 3, 4 });
+    defer c.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&h, &c, op);
 }
