@@ -31,7 +31,7 @@ const GAP_ROUNDING = 64 * std.math.floatEps(f64) * 2;
 /// an edge or at a corner: each solid keeps its own edge there (`EdgeSpec.copy`), a
 /// representation's choice OCCT's compounds make otherwise, so the faces, solids and
 /// measures say what the result is.
-const Expect = struct {
+pub const Expect = struct {
     vertices: ?usize,
     edges: ?usize,
     faces: usize,
@@ -53,7 +53,7 @@ fn boxOf(dx: f64, dy: f64, dz: f64) Expect {
     return .{ .vertices = 8, .edges = 12, .faces = 6, .solids = 1, .area = 2 * (dx * dy + dy * dz + dz * dx), .volume = dx * dy * dz };
 }
 
-const Case = struct {
+pub const Case = struct {
     name: []const u8,
     a: [2]Vec3,
     b: [2]Vec3,
@@ -62,7 +62,7 @@ const Case = struct {
     difference: Expect,
 };
 
-const CASES = [_]Case{
+pub const CASES = [_]Case{
     .{
         // Identical: the union and the intersection are the box, the difference empty
         .name = "identical boxes",

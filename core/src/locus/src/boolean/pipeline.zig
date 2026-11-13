@@ -63,6 +63,42 @@ pub const Stage = pave.Stage;
 
 /// The milestone of booleans on curved operands.
 const CURVED_MILESTONE = 5;
+/// The classes a fragment takes (`classify.Class`).
+const CLASSES = std.enums.values(classify.Class).len;
+
+/// Why a boolean (or a cut by a plane) refuses its input: each finding code an input of
+/// valid operands and arguments can provoke, a closed list (research/opengeometry.md §4)
+/// that boolean/coverage_test.zig holds the corpus to, every one exercised by some case.
+pub const REFUSALS = [_]diagnostics.Code{
+    .empty_input, // an operand not a solid, a chain of none
+    .bad_tolerance, // a tolerance that isn't one
+    .not_finite, // a cut's plane not finite
+    .not_positive, // a cut's normal of no length
+    .not_implemented, // a curved operand (M5)
+    .too_large_for_tolerance, // a coordinate past what the tolerance can weld
+    .limit_exceeded, // more edges or faces near one vertex than the paves keep apart
+    .at_tolerance, // a distance the intersection tolerance to rounding (D27)
+    .gap_too_large, // vertices merged into a ball past the zone
+    .edge_too_short, // an edge too short to split where it is met
+    .pinched, // a result one shell cannot hold, by design
+};
+
+/// What a boolean warns of, each exercised by the corpus too.
+pub const WARNINGS = [_]diagnostics.Code{
+    .nearly_coplanar, // faces a hair apart, so the result is as thin
+    .solids_touch, // two solids of the result touching along a line
+};
+
+/// A boolean's checks of its operands' and its own consistency: no valid input reaches one
+/// but through a fault (the fuzzer counts one as a find), so each is made to fire by a test
+/// that breaks what it guards (boolean/coverage_test.zig).
+pub const GUARDS = [_]diagnostics.Code{
+    .loop_not_closed, // a loop of an operand or of the result that does not close
+    .faces_overlap, // a face of an operand covering part of its plane twice
+    .imprint_unmatched, // a crossing the paves missed, made by the overlay
+    .unclassified, // a fragment whose every sample lies on the other operand's boundary
+    .edge_coedge_count, // an edge of the result its faces do not pair along
+};
 
 pub const Options = struct {
     common: diagnostics.Options = .{},
@@ -119,6 +155,11 @@ pub const Report = struct {
     failed_step: ?u32 = null,
     /// Answered by the containment table: the operands met nowhere.
     by_containment: bool = false,
+    /// How many interferences of each class the paves found (`pave.INTERFERENCES`' order).
+    interferences: [pave.INTERFERENCES.len]u32 = @splat(0),
+    /// Each operand's fragments (`a`, `b`) by class (`classify.Class`): with `op`, the rows
+    /// of the selection table (`select.keep`) that decided the result.
+    fragments: [2][CLASSES]u32 = @splat(@splat(0)),
 
     pub fn init(allocator: std.mem.Allocator) Report {
         return .{ .allocator = allocator };
@@ -144,10 +185,10 @@ pub const Report = struct {
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32 };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -180,6 +221,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
 
     var paves = try pave.run(allocator, a, b, tol, common, diag, &stage);
     defer paves.deinit();
+    r.interferences = paves.found;
     try common.checkCancel();
     // Operands that met nowhere: the containment table, each shell whole and classified
     // once (the general path's answer, without the overlay and a ray per face)
@@ -191,6 +233,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     stage = .classify;
     const classes = if (table) try classify.byShell(allocator, &paves, &fragments, common, diag) else try classify.run(allocator, &paves, &fragments, common, diag);
     defer allocator.free(classes);
+    for (fragments.items.items, classes) |fragment, c| r.fragments[fragment.operand][@intFromEnum(c.class)] += 1;
     const keeps = try select.run(allocator, op, &fragments, classes);
     defer allocator.free(keeps);
     try contacts(&paves, classes, r);
@@ -257,6 +300,10 @@ pub fn chain(allocator: std.mem.Allocator, operands: []const *const Body, op: Op
         try compose(allocator, &map, &step, @intCast(k));
         r.max_gap = @max(r.max_gap, step.max_gap);
         r.coincident = r.coincident or step.coincident;
+        for (&r.interferences, step.interferences) |*total, n| total.* += n;
+        for (&r.fragments, step.fragments) |*row, step_row| for (row, step_row) |*total, n| {
+            total.* += n;
+        };
         try r.contacts.appendSlice(allocator, step.contacts.items);
         if (held) |*h| h.deinit();
         held = made;
@@ -416,7 +463,9 @@ fn emptyOperand(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op
 
 /// One use of an edge by a kept fragment, for pairing the uses of an edge more than two
 /// fragments share.
-const Use = struct {
+/// A fragment's use of an edge spec: the spec, and the face it bounds. Public, with
+/// `pairTouching`, for the coverage test's case of the guard there (`edge_coedge_count`).
+pub const Use = struct {
     spec: u32,
     face: u32,
 };
@@ -704,7 +753,7 @@ fn builderVertex(b: *primitives.Builder, paves: *const pave.Paves, vertex_of: []
 /// made one edge per solid (`EdgeSpec.copy`): its uses sorted by the angle of their faces
 /// about it, and each pair of neighbours with material between them one edge (the face
 /// side away from a face's outward normal is its material).
-fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, diag: *Diagnostics) Error!void {
+pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, diag: *Diagnostics) Error!void {
     const Key = struct { lo: u32, hi: u32 };
     var groups: std.AutoArrayHashMapUnmanaged(Key, std.ArrayList(u32)) = .empty;
     defer {

@@ -71,6 +71,17 @@ pub const Stage = enum {
     check,
 };
 
+/// The interference classes, in the order they run (OCCT's): what each pave, merge,
+/// incidence or section is found by.
+pub const INTERFERENCES = [_]Stage{ .vertex_vertex, .vertex_edge, .edge_edge, .vertex_face, .edge_face, .face_face };
+
+/// The index of interference class `stage` in `INTERFERENCES`.
+pub fn interferenceIndex(stage: Stage) usize {
+    return for (INTERFERENCES, 0..) |s, i| {
+        if (s == stage) break i;
+    } else unreachable;
+}
+
 /// A face of an operand: 0 for `a`, 1 for `b`.
 pub const FaceRef = struct {
     operand: u1,
@@ -150,6 +161,9 @@ pub const Paves = struct {
     /// The common blocks: pieces of an edge of `a` and an edge of `b` between the same two
     /// merged vertices, the operands' edges overlapping there (one edge of the result).
     common: std.ArrayList(CommonBlock) = .empty,
+    /// How many interferences each class found (`INTERFERENCES`' order): vertices merged,
+    /// paves added, vertices found on faces, sections added; the result report's.
+    found: [INTERFERENCES.len]u32 = @splat(0),
 
     pub fn deinit(self: *Paves) void {
         const a = self.allocator;
@@ -318,6 +332,7 @@ const Filler = struct {
                 p.vertex_of[1][i] = found;
                 p.owners.items[found] |= 2;
                 try taken.append(self.allocator, .{ found, @intCast(i) });
+                self.tally();
                 continue;
             };
             p.vertex_of[1][i] = try self.addPoint(q, v.gap, 2);
@@ -483,6 +498,12 @@ const Filler = struct {
     fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
         if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
         try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
+        self.tally();
+    }
+
+    /// One interference of the class under way found.
+    fn tally(self: *Filler) void {
+        self.p.found[interferenceIndex(self.stage.*)] += 1;
     }
 
     // --- vertex–edge ---
@@ -621,6 +642,7 @@ const Filler = struct {
             const place = try planar_faces.place(self.body(k), f, q, self.p.tol, self.diag);
             if (place == .outside) continue;
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
+            self.tally();
             if (place == .inside) try self.p.touches.append(self.allocator, .{ .operand = @intCast(k), .face = @backingInt(f), .vertex = v });
         }
     }
@@ -656,6 +678,7 @@ const Filler = struct {
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
                 if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
                     try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = at });
+                    self.tally();
                     continue;
                 }
                 const place = try planar_faces.place(self.body(other), f, q, self.p.tol, self.diag);
@@ -666,6 +689,7 @@ const Filler = struct {
                     if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at);
                 }
                 try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = w });
+                self.tally();
                 if (place == .boundary and self.p.points.items.len > before) try self.onEdges(other, w, null);
             }
         }
@@ -824,6 +848,7 @@ const Filler = struct {
                 const segment = .{ @min(u, w), @max(u, w) };
                 if (self.imprinted(0, fa, u, w, in_a)) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (self.imprinted(1, fb, u, w, in_b)) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
+                self.tally();
             }
         }
     }
@@ -904,6 +929,7 @@ const Filler = struct {
                     const place = try planar_faces.place(self.body(other), g, mid, p.tol, self.diag);
                     if (!self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
+                    self.tally();
                 }
             }
         }

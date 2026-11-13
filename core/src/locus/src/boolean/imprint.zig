@@ -165,11 +165,16 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
     }
     o.run() catch |e| return planar_faces.overlayError(diag, e);
 
+    // A valid face winds once about each of its regions: an operand's face that covers
+    // part of its plane twice is named so before any of its regions is read back (its
+    // loop's own crossings are no merged vertices, which reading a region would report)
+    for (0..o.faces.items.len) |r| {
+        const winding = o.windingOf(@intCast(r), 0);
+        if (winding != 0 and winding != 1 and winding != -1) return diag.fail(error.InvalidInput, .{ .code = .faces_overlap, .entity = .of(.face, @backingInt(f)), .label = "a face of an operand", .measured = @floatFromInt(winding), .threshold = 1 });
+    }
     for (0..o.faces.items.len) |r| {
         const winding = o.windingOf(@intCast(r), 0);
         if (winding == 0) continue;
-        // A valid face winds once about each of its regions
-        if (winding != 1 and winding != -1) return diag.fail(error.InvalidInput, .{ .code = .faces_overlap, .entity = .of(.face, @backingInt(f)), .label = "a face of an operand", .measured = @floatFromInt(winding), .threshold = 1 });
         const first_loop: u32 = @intCast(out.loops.items.len);
         const region = o.faces.items[r];
         try cycle(&o, &lookup, region.outer, winding < 0, out, k, f, diag);
