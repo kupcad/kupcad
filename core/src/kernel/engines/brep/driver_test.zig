@@ -345,6 +345,27 @@ test "Driver: convex hulls of flat solids, single and batch" {
     try std.testing.expectEqual([3]f64{ 25, 5, 5 }, box.max);
 }
 
+test "Driver: STEP export of a solid of several pieces with a void writes its parts: one with its void, one without" {
+    // The writer does not decide which piece holds a void (a query); the driver decomposes
+    const outer = driver.driver.cubeFn(&TEST_CONFIG, 4, 4, 4, false) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(outer);
+    const unit = driver.driver.cubeFn(&TEST_CONFIG, 2, 2, 2, false) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(unit);
+    const cavity = driver.driver.translateFn(unit, 1, 1, 1) orelse return error.Translate;
+    defer driver.driver.destructFn(cavity);
+    const hollow = driver.driver.booleanFn(outer, cavity, .difference_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(hollow);
+    const apart = driver.driver.translateFn(unit, 6, 0, 0) orelse return error.Translate;
+    defer driver.driver.destructFn(apart);
+    const both = driver.driver.booleanFn(hollow, apart, .union_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(both);
+    const step = try driver.exportStep(std.testing.allocator, &.{both});
+    defer std.testing.allocator.free(step);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, step, "=BREP_WITH_VOIDS("));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, step, "=MANIFOLD_SOLID_BREP("));
+    try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, step, "=CLOSED_SHELL("));
+}
+
 test "Driver: STEP export of what it builds, every number exact; a mesh part refused" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube);

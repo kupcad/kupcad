@@ -132,13 +132,34 @@ pub fn limits(config: *const engine_config.EngineConfig) locus.Limits {
 }
 
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
-    var bodies = std.ArrayList(*const Body).empty;
-    defer bodies.deinit(allocator);
-    for (handles) |h| {
+    // A solid of several pieces with voids is written by its parts: which piece holds each
+    // void is Locus's `decompose`, a query the writer does not make
+    const parts = try allocator.alloc([]Body, handles.len);
+    defer allocator.free(parts);
+    @memset(parts, &.{});
+    defer for (parts) |pieces| {
+        for (pieces) |*piece| piece.deinit();
+        allocator.free(pieces);
+    };
+    for (handles, parts) |h, *pieces| {
         // Never skipped: a part left out is a wrong file (callers refuse mesh parts first,
         // exporters/export.zig requireExactParts).
         if (h.engine != .brep_native) return error.NotExactGeometry;
-        try bodies.append(allocator, &solidOf(h.ptr).body);
+        const solid = solidOf(h.ptr);
+        if (locus.io.step_write.writesWhole(&solid.body)) continue;
+        var diag = locus.Diagnostics.init(allocator);
+        defer diag.deinit();
+        pieces.* = locus.construct.decompose.decompose(allocator, &solid.body, solid.options(), &diag) catch |err| {
+            remember(&diag);
+            return err;
+        };
+    }
+    var bodies = std.ArrayList(*const Body).empty;
+    defer bodies.deinit(allocator);
+    for (handles, parts) |h, pieces| {
+        if (pieces.len == 0) {
+            try bodies.append(allocator, &solidOf(h.ptr).body);
+        } else for (pieces) |*piece| try bodies.append(allocator, piece);
     }
     if (bodies.items.len == 0) return error.NoGeometry;
     const written = try locus.io.step_write.writeReported(allocator, bodies.items);

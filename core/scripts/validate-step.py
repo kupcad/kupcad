@@ -43,6 +43,8 @@ MODELS = {
     "corner_union": ("cube(2, 2, 2) + cube(2, 2, 2).translate(1, 1, 1)", 12, 1, 8 + 8 - 1),
     # A cube-shaped void: one solid of two shells, the inner one facing in
     "void": ("cube(4, 4, 4) - cube(2, 2, 2).translate(1, 1, 1)", 12, 1, 64 - 8),
+    # A box with a void beside a cube: written by its parts, one with its void
+    "void_and_apart": ("(cube(4, 4, 4) - cube(2, 2, 2).translate(1, 1, 1)) + cube(1, 1, 1).translate(6, 0, 0)", 18, 2, 64 - 8 + 1),
     # Two cubes sharing an edge: two solids, each keeping its own copy of the edge
     "edge_touching": ("cube(1, 1, 1) + cube(1, 1, 1).translate(1, 1, 0)", 12, 2, 2),
     # The plane 2x + y + 2z = 1 (the normal 3 long, the offset along its unit) takes a

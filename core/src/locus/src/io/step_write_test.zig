@@ -9,6 +9,7 @@ const vec = @import("../math/vec.zig");
 const types = @import("../topology/types.zig");
 const Body = @import("../topology/body.zig").Body;
 const helpers = @import("../boolean/pipeline_test.zig");
+const decompose = @import("../construct/decompose.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -97,7 +98,7 @@ test "step: a box is one solid of eight vertices, twelve edges, six faces, writt
     try testing.expectEqual(@as(usize, max_id), count(text, "\n#") + 1);
 }
 
-test "step: a solid with a void is a BREP_WITH_VOIDS, the void its cavity's own shell reversed; a solid apart is a MANIFOLD_SOLID_BREP" {
+test "step: a solid with a void is a BREP_WITH_VOIDS, the void its cavity's own shell reversed; a body of parts with voids is written by its parts" {
     // Written as a plain solid, the void's shell was referenced by nothing: OpenCascade
     // read the box whole (6 faces, volume 64; `pnpm check:step`)
     var outer = try helpers.box(.{ 0, 0, 0 }, .{ 4, 4, 4 });
@@ -106,23 +107,42 @@ test "step: a solid with a void is a BREP_WITH_VOIDS, the void its cavity's own 
     defer cavity.deinit();
     var hollow = try helpers.sound(&outer, &cavity, .difference);
     defer hollow.deinit();
-    var apart = try helpers.box(.{ 6, 0, 0 }, .{ 7, 1, 1 });
-    defer apart.deinit();
-    var parts = try helpers.sound(&apart, &hollow, .@"union");
-    defer parts.deinit();
-    const written = try step_write.writeReported(testing.allocator, &.{&parts});
+    const written = try step_write.writeReported(testing.allocator, &.{&hollow});
     defer testing.allocator.free(written.text);
     const text = written.text;
     try testing.expectEqual(@as(usize, 1), count(text, "=BREP_WITH_VOIDS("));
-    try testing.expectEqual(@as(usize, 1), count(text, "=MANIFOLD_SOLID_BREP("));
-    try testing.expectEqual(@as(usize, 3), count(text, "=CLOSED_SHELL("));
+    try testing.expectEqual(@as(usize, 0), count(text, "=MANIFOLD_SOLID_BREP("));
+    try testing.expectEqual(@as(usize, 2), count(text, "=CLOSED_SHELL("));
     // The void under its orientation, false
     try testing.expectEqual(@as(usize, 1), countLines(text, "=ORIENTED_CLOSED_SHELL('',*,#", ",.F.);"));
     // The void's six faces, and theirs alone, bounded the other way round
     try testing.expectEqual(@as(usize, 6), countLines(text, "=FACE_OUTER_BOUND('',#", ",.F.);"));
-    try testing.expectEqual(@as(usize, 12), countLines(text, "=FACE_OUTER_BOUND('',#", ",.T.);"));
-    try testing.expectEqual(@as(usize, 2), written.report.solids);
-    try testing.expectEqual(@as(usize, 3), written.report.shells);
+    try testing.expectEqual(@as(usize, 6), countLines(text, "=FACE_OUTER_BOUND('',#", ",.T.);"));
+    try testing.expectEqual(@as(usize, 1), written.report.solids);
+    try testing.expectEqual(@as(usize, 2), written.report.shells);
+
+    // With a solid apart: which outer shell holds the void is decompose's query, not the
+    // writer's, so the body is refused and its parts written
+    var apart = try helpers.box(.{ 6, 0, 0 }, .{ 7, 1, 1 });
+    defer apart.deinit();
+    var parts = try helpers.sound(&apart, &hollow, .@"union");
+    defer parts.deinit();
+    try testing.expectError(error.VoidsInParts, step_write.write(testing.allocator, &.{&parts}));
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const pieces = try decompose.decompose(testing.allocator, &parts, .{}, &diag);
+    defer {
+        for (pieces) |*piece| piece.deinit();
+        testing.allocator.free(pieces);
+    }
+    var bodies: [2]*const Body = undefined;
+    for (pieces, &bodies) |*piece, *b| b.* = piece;
+    const both = try step_write.writeReported(testing.allocator, &bodies);
+    defer testing.allocator.free(both.text);
+    try testing.expectEqual(@as(usize, 1), count(both.text, "=BREP_WITH_VOIDS("));
+    try testing.expectEqual(@as(usize, 1), count(both.text, "=MANIFOLD_SOLID_BREP("));
+    try testing.expectEqual(@as(usize, 2), both.report.solids);
+    try testing.expectEqual(@as(usize, 3), both.report.shells);
 }
 
 /// How many lines of `text` hold `entity` and end in `ending`.

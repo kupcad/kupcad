@@ -986,9 +986,11 @@ Variable-radius and vertex blends are therefore a roadmap entry, not a non-goal.
 
 STEP AP214 writer for every geometry kind (the current writer plus cones, tori, ellipses,
 B-spline curves and surfaces, extrusion and revolution surfaces, pcurves optional), one
-`MANIFOLD_SOLID_BREP` per outer shell, a `BREP_WITH_VOIDS` for one holding voids (each
-void the innermost outer shell's around it, `decompose`'s rule, written as the cavity's own
-shell reversed under an `ORIENTED_CLOSED_SHELL` of orientation `.F.`, 2026-11-13), vertices
+`MANIFOLD_SOLID_BREP` per outer shell, a `BREP_WITH_VOIDS` for a body of one outer shell
+and voids (each void written as the cavity's own shell reversed under an
+`ORIENTED_CLOSED_SHELL` of orientation `.F.`, 2026-11-13; a body of several outer shells
+and voids is refused, `VoidsInParts`, since which shell holds a void is `decompose`'s
+query and io imports no operation: KupCAD's driver writes its parts), vertices
 and edges written once (SolveSpace's aliasing), validated by KupCAD's `check:3mf`-style job
 with an external reader (`check:step`: OpenCascade's load check list empty, its checker,
 face and solid counts, the exact volume, the header's counts; boolean results among the

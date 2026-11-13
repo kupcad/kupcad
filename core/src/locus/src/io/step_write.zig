@@ -1,9 +1,10 @@
 //! The STEP writer (AP214, docs/architecture.md §7.9): one `MANIFOLD_SOLID_BREP` per
 //! outer shell of each solid body (a body of two pieces is two solids), a `BREP_WITH_VOIDS`
-//! for one holding voids (each void the innermost outer shell's around it, as `decompose`
-//! finds; written as the cavity's own closed shell, reversed, under an
-//! `ORIENTED_CLOSED_SHELL` of orientation `.F.`, ISO 10303-42's form), its vertices and
-//! edges written once, every curve and surface as its own
+//! for a body of one outer shell and voids (each void written as the cavity's own closed
+//! shell, reversed, under an `ORIENTED_CLOSED_SHELL` of orientation `.F.`, ISO 10303-42's
+//! form; a body of several outer shells and voids is refused: which shell holds each void
+//! is a query, `decompose`'s, which an io module does not make, so its parts are written
+//! instead), its vertices and edges written once, every curve and surface as its own
 //! STEP entity (a plane as `PLANE`, a circle as `CIRCLE`, …) in Part 42's parameterization,
 //! which is Locus's own, and every number at full `f64` precision (the shortest text that
 //! reads back to the same double, never rounded). The file's uncertainty is the first
@@ -30,8 +31,6 @@ const nurbs = @import("../geometry/nurbs.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
-const diagnostics = @import("../diagnostics.zig");
-const decompose = @import("../construct/decompose.zig");
 const Body = body_mod.Body;
 const Vec3 = vec.Vec3;
 
@@ -43,8 +42,9 @@ pub const Error = error{
     NotImplemented,
     /// A traversal did not close.
     Corrupt,
-    /// A void inside no outer shell (the checker's `shell_overlaps`): no solid to write it in.
-    NotValid,
+    /// A body of several outer shells and voids: which shell holds each void is a query
+    /// (`decompose`), not the writer's; write the body's parts.
+    VoidsInParts,
 };
 
 /// The entity ids of the header; bodies start after them.
@@ -135,6 +135,7 @@ pub fn write(allocator: std.mem.Allocator, bodies: []const *const Body) Error![]
 pub fn writeReported(allocator: std.mem.Allocator, bodies: []const *const Body) Error!Written {
     if (bodies.len == 0) return error.NotSolid;
     for (bodies) |b| if (b.kind != .solid or b.isEmpty()) return error.NotSolid;
+    for (bodies) |b| if (!writesWhole(b)) return error.VoidsInParts;
     var w = Writer.init(allocator);
     defer w.out.deinit();
     // Every solid's id comes first, so the representation can list them: one per outer
@@ -236,6 +237,18 @@ fn outerShells(body: *const Body) usize {
     return n;
 }
 
+/// Whether the writer takes `body` as it is: not several outer shells with voids, whose
+/// parts (`decompose`) it takes instead.
+pub fn writesWhole(body: *const Body) bool {
+    return voidShells(body) == 0 or outerShells(body) <= 1;
+}
+
+fn voidShells(body: *const Body) usize {
+    var n: usize = 0;
+    for (body.shells.items) |s| n += @intFromBool(!s.tombstone and s.kind == .void);
+    return n;
+}
+
 /// Writes the body's shells; its outer ones as the solids `first_solid_id` onward.
 fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
     const allocator = w.allocator;
@@ -317,27 +330,21 @@ fn writeBody(w: *Writer, body: *const Body, first_solid_id: u32) Error!void {
         w.report.shells += 1;
         shell_ids[@backingInt(s)] = shell_id;
     }
-    // The solids, in the order of the shells' table: each outer shell with the voids it holds
-    var diag = diagnostics.Diagnostics.init(allocator);
-    defer diag.deinit();
-    var owned = decompose.owners(allocator, body, .{}, &diag) catch |err| return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.NotValid,
-    };
-    defer owned.deinit(allocator);
+    // The solids, in the order of the shells' table. A body with voids has one outer shell
+    // (`writeReported` refuses one of several), and it holds them all.
     var void_ids = std.ArrayList(u32).empty;
     defer void_ids.deinit(allocator);
+    for (body.shells.items, shell_ids) |shell, id| {
+        if (shell.tombstone or shell.kind != .void) continue;
+        try void_ids.append(allocator, try w.emit("ORIENTED_CLOSED_SHELL('',*,#{d},.F.)", .{id}));
+    }
     var solid_id = first_solid_id;
-    for (owned.outers, 0..) |outer, k| {
-        if (body.shell(outer).kind != .outer) continue;
-        void_ids.clearRetainingCapacity();
-        for (owned.voids, owned.owner) |v, o| if (o == k) {
-            try void_ids.append(allocator, try w.emit("ORIENTED_CLOSED_SHELL('',*,#{d},.F.)", .{shell_ids[@backingInt(v)]}));
-        };
+    for (body.shells.items, shell_ids) |shell, shell_id| {
+        if (shell.tombstone or shell.kind != .outer) continue;
         if (void_ids.items.len == 0) {
-            w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_ids[@backingInt(outer)] }) catch return error.OutOfMemory;
+            w.out.writer.print("#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_id }) catch return error.OutOfMemory;
         } else {
-            w.out.writer.print("#{d}=BREP_WITH_VOIDS('',#{d},(", .{ solid_id, shell_ids[@backingInt(outer)] }) catch return error.OutOfMemory;
+            w.out.writer.print("#{d}=BREP_WITH_VOIDS('',#{d},(", .{ solid_id, shell_id }) catch return error.OutOfMemory;
             for (void_ids.items, 0..) |id, i| w.out.writer.print("{s}#{d}", .{ if (i > 0) "," else "", id }) catch return error.OutOfMemory;
             w.out.writer.writeAll("));\n") catch return error.OutOfMemory;
         }
