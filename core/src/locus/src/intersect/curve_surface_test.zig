@@ -20,7 +20,7 @@ const CLOSE = 1e-12;
 fn crossings(curve: Curve, t0: f64, t1: f64, height: f64) !curve_surface.Crossings {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    return curve_surface.curvePlane(curve, t0, t1, Plane.level(height), tol, &diag);
+    return curve_surface.curvePlane(curve, t0, t1, Plane.level(height), tol.zone, &diag);
 }
 
 fn expectParams(want: []const f64, got: curve_surface.Crossings) !void {

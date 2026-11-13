@@ -178,7 +178,7 @@ const Section = struct {
         var cut: Cut = .{};
         if (!edge.flags.degenerate) {
             const curve = body.geometry.curve(edge.curve);
-            const crossings = try curve_surface.curvePlane(curve, edge.t0, edge.t1, self.plane, self.tol, self.diag);
+            const crossings = try curve_surface.curvePlane(curve, edge.t0, edge.t1, self.plane, self.tol.zone, self.diag);
             cut.lies_in = crossings.lies_in;
             const ends = [2]Vec3{ body.point(edge.start), body.point(edge.end) };
             for (crossings.params()) |t| {

@@ -117,7 +117,11 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
 }
 
 /// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives its
-/// ends); true when every edge lies in it, the face then lying in the plane.
+/// ends); true when every edge lies in it, the face then lying in the plane. On the plane
+/// is within the intersection tolerance and the edge's ends' gaps, as a boolean takes a
+/// vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
+/// vertex at a shallow angle crosses the plane's exact line far from it, inside the other
+/// face, where the boolean, rightly, made no edge (the solids fuzzer, 2026-11-13).
 fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
     var every_in = true;
     var any = false;
@@ -129,7 +133,8 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             if (edge.flags.degenerate) continue;
             any = true;
             const curve = body.geometry.curve(edge.curve);
-            const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, tol, diag);
+            const reach = tol.xsect + @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap);
+            const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, reach, diag);
             if (found.lies_in) {
                 try marks.append(allocator, body.point(edge.start));
                 try marks.append(allocator, body.point(edge.end));

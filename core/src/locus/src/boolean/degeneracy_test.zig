@@ -689,3 +689,35 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     try testing.expectApproxEqAbs(mb.volume + mc.volume, try volume(&u) + vi, slab);
     try testing.expectApproxEqAbs(mb.volume - vi, try volume(&d), slab);
 }
+
+test "degeneracy: a vertex the intersection tolerance off a face, its edge leaving it at a shallow angle" {
+    // The nightly solids fuzzer's find (2026-11-13, run 43413453969), as it came: a hull
+    // moved by the intersection tolerance cut from a turned box leaves vertices on the
+    // plane x = 1.00002; a box with a face on x = 1 united with it takes them for points of
+    // that face (vertex–face: within the tolerance), and an edge leaving one of them at 5°
+    // crosses x = 1 exactly 2e-4 further, inside the face, where the boolean made no edge.
+    // The overlap rules took that exact crossing for a point of both faces off one's
+    // boundary; they now take a crossing as the boolean does, an end within the tolerance
+    // and its gap being the edge's crossing
+    var a0 = try box(.{ 1, 1, 2 }, .{ 2, 3, 4 });
+    defer a0.deinit();
+    var a = try turned(&a0, .{ 2, 2, 2 }, .{ 1, 2, 3 }, std.math.pi / 4.0);
+    defer a.deinit();
+    var a_moved = try helpers.moved(&a, .{ -1, 0, -0.5 });
+    defer a_moved.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0, 4, 1 }, .{ 3, 1, 2 }, .{ 1, 1, 0 }, .{ 1, 2, 0 }, .{ 1, 1, 4 }, .{ 2, 1, 2 }, .{ 1, 0, 3 } };
+    var b0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer b0.deinit();
+    var b = try helpers.moved(&b0, .{ 2e-5, 1, 0 });
+    defer b.deinit();
+    var cut = try sound(&a_moved, &b, .difference);
+    defer cut.deinit();
+    var c = try box(.{ 1, 0.5, 3 }, .{ 4, 1.5, 4 });
+    defer c.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        var r = try sound(&cut, &c, op);
+        r.deinit();
+    }
+}
