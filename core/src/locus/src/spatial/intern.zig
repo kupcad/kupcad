@@ -114,12 +114,16 @@ pub const Interner = struct {
     }
 
     /// How far a lookup reaches for a record of `points` (and lengths up to `size`): the
-    /// zone and the rounding of the largest coordinate seen, these included; at most the
+    /// zone and the rounding of the largest coordinate seen, these included, at most the
     /// rounding at the largest coordinate the tolerance takes (`largestBand`, what the
-    /// grids' cells allow for: a coordinate past it is refused before it comes here).
-    fn reach(self: *Interner, points: []const Vec3, size: f64) f64 {
-        self.largest = @max(self.largest, @max(canonical.magnitude(points), size));
-        return self.tol.zone + @min(canonical.Comparison.distance(0, self.tol.zone, self.largest).band, largestBand(self.tol));
+    /// grids' cells allow for). A coordinate or length past that is refused (`OutOfRange`,
+    /// the scale guard's `too_large_for_tolerance`): its rounding is past what the zone can
+    /// decide (keys taken from the model's own point never reach the grid's own limit).
+    fn reach(self: *Interner, points: []const Vec3, size: f64) Error!f64 {
+        const magnitude = @max(canonical.magnitude(points), size);
+        if (!(magnitude <= self.tol.zone / SCALE_GUARD)) return error.OutOfRange;
+        self.largest = @max(self.largest, magnitude);
+        return self.tol.zone + canonical.Comparison.distance(0, self.tol.zone, self.largest).band;
     }
 
     /// The first candidate the same, null when none is; a candidate before it at the
@@ -139,7 +143,7 @@ pub const Interner = struct {
     /// The index of `p` in the arena: the first kept point within `zone`, else `p` added.
     pub fn point(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, p: Vec3) Error!PointIndex {
         _ = self.keyOrigin(p);
-        try self.points.near(allocator, g.points.items, p, self.reach(&.{p}, 0), &self.scratch);
+        try self.points.near(allocator, g.points.items, p, try self.reach(&.{p}, 0), &self.scratch);
         const Points = struct {
             kept: []const Vec3,
             p: Vec3,
@@ -163,7 +167,7 @@ pub const Interner = struct {
     pub fn line(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Line, a: Vec3, b: Vec3) Error!CurveRef {
         const at = self.keyOrigin(a);
         const key = canonical.lineKey(item, at);
-        try self.lines.candidates(allocator, key, self.reach(&.{ item.o, a, b }, 0), &self.scratch);
+        try self.lines.candidates(allocator, key, try self.reach(&.{ item.o, a, b }, 0), &self.scratch);
         const Lines = struct {
             kept: []const curves.Line,
             item: curves.Line,
@@ -183,7 +187,7 @@ pub const Interner = struct {
     }
 
     pub fn circle(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: curves.Circle) Error!CurveRef {
-        try self.circles.candidates(allocator, item.c, self.reach(&.{item.c}, item.r), &self.scratch);
+        try self.circles.candidates(allocator, item.c, try self.reach(&.{item.c}, item.r), &self.scratch);
         if (try self.first(Records(curves.Circle, canonical.sameCircle){ .kept = g.circles.items, .item = item, .tol = self.tol })) |i| return CurveRef.of(.circle, i);
         const ref = try g.addCircle(allocator, item);
         errdefer _ = g.circles.pop();
@@ -197,8 +201,8 @@ pub const Interner = struct {
     pub fn plane(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Plane, holds: []const Vec3) Error!SurfaceRef {
         const at = self.keyOrigin(item.frame.origin);
         const key = canonical.planeKey(item, at);
-        _ = self.reach(holds, 0);
-        try self.planes.candidates(allocator, key, self.reach(&.{item.frame.origin}, 0), &self.scratch);
+        _ = try self.reach(holds, 0);
+        try self.planes.candidates(allocator, key, try self.reach(&.{item.frame.origin}, 0), &self.scratch);
         const Planes = struct {
             kept: []const surfaces.Plane,
             item: surfaces.Plane,
@@ -222,7 +226,7 @@ pub const Interner = struct {
     pub fn cylinder(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Cylinder) Error!SurfaceRef {
         const at = self.keyOrigin(item.frame.origin);
         const key = canonical.axisKey(item.frame, at);
-        try self.cylinders.candidates(allocator, key, self.reach(&.{item.frame.origin}, item.r), &self.scratch);
+        try self.cylinders.candidates(allocator, key, try self.reach(&.{item.frame.origin}, item.r), &self.scratch);
         if (try self.first(Keyed(surfaces.Cylinder, canonical.sameCylinder){ .kept = g.cylinders.items, .item = item, .at = at, .tol = self.tol })) |i| return SurfaceRef.of(.cylinder, i);
         const ref = try g.addCylinder(allocator, item);
         errdefer _ = g.cylinders.pop();
@@ -231,7 +235,7 @@ pub const Interner = struct {
     }
 
     pub fn cone(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Cone) Error!SurfaceRef {
-        try self.cones.candidates(allocator, canonical.coneKey(item), self.reach(&.{ item.frame.origin, canonical.coneKey(item) }, 0), &self.scratch);
+        try self.cones.candidates(allocator, canonical.coneKey(item), try self.reach(&.{ item.frame.origin, canonical.coneKey(item) }, 0), &self.scratch);
         if (try self.first(Records(surfaces.Cone, canonical.sameCone){ .kept = g.cones.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.cone, i);
         const ref = try g.addCone(allocator, item);
         errdefer _ = g.cones.pop();
@@ -240,7 +244,7 @@ pub const Interner = struct {
     }
 
     pub fn sphere(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Sphere) Error!SurfaceRef {
-        try self.spheres.candidates(allocator, item.frame.origin, self.reach(&.{item.frame.origin}, item.r), &self.scratch);
+        try self.spheres.candidates(allocator, item.frame.origin, try self.reach(&.{item.frame.origin}, item.r), &self.scratch);
         if (try self.first(Records(surfaces.Sphere, canonical.sameSphere){ .kept = g.spheres.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.sphere, i);
         const ref = try g.addSphere(allocator, item);
         errdefer _ = g.spheres.pop();
@@ -249,7 +253,7 @@ pub const Interner = struct {
     }
 
     pub fn torus(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Torus) Error!SurfaceRef {
-        try self.tori.candidates(allocator, item.frame.origin, self.reach(&.{item.frame.origin}, item.major + item.minor), &self.scratch);
+        try self.tori.candidates(allocator, item.frame.origin, try self.reach(&.{item.frame.origin}, item.major + item.minor), &self.scratch);
         if (try self.first(Records(surfaces.Torus, canonical.sameTorus){ .kept = g.tori.items, .item = item, .tol = self.tol })) |i| return SurfaceRef.of(.torus, i);
         const ref = try g.addTorus(allocator, item);
         errdefer _ = g.tori.pop();

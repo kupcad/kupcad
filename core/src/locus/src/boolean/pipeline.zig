@@ -555,17 +555,40 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     var corners: std.ArrayList(Vec3) = .empty;
     defer corners.deinit(allocator);
 
+    // The kept fragments' planes, the largest first: coplanar fragments share the first
+    // record interned, so a face moves onto a larger one's plane, never the reverse (a
+    // plate's face moved onto a peg's moved the plate's volume by the gap times its area:
+    // the nightly's find, run 43515591144); ties in the fragments' order
+    {
+        const order = try allocator.alloc(u32, fragments.items.items.len);
+        defer allocator.free(order);
+        const area = try allocator.alloc(f64, fragments.items.items.len);
+        defer allocator.free(area);
+        var n: usize = 0;
+        for (keeps, 0..) |keep, i| {
+            if (keep == .drop) continue;
+            order[n] = @intCast(i);
+            n += 1;
+            area[i] = fragmentArea(paves, fragments, i);
+        }
+        const Larger = struct {
+            area: []const f64,
+            fn lessThan(ctx: @This(), x: u32, y: u32) bool {
+                return ctx.area[x] > ctx.area[y] or (ctx.area[x] == ctx.area[y] and x < y);
+            }
+        };
+        std.mem.sort(u32, order[0..n], Larger{ .area = area }, Larger.lessThan);
+        for (order[0..n]) |i| _ = try fragmentPlane(allocator, &b, paves, fragments, i, keeps[i] == .flip, &corners);
+    }
+
     for (fragments.items.items, keeps, 0..) |fragment, keep, i| {
         if (keep == .drop) continue;
         const flip = keep == .flip;
         const body = paves.operands[fragment.operand];
         const f = types.FaceIndex.of(fragment.face);
-        const frame = planar_faces.frameOf(body, f).?;
         var normal = in_face.outwardNormal(body, f, .{ 0, 0 });
         if (flip) normal = vec.neg(normal);
-        corners.clearRetainingCapacity();
-        for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| try corners.append(allocator, paves.point(m));
-        const facing = try b.facingPlane(Frame.init(frame.origin, frame.x, normal), corners.items);
+        const facing = try fragmentPlane(allocator, &b, paves, fragments, i, flip, &corners);
         const face_index: u32 = @intCast(faces.items.len);
         const first_loop: u32 = @intCast(loop_ranges.items.len);
         for (fragments.loopsOf(i)) |loop| {
@@ -627,6 +650,33 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
 /// face's pieces, whose face piece and whose faces about the vertex are in one shell (a
 /// pocket meeting the face it was cut from at a corner). Two solids touching so are two
 /// shells, and pass.
+/// Fragment `i`'s plane, its source face's turned when `flip`, interned for its corners.
+fn fragmentPlane(allocator: std.mem.Allocator, b: *primitives.Builder, paves: *const pave.Paves, fragments: *const imprint.Fragments, i: usize, flip: bool, corners: *std.ArrayList(Vec3)) Error!primitives.Builder.Facing {
+    const fragment = fragments.items.items[i];
+    const body = paves.operands[fragment.operand];
+    const f = types.FaceIndex.of(fragment.face);
+    const frame = planar_faces.frameOf(body, f).?;
+    var normal = in_face.outwardNormal(body, f, .{ 0, 0 });
+    if (flip) normal = vec.neg(normal);
+    corners.clearRetainingCapacity();
+    for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| try corners.append(allocator, paves.point(m));
+    return b.facingPlane(Frame.init(frame.origin, frame.x, normal), corners.items);
+}
+
+/// Fragment `i`'s area: its loops' vector areas (a hole's runs the other way and takes its
+/// share away), each from its first corner, so far from the origin it is the fragment's
+/// size that rounds, not its distance.
+fn fragmentArea(paves: *const pave.Paves, fragments: *const imprint.Fragments, i: usize) f64 {
+    var twice = vec.ZERO3;
+    for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
+        if (vertices.len < 3) continue;
+        const from = paves.point(vertices[0]);
+        for (vertices[1 .. vertices.len - 1], vertices[2..]) |p, q| twice = vec.add(twice, vec.cross(vec.sub(paves.point(p), from), vec.sub(paves.point(q), from)));
+    }
+    return vec.length(twice) / 2;
+}
+
 fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, face_fragment: []const u32, vertex_of: []const types.VertexIndex, body: *const Body, diag: *Diagnostics) Error!void {
     for (paves.touches.items) |touch| {
         const v = vertex_of[touch.vertex];

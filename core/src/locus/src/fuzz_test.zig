@@ -1553,6 +1553,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 0 3 4 0 1 3 4 3 2 -2 0 -1 10 2 3 1 8 4 3 0 4 1 4 4 0 3 3 4 3 4 4 0 3 2 3 1 2 3 2 0 2 2 0 0 2 2 2 -1 -2 13 1 0 -1 1 0 8 8 1 2 2",
         // The nightly's (run 43515591144, locus_solids): a hull's vertex the zone from a box's edge near where a hull edge crosses it, the two edges sharing a piece at an angle
         "solids 1 8 2 2 3 4 3 4 2 3 3 1 0 3 1 1 2 4 4 0 3 2 3 4 1 4 3 0 0 1 1 1 2 2 1 1 9 3 2 0 0 4 1 3 1 3 2 0 1 2 1 2 2 0 11 2 3 0 3 4 0 4 0 4 1 3 -1 0 -2 6 0",
+        // The nightly's (run 43515591144, locus): a peg's face 1e-5 out of a plate's, the plate's face given the peg's plane, its volume off by the gap times its area
+        "solids 0 1 2 3 4 3 4 0 0 1 1 2 -1 2 9 2 2 2 0 4 0 2 1 4 0 2 0 1 -1 -1 -1 1 0 9 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

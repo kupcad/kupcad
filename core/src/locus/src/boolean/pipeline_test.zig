@@ -17,6 +17,7 @@ const mat = @import("../math/mat.zig");
 const mass = @import("../measure/mass.zig");
 const overlap = @import("../query/overlap.zig");
 const pipeline = @import("pipeline.zig");
+const types = @import("../topology/types.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Op = pipeline.Op;
@@ -885,6 +886,28 @@ test "boolean: operands of different tolerances merge to the larger: a 200 mm pl
     try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&all));
     const above = 25.0 * 10 + 25.0 * 15 + 25.0 * 15;
     try testing.expectApproxEqAbs(200 * 200 * 10 + above, try volume(&all), plate_tol.xsect * 25);
+}
+
+test "boolean: coplanar faces take the larger one's plane: a peg's face 1e-5 out of a plate's leaves the plate's where it was" {
+    // The nightly's find (run 43515591144): the peg's fragments came first and the plate's
+    // face, its corners within the merged zone of the peg's plane, was given that plane: the
+    // plate's 600 square face moved 1e-5, its volume by 0.002, past the slab over the peg
+    const plate_tol = Tolerance.fromSize(200);
+    var plate = try boxAt(plate_tol, .{ 2.00001, -98.5, 0.5 }, .{ 102.00001, 101.5, 3.5 });
+    defer plate.deinit();
+    var peg = try boxAt(tol, .{ 2, -0.5, 1 }, .{ 3, 0.5, 2 });
+    defer peg.deinit();
+    const plate_volume = try volume(&plate);
+    const slab = plate_tol.xsect * 6;
+    for ([2][2]*const Body{ .{ &peg, &plate }, .{ &plate, &peg } }) |pair| {
+        var u = try sound(pair[0], pair[1], .@"union");
+        defer u.deinit();
+        try testing.expectApproxEqAbs(plate_volume, try volume(&u), slab);
+        // The face toward -x on the plate's plane
+        const face = types.FaceIndex.of(facing(&u, .{ -1, 0, 0 }));
+        const plane = u.geometry.planes.items[u.face(face).surface.index];
+        try testing.expectApproxEqAbs(2.00001, @abs(vec.dot(plane.frame.origin, plane.frame.z)), 1e-12);
+    }
 }
 
 test "boolean: operands of different tolerances merge to the larger: a 1 m beam with a 50 mm bracket, valid, the identities to the merged slab" {
