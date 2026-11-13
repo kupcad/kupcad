@@ -123,9 +123,9 @@ pub const Interner = struct {
     }
 
     /// The first candidate the same, null when none is; a candidate before it at the
-    /// tolerance is refused. `comparisons(i)` are candidate `i`'s.
+    /// tolerance is refused. `verdict(i)` is candidate `i`'s.
     fn first(self: *Interner, context: anytype) Error!?u32 {
-        for (self.scratch.items) |i| switch (canonical.verdict(&context.comparisons(i))) {
+        for (self.scratch.items) |i| switch (context.verdict(i)) {
             .same => return i,
             .apart => {},
             .at_tolerance => |c| {
@@ -144,8 +144,8 @@ pub const Interner = struct {
             kept: []const Vec3,
             p: Vec3,
             zone: f64,
-            fn comparisons(c: @This(), i: u32) [1]canonical.Comparison {
-                return .{canonical.Comparison.distance(vec.distance(c.kept[i], c.p), c.zone, canonical.magnitude(&.{ c.kept[i], c.p }))};
+            fn verdict(c: @This(), i: u32) canonical.Verdict {
+                return canonical.verdict(&.{canonical.Comparison.distance(vec.distance(c.kept[i], c.p), c.zone, canonical.magnitude(&.{ c.kept[i], c.p }))});
             }
         };
         if (try self.first(Points{ .kept = g.points.items, .p = p, .zone = self.tol.zone })) |found| return PointIndex.of(found);
@@ -171,8 +171,8 @@ pub const Interner = struct {
             a: Vec3,
             b: Vec3,
             tol: Tolerance,
-            fn comparisons(c: @This(), i: u32) [4]canonical.Comparison {
-                return canonical.sameLine(c.kept[i], c.item, c.at, c.a, c.b, c.tol);
+            fn verdict(c: @This(), i: u32) canonical.Verdict {
+                return canonical.verdict(&canonical.sameLine(c.kept[i], c.item, c.at, c.a, c.b, c.tol));
             }
         };
         if (try self.first(Lines{ .kept = g.lines.items, .item = item, .at = at, .a = a, .b = b, .tol = self.tol })) |i| return CurveRef.of(.line, i);
@@ -191,11 +191,28 @@ pub const Interner = struct {
         return ref;
     }
 
-    pub fn plane(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Plane) Error!SurfaceRef {
+    /// The plane `item` for a face spanning `holds` (its corners): a kept plane that is the
+    /// same and holds every one of them within `zone`, else `item` added. A face of known
+    /// exact geometry (a cap of a circle, a sketch's plane) may give none.
+    pub fn plane(self: *Interner, allocator: std.mem.Allocator, g: *Geometry, item: surfaces.Plane, holds: []const Vec3) Error!SurfaceRef {
         const at = self.keyOrigin(item.frame.origin);
         const key = canonical.planeKey(item, at);
+        _ = self.reach(holds, 0);
         try self.planes.candidates(allocator, key, self.reach(&.{item.frame.origin}, 0), &self.scratch);
-        if (try self.first(Keyed(surfaces.Plane, canonical.samePlane){ .kept = g.planes.items, .item = item, .at = at, .tol = self.tol })) |i| return SurfaceRef.of(.plane, i);
+        const Planes = struct {
+            kept: []const surfaces.Plane,
+            item: surfaces.Plane,
+            at: Vec3,
+            holds: []const Vec3,
+            tol: Tolerance,
+            fn verdict(c: @This(), i: u32) canonical.Verdict {
+                var tally: canonical.Tally = .{};
+                for (canonical.samePlane(c.kept[i], c.item, c.at, c.tol)) |comparison| tally.add(comparison);
+                for (c.holds) |p| tally.add(canonical.planeHolds(c.kept[i], p, c.tol));
+                return tally.verdict();
+            }
+        };
+        if (try self.first(Planes{ .kept = g.planes.items, .item = item, .at = at, .holds = holds, .tol = self.tol })) |i| return SurfaceRef.of(.plane, i);
         const ref = try g.addPlane(allocator, item);
         errdefer _ = g.planes.pop();
         try self.planes.add(allocator, key);
@@ -253,8 +270,8 @@ fn Records(comptime T: type, comptime same: anytype) type {
         kept: []const T,
         item: T,
         tol: Tolerance,
-        fn comparisons(c: @This(), i: u32) @typeInfo(@TypeOf(same)).@"fn".return_type.? {
-            return same(c.kept[i], c.item, c.tol);
+        fn verdict(c: @This(), i: u32) canonical.Verdict {
+            return canonical.verdict(&same(c.kept[i], c.item, c.tol));
         }
     };
 }
@@ -266,8 +283,8 @@ fn Keyed(comptime T: type, comptime same: anytype) type {
         item: T,
         at: Vec3,
         tol: Tolerance,
-        fn comparisons(c: @This(), i: u32) @typeInfo(@TypeOf(same)).@"fn".return_type.? {
-            return same(c.kept[i], c.item, c.at, c.tol);
+        fn verdict(c: @This(), i: u32) canonical.Verdict {
+            return canonical.verdict(&same(c.kept[i], c.item, c.at, c.tol));
         }
     };
 }

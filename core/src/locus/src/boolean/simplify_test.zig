@@ -59,7 +59,9 @@ fn splitTop(left: u32, right: u32) !Body {
         for (cycle, 0..) |c, k| edges[f][k] = try b.straight(v[c], v[cycle[(k + 1) % cycle.len]]);
         loops[f] = .{.{ .edges = edges[f][0..cycle.len] }};
         const x = vec.normalized(vec.sub(corners[cycle[1]], corners[cycle[0]])).?;
-        const plane = try b.facingPlane(geometry.Frame.init(corners[cycle[0]], x, n));
+        var holds: [5]vec.Vec3 = undefined;
+        for (cycle, 0..) |c, k| holds[k] = corners[c];
+        const plane = try b.facingPlane(geometry.Frame.init(corners[cycle[0]], x, n), holds[0..cycle.len]);
         const frame = b.body.geometry.planes.items[plane.surface.index].frame;
         var uv = geometry.Box2.empty;
         for (cycle) |c| {

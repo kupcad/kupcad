@@ -551,6 +551,9 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     defer face_loops.deinit(allocator);
     var normals: std.ArrayList(Vec3) = .empty;
     defer normals.deinit(allocator);
+    // A fragment's corners, which the plane it is given must hold
+    var corners: std.ArrayList(Vec3) = .empty;
+    defer corners.deinit(allocator);
 
     for (fragments.items.items, keeps, 0..) |fragment, keep, i| {
         if (keep == .drop) continue;
@@ -560,7 +563,9 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         const frame = planar_faces.frameOf(body, f).?;
         var normal = in_face.outwardNormal(body, f, .{ 0, 0 });
         if (flip) normal = vec.neg(normal);
-        const facing = try b.facingPlane(Frame.init(frame.origin, frame.x, normal));
+        corners.clearRetainingCapacity();
+        for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| try corners.append(allocator, paves.point(m));
+        const facing = try b.facingPlane(Frame.init(frame.origin, frame.x, normal), corners.items);
         const face_index: u32 = @intCast(faces.items.len);
         const first_loop: u32 = @intCast(loop_ranges.items.len);
         for (fragments.loopsOf(i)) |loop| {

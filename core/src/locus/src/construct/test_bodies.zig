@@ -38,7 +38,7 @@ pub fn splineSheet(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnost
         try b.straight(v[2], v[3]),
         try b.straight(v[3], v[0]),
     };
-    const plane = try b.plane(geometry.Frame.world);
+    const plane = try b.plane(geometry.Frame.world, &.{});
     return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2, 3 } } }}, .sheet);
 }
 
@@ -60,7 +60,7 @@ pub fn ellipseSheet(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnos
         try b.straight(v[2], v[3]),
         try b.straight(v[3], v[0]),
     };
-    const plane = try b.plane(geometry.Frame.world);
+    const plane = try b.plane(geometry.Frame.world, &.{});
     return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2.8, 3 } } }}, .sheet);
 }
 
@@ -80,7 +80,7 @@ pub fn quarterDisc(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnost
         try b.straight(v[1], v[2]),
         try b.straight(v[2], v[0]),
     };
-    return b.finish(&.{.{ .surface = try b.plane(geometry.Frame.world), .loops = &.{.{ .edges = &sector }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2, 2 } } }}, .sheet);
+    return b.finish(&.{.{ .surface = try b.plane(geometry.Frame.world, &.{}), .loops = &.{.{ .edges = &sector }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2, 2 } } }}, .sheet);
 }
 
 /// A box of 2 × 3 × 4 whose top is the bilinear patch over its four top corners, the
@@ -107,7 +107,7 @@ pub fn patchTopBox(allocator: std.mem.Allocator, tol: Tolerance, lift: f64, diag
         loops[f] = .{.{ .edges = &edges[f] }};
         if (f < 5) {
             const frame = geometry.Frame.init(c[q[0]], vec.normalized(vec.sub(c[q[1]], c[q[0]])).?, normals[f]);
-            specs[f] = .{ .surface = try b.plane(frame), .loops = &loops[f], .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 4 + @abs(lift), 4 + @abs(lift) } } };
+            specs[f] = .{ .surface = try b.plane(frame, &.{ c[q[0]], c[q[1]], c[q[2]], c[q[3]] }), .loops = &loops[f], .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 4 + @abs(lift), 4 + @abs(lift) } } };
         } else {
             specs[f] = .{ .surface = top, .loops = &loops[f], .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 1, 1 } } };
         }

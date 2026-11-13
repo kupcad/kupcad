@@ -301,13 +301,19 @@ fn pentagramPrism(diag: *Diagnostics) !Body {
         const p = b.body.point(top[i]);
         const q = b.body.point(top[j]);
         const along = vec.normalized(vec.sub(q, p)).?;
-        const facing = try b.facingPlane(geometry.Frame.init(p, along, vec.cross(along, vec.Z3)));
+        const facing = try b.facingPlane(geometry.Frame.init(p, along, vec.cross(along, vec.Z3)), &.{ p, q, b.body.point(bottom[i]), b.body.point(bottom[j]) });
         faces[2 + i] = .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &side_loops[i] };
     }
     const top_loop = [_]sew.LoopSpec{.{ .edges = &top_edges }};
     const bottom_loop = [_]sew.LoopSpec{.{ .edges = &bottom_edges }};
-    const up = try b.facingPlane(geometry.Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3));
-    const down = try b.facingPlane(geometry.Frame.init(.{ 0, 0, 0 }, vec.X3, vec.neg(vec.Z3)));
+    var top_points: [5]Vec3 = undefined;
+    var bottom_points: [5]Vec3 = undefined;
+    for (top, bottom, &top_points, &bottom_points) |t, d, *tp, *dp| {
+        tp.* = b.body.point(t);
+        dp.* = b.body.point(d);
+    }
+    const up = try b.facingPlane(geometry.Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3), &top_points);
+    const down = try b.facingPlane(geometry.Frame.init(.{ 0, 0, 0 }, vec.X3, vec.neg(vec.Z3)), &bottom_points);
     faces[0] = .{ .surface = up.surface, .same_sense = up.same_sense, .loops = &top_loop };
     faces[1] = .{ .surface = down.surface, .same_sense = down.same_sense, .loops = &bottom_loop };
     for (&faces) |*f| f.uv_box = .{ .min = .{ -2, -2 }, .max = .{ 2, 2 } };

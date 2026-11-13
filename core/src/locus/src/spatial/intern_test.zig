@@ -160,10 +160,10 @@ test "Interner: the same line, plane and surface get one index; different ones t
     const p2 = surfaces.Plane{ .frame = Frame.init(.{ 7, 3, 1 }, vec.Y3, vec.neg(vec.Z3)) };
     const p3 = surfaces.Plane{ .frame = Frame.init(.{ 0, 0, 1 + 0.5e-5 }, vec.X3, vec.Z3) };
     const p4 = surfaces.Plane{ .frame = Frame.init(.{ 0, 0, 1.001 }, vec.X3, vec.Z3) };
-    const s1 = try interner.plane(testing.allocator, &g, p1);
-    try testing.expect(s1.eql(try interner.plane(testing.allocator, &g, p2)));
-    try testing.expect(s1.eql(try interner.plane(testing.allocator, &g, p3)));
-    try testing.expect(!s1.eql(try interner.plane(testing.allocator, &g, p4)));
+    const s1 = try interner.plane(testing.allocator, &g, p1, &.{});
+    try testing.expect(s1.eql(try interner.plane(testing.allocator, &g, p2, &.{})));
+    try testing.expect(s1.eql(try interner.plane(testing.allocator, &g, p3, &.{})));
+    try testing.expect(!s1.eql(try interner.plane(testing.allocator, &g, p4, &.{})));
     try testing.expectEqual(@as(usize, 2), g.planes.items.len);
 
     // Cylinders: the same axis line and radius with a turned reference direction
@@ -257,8 +257,8 @@ test "Interner: pieces of one line and triangles of one plane far from the origi
         const corners = [_]Vec3{ base, vec.addScaled(base, u, 0.1), vec.add(vec.scale(u, 0.1), vec.addScaled(base, w, 0.1)), vec.addScaled(base, w, 0.1) };
         const normal_a = vec.normalized(vec.cross(vec.sub(corners[1], corners[0]), vec.sub(corners[2], corners[0]))).?;
         const normal_b = vec.normalized(vec.cross(vec.sub(corners[2], corners[0]), vec.sub(corners[3], corners[0]))).?;
-        const plane_a = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[0], vec.normalized(vec.sub(corners[1], corners[0])).?, normal_a) });
-        const plane_b = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[2], vec.normalized(vec.sub(corners[3], corners[2])).?, normal_b) });
+        const plane_a = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[0], vec.normalized(vec.sub(corners[1], corners[0])).?, normal_a) }, corners[0..3]);
+        const plane_b = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(corners[2], vec.normalized(vec.sub(corners[3], corners[2])).?, normal_b) }, &.{ corners[0], corners[2], corners[3] });
         try testing.expect(plane_a.eql(plane_b));
     }
 }
@@ -284,8 +284,27 @@ test "Interner: a record the zone from a kept one to within rounding is refused,
     const inside = Vec3{ 2, 0.99 * tol.zone, 0 };
     try testing.expect(x_axis.eql(try interner.line(testing.allocator, &g, curves.Line.through(.{ 0, 0, 0 }, inside).?, .{ 0, 0, 0 }, inside)));
     // Planes the zone apart, as the find's
-    const floor = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3) });
-    try testing.expectError(error.AtTolerance, interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + tol.zone }, vec.X3, vec.Z3) }));
-    try testing.expect(floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 0.99 * tol.zone }, vec.X3, vec.Z3) })));
-    try testing.expect(!floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 1.01 * tol.zone }, vec.X3, vec.Z3) })));
+    const floor = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 }, vec.X3, vec.Z3) }, &.{});
+    try testing.expectError(error.AtTolerance, interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + tol.zone }, vec.X3, vec.Z3) }, &.{}));
+    try testing.expect(floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 0.99 * tol.zone }, vec.X3, vec.Z3) }, &.{})));
+    try testing.expect(!floor.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(.{ 0, 0, 1 + 1.01 * tol.zone }, vec.X3, vec.Z3) }, &.{})));
+}
+
+test "Interner: two planes a fraction of a degree apart through one point are one record there and two across a face" {
+    // The solids fuzzer's find (2026-11-13): a flattened hull's two faces, within the angle
+    // and through one vertex, were one plane record, and an edge of one lay 0.0039 off it
+    const tol = Tolerance.fromZone(1e-5);
+    var g: Geometry = .empty;
+    defer g.deinit(testing.allocator);
+    var interner = Interner.init(tol);
+    defer interner.deinit(testing.allocator);
+    const tilt = 1e-3;
+    const tilted = vec.normalized(.{ 0, @sin(tilt), @cos(tilt) }).?;
+    const flat = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(vec.ZERO3, vec.X3, vec.Z3) }, &.{ vec.ZERO3, .{ 1, 0, 0 }, .{ 0, 1, 0 } });
+    // Asked for at the shared point alone, the same; over a face reaching 1 from it, 1e-3
+    // off at its far corner, its own
+    try testing.expect(flat.eql(try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(vec.ZERO3, vec.X3, tilted) }, &.{vec.ZERO3})));
+    const far_corner = vec.scale(vec.normalized(vec.cross(tilted, vec.X3)).?, -1);
+    const own = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(vec.ZERO3, vec.X3, tilted) }, &.{ vec.ZERO3, .{ 1, 0, 0 }, far_corner });
+    try testing.expect(!flat.eql(own));
 }

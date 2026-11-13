@@ -88,8 +88,10 @@ pub const Builder = struct {
         return self.interner.line(self.body.allocator, &self.body.geometry, l, a, b) catch |e| return self.fail(e);
     }
 
-    pub fn plane(self: *Builder, frame: Frame) Error!geometry.SurfaceRef {
-        return self.interner.plane(self.body.allocator, &self.body.geometry, .{ .frame = frame }) catch |e| return self.fail(e);
+    /// The plane of `frame` interned for a face spanning `holds` (its corners; none for a
+    /// face of exact geometry no other plane comes near, `Interner.plane`).
+    pub fn plane(self: *Builder, frame: Frame, holds: []const Vec3) Error!geometry.SurfaceRef {
+        return self.interner.plane(self.body.allocator, &self.body.geometry, .{ .frame = frame }, holds) catch |e| return self.fail(e);
     }
 
     /// A planar face's surface and sense: the plane of `frame` interned, which may be a
@@ -98,8 +100,8 @@ pub const Builder = struct {
     /// took the record's normal for its own was inside out when a coplanar face facing the
     /// other way had made the record first (two sides of a sweep on one line, a groove's
     /// walls; `polyhedron` and the sweeps, 2026-11-12).
-    pub fn facingPlane(self: *Builder, frame: Frame) Error!Facing {
-        const surface = try self.plane(frame);
+    pub fn facingPlane(self: *Builder, frame: Frame, holds: []const Vec3) Error!Facing {
+        const surface = try self.plane(frame, holds);
         const record = self.body.geometry.planes.items[surface.index];
         return .{ .surface = surface, .same_sense = vec.dot(record.frame.z, frame.z) > 0 };
     }
@@ -190,7 +192,7 @@ pub fn box(allocator: std.mem.Allocator, tol: Tolerance, x: f64, y: f64, z: f64,
         }
         for (0..4) |k| edges[f][k] = try b.straight(v[q[k]], v[q[(k + 1) % 4]]);
         loops[f] = .{.{ .edges = &edges[f] }};
-        specs[f] = .{ .surface = try b.plane(frame), .loops = &loops[f], .uv_box = uv };
+        specs[f] = .{ .surface = try b.plane(frame, &.{ corners[q[0]], corners[q[1]], corners[q[2]], corners[q[3]] }), .loops = &loops[f], .uv_box = uv };
     }
     return b.finish(&specs, .outer);
 }
@@ -249,8 +251,9 @@ pub fn cylinder(allocator: std.mem.Allocator, tol: Tolerance, r: f64, height: f6
         .{ .start = v2, .end = v3, .curve = top_circle, .t0 = 0, .t1 = PI },
         .{ .start = v3, .end = v2, .curve = top_circle, .t0 = PI, .t1 = TWO_PI },
     };
-    const bottom_plane = try b.plane(Frame.init(.{ 0, 0, z0 }, vec.X3, vec.neg(vec.Z3)));
-    const top_plane = try b.plane(Frame.init(.{ 0, 0, z1 }, vec.X3, vec.Z3));
+    // Caps of exact circles, the only planes there
+    const bottom_plane = try b.plane(Frame.init(.{ 0, 0, z0 }, vec.X3, vec.neg(vec.Z3)), &.{});
+    const top_plane = try b.plane(Frame.init(.{ 0, 0, z1 }, vec.X3, vec.Z3), &.{});
     const cap_box = geometry.Box2{ .min = .{ -r, -r }, .max = .{ r, r } };
     const specs = [4]sew.FaceSpec{
         .{ .surface = side, .loops = &.{.{ .edges = &a_edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ PI, height } } },
@@ -375,11 +378,11 @@ pub fn cone(allocator: std.mem.Allocator, tol: Tolerance, r1: f64, r2: f64, heig
     specs[n] = .{ .surface = surface, .loops = &.{.{ .edges = &b_edges }}, .uv_box = .{ .min = .{ PI, 0 }, .max = .{ TWO_PI, v_top } } };
     n += 1;
     if (r1 > 0) {
-        specs[n] = .{ .surface = try b.plane(Frame.init(.{ 0, 0, z0 }, vec.X3, vec.neg(vec.Z3))), .loops = &.{.{ .edges = &bottom_edges }}, .uv_box = .{ .min = .{ -r1, -r1 }, .max = .{ r1, r1 } } };
+        specs[n] = .{ .surface = try b.plane(Frame.init(.{ 0, 0, z0 }, vec.X3, vec.neg(vec.Z3)), &.{}), .loops = &.{.{ .edges = &bottom_edges }}, .uv_box = .{ .min = .{ -r1, -r1 }, .max = .{ r1, r1 } } };
         n += 1;
     }
     if (r2 > 0) {
-        specs[n] = .{ .surface = try b.plane(Frame.init(.{ 0, 0, z1 }, vec.X3, vec.Z3)), .loops = &.{.{ .edges = &top_edges }}, .uv_box = .{ .min = .{ -r2, -r2 }, .max = .{ r2, r2 } } };
+        specs[n] = .{ .surface = try b.plane(Frame.init(.{ 0, 0, z1 }, vec.X3, vec.Z3), &.{}), .loops = &.{.{ .edges = &top_edges }}, .uv_box = .{ .min = .{ -r2, -r2 }, .max = .{ r2, r2 } } };
         n += 1;
     }
     return b.finish(specs[0..n], .outer);
@@ -470,7 +473,8 @@ pub fn circle(allocator: std.mem.Allocator, tol: Tolerance, r: f64, diag: *Diagn
         .{ .start = v0, .end = v1, .curve = c, .t0 = 0, .t1 = PI },
         .{ .start = v1, .end = v0, .curve = c, .t0 = PI, .t1 = TWO_PI },
     };
-    const plane = try b.plane(Frame.world);
+    // A sheet's one plane
+    const plane = try b.plane(Frame.world, &.{});
     const specs = [1]sew.FaceSpec{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ -r, -r }, .max = .{ r, r } } }};
     return b.finish(&specs, .sheet);
 }
@@ -588,7 +592,7 @@ pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const 
         }
         loops[f] = .{.{ .edges = &edges[f] }};
         // The plane record is shared whichever way a coplanar triangle faces
-        const facing = try b.facingPlane(frame);
+        const facing = try b.facingPlane(frame, &.{ p0, p1, p2 });
         specs[f] = .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &loops[f], .uv_box = uv };
     }
     // The plane a face was given has its own x; the UV box must be in that plane's frame

@@ -78,7 +78,8 @@ fn squares(faces: []const [4]f64) !Body {
         }
         for (0..4) |k| e[k] = try b.straight(corners[k], corners[(k + 1) % 4]);
         l.* = .{.{ .edges = e }};
-        const facing = try b.facingPlane(if (up) geometry.Frame.world else geometry.Frame.init(vec.ZERO3, vec.X3, vec.neg(vec.Z3)));
+        // The world plane, either way up
+        const facing = try b.facingPlane(if (up) geometry.Frame.world else geometry.Frame.init(vec.ZERO3, vec.X3, vec.neg(vec.Z3)), &.{});
         const plane = b.body.geometry.surface(facing.surface).plane;
         var box = geometry.Box2.empty;
         for (at) |p| box.grow(plane.project(.{ p[0], p[1], 0 }));

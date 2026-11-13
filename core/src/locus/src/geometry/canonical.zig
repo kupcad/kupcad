@@ -55,13 +55,30 @@ pub const Verdict = union(enum) { same, apart, at_tolerance: Comparison };
 /// Apart when any comparison is clearly past its limit (a NaN is), else at the tolerance
 /// when any is within rounding of it, else the same.
 pub fn verdict(comparisons: []const Comparison) Verdict {
-    var at: ?Comparison = null;
-    for (comparisons) |c| {
-        if (!(c.measured <= c.limit + c.band)) return .apart;
-        if (at == null and @abs(c.measured - c.limit) <= c.band) at = c;
-    }
-    return if (at) |c| .{ .at_tolerance = c } else .same;
+    var tally: Tally = .{};
+    for (comparisons) |c| tally.add(c);
+    return tally.verdict();
 }
+
+/// `verdict` over comparisons given one at a time (a plane's, one per point it must hold).
+pub const Tally = struct {
+    apart: bool = false,
+    at: ?Comparison = null,
+
+    pub fn add(self: *Tally, c: Comparison) void {
+        if (self.apart) return;
+        if (!(c.measured <= c.limit + c.band)) {
+            self.apart = true;
+            return;
+        }
+        if (self.at == null and @abs(c.measured - c.limit) <= c.band) self.at = c;
+    }
+
+    pub fn verdict(self: Tally) Verdict {
+        if (self.apart) return .apart;
+        return if (self.at) |c| .{ .at_tolerance = c } else .same;
+    }
+};
 
 /// The size of the largest coordinate of `points`: what their distances are rounded at.
 pub fn magnitude(points: []const Vec3) f64 {
@@ -128,7 +145,11 @@ pub fn planeKey(plane: surfaces.Plane, at: Vec3) Vec3 {
     return vec.scale(n, vec.dot(vec.sub(plane.frame.origin, at), n));
 }
 
-/// Plane `b` against kept plane `a`: parallel, the same key, `b`'s origin on `a`.
+/// Plane `b` against kept plane `a`: parallel, the same key, `b`'s origin on `a`; and `a`
+/// holding every point the face asking for `b` spans (`planeHolds`), as a line is shared
+/// only over the extent that asks for it: two planes a fraction of a degree apart through
+/// one point are one plane there and apart across a face (a flattened hull's, the solids
+/// fuzzer's find of 2026-11-13: an edge 0.0039 off the plane its face was given).
 pub fn samePlane(a: surfaces.Plane, b: surfaces.Plane, at: Vec3, tol: Tolerance) [3]Comparison {
     const scale = magnitude(&.{ a.frame.origin, b.frame.origin, at });
     return .{
@@ -139,6 +160,11 @@ pub fn samePlane(a: surfaces.Plane, b: surfaces.Plane, at: Vec3, tol: Tolerance)
 }
 
 /// The point of the axis nearest `at`, from `at`.
+/// Whether kept plane `a` holds `p`, the corner of a face asking for a plane like it.
+pub fn planeHolds(a: surfaces.Plane, p: Vec3, tol: Tolerance) Comparison {
+    return Comparison.distance(@abs(a.height(p)), tol.zone, magnitude(&.{ a.frame.origin, p }));
+}
+
 pub fn axisKey(frame: types.Frame, at: Vec3) Vec3 {
     const o = vec.sub(frame.origin, at);
     return vec.addScaled(o, frame.z, -vec.dot(o, frame.z));

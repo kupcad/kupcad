@@ -59,7 +59,7 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
             loops[i] = .{.{ .edges = &edges[i] }};
             const out = if (spec.void) vec.neg(n) else n;
             const x = vec.normalized(vec.sub(corners[order[1]], corners[order[0]])).?;
-            const facing = try b.facingPlane(geometry.Frame.init(corners[order[0]], x, out));
+            const facing = try b.facingPlane(geometry.Frame.init(corners[order[0]], x, out), &.{ corners[order[0]], corners[order[1]], corners[order[2]], corners[order[3]] });
             const frame = b.body.geometry.planes.items[facing.surface.index].frame;
             var uv = geometry.Box2.empty;
             for (order) |c| {

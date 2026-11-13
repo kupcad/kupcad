@@ -231,7 +231,8 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     defer allocator.free(loops);
     const face_specs = try allocator.alloc(sew.FaceSpec, n_faces);
     defer allocator.free(face_specs);
-    const plane = try b.plane(geometry.Frame.world);
+    // The sketch's one plane
+    const plane = try b.plane(geometry.Frame.world, &.{});
     var li: usize = 0;
     var fi: usize = 0;
     for (0..n_cycles) |oi| {

@@ -100,8 +100,10 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
             // The cap facing the sheet's way keeps its loops' direction; the other one
             // reverses them
             const n_bottom = if (along > 0) vec.neg(n_sheet) else n_sheet;
-            const bottom_cap = try b.facingPlane(Frame.init(plane.frame.origin, plane.frame.x, n_bottom));
-            const top_cap = try b.facingPlane(Frame.init(vec.add(plane.frame.origin, direction), plane.frame.x, vec.neg(n_bottom)));
+            // Caps: the sheet's plane and its copy along the direction, a plane the sheet's
+            // other faces share and no other comes near
+            const bottom_cap = try b.facingPlane(Frame.init(plane.frame.origin, plane.frame.x, n_bottom), &.{});
+            const top_cap = try b.facingPlane(Frame.init(vec.add(plane.frame.origin, direction), plane.frame.x, vec.neg(n_bottom)), &.{});
             const bottom_plane = bottom_cap.surface;
             const top_plane = top_cap.surface;
             var bottom_box = geometry.Box2.empty;
@@ -235,8 +237,10 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
             if (!turn.full) {
                 const start = Affine.rotate(z, turn.start);
                 const end = Affine.rotate(z, turn.end);
-                const start_cap = try b.facingPlane(Frame.init(origin, start.vector(frame.r_dir), start.vector(frame.normal)));
-                const end_cap = try b.facingPlane(Frame.init(origin, end.vector(frame.r_dir), vec.neg(end.vector(frame.normal))));
+                // The profile's plane turned to each end, a half-plane through the axis
+                // no other comes near
+                const start_cap = try b.facingPlane(Frame.init(origin, start.vector(frame.r_dir), start.vector(frame.normal)), &.{});
+                const end_cap = try b.facingPlane(Frame.init(origin, end.vector(frame.r_dir), vec.neg(end.vector(frame.normal))), &.{});
                 caps = .{ .start = start_cap.surface, .start_same = start_cap.same_sense, .end = end_cap.surface, .end_same = end_cap.same_sense };
             }
             var face_loops = traverse.Loops.init(sheet, f);
@@ -619,7 +623,8 @@ fn planeSector(b: *Builder, r: RevolvedEdge, outward: Vec3, edges: []sew.EdgeSpe
     const g = &b.body.geometry;
     const frame = r.frame;
     const normal = if (vec.dot(outward, frame.z) > 0) frame.z else vec.neg(frame.z);
-    const facing = try b.facingPlane(Frame.init(frame.onAxis(r.place_a.axial), frame.r_dir, normal));
+    // Across the axis exactly: no plane tilted from it comes near
+    const facing = try b.facingPlane(Frame.init(frame.onAxis(r.place_a.axial), frame.r_dir, normal), &.{});
     const plane = g.surface(facing.surface).plane;
     var kept: usize = 0;
     for (0..SIDE_EDGES) |i| {
@@ -776,10 +781,11 @@ fn sideFace(b: *Builder, curve: curves.Curve, low: Copied, high: Copied, ends: E
             // sheet's normal, so the loop is counter-clockwise when the sweep rises
             const tangent = vec.normalized(vec.sub(pb, pa)).?;
             const frame = Frame.init(pa, tangent, outward);
-            const facing = try b.facingPlane(frame);
+            const corners = [_]Vec3{ pa, pb, vec.add(pa, direction), vec.add(pb, direction) };
+            const facing = try b.facingPlane(frame, &corners);
             const plane = g.surface(facing.surface).plane;
             var box = geometry.Box2.empty;
-            for ([_]Vec3{ pa, pb, vec.add(pa, direction), vec.add(pb, direction) }) |p| box.grow(plane.project(p));
+            for (corners) |p| box.grow(plane.project(p));
             if (vec.dot(direction, frame.y) < 0) reverseLoop(edges);
             return .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .uv_box = box };
         },
