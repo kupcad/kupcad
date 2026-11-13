@@ -18,6 +18,8 @@ const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const STEP_TOLERANCE = 1e-9;
 /// What the B-Rep scripts start with.
 const BREP_CONFIG = "CAD.config(engine: :brep)\n";
+/// The grid a mesh vertex's position is compared on across the engines: a millionth.
+const POINT_GRID = 1e6;
 
 /// Shapes both engines build. A cylinder's sides are a multiple of 4, so Manifold's polygon
 /// reaches the circle's extremes on both axes (B-Rep's circle is exact).
@@ -669,6 +671,89 @@ test "parity: a material is every vertex's on both engines, moved or not; none i
         var brep_buf: [8]u32 = undefined;
         try testing.expectEqualSlices(u32, case.slots, try slotsOn(.manifold, case.source, &mesh_buf));
         try testing.expectEqualSlices(u32, case.slots, try slotsOn(.brep_native, case.source, &brep_buf));
+    }
+}
+
+/// A mesh vertex as the engines are compared by: its position on `POINT_GRID` and its
+/// material slot.
+const SlotAt = struct {
+    at: [3]i64,
+    slot: u32,
+
+    fn lessThan(_: void, x: SlotAt, y: SlotAt) bool {
+        for (x.at, y.at) |a, b| if (a != b) return a < b;
+        return x.slot < y.slot;
+    }
+
+    fn eql(x: SlotAt, y: SlotAt) bool {
+        return std.mem.eql(i64, &x.at, &y.at) and x.slot == y.slot;
+    }
+};
+
+/// Every vertex of the mesh `source` builds on `engine` with its material slot, sorted and
+/// without repeats; the caller's to free.
+fn slotsAtOn(engine: geom.EngineType, source: []const u8) ![]SlotAt {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var script: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer script.deinit();
+    try script.writer.print("{s}{s}", .{ if (engine == .brep_native) BREP_CONFIG else "", source });
+    try testing.expectEqual(.ok, try support.runOn(&vm, script.written()));
+    const handle = try vm.ensureConcrete(vm.globals.get("r") orelse return error.MissingGlobal);
+    try testing.expectEqual(engine, handle.engine);
+    const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.NoMesh;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+    var out: std.ArrayList(SlotAt) = .empty;
+    errdefer out.deinit(testing.allocator);
+    var v: usize = 0;
+    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+        var at: [3]i64 = undefined;
+        for (&at, mesh.vert_props[v..][0..3]) |*a, c| a.* = @intFromFloat(@round(c * POINT_GRID));
+        try out.append(testing.allocator, .{ .at = at, .slot = if (mesh.num_prop < 4) kernel.DEFAULT_MATERIAL_SLOT else @intFromFloat(mesh.vert_props[v + 3]) });
+    }
+    std.mem.sort(SlotAt, out.items, {}, SlotAt.lessThan);
+    var n: usize = 0;
+    for (out.items) |item| {
+        if (n > 0 and out.items[n - 1].eql(item)) continue;
+        out.items[n] = item;
+        n += 1;
+    }
+    out.shrinkRetainingCapacity(n);
+    return out.toOwnedSlice(testing.allocator);
+}
+
+test "parity: a difference and a union of two coloured solids give each vertex the same material slot on both engines, the cut faces the cutter's" {
+    const setup =
+        \\red = cube(2).material(color: "#ff0000")
+        \\blue = cube(2).translate(1, 1, 1).material(color: "#0000ff")
+        \\
+    ;
+    const red = kernel.materialSlot(0);
+    const blue = kernel.materialSlot(1);
+    for ([_][]const u8{ "r = red - blue", "r = red + blue" }) |line| {
+        errdefer std.debug.print("script: {s}\n", .{line});
+        const source = try std.mem.concat(testing.allocator, u8, &.{ setup, line });
+        defer testing.allocator.free(source);
+        const on_mesh = try slotsAtOn(.manifold, source);
+        defer testing.allocator.free(on_mesh);
+        const on_brep = try slotsAtOn(.brep_native, source);
+        defer testing.allocator.free(on_brep);
+        errdefer std.debug.print("mesh engine: {any}\nB-Rep engine: {any}\n", .{ on_mesh, on_brep });
+        try testing.expectEqual(on_mesh.len, on_brep.len);
+        for (on_mesh, on_brep) |m, b| try testing.expect(m.eql(b));
+        // Both colours; in the difference, the cutter's on its three faces' seven corners
+        // alone, the notch at (1, 1, 1)
+        var blue_corners: usize = 0;
+        var reds: usize = 0;
+        for (on_brep) |item| {
+            if (item.slot == red) reds += 1;
+            if (item.slot != blue) continue;
+            blue_corners += 1;
+            if (std.mem.startsWith(u8, line, "r = red - blue")) for (item.at) |c| try testing.expect(c == 1 * POINT_GRID or c == 2 * POINT_GRID);
+        }
+        try testing.expect(reds > 0);
+        if (std.mem.startsWith(u8, line, "r = red - blue")) try testing.expectEqual(7, blue_corners) else try testing.expect(blue_corners > 0);
     }
 }
 
