@@ -81,7 +81,8 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, options: diagnosti
 }
 
 /// Every face of both operands whole, one fragment each (the containment table's, when the
-/// paves found the operands apart): its loops as its coedges' starts, merged.
+/// paves found the operands apart): its loops as its coedges' starts, merged. A loop of one
+/// vertex bounds nothing and is left out, as the general path's overlay leaves it out.
 pub fn wholeFaces(allocator: std.mem.Allocator, paves: *const Paves, diag: *Diagnostics) Error!Fragments {
     var out: Fragments = .{ .allocator = allocator };
     errdefer out.deinit();
@@ -94,6 +95,7 @@ pub fn wholeFaces(allocator: std.mem.Allocator, paves: *const Paves, diag: *Diag
                 const first_loop: u32 = @intCast(out.loops.items.len);
                 var loops = traverse.Loops.init(body, f);
                 while (loops.next() catch return corrupt(diag)) |l| {
+                    if (body.loop(l).first == .none) continue;
                     const start: u32 = @intCast(out.vertices.items.len);
                     var it = traverse.Coedges.init(body, l);
                     while (it.next() catch return corrupt(diag)) |c| try out.vertices.append(allocator, paves.vertex_of[k][@backingInt(body.coedgeStart(c))]);

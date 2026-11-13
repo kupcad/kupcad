@@ -39,10 +39,12 @@ const bvh_mod = @import("../spatial/bvh.zig");
 const bbox = @import("../measure/bbox.zig");
 const in_face = @import("../query/in_face.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const curve_surface = @import("../intersect/curve_surface.zig");
 const Body = body_mod.Body;
 const Box3 = geometry.Box3;
 const Bvh = bvh_mod.Bvh;
 const Frame = geometry.Frame;
+const Plane = curve_surface.Plane;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -96,6 +98,13 @@ pub const CommonBlock = struct {
     edges: [2]u32,
 };
 
+/// A merged vertex strictly inside face `face` of `operand`.
+pub const Touch = struct {
+    operand: u1,
+    face: u32,
+    vertex: u32,
+};
+
 /// A merged vertex lying on a face.
 const Incidence = struct {
     face: FaceRef,
@@ -123,10 +132,18 @@ pub const Paves = struct {
     edge_paves: [2][]std.ArrayList(Pave) = .{ &.{}, &.{} },
     /// The faces of both operands each merged vertex lies on, as sorted pairs.
     incidences: std.ArrayList(Incidence) = .empty,
+    /// Of those, the ones on a face's boundary (a pave of one of its edges), sorted: what
+    /// the paves decided lies on the boundary, which later decisions defer to.
+    boundary: std.ArrayList(Incidence) = .empty,
     /// Each operand's face's section segments (the smaller vertex first).
     sections: [2][]std.ArrayList([2]u32) = .{ &.{}, &.{} },
     /// The pairs of faces (of `a`, of `b`) lying in one plane.
     coplanar: std.ArrayList([2]u32) = .empty,
+    /// The vertices of one operand strictly inside a face of the other (vertex–face): where
+    /// the operands touch at a point, unless the face's imprint puts the vertex on an edge
+    /// (the other operand passing through the face there). Assembly refuses a result that
+    /// keeps such a point inside one solid, a pinch no edge records.
+    touches: std.ArrayList(Touch) = .empty,
     /// The common blocks: pieces of an edge of `a` and an edge of `b` between the same two
     /// merged vertices, the operands' edges overlapping there (one edge of the result).
     common: std.ArrayList(CommonBlock) = .empty,
@@ -145,8 +162,10 @@ pub const Paves = struct {
             a.free(self.sections[k]);
         }
         self.incidences.deinit(a);
+        self.boundary.deinit(a);
         self.coplanar.deinit(a);
         self.common.deinit(a);
+        self.touches.deinit(a);
         self.* = undefined;
     }
 
@@ -316,6 +335,11 @@ const Filler = struct {
                 const q = types.VertexIndex.of(t[1]);
                 gap = @max(gap, vec.distance(centre, b.point(q)) + b.vertex(q).gap);
             }
+            // The ball is the result's vertex's gap, which the zone bounds (§6): vertices
+            // merged from gaps a chain recorded, or two exactly the tolerance apart (half of
+            // it is the zone, and the centre's rounding is past it), are refused here, the
+            // vertex named, never a result the checker then fails (2026-11-13)
+            if (gap > p.tol.zone) return self.diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.vertex, @backingInt(own_index)), .label = "vertex–vertex: the first operand's vertex merged with the second's", .measured = gap, .threshold = p.tol.zone });
             p.points.items[m] = centre;
             p.gaps.items[m] = gap;
             start = end;
@@ -572,8 +596,10 @@ const Filler = struct {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
             if (@abs(planar_faces.planeOf(frame).height(q)) > self.p.tol.xsect + self.p.gaps.items[v]) continue;
-            if (try planar_faces.place(self.body(k), f, q, self.p.tol, self.diag) == .outside) continue;
+            const place = try planar_faces.place(self.body(k), f, q, self.p.tol, self.diag);
+            if (place == .outside) continue;
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
+            if (place == .inside) try self.p.touches.append(self.allocator, .{ .operand = @intCast(k), .face = @backingInt(f), .vertex = v });
         }
     }
 
@@ -583,7 +609,12 @@ const Filler = struct {
     /// the face's plane beyond the tolerance (an end on the plane is vertex–face's): the
     /// crossing, inside the face or on its boundary, a merged vertex on the edge and the
     /// face (one on the face's boundary tried against the other operand's edges, where
-    /// edge–edge should have found it).
+    /// edge–edge should have found it). A straight edge meets a plane once: a pave the edge
+    /// already has on the face (edge–edge's, where it passes an edge of the face) is the
+    /// crossing, however far the computed point is from it. At a shallow angle the edge
+    /// stays within the tolerance of the plane along a stretch many times the tolerance,
+    /// and a second vertex there made the two faces meet along a bent chain that both kept,
+    /// a fold (2026-11-13).
     fn edgeFace(self: *Filler) Error!void {
         for (0..2) |k| {
             const other = 1 - k;
@@ -601,6 +632,10 @@ const Filler = struct {
                 const xsect = self.p.tol.xsect;
                 if (@abs(h0) <= xsect or @abs(h1) <= xsect or (h0 < 0) == (h1 < 0)) continue;
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
+                if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
+                    try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = at });
+                    continue;
+                }
                 const place = try planar_faces.place(self.body(other), f, q, self.p.tol, self.diag);
                 if (place == .outside) continue;
                 const before = self.p.points.items.len;
@@ -612,6 +647,24 @@ const Filler = struct {
                 if (place == .boundary and self.p.points.items.len > before) try self.onEdges(other, w, null);
             }
         }
+    }
+
+    /// Of edge `e`'s paves so far, the one nearest `q` lying on face `f` of operand
+    /// `other` (within the tolerance and its gap of the face's plane, inside the face or on
+    /// its boundary); null when none is.
+    fn paveOnFace(self: *Filler, k: usize, e: types.EdgeIndex, other: usize, f: types.FaceIndex, plane: Plane, q: Vec3) Error!?u32 {
+        var best: ?u32 = null;
+        var best_distance = std.math.inf(f64);
+        for (self.p.edge_paves[k][@backingInt(e)].items) |pave| {
+            const point = self.p.point(pave.vertex);
+            if (@abs(plane.height(point)) > self.p.tol.xsect + self.p.gaps.items[pave.vertex]) continue;
+            const distance = vec.distance(point, q);
+            if (distance >= best_distance) continue;
+            if (try planar_faces.place(self.body(other), f, point, self.p.tol, self.diag) == .outside) continue;
+            best = pave.vertex;
+            best_distance = distance;
+        }
+        return best;
     }
 
     // --- incidences ---
@@ -629,14 +682,42 @@ const Filler = struct {
                     var it = traverse.Coedges.init(body_k, l);
                     while (it.next() catch return corrupt(self.diag)) |c| {
                         for (p.edge_paves[k][@backingInt(body_k.coedge(c).edge)].items) |pave| {
-                            try p.incidences.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = pave.vertex });
+                            try p.boundary.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = pave.vertex });
                         }
                     }
                 }
             }
         }
+        sortUnique(Incidence, &p.boundary, Incidence.lessThan);
+        try p.incidences.appendSlice(self.allocator, p.boundary.items);
         try p.incidences.appendSlice(self.allocator, self.found.items);
         sortUnique(Incidence, &p.incidences, Incidence.lessThan);
+    }
+
+    /// Whether the paves put merged vertex `v` on the boundary of face `f` of operand `k`.
+    fn onBoundary(self: *const Filler, k: usize, f: types.FaceIndex, v: u32) bool {
+        const key: Incidence = .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v };
+        const items = self.p.boundary.items;
+        var lo: usize = 0;
+        var hi: usize = items.len;
+        while (lo < hi) {
+            const mid = (lo + hi) / 2;
+            if (Incidence.lessThan({}, items[mid], key)) lo = mid + 1 else hi = mid;
+        }
+        return lo < items.len and !Incidence.lessThan({}, key, items[lo]);
+    }
+
+    /// Whether the piece from `u` to `w`, its middle at `place` against face `f` of operand
+    /// `k`, lies inside the face for the imprint: inside, or on the boundary by its middle
+    /// alone with an end the paves put off the boundary (a piece one intersection tolerance
+    /// long, from an edge's tolerance out, has its middle within the zone of the edge; the
+    /// paves decided its end is not on it, and they decide once).
+    fn imprinted(self: *const Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place) bool {
+        return switch (place) {
+            .inside => true,
+            .outside => false,
+            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w),
+        };
     }
 
     // --- common blocks ---
@@ -719,8 +800,8 @@ const Filler = struct {
                 const in_b = try planar_faces.place(self.body(1), fb, mid, p.tol, self.diag);
                 if (in_b == .outside) continue;
                 const segment = .{ @min(u, w), @max(u, w) };
-                if (in_a == .inside) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
-                if (in_b == .inside) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
+                if (self.imprinted(0, fa, u, w, in_a)) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
+                if (self.imprinted(1, fb, u, w, in_b)) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
             }
         }
     }
@@ -798,7 +879,8 @@ const Filler = struct {
                 const list = p.edge_paves[k][@backingInt(body_k.coedge(c).edge)].items;
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
-                    if (try planar_faces.place(self.body(other), g, mid, p.tol, self.diag) != .inside) continue;
+                    const place = try planar_faces.place(self.body(other), g, mid, p.tol, self.diag);
+                    if (!self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                 }
             }

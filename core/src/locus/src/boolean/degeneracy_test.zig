@@ -28,6 +28,7 @@ const expectIdentities = helpers.expectIdentities;
 const shellKinds = helpers.shellKinds;
 const turned = helpers.turned;
 const Vec3 = vec.Vec3;
+const VertexIndex = @import("../topology/types.zig").VertexIndex;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -412,4 +413,222 @@ test "degeneracy: two 1000-sided prisms overlapping, and 64 pegs joined to a pla
     var studded = try pipeline.chain(testing.allocator, &operands, .@"union", .{}, &diag, null);
     defer studded.deinit();
     try expectShape(&studded, 256 + 64 * 2, 6 + 64 * 5, 1);
+}
+
+test "degeneracy: a cut whose corner touches the face it was cut from is pinched at a point, refused by design" {
+    // The solids fuzzer's first find (2026-11-13): a tetrahedron through a box's bottom, its
+    // apex on the box's side from within; the pocket the difference leaves, open at the
+    // bottom, meets that side at one point no edge records, inside one solid
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var through = try tetrahedron(.{ 2, 1, 1 }, .{ 0.5, 0.5, -1 }, .{ 0.5, 1.5, -1 }, .{ 1.5, 1, -1 });
+    defer through.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &a, &through, .difference, .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    var u = try sound(&a, &through, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&u));
+    var i = try sound(&a, &through, .intersection);
+    defer i.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&i));
+    // Wholly inside, the cut is a void touching the side at its corner: two shells, which
+    // pass
+    var inside = try tetrahedron(.{ 2, 1, 1 }, .{ 1, 0.5, 0.5 }, .{ 1, 1.5, 0.5 }, .{ 1, 1, 1.5 });
+    defer inside.deinit();
+    var hollow = try sound(&a, &inside, .difference);
+    defer hollow.deinit();
+    try testing.expectEqual([2]usize{ 1, 1 }, shellKinds(&hollow));
+    try testing.expectApproxEqAbs(8 - try volume(&inside), try volume(&hollow), CLOSE);
+    // From outside, the corner on the face makes two solids touching at a point, which pass
+    var outside = try tetrahedron(.{ 2, 1, 1 }, .{ 3, 0.5, 0.5 }, .{ 3, 1.5, 0.5 }, .{ 3, 1, 1.5 });
+    defer outside.deinit();
+    var both = try sound(&a, &outside, .@"union");
+    defer both.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&both));
+    var cut = try sound(&a, &outside, .difference);
+    defer cut.deinit();
+    try expectShape(&cut, 8, 6, 1);
+}
+
+test "degeneracy: a sliver one intersection tolerance thick, crossed by a face, kept or collapsed" {
+    // The solids fuzzer's second find (2026-11-13), reduced: a box overlapping another by
+    // the intersection tolerance and standing out of its top, its sides crossing the top in
+    // pieces that long. Just past the tolerance the sliver is kept: the paves put such a
+    // piece's far end off the top's edge while its middle is within the zone of it, and the
+    // paves decide (the piece is imprinted); a sample of the sliver's strip on the other's
+    // face gives way to the next one. Just within it the faces lie in one plane and the
+    // operands touch. Either way the identities hold to the slab the tolerance may count
+    // either way: its thickness times the face it lies on.
+    const xsect = tol.xsect;
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    for ([_]f64{ 1 + 1e-6, 1 - 1e-6 }) |by| {
+        var b = try box(.{ 0.5, -1, 1 }, .{ 1.5, xsect * by, 3 });
+        defer b.deinit();
+        var u = try sound(&a, &b, .@"union");
+        defer u.deinit();
+        try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&u));
+        var i = try sound(&a, &b, .intersection);
+        defer i.deinit();
+        var d = try sound(&a, &b, .difference);
+        defer d.deinit();
+        const slab = xsect * 1 * 1;
+        const vi = try volume(&i);
+        if (by > 1) try testing.expectApproxEqAbs(slab * by, vi, 1e-12) else try testing.expect(i.isEmpty());
+        const va = try volume(&a);
+        const vb = try volume(&b);
+        try testing.expectApproxEqAbs(va + vb, try volume(&u) + vi, slab);
+        try testing.expectApproxEqAbs(va - vi, try volume(&d), slab);
+    }
+}
+
+test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
+    // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
+    // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's
+    // edge to inside the other; merged, the hull's face holds the contact as a chain of
+    // slits from its boundary, which simplification once took for a bridge and removed
+    var a = try box(.{ 0.5, 0, 1 }, .{ 1.5, 2, 3 });
+    defer a.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 1, 3.5, 1 }, .{ 4, -0.5, 4 }, .{ 0, 3.5, 2 }, .{ 1, 2.5, 2 }, .{ 1, 2.5, 4 } };
+    var b = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer b.deinit();
+    var u = try sound(&a, &b, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+    try expectIdentities(&a, &b);
+}
+
+test "degeneracy: an edge passing a box's edge within the tolerance and crossing its face at a shallow angle" {
+    // The solids fuzzer's fifth find (2026-11-13), reduced: a hull's edge, direction
+    // (1, 3, 3), passes 1.9e-5 from the box's edge at x = 0.5, y = 2 (within the
+    // intersection tolerance, so edge–edge makes a vertex there) and crosses the box's face
+    // x = 0.5 at 13° 5.7e-5 away; the box's edge crosses the hull's face 3x − z = 6e-5 as
+    // near. Two more vertices there made the two faces meet along a bent chain both kept,
+    // a fold the overlap rules refuse. An edge meets a plane once: the crossings are the
+    // vertex the edges already have on the faces. The exact intersection's top is an edge
+    // 6e-5 long that is now that vertex, 5.4e-5 above it: its volume, and the identities,
+    // hold to that displacement times the result's area, well within the fuzzer's slab
+    var a = try box(.{ 0, 1, 1 }, .{ 0.5, 2, 3 });
+    defer a.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 4, 3, 4 }, .{ 4, 4, 4 }, .{ 1, 4, 3 }, .{ 0, 1, 0 }, .{ 3, 3, 4 }, .{ 0, 4, 0 } };
+    var b0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer b0.deinit();
+    var b = try helpers.moved(&b0, .{ 2e-5, -0.5, 0 });
+    defer b.deinit();
+    var u = try sound(&b, &a, .@"union");
+    defer u.deinit();
+    var i = try sound(&b, &a, .intersection);
+    defer i.deinit();
+    var d = try sound(&b, &a, .difference);
+    defer d.deinit();
+    // The exact intersection, from its cross-sections in z (2026-11-13)
+    const exact = 0.016663166786673865;
+    const measured = try @import("../measure/mass.zig").mass(&i, .{}, &diag);
+    const apex = 6e-5 * measured.area;
+    const vi = measured.volume;
+    try testing.expectApproxEqAbs(exact, vi, apex);
+    try testing.expectEqual(@as(usize, 5), i.counts().faces);
+    const va = try volume(&a);
+    const vb = try volume(&b);
+    try testing.expectApproxEqAbs(va + vb, try volume(&u) + vi, 2 * apex);
+    try testing.expectApproxEqAbs(vb - vi, try volume(&d), 2 * apex);
+}
+
+test "degeneracy: vertices merged past the zone are refused, the vertex named" {
+    // The solids fuzzer's sixth find (2026-11-13): a merged vertex's ball is the result's
+    // vertex's gap, which the zone bounds; the gap a chain's earlier boolean recorded plus
+    // half the distance to the other operand's vertex (or two vertices exactly the
+    // intersection tolerance apart, the centre's rounding past the zone) made a result its
+    // own last check refused. The merge refuses it, naming the vertex, at vertex–vertex
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var b = try box(.{ 1 + 1e-5, 1, 1 }, .{ 2, 2, 2 });
+    defer b.deinit();
+    var corner: ?usize = null;
+    for (a.vertices.items, 0..) |v, i| {
+        if (!v.tombstone and vec.distance(a.point(VertexIndex.of(i)), .{ 1, 1, 1 }) == 0) corner = i;
+    }
+    for ([_]f64{ 0.8e-5, 0.4e-5 }) |recorded| {
+        a.vertices.items[corner.?].gap = recorded;
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var r = pipeline.Report.init(testing.allocator);
+        defer r.deinit();
+        if (pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag, &r)) |result| {
+            var kept = result;
+            kept.deinit();
+            try testing.expect(recorded + 0.5e-5 <= tol.zone);
+        } else |err| {
+            const f = diag.first().?;
+            if (recorded + 0.5e-5 <= tol.zone) {
+                // Within the zone: whatever else the touching corners are, not this
+                try testing.expect(f.code != .gap_too_large);
+                continue;
+            }
+            try testing.expectEqual(error.Degenerate, err);
+            try testing.expectEqual(diagnostics.Code.gap_too_large, f.code);
+            try testing.expectEqual(diagnostics.EntityKind.vertex, f.entity.kind);
+            try testing.expectEqual(@as(u32, @intCast(corner.?)), f.entity.index);
+            try testing.expectApproxEqAbs(1.3e-5, f.measured, 1e-12);
+            try testing.expectEqual(@as(?pipeline.Stage, .vertex_vertex), r.failed_in);
+        }
+    }
+}
+
+/// Whether some face of `body` has a loop of one vertex.
+fn hasPointLoop(body: *const Body) bool {
+    for (body.loops.items) |l| if (!l.tombstone and l.first == .none) return true;
+    return false;
+}
+
+/// The containment table and the general path give the same body for `a` and `b` apart.
+fn expectTableAgrees(a: *const Body, b: *const Body) !void {
+    for ([_]pipeline.Op{ .@"union", .difference, .intersection }) |op| {
+        var fast = pipeline.Report.init(testing.allocator);
+        defer fast.deinit();
+        var by_table = try helpers.reported(a, b, op, .{}, &fast);
+        defer by_table.deinit();
+        var slow = pipeline.Report.init(testing.allocator);
+        defer slow.deinit();
+        var by_path = try helpers.reported(a, b, op, .{ .fast_paths = false }, &slow);
+        defer by_path.deinit();
+        try testing.expect(fast.by_containment);
+        try testing.expectEqual(by_path.counts(), by_table.counts());
+        try testing.expectApproxEqAbs(try volume(&by_path), try volume(&by_table), CLOSE);
+    }
+}
+
+test "degeneracy: a hole that was a lone slit leaves no point in the face; a point in a face is no fragment" {
+    // The solids fuzzer's seventh find (2026-11-13): two boxes joined with a face in one
+    // plane (y = 3), the first's corner edges lying in the second's face; merged, a hole of
+    // the face was a lone slit, its spur's far vertex went and its near one was left a loop
+    // of one vertex (the pass's edge counts, stale once a bridge had gone, said something
+    // else used it). The next boolean, with a box apart, went by the containment table,
+    // which sewed that loop as an empty one: an edge with three uses
+    var a = try box(.{ 0.5, 0, 1 }, .{ 3.5, 3, 2 });
+    defer a.deinit();
+    var c = try box(.{ 3, 2, -0.5 }, .{ 5, 3, 3.5 });
+    defer c.deinit();
+    var joined = try sound(&a, &c, .@"union");
+    defer joined.deinit();
+    try testing.expect(!hasPointLoop(&joined));
+    var above = try box(.{ 1.5, 1, 4 }, .{ 2.5, 2, 5 });
+    defer above.deinit();
+    try expectTableAgrees(&joined, &above);
+    // A point in a face (a valid body: `mvh`) bounds nothing, on either path
+    var dotted = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer dotted.deinit();
+    const top = helpers.facing(&dotted, .{ 0, 0, 1 });
+    const centre = try dotted.geometry.addPoint(testing.allocator, .{ 1, 1, 2 });
+    _ = try @import("../topology/euler.zig").mvh(&dotted, @import("../topology/types.zig").FaceIndex.of(top), centre);
+    try testing.expect(hasPointLoop(&dotted));
+    var away = try box(.{ 5, 0, 0 }, .{ 6, 1, 1 });
+    defer away.deinit();
+    try expectTableAgrees(&dotted, &away);
 }

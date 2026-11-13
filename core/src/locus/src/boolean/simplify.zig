@@ -9,7 +9,8 @@
 //!   with a copy, where another solid touches the face along the line (merged, the line
 //!   would lie inside the face: the overlap rules' find, 2026-11-12).
 //! - An edge whose two coedges a merge left in one loop goes: a spur (`kevSpur`, its far
-//!   vertex with it) or a bridge between an outer boundary and a hole (`kemr`, the loop
+//!   vertex with it; a hole that was a lone slit, then a loop of one vertex nothing else
+//!   uses, with `kvh`) or a bridge between an outer boundary and a hole (`kemr`, the loop
 //!   with the larger area about the outward normal kept first, as the outer).
 //! - A vertex with two edges, both pieces of one line meeting end to end, goes (`kevJoin`,
 //!   the edges one).
@@ -84,21 +85,13 @@ fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex) bool {
 /// (another edge between its vertices: two solids touching along it, assembled as one edge
 /// per solid), whose line the touching solid needs as a boundary of this face.
 fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
-    const Pair = struct { lo: u32, hi: u32 };
-    var copies: std.AutoHashMapUnmanaged(Pair, u32) = .empty;
+    var copies = try Copies.of(body);
     defer copies.deinit(body.allocator);
-    for (body.edges.items) |e| {
-        if (e.flags.tombstone) continue;
-        const key: Pair = .{ .lo = @min(@backingInt(e.start), @backingInt(e.end)), .hi = @max(@backingInt(e.start), @backingInt(e.end)) };
-        const entry = try copies.getOrPut(body.allocator, key);
-        entry.value_ptr.* = if (entry.found_existing) entry.value_ptr.* + 1 else 1;
-    }
     var changed = false;
     for (0..body.edges.items.len) |i| {
         const e = body.edges.items[i];
         if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
-        const key: Pair = .{ .lo = @min(@backingInt(e.start), @backingInt(e.end)), .hi = @max(@backingInt(e.start), @backingInt(e.end)) };
-        if (copies.get(key).? > 1) continue;
+        if (copies.has(e)) continue;
         const c = e.coedge;
         const p = body.coedge(c).partner;
         if (p == .none) continue;
@@ -128,14 +121,20 @@ fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
 
 /// Edges with both coedges in one loop, left by merges: spurs and bridges. A spur goes
 /// with its far vertex only when nothing else uses the vertex (a slit where the other
-/// operand touched the face, whose tip is a corner of a face kept, stays).
+/// operand touched the face, whose tip is a corner of a face kept, stays); an edge with a
+/// copy, where another solid touches the face along it, stays (a chain of such slits from
+/// the boundary, its first edge taken for a bridge, left the contact inside the face: the
+/// solids fuzzer, 2026-11-13).
 fn removeInnerEdges(body: *Body, diag: *Diagnostics) Error!bool {
     const uses = try edgeCounts(body);
     defer body.allocator.free(uses);
+    var copies = try Copies.of(body);
+    defer copies.deinit(body.allocator);
     var changed = false;
     for (0..body.edges.items.len) |i| {
         const e = body.edges.items[i];
         if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
+        if (copies.has(e)) continue;
         const c = e.coedge;
         const p = body.coedge(c).partner;
         if (p == .none or body.coedge(c).loop != body.coedge(p).loop) continue;
@@ -143,9 +142,18 @@ fn removeInnerEdges(body: *Body, diag: *Diagnostics) Error!bool {
         if (out) |spur| {
             const far = body.coedgeEnd(spur);
             if (uses[@backingInt(far)] != 1) continue;
-            uses[@backingInt(body.coedgeStart(spur))] -= 1;
+            const near = body.coedgeStart(spur);
+            const loop = body.coedge(spur).loop;
+            uses[@backingInt(near)] -= 1;
             uses[@backingInt(far)] = 0;
             euler.kevSpur(body, spur) catch |err| return eulerError(diag, err);
+            // A hole that was a lone slit is now a point; when no edge leaves it any more (the
+            // body's own record: the pass's counts are stale once a bridge has gone), it goes
+            // too. A loop of one vertex in a face was left for the next boolean, whose
+            // containment table sewed the face from its loops (the solids fuzzer, 2026-11-13)
+            if (body.loop(loop).first == .none and body.vertex(near).coedge == .none and body.face(body.loop(loop).face).first_loop != loop) {
+                euler.kvh(body, loop) catch |err| return eulerError(diag, err);
+            }
         } else {
             const face = body.loop(body.coedge(c).loop).face;
             _ = euler.kemr(body, c) catch |err| return eulerError(diag, err);
@@ -245,6 +253,37 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
     }
     return changed;
 }
+
+/// The live edges between each pair of vertices: more than one where solids touch along a
+/// line, an edge per solid (the assembly's copies).
+const Copies = struct {
+    const Pair = struct { lo: u32, hi: u32 };
+    counts: std.AutoHashMapUnmanaged(Pair, u32) = .empty,
+
+    fn of(body: *const Body) error{OutOfMemory}!Copies {
+        var self: Copies = .{};
+        errdefer self.deinit(body.allocator);
+        for (body.edges.items) |e| {
+            if (e.flags.tombstone) continue;
+            const entry = try self.counts.getOrPut(body.allocator, pairOf(e));
+            entry.value_ptr.* = if (entry.found_existing) entry.value_ptr.* + 1 else 1;
+        }
+        return self;
+    }
+
+    fn deinit(self: *Copies, allocator: std.mem.Allocator) void {
+        self.counts.deinit(allocator);
+    }
+
+    /// Whether edge `e` has a copy (counted when the table was made).
+    fn has(self: *const Copies, e: types.Edge) bool {
+        return (self.counts.get(pairOf(e)) orelse 0) > 1;
+    }
+
+    fn pairOf(e: types.Edge) Pair {
+        return .{ .lo = @min(@backingInt(e.start), @backingInt(e.end)), .hi = @max(@backingInt(e.start), @backingInt(e.end)) };
+    }
+};
 
 /// How many live edges end at each vertex; owned by the body's allocator.
 fn edgeCounts(body: *const Body) error{OutOfMemory}![]u32 {

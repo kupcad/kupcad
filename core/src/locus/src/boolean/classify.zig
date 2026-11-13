@@ -55,30 +55,32 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     errdefer allocator.free(classes);
     var partners: std.ArrayList(u32) = .empty;
     defer partners.deinit(allocator);
+    var samples: std.ArrayList(Vec3) = .empty;
+    defer samples.deinit(allocator);
     for (fragments.items.items, 0..) |fragment, i| {
         try options.checkCancel();
         const body = paves.operands[fragment.operand];
         const other = 1 - fragment.operand;
         const f = types.FaceIndex.of(fragment.face);
-        const p = try sample(allocator, paves, fragments, i) orelse return diag.fail(error.Degenerate, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a piece of a face with no area" });
+        samples.clearRetainingCapacity();
+        try sample(allocator, paves, fragments, i, &samples);
+        if (samples.items.len == 0) return diag.fail(error.Degenerate, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a piece of a face with no area" });
         try paves.coplanarWith(fragment.operand, fragment.face, &partners);
-        const same_domain: ?Classified = for (partners.items) |g| {
-            const face_g = types.FaceIndex.of(g);
-            if (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag) != .inside) continue;
-            const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
-            const n_g = in_face.outwardNormal(paves.operands[other], face_g, .{ 0, 0 });
-            break .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
-        } else null;
-        if (same_domain) |classified| {
+        if (try sameDomain(paves, body, f, other, samples.items, partners.items, diag)) |classified| {
             classes[i] = classified;
             continue;
         }
+        // Else by rays, from the first sample off the other's boundary (in a sliver one
+        // tolerance wide the clearest sample is within the zone of the other's face that
+        // bounds it, and the next is not; 2026-11-13)
         classes[i].partner = NONE;
-        classes[i].class = switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
-            .inside => .inside,
-            .outside => .outside,
-            .boundary => return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" }),
-        };
+        classes[i].class = for (samples.items) |p| {
+            switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
+                .inside => break .inside,
+                .outside => break .outside,
+                .boundary => continue,
+            }
+        } else return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
     }
     return classes;
 }
@@ -121,14 +123,29 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
     return classes;
 }
 
-/// A point strictly inside fragment `i`, as far from its edges as a triangle's centroid
-/// gets, or null when it has no area. Its loops are triangulated without their spurs: a
+/// Coincident: the first sample strictly inside a face of the other operand lying in this
+/// face's plane (`partners`), facing the same way or the other; null when none is.
+fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
+    for (samples) |p| {
+        for (partners) |g| {
+            const face_g = types.FaceIndex.of(g);
+            if (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag) != .inside) continue;
+            const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
+            const n_g = in_face.outwardNormal(paves.operands[other], face_g, .{ 0, 0 });
+            return .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
+        }
+    }
+    return null;
+}
+
+/// Points strictly inside fragment `i`, the centroids of its triangles, the furthest from
+/// its edges first, into `out`; none when it has no area. Its loops are triangulated without their spurs: a
 /// section segment ending inside the face (the other operand touching it along a line from
 /// one side) is an edge the loop runs there and back, which bounds no area and which the
 /// triangulator, rightly, takes for a ring touching itself; the point keeps clear of it
 /// all the same, since the other operand touches the face there (a centroid on the slit's
 /// tip was found on the other's boundary, 2026-11-12).
-fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, i: usize) Error!?Vec3 {
+fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, i: usize, out: *std.ArrayList(Vec3)) Error!void {
     const fragment = fragments.items.items[i];
     const frame = planar_faces.frameOf(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face)).?;
     var points: std.ArrayList(Vec2) = .empty;
@@ -152,9 +169,9 @@ fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const F
         try starts.append(allocator, @intCast(points.items.len));
         for (ring.items) |v| try points.append(allocator, planar_faces.flat(frame, paves.point(v)));
     }
-    if (starts.items.len == 0) return null;
+    if (starts.items.len == 0) return;
     try starts.append(allocator, @intCast(points.items.len));
-    return overlap.interiorPoint(allocator, frame, points.items, starts.items, edges.items);
+    try overlap.interiorPoints(allocator, frame, points.items, starts.items, edges.items, out);
 }
 
 /// The cycle `ring` with every spur taken out: wherever it runs `a b a` (out to `b` and

@@ -267,7 +267,18 @@ pub fn facePoint(allocator: std.mem.Allocator, body: *const Body, f: types.FaceI
 /// one furthest from them; null when the triangulator refuses the rings. A centroid of
 /// the largest triangle alone may lie on a slit, or on a vertex of one.
 pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points: []Vec2, starts: []const u32, avoid: []const [2]Vec2) Error!?Vec3 {
-    if (starts.len < 2) return null;
+    var candidates: std.ArrayList(Vec3) = .empty;
+    defer candidates.deinit(allocator);
+    try interiorPoints(allocator, frame, points, starts, avoid, &candidates);
+    return if (candidates.items.len > 0) candidates.items[0] else null;
+}
+
+/// Every centroid of the triangles of the polygon's triangulation (as `interiorPoint` finds
+/// them), the furthest from the rings' edges and `avoid` first, appended to `out`: a caller
+/// whose first point lands where it can decide nothing (on another body's boundary) tries
+/// the next. None when the triangulator refuses the rings.
+pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, points: []Vec2, starts: []const u32, avoid: []const [2]Vec2, out: *std.ArrayList(Vec3)) Error!void {
+    if (starts.len < 2) return;
     // Counter-clockwise outer ring: mirrored when it runs the other way
     const mirror = ringArea(points[starts[0]..starts[1]]) < 0;
     if (mirror) for (points) |*q| {
@@ -280,11 +291,12 @@ pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points
     defer scratch.deinit();
     const triangles = triangulate.triangulate(allocator, .{ .points = points, .starts = starts }, &scratch) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => return null,
+        else => return,
     };
     defer allocator.free(triangles);
-    var best: ?Vec2 = null;
-    var best_clearance: f64 = -1;
+    const Candidate = struct { at: Vec2, clearance: f64 };
+    var found: std.ArrayList(Candidate) = .empty;
+    defer found.deinit(allocator);
     for (triangles) |t| {
         const a = points[t[0]];
         const b = points[t[1]];
@@ -304,12 +316,16 @@ pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points
             }
         }
         for (avoid) |segment| clearance = @min(clearance, segmentDistance(q, segment[0], segment[1]));
-        if (clearance <= best_clearance) continue;
-        best_clearance = clearance;
-        best = q;
+        try found.append(allocator, .{ .at = q, .clearance = clearance });
     }
-    const q = best orelse return null;
-    return frame.toWorld(.{ q[0], q[1], 0 });
+    // The clearest first; ties in the triangulation's order
+    const Order = struct {
+        fn lessThan(_: void, x: Candidate, y: Candidate) bool {
+            return x.clearance > y.clearance;
+        }
+    };
+    std.mem.sort(Candidate, found.items, {}, Order.lessThan);
+    for (found.items) |c| try out.append(allocator, frame.toWorld(.{ c.at[0], c.at[1], 0 }));
 }
 
 /// The distance from `p` to the segment from `a` to `b`.

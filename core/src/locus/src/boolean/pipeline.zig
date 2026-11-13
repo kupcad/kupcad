@@ -32,6 +32,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
@@ -201,20 +202,17 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var result = made.body;
     errdefer result.deinit();
     try trace.phase(allocator, &common, &result, "boolean", "assembled");
+    // The Euler operators simplification runs take a structurally valid body: the assembly
+    // is checked to that level first, a pinch refused there (the solids fuzzer, 2026-11-13:
+    // a pinched difference reached `kef`, whose check in Debug stopped the process)
+    try refuseInvalid(allocator, &result, .structural, diag);
     stage = .simplify;
     var log: simplify.Log = .{};
     defer log.deinit(allocator);
     try simplify.run(&result, diag, &log);
     try trace.phase(allocator, &common, &result, "boolean", "simplified");
     stage = .check;
-    var checked = try check.run(allocator, &result, .geometric);
-    defer checked.deinit(allocator);
-    if (checked.first()) |f| {
-        if (f.code == .euler_poincare) if (try pinchedShell(allocator, &result, f)) |s| {
-            return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, s), .label = "the result" });
-        };
-        return diag.fail(error.NotValid, f);
-    }
+    try refuseInvalid(allocator, &result, .geometric, diag);
     try faceMap(allocator, &result, &made, &log, options.tag_op, r, diag);
     for (result.vertices.items) |v| if (!v.tombstone) {
         r.max_gap = @max(r.max_gap, v.gap);
@@ -326,6 +324,18 @@ fn contacts(paves: *const pave.Paves, classes: []const classify.Classified, r: *
     @memset(on, 0);
     for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
     for (on, 0..) |operands, v| if (operands == 3) try r.contacts.append(r.allocator, paves.point(@intCast(v)));
+}
+
+/// The checker's first failure on `body` up to `level` as the operation's, a pinch as
+/// `pinched` (refused by design), any other as `NotValid` with the finding.
+fn refuseInvalid(allocator: std.mem.Allocator, body: *const Body, level: check.Level, diag: *Diagnostics) Error!void {
+    var checked = try check.run(allocator, body, level);
+    defer checked.deinit(allocator);
+    const f = checked.first() orelse return;
+    if (f.code == .euler_poincare) if (try pinchedShell(allocator, body, f)) |s| {
+        return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, s), .label = "the result" });
+    };
+    return diag.fail(error.NotValid, f);
 }
 
 /// The shell an Euler–Poincaré finding names when it is pinched: one shell touching itself
@@ -536,9 +546,54 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         while (shells.next() catch return corrupt(diag)) |s| {
             if (try shellVolume(&b.body, s, diag) < 0) b.body.shell(s).kind = .void;
         }
+        try pinchedAtPoint(paves, fragments, made.face_fragment, vertex_of, &b.body, diag);
     }
     made.body = b.body;
     return made;
+}
+
+/// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
+/// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
+/// face's pieces, whose face piece and whose faces about the vertex are in one shell (a
+/// pocket meeting the face it was cut from at a corner). Two solids touching so are two
+/// shells, and pass.
+fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, face_fragment: []const u32, vertex_of: []const types.VertexIndex, body: *const Body, diag: *Diagnostics) Error!void {
+    for (paves.touches.items) |touch| {
+        const v = vertex_of[touch.vertex];
+        if (v == .none) continue;
+        const frame = planar_faces.frameOf(paves.operands[touch.operand], types.FaceIndex.of(touch.face)).?;
+        const at = planar_faces.flat(frame, paves.point(touch.vertex));
+        // The built face of the touched face's piece around the point
+        const holder: ?u32 = for (face_fragment, 0..) |i, j| {
+            const fragment = fragments.items.items[i];
+            if (fragment.operand != touch.operand or fragment.face != touch.face) continue;
+            if (aroundPoint(paves, fragments, i, frame, at, touch.vertex)) break @intCast(j);
+        } else null;
+        const j = holder orelse continue;
+        const shell = body.faces.items[j].shell;
+        for (body.coedges.items, 0..) |c, ci| {
+            if (c.tombstone or body.coedgeStart(types.CoedgeIndex.of(ci)) != v) continue;
+            if (body.face(body.loop(c.loop).face).shell == shell) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand on a face of the other, inside one solid)" });
+        }
+    }
+}
+
+/// Whether fragment `i` holds the point `at` (merged vertex `m`) strictly inside, by the
+/// exact crossing count of its loops in its face's plane; a fragment with `m` on a loop
+/// holds it on its boundary, an edge's end, which no pinch is.
+fn aroundPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, i: usize, frame: Frame, at: [2]f64, m: u32) bool {
+    var inside = false;
+    for (fragments.loopsOf(i)) |loop| {
+        const ring = fragments.loopVertices(loop);
+        for (ring, 0..) |u, k| {
+            if (u == m) return false;
+            const a = planar_faces.flat(frame, paves.point(u));
+            const b = planar_faces.flat(frame, paves.point(ring[(k + 1) % ring.len]));
+            if ((a[1] > at[1]) == (b[1] > at[1])) continue;
+            if ((predicates.orient2d(a, b, at) > 0) == (b[1] > a[1])) inside = !inside;
+        }
+    }
+    return inside;
 }
 
 /// Both operands' tag rows into `body`'s table, the second's parents moved past the
