@@ -153,6 +153,13 @@ const BREP_REFUSES = [_][]const u8{
     // engine decides one way
     "cube(2, 2, 1) - polygon([[1, 0], [2, 2], [0, 2]]).extrude(2).rotate(x: 90).translate(y: 1)",
     "cube(2) + cube(2).translate(2.00002, 0, 0)",
+    // Each feature the B-Rep engine does not have yet, named in its refusal
+    "square(1).loft(square(2), 3)",
+    "cube(1).hull(sphere(1).translate(x: 3))",
+    "square(1, center: true).extrude(4, twist: 90)",
+    "square(2, center: true).extrude(5, scale: 0.5)",
+    "cube(4).minkowski(sphere(0.5, segments: 16))",
+    "cube(2).rotate(x: 30).project.extrude(1)",
 };
 
 /// Arguments both engines must refuse, with the same error.
@@ -712,4 +719,29 @@ test "parity: a void stays with its solid in the B-Rep engine's parts, its own i
     var total: f64 = 0;
     for (mesh_engine) |v| total += v;
     try testing.expectApproxEqAbs(@as(f64, 56), total, 1e-9);
+}
+
+test "parity: each feature the B-Rep engine refuses is refused, by name, by a script of BREP_REFUSES" {
+    // Coverage over the corpus (M4's exit, research/opengeometry.md §4): every reason the
+    // B-Rep engine gives for refusing a script, each `Feature` it does not support, is what
+    // some script of BREP_REFUSES is refused for (the refusal reads "can't <the feature>")
+    var messages: [BREP_REFUSES.len][512]u8 = undefined;
+    var lengths: [BREP_REFUSES.len]usize = undefined;
+    inline for (BREP_REFUSES, 0..) |source, i| {
+        // Built lazily: its volume asks for it, inside the rescue
+        const message = try rescuedMessage(comptime BREP_CONFIG ++ support.rescued("(" ++ source ++ ").volume"), &messages[i]);
+        lengths[i] = message.len;
+    }
+    var uncovered: usize = 0;
+    for (std.enums.values(kernel.Feature)) |feature| {
+        if (kernel.supports(.brep_native, feature)) continue;
+        const named = for (&messages, lengths) |*m, n| {
+            if (std.mem.indexOf(u8, m[0..n], feature.describe()) != null) break true;
+        } else false;
+        if (!named) {
+            std.debug.print("uncovered: the B-Rep engine refuses {s} (\"can't {s}\"), which no script of BREP_REFUSES is refused for\n", .{ @tagName(feature), feature.describe() });
+            uncovered += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 0), uncovered);
 }
