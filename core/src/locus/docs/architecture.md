@@ -629,7 +629,9 @@ own analysis, naming the entity, never from a missing handler.
 **As built for planar solids (M4, 2026-11-12; `boolean/`, the phases in this order, each
 importing only those before it, which the layering test holds):**
 - `pave.zig`: `a`'s vertices each a merged vertex, `b`'s merged with the first of `a`'s
-  within `xsect` (the centre of their points' box, the gap reaching the furthest);
+  within `xsect` (the centre of their points' box, the gap reaching the furthest; a ball
+  past the zone, gaps a chain recorded or the centre's rounding at exactly `xsect`, refused
+  there as `Degenerate`, `gap_too_large`);
   vertex–edge for every merged vertex against the edges of the operand it holds no vertex
   of (on the segment within `xsect` plus its gap, its foot in the edge's shrunk range:
   beyond `xsect` and the end's gap from either end; an edge whose shrunk range is under
@@ -638,14 +640,19 @@ importing only those before it, which the layering test holds):**
   are made of vertex–edge's paves), the point welded to a merged vertex within `xsect` or
   new, then tried against every other edge; vertex–face; edge–face where an edge's ends lie
   beyond `xsect` on either side of a face's plane and the crossing is in the face (one on
-  its boundary tried against the other's edges, which edge–edge should have split);
+  its boundary tried against the other's edges, which edge–edge should have split), or a
+  pave the edge already has on the face, an edge meeting a plane once (at a shallow angle
+  the computed point can be several `xsect` from where edge–edge met the face's edge);
   then each face's merged vertices (its edges' paves and what the face stages found), and
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
   line, each gap whose middle is in both a section segment of each face it is inside of.
   Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
   one's pave blocks inside the other its section segments; two parallel a hair apart (within
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
-  the result has faces that thin). Pave blocks of an edge of each operand between the same
+  the result has faces that thin). A section piece lies on a face's boundary only when
+  the paves put both its ends there (never by its middle's distance alone), and is then
+  not imprinted again. Each vertex strictly inside a face of the other operand is kept
+  (`Paves.touches`): a corner of one solid on a face of the other. Pave blocks of an edge of each operand between the same
   two merged vertices are the common blocks, a table of their own (one edge of the result,
   the operands' contact for the result report).
 - `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its
@@ -656,15 +663,22 @@ importing only those before it, which the layering test holds):**
   triangulation (spurs taken out) furthest from its edges, spurs included (a centroid once
   fell on a slit's tip, where the other operand touched the face); inside a coplanar face
   of the other operand it is `on_same` or `on_opposite` by their outward normals, else
-  inside or outside by `point_in_body`; a sample on the other's boundary is `unclassified`.
+  inside or outside by `point_in_body`; a sample on the other's boundary gives way to the
+  next centroid in order of clearance (a sliver one `xsect` wide has its clearest within the
+  zone of the face bounding it), and the fragment is `unclassified` only when all are.
 - `select.zig`: Mäntylä's table, a coincident face kept once, from `a`.
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of
   material about it into one edge per solid (`EdgeSpec.copy`); a shell of negative volume
-  a void. Then `simplify.zig` (`kef` across edges between faces on one plane record of one
+  a void. A touch point whose face piece and the faces about the vertex are in one shell
+  is a pinch at a point and refused (`pinched`), as a line pinch is; then the checker's
+  structural level on the assembled body, so no Euler operator runs on a body it fails
+  (a fuzz find: a pinch the paves missed tripped `kef`'s debug check). Then `simplify.zig` (`kef` across edges between faces on one plane record of one
   sense and attribute, never across an edge with a copy, whose line the touching solid
-  needs; spurs whose far vertex nothing else uses, bridges by `kemr`; `kevJoin` at
+  needs; spurs whose far vertex nothing else uses, a hole that was a lone slit then a
+  point that goes too (`kvh`, when the vertex's own record has no edge leaving it), bridges
+  by `kemr` (never an edge with a copy either); `kevJoin` at
   vertices of two edges on one line, counted over the whole body; `kevMerge` of an edge no
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
   `compact`, the checker; a warning (`solids_touch`) names each edge where two of the
@@ -672,7 +686,8 @@ importing only those before it, which the layering test holds):**
 - The containment table (§7.4 step 0, as built): when the paves find the operands met
   nowhere (no vertex merged or lying on the other, no crossing, no coplanar or cut face
   pair: `Paves.apart`), every face is one whole fragment and each shell is classified once,
-  by one vertex against the other operand (`classify.byShell`), then the same selection,
+  by one vertex against the other operand (`classify.byShell`; a loop of one vertex
+  bounds nothing and is left out, as the overlay leaves it), then the same selection,
   assembly and simplification: a box inside another, around it, apart, in a cavity, a
   shell of a multi-shell operand inside. It agrees with the general path (`Options.
   fast_paths = false` runs that alone; a test holds the two to the same counts, shells,
@@ -1082,8 +1097,16 @@ One negative fixture per rule lives in `test/corpus/invalid/`.
   and later the STEP reader on any bytes; the 2D kernel on generated rings of points on a
   coarse grid with operation chains (M2); the overlay alone on generated arrangements of
   near-tangent arcs, its labels checked at a point inside each face against each input's
-  own crossings, exactly (`locus_overlay`, 2026-11-12); random placements, rotations and
-  scales of primitives combined by random booleans (M4). Every result is valid or a clean
+  own crossings, exactly (`locus_overlay`, 2026-11-12); booleans of solids (`locus_solids`,
+  2026-11-13): boxes and hulls of points on a coarse grid, turned (a quarter, a half, an
+  eighth, 0.3 rad), scaled per axis and moved by half-steps, one placement in sixteen by an
+  extreme, in chains of booleans (all three of a pair, for the identities) and cuts by a
+  plane, every result through the checker, the overlap rules and its report, the
+  identities exact but for the slab of faces closer than the intersection tolerance, which
+  the boolean takes for one plane; a refusal by design is clean, the general path failing
+  on valid planar operands a find; with a parameter sweep beside it
+  (`boolean/parameters_test.zig`: a cut's normal and offset, a boolean's tolerance, an
+  operand's placement, at every extreme). Every result is valid or a clean
   error, nothing leaks, the area and volume identities of booleans hold exactly, and no
   run hangs (every traversal is bounded by entity counts). A failing run prints its every
   draw as a `replay:` line, and `zig build test -Dfuzz-replay=FILE` plays such lines back
