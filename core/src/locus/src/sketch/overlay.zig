@@ -1112,7 +1112,10 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     const slot_bottom = slotAt(s, bottom);
                     const radial = vec.sub2(at, arc.c);
                     var up = Vec2{ -radial[1], radial[0] };
-                    if (up[1] < 0 or (up[1] == 0 and vec.dot2(up, vec.sub2(top, at)) < 0)) up = vec.scale2(up, -1);
+                    // Level at the circle's lowest point: the piece on the east half leaves
+                    // it east, the west one west (its top can be straight above the lowest
+                    // point, a half-turn round: the overlay fuzz target, 2026-11-13)
+                    if (up[1] < 0 or (up[1] == 0 and (up[0] > 0) != (piece.side == .east))) up = vec.scale2(up, -1);
                     const up_ccw = if (descending) !arc.ccw else arc.ccw;
                     const bend = if (up_ccw) -1 / arc.r else 1 / arc.r;
                     consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .slot_top = slot_top, .slot_bottom = slot_bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);

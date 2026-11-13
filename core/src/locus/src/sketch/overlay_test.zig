@@ -466,6 +466,30 @@ test "overlay: a hole's ray through a circle's lowest point, an extreme and no v
     try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces + areaWhere(&o, -1, 1).faces);
 }
 
+test "overlay: a hole's ray through an arc's lowest point, the arc's west piece ending straight above it" {
+    // The overlay fuzz target's find (2026-11-13), reduced: a circle whose leftmost vertex
+    // is at y = 1, and to its west a three-quarter arc, clockwise about (0.25, 3.5) from
+    // its east point down through its lowest point (0.25, 1) and round to its top (0.25, 6),
+    // closed by a line. Its west piece runs from the lowest point to the top straight
+    // above it, so the direction it leaves the lowest point by, taken from the way to its
+    // top, was east, the east piece's own: the tie went to the west piece and the circle
+    // was nested inside the arc's region, its labels offset by that winding
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 2.75, 3.5 }, .b = .{ 0.25, 6 }, .arc = .{ .c = .{ 0.25, 3.5 }, .r = 2.5, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 0.25, 6 }, .b = .{ 2.75, 3.5 } });
+    _ = try o.addInput();
+    try circle(&o, .{ 2, 1 }, 0.25);
+    try o.run();
+    try expectPlanar(&o);
+    // The circle is outside the arc's region: wound by its own input alone
+    const disc = areaWhere(&o, 0, 1);
+    try testing.expectEqual(@as(usize, 1), disc.faces);
+    try testing.expectApproxEqAbs(PI * 0.25 * 0.25, disc.area, 1e-9);
+    try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces + areaWhere(&o, -1, 1).faces);
+}
+
 test "overlay: a cycle that runs each of its edges both ways bounds nothing, whatever its area's rounding" {
     // The overlay fuzz target's find (2026-11-12): three collinear points, one a rounding
     // off the grid, closed into a ring of no area. Its cycle runs both edges each way; the
