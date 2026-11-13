@@ -1,0 +1,5 @@
+{
+  "what": "a unit tetrahedron under a zone of 1e-13, below its coordinates' spacing",
+  "level": "geometric",
+  "first": "too_large_for_tolerance"
+}

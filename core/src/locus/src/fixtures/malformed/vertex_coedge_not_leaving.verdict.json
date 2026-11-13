@@ -1,0 +1,5 @@
+{
+  "what": "a vertex naming a coedge that arrives at it",
+  "level": "structural",
+  "first": "vertex_coedge_not_leaving"
+}

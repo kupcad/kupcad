@@ -1,0 +1,5 @@
+{
+  "what": "a vertex moved a tenth off its edges' lines",
+  "level": "geometric",
+  "first": "vertex_off_curve"
+}

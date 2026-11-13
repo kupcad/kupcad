@@ -1,0 +1,5 @@
+{
+  "what": "a coedge whose partner is not its own",
+  "level": "structural",
+  "first": "partner_not_reciprocal"
+}

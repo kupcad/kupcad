@@ -1,0 +1,5 @@
+{
+  "what": "a loop naming another face than the one it bounds",
+  "level": "structural",
+  "first": "loop_face_disagrees"
+}

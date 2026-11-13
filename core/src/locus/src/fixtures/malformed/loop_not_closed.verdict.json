@@ -1,0 +1,5 @@
+{
+  "what": "a loop whose second coedge is its own next and prev",
+  "level": "structural",
+  "first": "loop_not_closed"
+}

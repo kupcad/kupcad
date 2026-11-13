@@ -1,0 +1,5 @@
+{
+  "what": "an edge's vertices swapped: its loops do not connect",
+  "level": "structural",
+  "first": "loop_not_connected"
+}

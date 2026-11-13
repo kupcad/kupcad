@@ -1,0 +1,5 @@
+{
+  "what": "a loop with neither coedges nor a vertex",
+  "level": "structural",
+  "first": "loop_empty"
+}

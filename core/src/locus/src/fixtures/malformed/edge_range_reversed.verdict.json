@@ -1,0 +1,5 @@
+{
+  "what": "an edge's range the wrong way round",
+  "level": "structural",
+  "first": "edge_range_reversed"
+}

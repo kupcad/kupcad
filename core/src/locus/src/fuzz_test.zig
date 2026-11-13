@@ -143,7 +143,9 @@ test "fuzz: the body JSON reader takes any input" {
     try testing.fuzz(buf, readJson, .{ .corpus = seeds.items });
 }
 
-/// The JSON of a few bodies, as the fuzzer's seeds.
+/// The JSON of a few bodies, as the fuzzer's seeds, and the malformed corpus's bodies
+/// (fixtures/malformed.zig): each broken in one way, near what the reader refuses and the
+/// checker names.
 fn jsonSeeds(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
     var seeds: std.ArrayList([]const u8) = .empty;
     errdefer freeSeeds(allocator, &seeds);
@@ -158,6 +160,7 @@ fn jsonSeeds(allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
     var disc = try primitives.circle(allocator, tol, 2, &diag);
     defer disc.deinit();
     try seeds.append(allocator, try body_json.dump(allocator, &disc));
+    for (@import("fixtures/malformed.zig").CASES) |case| try seeds.append(allocator, try allocator.dupe(u8, case.body));
     return seeds;
 }
 

@@ -1,0 +1,5 @@
+{
+  "what": "a coedge naming another loop than the one it runs in",
+  "level": "structural",
+  "first": "coedge_loop_disagrees"
+}

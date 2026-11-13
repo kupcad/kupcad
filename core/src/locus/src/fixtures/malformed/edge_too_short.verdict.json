@@ -1,0 +1,5 @@
+{
+  "what": "a unit tetrahedron under a zone of 0.6: its edges shorter than twice it",
+  "level": "geometric",
+  "first": "edge_too_short"
+}

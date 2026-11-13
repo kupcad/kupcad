@@ -1,0 +1,5 @@
+{
+  "what": "a coedge whose next's prev is another",
+  "level": "structural",
+  "first": "next_prev_not_reciprocal"
+}

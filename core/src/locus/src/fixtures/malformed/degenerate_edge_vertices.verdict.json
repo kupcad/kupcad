@@ -1,0 +1,5 @@
+{
+  "what": "an edge flagged degenerate between two vertices",
+  "level": "structural",
+  "first": "degenerate_edge_vertices"
+}

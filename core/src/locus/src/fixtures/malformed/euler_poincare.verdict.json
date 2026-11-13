@@ -1,0 +1,5 @@
+{
+  "what": "an extra face of one vertex loop: V − E + F − (L − F) − 2(S − G) off",
+  "level": "structural",
+  "first": "euler_poincare"
+}

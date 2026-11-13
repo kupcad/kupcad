@@ -70,7 +70,10 @@ const TRIG_THROUGH_BARRIER = [_][]const u8{ "std.math.atan2(", "std.math.atan(" 
 const TRIG_BARRIER = "math/trig.zig";
 
 /// Test helpers that aren't named `*_test.zig`: like tests, they may import anything.
-const TEST_HELPERS = [_][]const u8{};
+const TEST_HELPERS = [_][]const u8{
+    // The malformed corpus's list, the files embedded (checker tests and fuzz seeds)
+    "fixtures/malformed.zig",
+};
 
 const MAX_SOURCE = 1 << 22;
 

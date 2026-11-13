@@ -2,6 +2,7 @@
 //! rule that must name it first.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
@@ -13,6 +14,8 @@ const Body = @import("body.zig").Body;
 const euler = @import("euler.zig");
 const check = @import("check.zig");
 const traverse_mod = @import("traverse.zig");
+const body_json = @import("../io/body_json.zig");
+const malformed = @import("../fixtures/malformed.zig");
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
@@ -106,288 +109,360 @@ test "a tetrahedron passes every rule" {
     try testing.expect(report.ok());
 }
 
-test "structural rules: each broken in one way is named" {
-    // Index out of range
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.vertex(types.VertexIndex.of(0)).point = geometry.PointIndex.of(99);
-        try expectRule(&b, .structural, .index_out_of_range);
+/// A body broken in one way, the rule that must name it, and its place in the malformed
+/// corpus (fixtures/malformed.zig): the defects this file builds in code, each also a file
+/// a reader takes in (M4's exit; research/opengeometry.md §6, OpenGeometry's verdicts).
+const Malformed = struct {
+    name: []const u8,
+    /// The defect in words, the verdict file's `what`.
+    what: []const u8,
+    base: Base = .tetrahedron,
+    /// The break, in code; null for a defect only a file can carry (`edit`).
+    breaks: ?*const fn (*Body) anyerror!void = null,
+    /// An edit of the body's JSON text: the defect only a file can carry.
+    edit: ?[2][]const u8 = null,
+    level: check.Level = .structural,
+    /// The checker's first finding on the body broken in code; null for an `edit` case.
+    rule: ?check.Rule = null,
+    /// The reader refuses the file (`body_json.Error.Malformed`), the verdict instead of a
+    /// finding: an index past its table, a version or a kind it does not know.
+    refused: bool = false,
+};
+
+const Base = enum { tetrahedron, plate };
+
+fn baseBody(base: Base) !Body {
+    return switch (base) {
+        .tetrahedron => tetrahedron(testing.allocator),
+        .plate => plate(),
+    };
+}
+
+/// A 10 × 10 plate with a 2 × 2 hole, by the even-odd fill.
+fn plate() !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const outer = [_]vec.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    const inner = [_]vec.Vec2{ .{ 2, 2 }, .{ 2, 4 }, .{ 4, 4 }, .{ 4, 2 } };
+    return @import("../construct/primitives.zig").polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
+}
+
+const MALFORMED = [_]Malformed{
+    // What the reader refuses
+    .{ .name = "point_index_past_table", .what = "a vertex naming point 99 of a table of four", .breaks = pointPastTable, .rule = .index_out_of_range, .refused = true },
+    .{ .name = "version_unknown", .what = "a body in a format version the reader does not know", .edit = .{ "\"version\": 1", "\"version\": 99" }, .refused = true },
+    .{ .name = "curve_kind_unknown", .what = "an edge on a curve of a kind no table holds", .edit = .{ "\"kind\": \"line\"", "\"kind\": \"helix\"" }, .refused = true },
+    // Structural
+    .{ .name = "next_prev_not_reciprocal", .what = "a coedge whose next's prev is another", .breaks = nextPrevNotReciprocal, .rule = .next_prev_not_reciprocal },
+    .{ .name = "partner_not_reciprocal", .what = "a coedge whose partner is not its own", .breaks = partnerNotReciprocal, .rule = .partner_not_reciprocal },
+    .{ .name = "partner_same_sense", .what = "partners running their edge the same way", .breaks = partnerSameSense, .rule = .partner_same_sense },
+    .{ .name = "loop_not_connected", .what = "an edge's vertices swapped: its loops do not connect", .breaks = loopNotConnected, .rule = .loop_not_connected },
+    .{ .name = "loop_not_closed", .what = "a loop whose second coedge is its own next and prev", .breaks = loopNotClosed, .rule = .loop_not_closed },
+    .{ .name = "loop_empty", .what = "a loop with neither coedges nor a vertex", .breaks = loopEmpty, .rule = .loop_empty },
+    .{ .name = "coedge_loop_disagrees", .what = "a coedge naming another loop than the one it runs in", .breaks = coedgeLoopDisagrees, .rule = .coedge_loop_disagrees },
+    .{ .name = "edge_three_coedges", .what = "an edge a third coedge names (its partner then on another edge)", .breaks = edgeThreeCoedges, .rule = .partner_not_reciprocal },
+    .{ .name = "degenerate_edge_vertices", .what = "an edge flagged degenerate between two vertices", .breaks = degenerateEdgeVertices, .rule = .degenerate_edge_vertices },
+    .{ .name = "edge_range_reversed", .what = "an edge's range the wrong way round", .breaks = edgeRangeReversed, .rule = .edge_range_reversed },
+    .{ .name = "vertex_coedge_not_leaving", .what = "a vertex naming a coedge that arrives at it", .breaks = vertexCoedgeNotLeaving, .rule = .vertex_coedge_not_leaving },
+    .{ .name = "face_shell_disagrees", .what = "a face naming a shell whose list it is not in", .breaks = faceShellDisagrees, .rule = .face_shell_disagrees },
+    .{ .name = "loop_face_disagrees", .what = "a loop naming another face than the one it bounds", .breaks = loopFaceDisagrees, .rule = .loop_face_disagrees },
+    .{ .name = "face_without_loop", .what = "a face with no loop", .breaks = faceWithoutLoop, .rule = .face_without_loop },
+    .{ .name = "face_shell_count", .what = "a face in no shell's list", .breaks = faceShellCount, .rule = .face_shell_count },
+    .{ .name = "euler_poincare", .what = "an extra face of one vertex loop: V − E + F − (L − F) − 2(S − G) off", .breaks = eulerPoincare, .rule = .euler_poincare },
+    // Orientation and geometric
+    .{ .name = "open_edge_in_closed_shell", .what = "an edge with one coedge in a closed shell", .breaks = openEdgeInClosedShell, .level = .geometric, .rule = .open_edge_in_closed_shell },
+    .{ .name = "vertex_off_curve", .what = "a vertex moved a tenth off its edges' lines", .breaks = vertexOffCurve, .level = .geometric, .rule = .vertex_off_curve },
+    .{ .name = "edge_too_short", .what = "a unit tetrahedron under a zone of 0.6: its edges shorter than twice it", .breaks = edgeTooShort, .level = .geometric, .rule = .edge_too_short },
+    .{ .name = "too_large_for_zone", .what = "a unit tetrahedron under a zone of 1e-13, below its coordinates' spacing", .breaks = tooLargeForZone, .level = .geometric, .rule = .too_large_for_tolerance },
+    .{ .name = "too_large_far_out", .what = "the tetrahedron moved a thousand kilometres out at a zone of 1e-5", .breaks = tooLargeFarOut, .level = .geometric, .rule = .too_large_for_tolerance },
+    .{ .name = "gap_too_large", .what = "a vertex's gap a hundred times the zone", .breaks = gapTooLarge, .level = .geometric, .rule = .gap_too_large },
+    .{ .name = "edge_off_surface", .what = "a face's plane moved a hundredth off its edges", .breaks = edgeOffSurface, .level = .geometric, .rule = .edge_off_surface },
+    .{ .name = "loop_winding", .what = "a face flipped alone: its loop runs the wrong way for its sense", .breaks = loopWinding, .level = .geometric, .rule = .loop_winding },
+    .{ .name = "shell_inside_out", .what = "the whole shell turned inside out: every local rule holds, its volume is negative", .breaks = shellInsideOut, .level = .geometric, .rule = .shell_inside_out },
+    .{ .name = "vertices_too_close", .what = "a second vertex 1e-6 from the first", .breaks = verticesTooClose, .level = .geometric, .rule = .vertices_too_close },
+    // Global
+    .{ .name = "hole_outside_outer", .what = "a plate's hole moved out of its outer loop, its points and lines together", .base = .plate, .breaks = holeOutsideOuter, .level = .global, .rule = .hole_outside_outer },
+};
+
+fn pointPastTable(b: *Body) !void {
+    b.vertex(types.VertexIndex.of(0)).point = geometry.PointIndex.of(99);
+}
+
+fn nextPrevNotReciprocal(b: *Body) !void {
+    const c = types.CoedgeIndex.of(0);
+    b.coedge(b.coedge(c).next).prev = b.coedge(c).prev;
+}
+
+fn partnerNotReciprocal(b: *Body) !void {
+    b.coedge(types.CoedgeIndex.of(0)).partner = types.CoedgeIndex.of(3);
+}
+
+fn partnerSameSense(b: *Body) !void {
+    const c = b.coedge(types.CoedgeIndex.of(0));
+    b.coedge(c.partner).same_sense = c.same_sense;
+}
+
+fn loopNotConnected(b: *Body) !void {
+    const e = b.edge(types.EdgeIndex.of(0));
+    std.mem.swap(types.VertexIndex, &e.start, &e.end);
+}
+
+fn loopNotClosed(b: *Body) !void {
+    const second = b.coedge(b.loop(types.LoopIndex.of(0)).first).next;
+    b.coedge(second).next = second;
+    b.coedge(second).prev = second;
+}
+
+fn loopEmpty(b: *Body) !void {
+    const extra = try b.addLoop(.{ .face = types.FaceIndex.of(0) });
+    b.appendLoop(types.FaceIndex.of(0), extra);
+}
+
+fn coedgeLoopDisagrees(b: *Body) !void {
+    b.coedge(types.CoedgeIndex.of(0)).loop = types.LoopIndex.of(1);
+}
+
+fn edgeThreeCoedges(b: *Body) !void {
+    // The count rule itself needs a loop that connects, which three coedges of one edge
+    // never do: the moved coedge's partner on another edge is named first
+    b.coedge(types.CoedgeIndex.of(2)).edge = types.EdgeIndex.of(0);
+}
+
+fn degenerateEdgeVertices(b: *Body) !void {
+    b.edge(types.EdgeIndex.of(0)).flags.degenerate = true;
+}
+
+fn edgeRangeReversed(b: *Body) !void {
+    b.edge(types.EdgeIndex.of(0)).t1 = -1;
+}
+
+fn vertexCoedgeNotLeaving(b: *Body) !void {
+    const v = b.vertex(types.VertexIndex.of(0));
+    v.coedge = b.coedge(v.coedge).partner;
+}
+
+fn faceShellDisagrees(b: *Body) !void {
+    const extra = try b.addShell(.{});
+    b.face(types.FaceIndex.of(0)).shell = extra;
+}
+
+fn loopFaceDisagrees(b: *Body) !void {
+    b.loop(types.LoopIndex.of(0)).face = types.FaceIndex.of(1);
+}
+
+fn faceWithoutLoop(b: *Body) !void {
+    b.face(types.FaceIndex.of(0)).first_loop = .none;
+}
+
+fn faceShellCount(b: *Body) !void {
+    const f = types.FaceIndex.of(0);
+    b.removeFace(b.face(f).shell, f);
+}
+
+fn eulerPoincare(b: *Body) !void {
+    // A face of one vertex loop on an existing vertex: every reference holds, the count
+    // does not
+    const extra_face = try b.addFace(.{ .surface = geometry.SurfaceRef.of(.plane, 0), .shell = types.ShellIndex.of(0) });
+    b.appendFace(types.ShellIndex.of(0), extra_face);
+    const extra_loop = try b.addLoop(.{ .face = extra_face, .vertex = types.VertexIndex.of(0) });
+    b.appendLoop(extra_face, extra_loop);
+}
+
+fn openEdgeInClosedShell(b: *Body) !void {
+    // Both coedges forget their partner, which the structural rules allow (a sheet edge
+    // has one coedge); the orientation rule wants two in a closed shell
+    const c = types.CoedgeIndex.of(0);
+    const p = b.coedge(c).partner;
+    b.coedge(c).partner = .none;
+    b.coedge(p).partner = .none;
+}
+
+fn vertexOffCurve(b: *Body) !void {
+    b.geometry.points.items[0] = .{ 0.1, 0, 0 };
+}
+
+fn edgeTooShort(b: *Body) !void {
+    b.tol = Tolerance.fromZone(0.6);
+}
+
+fn tooLargeForZone(b: *Body) !void {
+    b.tol = Tolerance.fromZone(1e-13);
+}
+
+fn tooLargeFarOut(b: *Body) !void {
+    for (b.geometry.points.items) |*p| p[0] += 1e9;
+    for (b.geometry.planes.items) |*pl| pl.frame.origin[0] += 1e9;
+    for (b.geometry.lines.items) |*line| line.o[0] += 1e9;
+}
+
+fn gapTooLarge(b: *Body) !void {
+    b.vertex(types.VertexIndex.of(0)).gap = 1e-3;
+}
+
+fn edgeOffSurface(b: *Body) !void {
+    b.geometry.planes.items[0].frame.origin = .{ 0, 0, 0.01 };
+}
+
+fn loopWinding(b: *Body) !void {
+    b.face(types.FaceIndex.of(0)).same_sense = false;
+}
+
+fn shellInsideOut(b: *Body) !void {
+    for (b.faces.items) |*f| f.same_sense = !f.same_sense;
+    for (b.coedges.items) |*c| {
+        std.mem.swap(types.CoedgeIndex, &c.next, &c.prev);
+        c.same_sense = !c.same_sense;
     }
-    // next/prev not reciprocal
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const c = types.CoedgeIndex.of(0);
-        b.coedge(b.coedge(c).next).prev = b.coedge(c).prev;
-        try expectRule(&b, .structural, .next_prev_not_reciprocal);
-    }
-    // partner not reciprocal
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.coedge(types.CoedgeIndex.of(0)).partner = types.CoedgeIndex.of(3);
-        try expectRule(&b, .structural, .partner_not_reciprocal);
-    }
-    // partners with the same sense
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const c = b.coedge(types.CoedgeIndex.of(0));
-        b.coedge(c.partner).same_sense = c.same_sense;
-        try expectRule(&b, .structural, .partner_same_sense);
-    }
-    // a loop whose coedges don't connect: swap an edge's vertices
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const e = b.edge(types.EdgeIndex.of(0));
-        std.mem.swap(types.VertexIndex, &e.start, &e.end);
-        try expectRule(&b, .structural, .loop_not_connected);
-    }
-    // a loop that never closes
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const l = b.loop(types.LoopIndex.of(0));
-        const first = l.first;
-        const second = b.coedge(first).next;
-        b.coedge(second).next = second;
-        b.coedge(second).prev = second;
-        try expectRule(&b, .structural, .loop_not_closed);
-    }
-    // a loop with neither coedges nor a vertex
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const extra = try b.addLoop(.{ .face = types.FaceIndex.of(0) });
-        b.appendLoop(types.FaceIndex.of(0), extra);
-        try expectRule(&b, .structural, .loop_empty);
-    }
-    // a coedge naming the wrong loop
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.coedge(types.CoedgeIndex.of(0)).loop = types.LoopIndex.of(1);
-        try expectRule(&b, .structural, .coedge_loop_disagrees);
-    }
-    // an edge with three coedges: the moved coedge's partner is on another edge, which
-    // the reciprocity rule names first; the count rule itself needs a loop that connects,
-    // which three coedges of one edge never do
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.coedge(types.CoedgeIndex.of(2)).edge = types.EdgeIndex.of(0);
-        try expectRule(&b, .structural, .partner_not_reciprocal);
-    }
-    // degenerate flag without start == end
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.edge(types.EdgeIndex.of(0)).flags.degenerate = true;
-        try expectRule(&b, .structural, .degenerate_edge_vertices);
-    }
-    // a range the wrong way round
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.edge(types.EdgeIndex.of(0)).t1 = -1;
-        try expectRule(&b, .structural, .edge_range_reversed);
-    }
-    // a vertex naming a coedge that does not leave it
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const v = b.vertex(types.VertexIndex.of(0));
-        v.coedge = b.coedge(v.coedge).partner;
-        try expectRule(&b, .structural, .vertex_coedge_not_leaving);
-    }
-    // a face naming another shell
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const extra = try b.addShell(.{});
-        b.face(types.FaceIndex.of(0)).shell = extra;
-        try expectRule(&b, .structural, .face_shell_disagrees);
-    }
-    // a loop naming another face
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.loop(types.LoopIndex.of(0)).face = types.FaceIndex.of(1);
-        try expectRule(&b, .structural, .loop_face_disagrees);
-    }
-    // a face without a loop
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.face(types.FaceIndex.of(0)).first_loop = .none;
-        try expectRule(&b, .structural, .face_without_loop);
-    }
-    // a face in no shell's list
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const f = types.FaceIndex.of(0);
-        const s = b.face(f).shell;
-        b.removeFace(s, f);
-        try expectRule(&b, .structural, .face_shell_count);
-    }
-    // Euler–Poincaré: a face with an extra ring of one vertex passes (L − F counts it), a
-    // dangling extra edge pair in a loop (a spur) raises E without V: chi off by one
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        // Add a vertex loop to a face without ... that is valid. Instead relabel a vertex
-        // so two distinct vertices become one record in the count: swap one edge's end
-        // for another existing vertex, keeping loops connected is impossible, so the
-        // Euler rule is reached by adding a face with a loop that reuses existing coedges
-        const extra_face = try b.addFace(.{ .surface = geometry.SurfaceRef.of(.plane, 0), .shell = types.ShellIndex.of(0) });
-        b.appendFace(types.ShellIndex.of(0), extra_face);
-        const extra_loop = try b.addLoop(.{ .face = extra_face, .vertex = types.VertexIndex.of(0) });
-        b.appendLoop(extra_face, extra_loop);
-        try expectRule(&b, .structural, .euler_poincare);
+    for (b.vertices.items) |*v| v.coedge = b.coedge(v.coedge).partner;
+}
+
+fn verticesTooClose(b: *Body) !void {
+    const p = try b.geometry.addPoint(b.allocator, .{ 1e-6, 0, 0 });
+    _ = try b.addVertex(.{ .point = p });
+}
+
+fn holeOutsideOuter(b: *Body) !void {
+    // The even-odd fill makes two faces of two outlines apart (no hole outside an outer
+    // loop can be built); a hole moved out afterwards, its points and lines together, so
+    // every local rule still holds, is what level 2 names
+    const hole = b.loop(b.face(types.FaceIndex.of(0)).first_loop).next_in_face;
+    const away = Vec3{ 20, 20, 0 };
+    var it = traverse_mod.Coedges.init(b, hole);
+    while (try it.next()) |c| {
+        const start = b.coedgeStart(c);
+        b.geometry.points.items[@backingInt(b.vertex(start).point)] = vec.add(b.point(start), away);
+        const line = &b.geometry.lines.items[b.edge(b.coedge(c).edge).curve.index];
+        line.o = vec.add(line.o, away);
     }
 }
 
-test "orientation and geometric rules" {
-    // An edge with one coedge in a closed shell
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const c = types.CoedgeIndex.of(0);
-        const p = b.coedge(c).partner;
-        // Both coedges forget their partner, which the structural rules allow (a sheet
-        // edge has one coedge); the orientation rule wants two in a closed shell
-        b.coedge(c).partner = .none;
-        b.coedge(p).partner = .none;
-        try expectRule(&b, .geometric, .open_edge_in_closed_shell);
+/// The case's body broken in code.
+fn brokenBody(case: Malformed) !Body {
+    var b = try baseBody(case.base);
+    errdefer b.deinit();
+    if (case.breaks) |breaks| try breaks(&b);
+    return b;
+}
+
+/// The case's file: the broken body as JSON, edited when the case says.
+fn caseText(case: Malformed) ![]u8 {
+    var b = try brokenBody(case);
+    defer b.deinit();
+    const text = try body_json.dump(testing.allocator, &b);
+    const edit = case.edit orelse return text;
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, edit[0]) != null);
+    return std.mem.replaceOwned(u8, testing.allocator, text, edit[0], edit[1]);
+}
+
+/// The case's verdict file.
+fn verdictText(case: Malformed) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+    if (case.refused) {
+        try w.print("{f}", .{std.json.fmt(.{ .what = case.what, .reader = "refuses" }, .{ .whitespace = .indent_2 })});
+    } else {
+        try w.print("{f}", .{std.json.fmt(.{ .what = case.what, .level = @tagName(case.level), .first = @tagName(case.rule.?) }, .{ .whitespace = .indent_2 })});
     }
-    // A vertex off its curve
-    {
-        var b = try tetrahedron(testing.allocator);
+    try w.writeByte('\n');
+    return out.toOwnedSlice();
+}
+
+/// A verdict file, read.
+const Verdict = struct { what: []const u8, reader: ?[]const u8 = null, level: ?[]const u8 = null, first: ?[]const u8 = null };
+
+test "checker: each malformed case, broken in code, is named first by its rule" {
+    for (MALFORMED) |case| {
+        const rule = case.rule orelse continue;
+        errdefer std.debug.print("case {s}: {s}\n", .{ case.name, case.what });
+        var b = try brokenBody(case);
         defer b.deinit();
-        b.geometry.points.items[0] = .{ 0.1, 0, 0 };
-        try expectRule(&b, .geometric, .vertex_off_curve);
+        try expectRule(&b, case.level, rule);
     }
-    // An edge too short: a tiny tetrahedron
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.tol = Tolerance.fromZone(0.6);
-        try expectRule(&b, .geometric, .edge_too_short);
-    }
-    // Coordinates too large for the zone: the unit tetrahedron under a zone of 1e-13,
-    // below its coordinates' spacing times the guard's margin; and the same body moved
-    // a thousand kilometres out, where a zone of 1e-5 is a ten-thousandth of the spacing
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.tol = Tolerance.fromZone(1e-13);
-        try expectRule(&b, .geometric, .too_large_for_tolerance);
-    }
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        for (b.geometry.points.items) |*p| p[0] += 1e9;
-        for (b.geometry.planes.items) |*plane| plane.frame.origin[0] += 1e9;
-        for (b.geometry.lines.items) |*line| line.o[0] += 1e9;
-        try expectRule(&b, .geometric, .too_large_for_tolerance);
-    }
-    // A gap past the zone
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.vertex(types.VertexIndex.of(0)).gap = 1e-3;
-        try expectRule(&b, .geometric, .gap_too_large);
-    }
-    // An edge off a face's surface: move a plane
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.geometry.planes.items[0].frame.origin = .{ 0, 0, 0.01 };
-        try expectRule(&b, .geometric, .edge_off_surface);
-    }
-    // A face flipped alone: its loop runs the wrong way for its sense
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        b.face(types.FaceIndex.of(0)).same_sense = false;
-        try expectRule(&b, .geometric, .loop_winding);
-    }
-    // The whole shell turned inside out: every loop reversed and every sense flipped,
-    // which every local rule allows; the signed volume says so
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        for (b.faces.items) |*f| f.same_sense = !f.same_sense;
-        for (b.coedges.items) |*c| {
-            std.mem.swap(types.CoedgeIndex, &c.next, &c.prev);
-            c.same_sense = !c.same_sense;
-        }
-        for (b.vertices.items) |*v| v.coedge = b.coedge(v.coedge).partner;
-        try expectRule(&b, .geometric, .shell_inside_out);
-    }
-    // Two vertices at one place
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const p = try b.geometry.addPoint(testing.allocator, .{ 1e-6, 0, 0 });
-        _ = try b.addVertex(.{ .point = p });
-        try expectRule(&b, .geometric, .vertices_too_close);
-    }
+}
+
+test "checker: UV boxes outside a cylinder's domain, and one that wraps" {
+    var b = try tetrahedron(testing.allocator);
+    defer b.deinit();
     // A UV box outside the domain, and one that wraps: on a cylinder
-    {
-        var b = try tetrahedron(testing.allocator);
-        defer b.deinit();
-        const cyl = try b.geometry.addCylinder(testing.allocator, .{ .frame = geometry.Frame.world, .r = 1 });
-        b.face(types.FaceIndex.of(0)).surface = cyl;
-        b.face(types.FaceIndex.of(0)).uv_box = .{ .min = .{ -1, 0 }, .max = .{ 1, 1 } };
-        var report = try check.run(testing.allocator, &b, .geometric);
-        defer report.deinit(testing.allocator);
-        var found = false;
-        for (report.findings.items) |f| found = found or f.code == .uv_box_outside_domain;
-        try testing.expect(found);
-        b.face(types.FaceIndex.of(0)).uv_box = .{ .min = .{ 0, 0 }, .max = .{ 7, 1 } };
-        var report2 = try check.run(testing.allocator, &b, .geometric);
-        defer report2.deinit(testing.allocator);
-        found = false;
-        for (report2.findings.items) |f| found = found or f.code == .uv_box_wraps;
-        try testing.expect(found);
+    const cyl = try b.geometry.addCylinder(testing.allocator, .{ .frame = geometry.Frame.world, .r = 1 });
+    b.face(types.FaceIndex.of(0)).surface = cyl;
+    b.face(types.FaceIndex.of(0)).uv_box = .{ .min = .{ -1, 0 }, .max = .{ 1, 1 } };
+    var report = try check.run(testing.allocator, &b, .geometric);
+    defer report.deinit(testing.allocator);
+    var found = false;
+    for (report.findings.items) |f| found = found or f.code == .uv_box_outside_domain;
+    try testing.expect(found);
+    b.face(types.FaceIndex.of(0)).uv_box = .{ .min = .{ 0, 0 }, .max = .{ 7, 1 } };
+    var report2 = try check.run(testing.allocator, &b, .geometric);
+    defer report2.deinit(testing.allocator);
+    found = false;
+    for (report2.findings.items) |f| found = found or f.code == .uv_box_wraps;
+    try testing.expect(found);
+}
+
+test "malformed corpus: each file is its case's body and verdict, as the table makes them" {
+    const update = @import("test_paths").update_snapshots;
+    if (update and builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    try testing.expectEqual(MALFORMED.len, malformed.NAMES.len);
+    for (MALFORMED, malformed.CASES) |case, file| {
+        errdefer std.debug.print("case {s}: rerun with -Dupdate-snapshots and review the diff\n", .{case.name});
+        try testing.expectEqualStrings(case.name, file.name);
+        const text = try caseText(case);
+        defer testing.allocator.free(text);
+        const verdict = try verdictText(case);
+        defer testing.allocator.free(verdict);
+        if (update) {
+            for ([_][]const u8{ ".json", ".verdict.json" }, [_][]const u8{ text, verdict }) |ext, data| {
+                const path = try std.mem.concat(testing.allocator, u8, &.{ @import("test_paths").locus_dir, "/src/fixtures/malformed/", case.name, ext });
+                defer testing.allocator.free(path);
+                var out = try std.Io.Dir.cwd().createFile(testing.io, path, .{});
+                defer out.close(testing.io);
+                try out.writeStreamingAll(testing.io, data);
+            }
+            continue;
+        }
+        try testing.expectEqualStrings(file.body, text);
+        try testing.expectEqualStrings(file.verdict, verdict);
     }
 }
 
-test "global rules: a hole outside its outer loop; two faces on one plane are a warning, not a failure" {
+test "malformed corpus: each file, read, is refused or named first as its verdict says" {
+    // The data alone: the file read as a host's would be, and its verdict file's word
+    for (malformed.CASES) |file| {
+        errdefer std.debug.print("case {s}\n", .{file.name});
+        const parsed = try std.json.parseFromSlice(Verdict, testing.allocator, file.verdict, .{});
+        defer parsed.deinit();
+        const verdict = parsed.value;
+        try testing.expect(verdict.what.len > 0);
+        if (verdict.reader) |reader| {
+            try testing.expectEqualStrings("refuses", reader);
+            try testing.expectError(error.Malformed, body_json.load(testing.allocator, file.body));
+            continue;
+        }
+        var body = try body_json.load(testing.allocator, file.body);
+        defer body.deinit();
+        const level = std.meta.stringToEnum(check.Level, verdict.level.?) orelse return error.TestUnexpectedResult;
+        const rule = std.meta.stringToEnum(check.Rule, verdict.first.?) orelse return error.TestUnexpectedResult;
+        try expectRule(&body, level, rule);
+    }
+}
+
+test "global rules: two faces on one plane are a warning, not a failure" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const primitives = @import("../construct/primitives.zig");
-    // The even-odd fill makes two faces of two outlines apart (no hole outside an outer
-    // loop can be built); a hole moved out afterwards (its points and its lines together,
-    // so every local rule still holds) is what level 2 names
+    // A plate with a hole passes, no warning (the hole moved out of it is the malformed
+    // corpus's `hole_outside_outer`)
     const outer = [_]vec.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
-    const far = [_]vec.Vec2{ .{ 20, 20 }, .{ 20, 22 }, .{ 22, 22 }, .{ 22, 20 } };
-    var apart = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &far }, &diag);
-    defer apart.deinit();
-    try testing.expectEqual(@as(usize, 2), apart.counts().faces);
     const inner = [_]vec.Vec2{ .{ 2, 2 }, .{ 2, 4 }, .{ 4, 4 }, .{ 4, 2 } };
-    var plate = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
-    defer plate.deinit();
-    var report = try check.run(testing.allocator, &plate, .global);
+    var holed = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
+    defer holed.deinit();
+    var report = try check.run(testing.allocator, &holed, .global);
     defer report.deinit(testing.allocator);
     try testing.expect(report.ok());
     try testing.expectEqual(@as(usize, 0), report.warnings());
-    var astray = try plate.clone(testing.allocator);
-    defer astray.deinit();
-    const hole = astray.loop(astray.face(types.FaceIndex.of(0)).first_loop).next_in_face;
-    const away = Vec3{ 20, 20, 0 };
-    var it = traverse_mod.Coedges.init(&astray, hole);
-    while (try it.next()) |c| {
-        const start = astray.coedgeStart(c);
-        astray.geometry.points.items[@backingInt(astray.vertex(start).point)] = vec.add(astray.point(start), away);
-        const line = &astray.geometry.lines.items[astray.edge(astray.coedge(c).edge).curve.index];
-        line.o = vec.add(line.o, away);
-    }
-    try expectRule(&astray, .global, .hole_outside_outer);
 
     // A pyramid whose base is two coplanar triangles on one plane record
     const pts = [_]Vec3{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 10, 10, 0 }, .{ 0, 10, 0 }, .{ 5, 5, 10 } };
