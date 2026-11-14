@@ -25,6 +25,14 @@
 //! stages made; the merged vertices both faces lie on are sorted along the line and each
 //! gap between two is kept when its middle lies in both faces (§9.1's planar meet, on the
 //! merged vertices). Planar faces with straight edges only (curved operands are M5's).
+//!
+//! Where one operand comes within the tolerance of two of the other's features that do not
+//! meet there, no decision of the tolerance is consistent (the minimum feature size,
+//! architecture §3), and the paves refuse it (`below_feature_size`): at a merged vertex,
+//! within reach of two faces that meet nowhere near it (`featureSize`); and at a face, two
+//! faces of the other operand in its plane but not in one (`coplanarTogether`), or two
+//! pieces they leave on it within the tolerance of each other in its plane where they share
+//! no merged vertex (`sectionsApart`).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -42,11 +50,13 @@ const bbox = @import("../measure/bbox.zig");
 const in_face = @import("../query/in_face.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const curve_surface = @import("../intersect/curve_surface.zig");
+const predicates = @import("../math/predicates.zig");
 const Body = body_mod.Body;
 const Box3 = geometry.Box3;
 const Bvh = bvh_mod.Bvh;
 const Frame = geometry.Frame;
 const Plane = curve_surface.Plane;
+const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -313,6 +323,8 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     try filler.faceFace();
     try filler.nearlyCoplanar();
     for (0..2) |k| for (p.sections[k]) |*list| sortUnique([2]u32, list, lessPair);
+    try filler.coplanarTogether();
+    try filler.sectionsApart();
     return p;
 }
 
@@ -786,14 +798,14 @@ const Filler = struct {
                         const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?);
                         const foot = vec.addScaled(q, plane.n, -plane.height(q));
                         const from_foot = try in_face.boundaryDistance(self.body(k), f, foot, self.diag);
-                        if (try self.within(from_foot, reach, .of(.face, @backingInt(f)))) return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .measured = from_foot, .threshold = reach });
+                        if (try self.within(from_foot, reach, .of(.face, @backingInt(f)))) return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a vertex inside a face of the first operand, and the face's boundary by the vertex's foot on its plane," else "a vertex inside a face of the second operand, and the face's boundary by the vertex's foot on its plane,", .measured = from_foot, .threshold = reach });
                     }
                     on[count] = f;
                     count += 1;
                 }
                 for (on[0..count], 0..) |a, x| for (on[x + 1 .. count]) |b| {
                     if (try self.meetNear(k, a, b, q, reach)) continue;
-                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(b)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .threshold = reach });
+                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(b)), .label = if (k == 0) "two faces of the first operand within reach of one vertex," else "two faces of the second operand within reach of one vertex,", .threshold = reach });
                 };
             }
         }
@@ -1061,7 +1073,6 @@ const Filler = struct {
                 try self.blocksInside(0, fa, 1, fb);
                 continue;
             }
-            const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
             try p.verticesOn(0, @backingInt(fa), &on_a);
             try p.verticesOn(1, @backingInt(fb), &on_b);
             both.clearRetainingCapacity();
@@ -1075,6 +1086,7 @@ const Filler = struct {
                 } else if (on_a.items[i] < on_b.items[j]) i += 1 else j += 1;
             }
             if (both.items.len < 2) continue;
+            const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
             const Order = struct {
                 points: []const Vec3,
                 line: Vec3,
@@ -1170,6 +1182,97 @@ const Filler = struct {
         return true;
     }
 
+    /// Each face's coplanar partners (faces of the other operand lying in its plane,
+    /// `Paves.coplanar`) coplanar with each other too, or sharing an edge: lying in a plane
+    /// within the tolerance is not transitive (Segal and Séquin 1988's restriction R1), and
+    /// two faces of one operand in one face's plane but not in one plane are two planes that
+    /// face is decided against (a wall 1.5 intersection tolerances thick probed by a face
+    /// inside it: the wall's two faces both in its plane, the imprints apart). Refused
+    /// (`below_feature_size`), naming the second of the two.
+    fn coplanarTogether(self: *Filler) Error!void {
+        const p = self.p;
+        var pairs: std.ArrayList([2]u32) = .empty;
+        defer pairs.deinit(self.allocator);
+        for (0..2) |k| {
+            // Face `pair[0]` of operand `k`, a partner `pair[1]` of the other, by face
+            const other = 1 - k;
+            pairs.clearRetainingCapacity();
+            for (p.coplanar.items) |pair| try pairs.append(self.allocator, .{ pair[k], pair[other] });
+            std.mem.sort([2]u32, pairs.items, {}, lessPair);
+            var start: usize = 0;
+            while (start < pairs.items.len) {
+                var end = start;
+                while (end < pairs.items.len and pairs.items[end][0] == pairs.items[start][0]) end += 1;
+                const group = pairs.items[start..end];
+                for (group, 0..) |x, i| for (group[i + 1 ..]) |y| {
+                    const f = types.FaceIndex.of(x[1]);
+                    const g = types.FaceIndex.of(y[1]);
+                    if (try self.adjacent(other, f, g)) continue;
+                    if (try self.liesIn(other, f, planar_faces.frameOf(self.body(other), g).?) and try self.liesIn(other, g, planar_faces.frameOf(self.body(other), f).?)) continue;
+                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, y[1]), .label = if (other == 0) "two faces of the first operand in the plane of one face of the second, not in one plane," else "two faces of the second operand in the plane of one face of the first, not in one plane,", .threshold = p.tol.xsect });
+                };
+                start = end;
+            }
+        }
+    }
+
+    /// Whether faces `f` and `g` of operand `k` share an edge.
+    fn adjacent(self: *Filler, k: usize, f: types.FaceIndex, g: types.FaceIndex) Error!bool {
+        const body_k = self.body(k);
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const partner = body_k.coedge(c).partner;
+                if (partner != .none and body_k.loop(body_k.coedge(partner).loop).face == g) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Each face's section segments (what the other operand leaves on it), pairwise, those
+    /// sharing no merged vertex further apart in the face's plane than the intersection
+    /// tolerance: nearer, the imprint's overlay welds or cuts them where the paves found no
+    /// point (within the zone), or leaves a strip between them whose every point is within
+    /// the zone of both, which no sample classifies (twice the zone is the tolerance). Two of
+    /// the other operand's features within the tolerance of each other here, away from where
+    /// they meet (a flat tetrahedron's opposite edges 1.5e-5 apart, both in the plane of a
+    /// face between them, crossing there; Segal and Séquin 1988's R3). Two sharing a vertex
+    /// are the minimum feature size's: the other end of one within reach of the other is a
+    /// merged vertex within reach of two of that operand's faces away from where they meet
+    /// (`featureSize`). Refused (`below_feature_size`), naming the face.
+    fn sectionsApart(self: *Filler) Error!void {
+        const p = self.p;
+        const Flat = struct { a: Vec2, b: Vec2, ends: [2]u32, lo: f64, hi: f64 };
+        var flat: std.ArrayList(Flat) = .empty;
+        defer flat.deinit(self.allocator);
+        for (0..2) |k| for (self.faces[k]) |f| {
+            const list = p.sections[k][@backingInt(f)].items;
+            if (list.len < 2) continue;
+            const frame = planar_faces.frameOf(self.body(k), f).?;
+            flat.clearRetainingCapacity();
+            for (list) |segment| {
+                const a = planar_faces.flat(frame, p.point(segment[0]));
+                const b = planar_faces.flat(frame, p.point(segment[1]));
+                try flat.append(self.allocator, .{ .a = a, .b = b, .ends = segment, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]) });
+            }
+            const Order = struct {
+                fn lessThan(_: void, x: Flat, y: Flat) bool {
+                    return x.lo < y.lo or (x.lo == y.lo and lessPair({}, x.ends, y.ends));
+                }
+            };
+            std.mem.sort(Flat, flat.items, {}, Order.lessThan);
+            for (flat.items, 0..) |x, i| for (flat.items[i + 1 ..]) |y| {
+                // Sorted by their least x: none further on comes within reach
+                if (y.lo > x.hi + p.tol.xsect) break;
+                if (x.ends[0] == y.ends[0] or x.ends[0] == y.ends[1] or x.ends[1] == y.ends[0] or x.ends[1] == y.ends[1]) continue;
+                const gap = segmentGap(x.a, x.b, y.a, y.b);
+                if (!try self.within(gap, p.tol.xsect, .of(.face, @backingInt(f)))) continue;
+                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "two of the pieces the second operand leaves on a face of the first, nearer each other in its plane than the reach where they do not meet," else "two of the pieces the first operand leaves on a face of the second, nearer each other in its plane than the reach where they do not meet,", .measured = gap, .threshold = p.tol.xsect });
+            };
+        };
+    }
+
     /// Each pave block of face `f` of operand `k` whose middle is inside face `g` of
     /// operand `other` (one plane): a section segment of `g`.
     fn blocksInside(self: *Filler, k: usize, f: types.FaceIndex, other: usize, g: types.FaceIndex) Error!void {
@@ -1198,6 +1301,25 @@ fn closestOnSegment(a: Vec3, b: Vec3, q: Vec3) Vec3 {
     const len2 = vec.dot(d, d);
     if (len2 == 0) return a;
     return vec.addScaled(a, d, std.math.clamp(vec.dot(vec.sub(q, a), d) / len2, 0, 1));
+}
+
+/// The distance between the segments from `a` to `b` and from `c` to `d` in a plane: 0 when
+/// they cross (the exact orientations), else the least of each end's from the other.
+fn segmentGap(a: Vec2, b: Vec2, c: Vec2, d: Vec2) f64 {
+    const o1 = predicates.orient2d(a, b, c);
+    const o2 = predicates.orient2d(a, b, d);
+    const o3 = predicates.orient2d(c, d, a);
+    const o4 = predicates.orient2d(c, d, b);
+    if (((o1 > 0 and o2 < 0) or (o1 < 0 and o2 > 0)) and ((o3 > 0 and o4 < 0) or (o3 < 0 and o4 > 0))) return 0;
+    return @min(@min(pointGap(c, a, b), pointGap(d, a, b)), @min(pointGap(a, c, d), pointGap(b, c, d)));
+}
+
+/// The distance from `q` to the segment from `a` to `b` in a plane.
+fn pointGap(q: Vec2, a: Vec2, b: Vec2) f64 {
+    const d = vec.sub2(b, a);
+    const len_sq = vec.lengthSq2(d);
+    const s = if (len_sq == 0) 0 else std.math.clamp(vec.dot2(vec.sub2(q, a), d) / len_sq, 0, 1);
+    return vec.distance2(q, vec.addScaled2(a, d, s));
 }
 
 /// The parameters along two lines `p + s·d` and `q + u·e` of their closest points; null

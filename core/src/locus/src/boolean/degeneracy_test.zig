@@ -858,6 +858,64 @@ test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its
     }
 }
 
+/// Each operation of `a` and `b` refused with `code`.
+fn expectRefused(a: *const Body, b: *const Body, code: diagnostics.Code) !void {
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        if (pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null)) |result| {
+            var made = result;
+            made.deinit();
+            std.debug.print("{s} was not refused\n", .{@tagName(op)});
+            return error.TestExpectedError;
+        } else |_| {}
+        errdefer std.debug.print("{s}: {f}\n", .{ @tagName(op), diag });
+        try testing.expectEqual(code, diag.first().?.code);
+    }
+}
+
+test "degeneracy: a face through a plate 1.5 tolerances thick, past it all round, is refused: the plate's top and bottom both lie in its plane" {
+    // research/consistent-tolerances.md's first probe (2026-11-14): the box's top at the
+    // plate's mid-height is within the intersection tolerance of the plate's top and bottom
+    // (and its sides, 3e-5 tall, lay in its plane by their corners' heights); no merged
+    // vertex is within reach of two of the plate's faces (the box's corners are outside it),
+    // so the minimum feature size never saw the pair, and the imprint reached its guard
+    // (`imprint_unmatched`). The top and bottom in the box's plane, not in one: refused
+    var plate = try box(.{ 0, 0, 0 }, .{ 10, 10, 1.5 * tol.xsect });
+    defer plate.deinit();
+    var b = try box(.{ -5, -5, -5 }, .{ 15, 15, 0.75 * tol.xsect });
+    defer b.deinit();
+    try expectRefused(&plate, &b, .below_feature_size);
+}
+
+test "degeneracy: a face inside a wall 1.5 tolerances thick is refused: the wall's two faces both lie in its plane, not in one" {
+    // The second probe: a cavity's face 3e-5 behind the outer face x = 10, and a box whose
+    // face lies between the two, in the plane of each (within the tolerance) but of
+    // neither's; the imprints disagreed (`imprint_unmatched`)
+    var outer = try box(.{ 0, 0, 0 }, .{ 10, 10, 10 });
+    defer outer.deinit();
+    var cavity = try box(.{ 5, 1, 1 }, .{ 10 - 1.5 * tol.xsect, 9, 9 });
+    defer cavity.deinit();
+    var walled = try sound(&outer, &cavity, .difference);
+    defer walled.deinit();
+    var b = try box(.{ 10 - 0.75 * tol.xsect, 0.5, 0.5 }, .{ 20, 9.5, 9.5 });
+    defer b.deinit();
+    try expectRefused(&walled, &b, .below_feature_size);
+}
+
+test "degeneracy: a face between a flat tetrahedron's opposite edges is refused: both edges lie in its plane, crossing there" {
+    // The third probe: a valid tetrahedron whose opposite edges are 1.5e-5 apart (every
+    // pair of its faces shares an edge, so the overlap rules see only boundary contacts),
+    // and a box whose top lies between them; both edges are imprinted on the box's top and
+    // cross in its plane where no merged vertex is (`imprint_unmatched`)
+    const h = 0.75 * tol.xsect;
+    var tetra = try tetrahedron(.{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, h }, .{ 0, 1, h });
+    defer tetra.deinit();
+    var b = try box(.{ -20, -20, -5 }, .{ 20, 20, h / 2 });
+    defer b.deinit();
+    try expectRefused(&tetra, &b, .below_feature_size);
+}
+
 test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its upper edge within the tolerance over it, is classified by a point clear of the plate" {
     // The gap draws' first find (2026-11-14), at a zone of 1e-4: the tetrahedron's upper
     // edge 5e-5 over the plate's top and its lower 2.5e-4 under it, so its upper faces

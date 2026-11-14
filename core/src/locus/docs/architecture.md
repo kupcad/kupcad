@@ -462,7 +462,15 @@ operation (H p.117–118). Where two faces of one operand come within the inters
 tolerance of each other away from where they meet (a merged vertex inside one, clear of
 its boundary, within the tolerance of the other), no decision of the tolerance is
 consistent, and a boolean refuses it (`below_feature_size`, the paves; the solids fuzzer's
-draws at the tolerance, 2026-11-14).
+draws at the tolerance, 2026-11-14). A face of the other operand probes the same way where
+no vertex does (research/consistent-tolerances.md, Segal and Séquin's restrictions R1 and
+R3): two faces of one operand both in a face's plane must be in one plane or share an edge
+(a wall 1.5 tolerances thick with a face inside it), and the pieces one operand leaves on a
+face must keep the tolerance apart in its plane where they share no merged vertex (a flat
+tetrahedron's opposite edges both in the face's plane, crossing there); both refused
+`below_feature_size`. An operand built at a finer tolerance than the boolean takes (the
+larger of the two, §6) must be valid at the boolean's, or the result is not
+(`mixed_tolerance`).
 
 **Determinism**: every module sets `@setFloatMode(.strict)`; no fused multiply-add in
 anything that decides topology; transcendental functions (`sin`, `cos`, `atan2`) appear

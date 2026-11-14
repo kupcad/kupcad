@@ -21,9 +21,10 @@
 //! 7. the checker: the result passes it or the operation fails with its finding.
 //!
 //! Typed findings name the entity: failures `TooSmallEdge` (an operand's edge, `pave`),
-//! `below_feature_size` (a face of an operand another of its faces comes within the
-//! tolerance of, away from where they meet, at a merged vertex, `pave`), `mixed_tolerance`
-//! (an operand not valid at the larger tolerance the boolean takes),
+//! `below_feature_size` (two features of an operand within the tolerance of each other
+//! away from where they meet, where the other operand comes within reach of both: at a
+//! merged vertex, or in a face's plane, `pave`), `mixed_tolerance` (an operand not valid at
+//! the larger tolerance the boolean takes),
 //! `imprint_unmatched` and `unclassified` (an operand's face), `pinched` (a result's shell
 //! touching itself along a line or at a point inside one solid, refused by design), the
 //! checker's on the result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
