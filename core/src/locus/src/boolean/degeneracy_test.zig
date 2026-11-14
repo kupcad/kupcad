@@ -37,6 +37,15 @@ const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
+/// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
+/// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
+/// numbers, as the case gives them.
+const BUG33361 = [4][8]Vec3{
+    .{ .{ -13.1319809553115, 86.7822037750006, -0.00566973476865229 }, .{ -128.558636709231, 86.5345485791916, -0.00570258843333704 }, .{ -100.69915263562, -4.39311321186025, -0.00566084285433277 }, .{ -79.6175928285065, -4.39310160958954, -0.0056548256445943 }, .{ -14.129603767474, 86.2679145189996, -19.5413698283793 }, .{ -127.672333074639, 86.0243014066245, -19.5414021458256 }, .{ -99.9691824161271, -4.39312007067491, -19.5413606345018 }, .{ -80.240198192502, -4.39310921279638, -19.5413550033513 } },
+    .{ .{ 127.874808332641, 87.0848242748098, -0.00573631640736139 }, .{ 4.13755363440343, 86.8193381629493, -0.00577153550167253 }, .{ 87.7714933163724, -4.39312459253253, -0.00571376462476536 }, .{ 108.964655532952, -4.39311292884125, -0.00570771556087379 }, .{ 127.250964034433, 86.5713396058731, -19.5413363036311 }, .{ 5.24619819968578, 86.3095706585265, -19.5413710296105 }, .{ 88.4127315018899, -4.39313150014382, -19.5413135815986 }, .{ 108.446956291808, -4.39312047427561, -19.5413078633248 } },
+    .{ .{ 108.933394491783, -4.52270499989385, -0.0678854291688111 }, .{ 71.6392583557696, -4.82783796975667, 0.111191412258037 }, .{ 71.3588792617103, 151.745015502843, 0.0366204967163988 }, .{ 127.845048470054, 86.9672826319557, -0.202979251077327 }, .{ 109.955308180154, -5.58542764710532, 46.9881961078522 }, .{ 70.0688762581537, -5.90713971196433, 46.9762651891041 }, .{ 69.7567011034265, 151.061981157248, 47.828071244823 }, .{ 128.441716305279, 83.7679782847199, 47.4778456953173 } },
+    .{ .{ -122.825413548196, 67.8222420317801, -0.00583425335077337 }, .{ 121.414994525437, 55.8353479065558, -0.00563439528369258 }, .{ 127.874867553719, 87.0848594871004, -0.00564196037409204 }, .{ -128.558663169796, 86.5344601820726, -0.00584644818335889 }, .{ -122.343446023918, 68.6316879811904, -19.5414411166127 }, .{ 121.07295954832, 56.6852348873057, -19.5412518461508 }, .{ 127.250997928568, 86.5713737315812, -19.5412353309277 }, .{ -127.67235532236, 86.0242158147956, -19.5414386144761 } },
+};
 /// OCCT's C6 and D4 (corpus_test.zig's `TURNED`): a box √31/4 long, ¼ or ½ wide, turned
 /// 34.73° about its corner at the origin against the unit box.
 const BAR_TURN = std.math.degreesToRadians(34.73);
@@ -1121,6 +1130,19 @@ test "degeneracy: OCCT's H9, a hole through the box touching its side along a li
     try testing.expect(s.isEmpty());
 }
 
+test "degeneracy: H9's void, the turned box inside the box but for its edge on the side, refused pinched" {
+    // research/occt-tests.md (O5): H9's turned box cut to z from ¼ to ¾, so the difference
+    // is a void whose edge (0, ¼ + √3/4) lies on the side x = 0 along a segment: a void
+    // touching its outer shell along a line, which no STEP solid holds (P1, Leo's
+    // decision); OCCT has no such case of its own. The intersection is the turned box
+    var pair = try unitAndTurned(.{ 0.25, 0.25, 0.25 }, .{ 0.75, 0.75, 0.75 }, .{ 0.25, 0.25, 0 }, std.math.degreesToRadians(30.0));
+    defer for (&pair) |*body| body.deinit();
+    try expectPinched(&pair[0], &pair[1]);
+    var i = try sound(&pair[0], &pair[1], .intersection);
+    defer i.deinit();
+    try expectShape(&i, 0.125, 6, 1);
+}
+
 test "degeneracy: OCCT's N3, a box under the box, its top's corner on the box's bottom edge: the bottom's one loop through that corner twice" {
     // After OCCT `tests/boolean/bop*_simple/N3`: its coordinates and areas; volumes and
     // counts worked out here. H9's turned square under the box (z from −1 to 0), its top
@@ -1429,5 +1451,31 @@ test "degeneracy: OCCT's spec case, a box 1e-6 and 1e-4 taller and deeper than t
             if (within) try testing.expect(r.shift > 0);
             try testing.expectApproxEqAbs(want, try volume(&u), r.shift + CLOSE);
         }
+    }
+}
+
+test "degeneracy: OCCT's bug33361, four hexahedra whose corners miss by 1e-4, joined one by one: made and sound, or refused by type" {
+    // Dirty input (research/occt-tests.md, O6; OCCT checks the shape only): each
+    // hexahedron as the hull of its corners, the fold of OCCT's fuses, each step by the
+    // probes' oracle; a step refused ends the fold
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var solids: [4]Body = undefined;
+    var built: usize = 0;
+    defer for (solids[0..built]) |*s| s.deinit();
+    for (&BUG33361, &solids) |*corners, *s| {
+        s.* = try @import("../construct/hull.zig").hull(testing.allocator, tol, corners, &diag);
+        built += 1;
+    }
+    var current = try solids[0].clone(testing.allocator);
+    defer current.deinit();
+    for (solids[1..], 1..) |*next, k| {
+        errdefer std.debug.print("step {d}\n", .{k});
+        try expectProbe(&current, next);
+        var refused: ?diagnostics.Code = null;
+        var shift: f64 = 0;
+        const made = try madeOrRefused(&current, next, .@"union", &refused, &shift) orelse break;
+        current.deinit();
+        current = made;
     }
 }

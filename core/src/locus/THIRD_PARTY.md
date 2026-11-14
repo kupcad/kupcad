@@ -13,6 +13,15 @@ The other kernels read while planning and building Locus — OCCT (LGPL-2.1), So
 — contributed ideas and test cases only: data structures, phase orders, tolerance schemes, the lists of what goes wrong.
 No code of theirs is in this tree; KupCAD is dual-licensed, so none could be.
 
+OCCT's test suite gave the boolean corpus configurations and expected areas
+(`src/boolean/corpus_test.zig`, `degeneracy_test.zig`): the box pairs of
+`tests/boolean/bop{common,cut,fuse,tuc}_simple` (A9, B3, C3–C6, D4, D7, F5, G2, G8, H7, H9,
+I9, L1, M8, N3, P4, P6, Q9), the pockets of `tests/boolean/bcut_simple` (H1, H4, I3, I4,
+J8, K7, K8, K9, L1), and `tests/bugs/modalg_*` buc60801, bug25354_33/34/37, bug27878_6,
+bug28485_1 and bug33361. Their coordinates and numbers are restated as Zig table rows, each
+crediting its case; the volumes and counts were worked out for Locus; no script text is
+copied.
+
 The validators CI runs over Locus's exports (OpenCascade through the OCP bindings for
 STEP, the Khronos validator for glTF, lib3mf for 3MF; `core/scripts/`) are test tools
 installed in the CI job only: none is linked, vendored or shipped in any build, package or
