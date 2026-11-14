@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
+const predicates = @import("../math/predicates.zig");
 const diagnostics = @import("../diagnostics.zig");
 const trace = @import("../io/trace.zig");
 const body_mod = @import("../topology/body.zig");
@@ -202,7 +203,7 @@ const Band = struct {
         const delta = self.delta;
         const t1 = piece.endTangent();
         const t2 = next.startTangent();
-        const turn = vec.cross2(t1, t2);
+        const turn = self.turnAt(piece, next);
         if (turn * delta <= 0) return;
         const v = piece.b;
         const end1 = vec.addScaled2(v, vec.scale2(vec.perp2(t1), -1), delta);
@@ -227,19 +228,46 @@ const Band = struct {
                         return;
                     }
                 }
-                try self.squareCap(v, end1, t1, start2, t2, forward);
+                try self.squareCap(v, end1, t1, start2, t2, turn > 0, forward);
             },
-            .square => try self.squareCap(v, end1, t1, start2, t2, forward),
+            .square => try self.squareCap(v, end1, t1, start2, t2, turn > 0, forward),
         }
+    }
+
+    /// Which way the boundary turns where `piece` meets `next`: positive to the left,
+    /// negative to the right (only the sign counts). Within a quarter turn of straight
+    /// on, by the tangents' cross: the gap between the two sweeps is the tangents' alone,
+    /// however the curves bend. Past it, by the order of the two curves about the
+    /// corner as the overlay orders them (`overlay.orderSample`: points a hundred zones
+    /// along each, the predicate exact on those): at a cusp (an arc ending tangent to a
+    /// line) the tangents oppose and their cross is 0 or a rounding either way, while the
+    /// turn is a half turn to the side the face lies on, which only the curves' bend
+    /// tells; elsewhere the two agree, the overlay having cut the curves where they cross
+    /// (the fuzzer, 2026-11-14: a round join at a cusp left out in place, the cross 0,
+    /// and put in on the sheet turned, the cross a rounding above 0; 13.81 against 16.98).
+    fn turnAt(self: *const Band, piece: Piece, next: Piece) f64 {
+        const t1 = piece.endTangent();
+        const t2 = next.startTangent();
+        if (vec.dot2(t1, t2) >= 0) return vec.cross2(t1, t2);
+        const v = piece.b;
+        const back: ?Arc = if (piece.arc) |arc| .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw } else null;
+        const behind = overlay_mod.orderSample(v, piece.a, back, self.zone);
+        const ahead = overlay_mod.orderSample(v, next.b, next.arc, self.zone);
+        // Left when the curve back lies within a half turn counter-clockwise of the one
+        // ahead: the face, between them that way round, is the narrower side
+        return predicates.orient2d(v, ahead, behind);
     }
 
     /// The corner capped: the line at the offset distance from the corner along the
     /// bisector of the two offsets, between its crossings with the offset lines extended.
-    fn squareCap(self: *Band, v: Vec2, end1: Vec2, t1: Vec2, start2: Vec2, t2: Vec2, forward: bool) Error!void {
-        const bisector = vec.normalized2(vec.add2(vec.sub2(end1, v), vec.sub2(start2, v))) orelse {
-            try self.region(&.{ .{ .a = v, .b = end1 }, .{ .a = end1, .b = start2 }, .{ .a = start2, .b = v } }, forward);
-            return;
-        };
+    /// The bisector is square to the chord from the first offset's end to the second's,
+    /// on the side the boundary turns away from (`left` when it turns left), not the two
+    /// offsets' sum: at a cusp they are opposite, and their sum is nothing or a rounding
+    /// pointing anywhere.
+    fn squareCap(self: *Band, v: Vec2, end1: Vec2, t1: Vec2, start2: Vec2, t2: Vec2, left: bool, forward: bool) Error!void {
+        const across = vec.perp2(vec.sub2(start2, end1));
+        // `corner` keeps the two ends more than the zone apart
+        const bisector = vec.normalized2(if (left) vec.scale2(across, -1) else across) orelse return;
         const on_cap = vec.addScaled2(v, bisector, @abs(self.delta));
         const along_cap = vec.perp2(bisector);
         const c1 = linesMeet(end1, t1, on_cap, along_cap) orelse end1;

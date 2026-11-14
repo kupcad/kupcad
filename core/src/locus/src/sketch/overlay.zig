@@ -735,7 +735,7 @@ pub const Overlay = struct {
 
     /// Whether `x` leaves its origin at a smaller angle than `y`, counter-clockwise from
     /// the positive x axis: by the directions to their samples a reach along them
-    /// (`sampleAlong`), by half-plane, then by the exact predicate on the sample points.
+    /// (`orderSample`), by half-plane, then by the exact predicate on the sample points.
     /// Tangent curves (a join arc and the line it joins) part by their bend within the
     /// reach, so no curvature rule is needed; two lines a fraction of a degree apart have
     /// their definite order (as near-tangent by an angle tolerance they had none, and the
@@ -753,10 +753,9 @@ pub const Overlay = struct {
         return x < y;
     }
 
-    /// The half-edge's point `ORDER_REACH` zones along it from its origin, or its middle
-    /// when it is shorter than twice that; a line's far end, which is exact.
+    /// The half-edge's point the order about its origin goes by (`orderSample`).
     fn sample(self: *const Overlay, half: u32) Vec2 {
-        return sampleAlong(self.point(self.origin(half)), self.point(self.target(half)), self.arcOf(half), ORDER_REACH * self.tol.zone);
+        return orderSample(self.point(self.origin(half)), self.point(self.target(half)), self.arcOf(half), self.tol.zone);
     }
 
     fn upperHalf(d: Vec2) bool {
@@ -1006,13 +1005,16 @@ const Span = struct {
     }
 };
 
-/// The point `reach` along the curve from `a` to `b` (straight, or along `arc`), or its
-/// middle when the curve is shorter than twice the reach; `b` itself for a line, whose
-/// direction from `a` is the same anywhere along it and exact there.
-fn sampleAlong(a: Vec2, b: Vec2, arc: ?Arc, reach: f64) Vec2 {
+/// The point the curve from `a` to `b` (straight, or along `arc`) is ordered by among the
+/// curves leaving `a`: `ORDER_REACH` zones along it, or its middle when it is shorter
+/// than twice that; `b` itself for a line, whose direction from `a` is the same anywhere
+/// along it and exact there. The overlay's order about a vertex goes by it, and so does
+/// the offset's turn at a cusp (offset.zig), so the two read curves leaving a vertex one
+/// way alike.
+pub fn orderSample(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Vec2 {
     const circle = arc orelse return b;
     const span = arcSpan(a, b, circle);
-    const s = @min(reach, circle.r * span.sweep / 2.0);
+    const s = @min(ORDER_REACH * zone, circle.r * span.sweep / 2.0);
     const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
     return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
 }

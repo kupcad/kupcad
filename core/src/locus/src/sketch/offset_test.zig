@@ -1,7 +1,8 @@
 //! Offsets against closed forms: a square grown with each join, shrunk, shrunk to nothing;
 //! a circle; a plate with a hole, whose hole shrinks as the plate grows; a sliver shrunk
 //! past its width; a U whose slot is narrower than the offset, shrunk with each join and
-//! grown shut.
+//! grown shut; a square less a quarter disc, whose two cusps get each join, grown and as
+//! a hole shrunk.
 
 const std = @import("std");
 const testing = std.testing;
@@ -13,6 +14,7 @@ const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
 const transform = @import("../construct/transform.zig");
 const mass = @import("../measure/mass.zig");
+const query = @import("query.zig");
 const boolean = @import("boolean.zig");
 const offset = @import("offset.zig");
 const hull = @import("hull.zig");
@@ -417,4 +419,64 @@ test "offset: a shrunk sheet lies within its sheet where two arcs meet a roundin
     var outside = try boolean.boolean(testing.allocator, &.{ &s, &sheet }, .difference, .{}, &diag);
     defer outside.deinit();
     try testing.expectEqual(@as(usize, 0), outside.counts().faces);
+}
+
+test "offset: a cusp turns a half turn to its face's side, joined with each join (a square less a quarter disc)" {
+    // The square [0, 2]² less the quarter disc about (0, 2) of radius 2: the arc ends
+    // tangent to the bottom at (0, 0) and to the right side at (2, 2), two cusps where the
+    // tangents oppose and their cross is exactly 0. Grown by one half, the region is the
+    // sheet, the bands along its sides and its arc, and the joins: at each cusp a half
+    // disc for round (with the quarter disc at (2, 0), Steiner's A + Pδ + πδ² in all),
+    // a δ by 2δ cap for square and miter (the offset lines are parallel), nothing for
+    // bevel. The plate [−2, 4]² with the sheet as a hole, shrunk by one half, loses the
+    // same about the hole, whose cusps turn the other way
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const spandrel = [_]RingPoint{ .{ .p = .{ 0, 0 } }, .{ .p = .{ 2, 0 } }, .{ .p = .{ 2, 2 }, .bulge = -1, .ccw = false } };
+    var sheet = try bulged(&.{&spandrel}, &diag);
+    defer sheet.deinit();
+    const plate = [_]RingPoint{ .{ .p = .{ -2, -2 } }, .{ .p = .{ 4, -2 } }, .{ .p = .{ 4, 4 } }, .{ .p = .{ -2, 4 } } };
+    var holed = try bulged(&.{ &plate, &spandrel }, &diag);
+    defer holed.deinit();
+    // The sheet, its sides' bands and its arc's annular sector between radii 2 and 1.5
+    const banded: f64 = 4 - PI + 2 + PI / 4.0 * (4 - 1.5 * 1.5);
+    const joins = [_]struct { join: offset.Join, corners: f64 }{
+        .{ .join = .round, .corners = PI / 16.0 + PI / 4.0 },
+        .{ .join = .square, .corners = 0.25 * (2 * @sqrt(2.0) - 2) + 1 },
+        .{ .join = .miter, .corners = 0.25 + 1 },
+        .{ .join = .bevel, .corners = 0.125 },
+    };
+    for (joins) |j| {
+        errdefer std.debug.print("the join: {s}\n", .{@tagName(j.join)});
+        var g = try grown(&sheet, 0.5, j.join, &diag);
+        defer g.deinit();
+        try testing.expectApproxEqRel(banded + j.corners, try areaOf(&g), 1e-12);
+        var s = try grown(&holed, -0.5, j.join, &diag);
+        defer s.deinit();
+        try testing.expectApproxEqRel(25 - banded - j.corners, try areaOf(&s), 1e-12);
+    }
+}
+
+test "offset: a grown sheet holds the disc about its cusp, turned or not (the fuzzer's chain whose join came and went)" {
+    // The fuzzer's find (2026-11-14, run 43585380964): a triangle whose side from (0, 3)
+    // to (2, 1) is an arc about (0, 1) of radius 2, which crosses the side from (2, 2) at
+    // (1.6, 2.2) and ends at (2, 1) tangent to the side x = 2 (the fuzzer's sheet had a
+    // second ring, a spur that fills nothing). Grown by 1.5 with round joins: the tangents'
+    // cross at the cusp was exactly 0 and the half disc below it was left out (13.81); on
+    // the sheet turned 0.3 about z and moved far out the cross was a rounding above 0 and
+    // it was put in (16.98; a fine grid of distances to the sheet gives 16.979)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = try bulged(&.{&.{ .{ .p = .{ 2, 2 } }, .{ .p = .{ 0, 3 }, .bulge = -1, .ccw = false }, .{ .p = .{ 2, 1 } } }}, &diag);
+    defer sheet.deinit();
+    var g = try offset.offset(testing.allocator, &sheet, 1.5, .round, 3, .{}, &diag);
+    defer g.deinit();
+    try testing.expect(try query.contains(&g, .{ 2, -0.4 }, tol.zone, &diag));
+    try testing.expect(try areaOf(&g) > 16.97);
+    const move = mat.Affine.translate(.{ 1e5, -2e5, 0 }).compose(&mat.Affine.rotate(vec.Z3, 0.3));
+    var moved = try transform.transform(testing.allocator, &sheet, &move, .{}, &diag);
+    defer moved.deinit();
+    var gm = try offset.offset(testing.allocator, &moved, 1.5, .round, 3, .{}, &diag);
+    defer gm.deinit();
+    try testing.expectApproxEqRel(try areaOf(&g), try areaOf(&gm), 1e-9);
 }
