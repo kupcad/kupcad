@@ -963,6 +963,7 @@ const Provenance = struct {
 
     fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Face {
         const p = self.paves;
+        var pressed: ?Face = null;
         for (group) |candidate| {
             const c = nodeFace(candidate, n_a);
             const candidate_plane = planeOf(p.operands[c.operand], c.face);
@@ -973,13 +974,85 @@ const Provenance = struct {
                 for (self.points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt)), p.tol.xsect, canonical.magnitude(&.{ pt, candidate_plane.frame.origin })));
             }
             switch (tally.verdict()) {
-                .same => return c,
+                .same => {
+                    if (try self.keepsApart(group, n_a, candidate_plane, diag)) |g| {
+                        pressed = g;
+                        continue;
+                    }
+                    return c;
+                },
                 .at_tolerance => |at| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, c.face), .label = "a face's plane, which the faces the paves found in one plane with it lie in or not, to within rounding", .measured = at.measured, .threshold = at.limit }),
                 .apart => {},
             }
         }
+        if (pressed) |g| return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, g.face), .label = "a face of a group the paves found in one plane, each plane of which takes it within the tolerance of a feature of its own operand it is apart from", .threshold = p.tol.xsect });
         const first = nodeFace(group[0], n_a);
         return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.face, first.face), .label = "faces the paves found in one plane, which no plane of theirs holds within the intersection tolerance", .threshold = p.tol.xsect });
+    }
+
+    /// Null when `plane` keeps every face of `group` it moves (a face whose own plane is
+    /// another) as far from the features of its own operand it is apart from as the
+    /// tolerance keeps them, else such a face: the plane would take it within the tolerance
+    /// and a feature's gap of a vertex whose foot is in the face, or of an edge passing over
+    /// it, that were farther from its own plane (a wall's outer side given a coplanar
+    /// face's plane 7.5e-6 in, 1.75e-5 from the cavity's side it was 2.5e-5 from: the
+    /// void touched its outer shell, the 10K fuzz session, 2026-11-15). Its edges keep their
+    /// lines (D28), so edge to edge nothing moves; a straight edge's height over a plane is
+    /// linear, so its nearest over the face is at an end in it, where it crosses the face's
+    /// boundary or where it crosses the plane, and only an edge with an end within reach of
+    /// the plane, or crossing it, can come near.
+    fn keepsApart(self: *Provenance, group: []const u32, n_a: u32, target: surfaces.Plane, diag: *Diagnostics) Error!?Face {
+        const p = self.paves;
+        for (group) |member| {
+            const g = nodeFace(member, n_a);
+            const body = p.operands[g.operand];
+            const own = planeOf(body, g.face);
+            if (std.meta.eql(own.frame.origin, target.frame.origin) and std.meta.eql(own.frame.z, target.frame.z)) continue;
+            const f = types.FaceIndex.of(g.face);
+            // The face's own vertices, which it meets
+            self.merged.clearRetainingCapacity();
+            var loops = traverse.Loops.init(body, f);
+            while (loops.next() catch return corrupt(diag)) |l| {
+                var it = traverse.Coedges.init(body, l);
+                while (it.next() catch return corrupt(diag)) |c| try self.merged.append(self.allocator, @backingInt(body.coedgeStart(c)));
+            }
+            const meets = self.merged.items;
+            for (body.vertices.items, 0..) |v, vi| {
+                if (v.tombstone or std.mem.indexOfScalar(u32, meets, @intCast(vi)) != null) continue;
+                if (try self.brought(body, f, own, target, body.point(types.VertexIndex.of(vi)), p.tol.xsect + v.gap, diag)) return g;
+            }
+            for (body.edges.items) |e| {
+                if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none or e.curve.kind != .line) continue;
+                if (std.mem.indexOfScalar(u32, meets, @backingInt(e.start)) != null or std.mem.indexOfScalar(u32, meets, @backingInt(e.end)) != null) continue;
+                const a = body.point(e.start);
+                const b = body.point(e.end);
+                const reach = p.tol.xsect + @max(body.vertex(e.start).gap, body.vertex(e.end).gap);
+                const ha = target.height(a);
+                const hb = target.height(b);
+                if (@abs(ha) > reach and @abs(hb) > reach and (ha > 0) == (hb > 0)) continue;
+                // Where it crosses the plane, and where it crosses the face's boundary
+                if ((ha > 0) != (hb > 0)) {
+                    if (try self.brought(body, f, own, target, vec.lerp(a, b, ha / (ha - hb)), reach, diag)) return g;
+                }
+                var crossings = traverse.Loops.init(body, f);
+                while (crossings.next() catch return corrupt(diag)) |l| {
+                    var it = traverse.Coedges.init(body, l);
+                    while (it.next() catch return corrupt(diag)) |c| {
+                        const t = crossingAlong(own.frame, a, b, body.point(body.coedgeStart(c)), body.point(body.coedgeEnd(c))) orelse continue;
+                        if (try self.brought(body, f, own, target, vec.lerp(a, b, t), reach, diag)) return g;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Whether `plane` brings point `q` within `reach` of face `f` (its foot in the face or
+    /// on its boundary) from farther than `reach` off the face's own plane `own`.
+    fn brought(self: *Provenance, body: *const Body, f: types.FaceIndex, own: surfaces.Plane, target: surfaces.Plane, q: Vec3, reach: f64, diag: *Diagnostics) Error!bool {
+        _ = self;
+        if (@abs(target.height(q)) > reach or @abs(own.height(q)) <= reach) return false;
+        return try in_face.classify(body, f, q, in_face.uvOf(body, f, q), 0, diag) != .outside;
     }
 
     /// Face `g`'s corners, the merged vertices on it and where its kept fragments' pieces
@@ -1068,6 +1141,24 @@ const Provenance = struct {
         return body.geometry.planes.items[body.face(types.FaceIndex.of(face)).surface.index];
     }
 };
+
+/// Where the segment from `a` to `b` crosses the one from `c` to `d`, both seen in
+/// `frame`'s plane: the parameter along the first, null when they do not cross.
+fn crossingAlong(frame: Frame, a: Vec3, b: Vec3, c: Vec3, d: Vec3) ?f64 {
+    const pa = frame.toLocal(a);
+    const pb = frame.toLocal(b);
+    const pc = frame.toLocal(c);
+    const pd = frame.toLocal(d);
+    const r: [2]f64 = .{ pb[0] - pa[0], pb[1] - pa[1] };
+    const s: [2]f64 = .{ pd[0] - pc[0], pd[1] - pc[1] };
+    const denom = r[0] * s[1] - r[1] * s[0];
+    if (denom == 0) return null;
+    const qp: [2]f64 = .{ pc[0] - pa[0], pc[1] - pa[1] };
+    const t = (qp[0] * s[1] - qp[1] * s[0]) / denom;
+    const u = (qp[0] * r[1] - qp[1] * r[0]) / denom;
+    if (t < 0 or t > 1 or u < 0 or u > 1) return null;
+    return t;
+}
 
 fn findRoot(parent: []u32, i: u32) u32 {
     var r = i;

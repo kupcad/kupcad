@@ -709,6 +709,58 @@ test "degeneracy: a tetrahedron's tip through a box's top by 2.45e-5, its sectio
     try expectProbe(&a, &tip);
 }
 
+test "degeneracy: a face in one plane with a wall's side 1.25 tolerances off its cavity: the plane chosen keeps the wall's side off the cavity" {
+    // The 10K fuzz session's sixth run (2026-11-15, locus_solids), reduced: a block in a
+    // wall's material above its cavity, its side 7.5e-6 inside the wall's outer side, one
+    // plane with it. The group took the first operand's plane, the block's, and moved the
+    // wall's whole side 7.5e-6 in, 1.75e-5 from the cavity's side it was 2.5e-5 from: the
+    // union's void touched its outer shell (the overlap rules: pinched). The plane chosen
+    // keeps every face it moves off its own operand's features: the wall's here.
+    const xsect = tol.xsect;
+    var outer = try box(.{ 0.25, 0, 0 }, .{ 2 + 0.625 * xsect, 4, 2 });
+    defer outer.deinit();
+    var cavity = try box(.{ 0.5, 0.25, 0.25 }, .{ 2 - 0.625 * xsect, 3.75, 1.75 });
+    defer cavity.deinit();
+    var wall = try sound(&outer, &cavity, .difference);
+    defer wall.deinit();
+    var block = try box(.{ 1.9, 0.5, 1.8 }, .{ 2 + 0.25 * xsect, 1, 2 });
+    defer block.deinit();
+    try helpers.expectIdentitiesAtTolerance(&block, &wall);
+    try helpers.expectIdentitiesAtTolerance(&wall, &block);
+}
+
+test "degeneracy: two walls' sides in one plane, each 1.25 tolerances off its cavity: neither plane keeps the other's side off its cavity, refused" {
+    // Each wall's side is 2.5e-5 from its own cavity's side and 3.75e-6 past the plane
+    // between them, over a strip where the walls meet; either side's plane takes the other
+    // within 1.75e-5 of its cavity, so no plane of the group holds both apart
+    const xsect = tol.xsect;
+    const half = 0.1875 * xsect;
+    var outer_a = try box(.{ 0, 0, 0 }, .{ 2 + half, 4, 2 });
+    defer outer_a.deinit();
+    var cavity_a = try box(.{ 0.25, 0.25, 0.25 }, .{ 2 + half - 1.25 * xsect, 3.75, 1.75 });
+    defer cavity_a.deinit();
+    var a = try sound(&outer_a, &cavity_a, .difference);
+    defer a.deinit();
+    var outer_b = try box(.{ 2 - half, 0, 1.8 }, .{ 4, 4, 4 });
+    defer outer_b.deinit();
+    var cavity_b = try box(.{ 2 - half + 1.25 * xsect, 0.25, 2.05 }, .{ 3.75, 3.75, 3.75 });
+    defer cavity_b.deinit();
+    var b = try sound(&outer_b, &cavity_b, .difference);
+    defer b.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        if (pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null)) |made| {
+            var result = made;
+            result.deinit();
+            return error.TestExpectedError;
+        } else |_| {}
+        errdefer std.debug.print("{s}: {f}\n", .{ @tagName(op), diag });
+        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+        try testing.expect(std.mem.indexOf(u8, diag.first().?.label, "each plane of which") != null);
+    }
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

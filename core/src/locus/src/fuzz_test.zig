@@ -1915,6 +1915,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the tip, which the paves kept off the face, and not on the third: the tip's faces
         // did not close (a run along the boundary is the section only through vertices on it)
         "solids 1 5 0 1 1 3 1 3 2 3 3 2 4 3 2 4 0 2 3 13 -1 4 4 3 2 1 7 3 2 0 3 2 2 0 4 2 1 0 1 4 0 1 1 0 4 4 0 4 0 3 6 1 2 11 3 11 0 0 1 -1 -1 5 5 3 0 2 3 3 4 2 4 3 0 0 0 0 13 8 11 13 2",
+        // Its sixth run (locus_solids): a block's side one plane with a wall's 7.5e-6 off it,
+        // the block's plane taken, the wall's side moved 1.75e-5 from its cavity's side (2.5e-5
+        // before): the union's void touched its outer shell
+        "solids 3 0 2 1 0 2 4 0 1 2 2 4 2 3 4 3 15 3 2 0 3 4 2 3 3 4 1 3 5 -1 9 10 0 3 1 6 1 1 3 3 2 1 3 4 2 1 3 4 4 4 3 3 3 1 3 2 14 -2 10 2 2 2 3 1 0 3 1 3 2 0 4 1 0 2 2 -2 4 3 1 2 10 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
