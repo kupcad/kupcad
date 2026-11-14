@@ -1,8 +1,9 @@
 //! The convex hull of points (quickhull, as the first model had it: an initial tetrahedron
 //! from extreme points, then each face's farthest outside point added, the visible faces
-//! removed and the horizon joined to it), and the hull as a body: a polyhedron over the
-//! points its faces use. Flat-faced solids only: a curved solid's hull from its vertices is
-//! not its hull (the driver refuses it, `curved_hull`).
+//! removed and the horizon joined to it), and the hull as a body: a face for each plane of
+//! its triangles as the interner keeps them, over the points its faces use. Flat-faced
+//! solids only: a curved solid's hull from its vertices is not its hull (the driver refuses
+//! it, `curved_hull`).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -10,6 +11,11 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const diagnostics = @import("../diagnostics.zig");
 const Body = @import("../topology/body.zig").Body;
 const primitives = @import("primitives.zig");
+const sew = @import("sew.zig");
+const geometry = @import("../geometry/types.zig");
+const curves = @import("../geometry/curves.zig");
+const canonical = @import("../geometry/canonical.zig");
+const types = @import("../topology/types.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -253,134 +259,226 @@ pub const Quickhull = struct {
     }
 };
 
-/// How parallel two triangles' normals must be, as `1 − cos`, to lie on one face of the
-/// hull, and how close their planes.
-const COPLANAR_ANGLE: f64 = 1e-9;
-
-/// The hull's faces as convex polygons, corners counter-clockwise seen from outside: the
-/// triangles grouped by plane, each group's boundary chained, and the points on the
-/// boundary's edges (collinear with their neighbours) dropped. Quickhull keeps a point
-/// that lies on a face or an edge of the final hull whenever it was outside an earlier
-/// face, depending on the points' order; the polygons do not.
-pub fn facets(allocator: std.mem.Allocator, points: []const Vec3, tris: []const [3]u32, epsilon: f64) error{OutOfMemory}![][]u32 {
-    const Plane = struct { normal: Vec3, distance: f64, first: usize };
-    var planes = std.ArrayList(Plane).empty;
-    defer planes.deinit(allocator);
-    const group_of = try allocator.alloc(usize, tris.len);
-    defer allocator.free(group_of);
-    for (tris, 0..) |t, i| {
-        const n = vec.normalized(vec.cross(vec.sub(points[t[1]], points[t[0]]), vec.sub(points[t[2]], points[t[0]]))) orelse vec.X3;
-        const d = vec.dot(n, points[t[0]]);
-        group_of[i] = planes.items.len;
-        for (planes.items, 0..) |pl, g| {
-            if (1.0 - vec.dot(pl.normal, n) <= COPLANAR_ANGLE and @abs(pl.distance - d) <= epsilon) {
-                group_of[i] = g;
-                break;
-            }
-        }
-        if (group_of[i] == planes.items.len) try planes.append(allocator, .{ .normal = n, .distance = d, .first = i });
-    }
-    var out = std.ArrayList([]u32).empty;
-    errdefer {
-        for (out.items) |f| allocator.free(f);
-        out.deinit(allocator);
-    }
-    var successor = std.AutoHashMapUnmanaged(u32, u32).empty;
-    defer successor.deinit(allocator);
-    var reversed = std.AutoHashMapUnmanaged(u64, void).empty;
-    defer reversed.deinit(allocator);
-    var loop = std.ArrayList(u32).empty;
-    defer loop.deinit(allocator);
-    for (planes.items, 0..) |_, g| {
-        // The group's boundary: its directed edges whose reverse is not in the group
-        successor.clearRetainingCapacity();
-        reversed.clearRetainingCapacity();
-        for (tris, group_of) |t, tg| {
-            if (tg != g) continue;
-            for (0..3) |k| try reversed.put(allocator, key(t[(k + 1) % 3], t[k]), {});
-        }
-        var start: u32 = std.math.maxInt(u32);
-        for (tris, group_of) |t, tg| {
-            if (tg != g) continue;
-            for (0..3) |k| {
-                const a = t[k];
-                const b = t[(k + 1) % 3];
-                if (reversed.contains(key(a, b))) continue;
-                try successor.put(allocator, a, b);
-                start = @min(start, a);
-            }
-        }
-        if (start == std.math.maxInt(u32)) continue;
-        loop.clearRetainingCapacity();
-        var v = start;
-        var steps: usize = 0;
-        while (steps <= successor.count()) : (steps += 1) {
-            try loop.append(allocator, v);
-            v = successor.get(v) orelse break;
-            if (v == start) break;
-        }
-        // Drop the points collinear with their neighbours
-        var corners = std.ArrayList(u32).empty;
-        errdefer corners.deinit(allocator);
-        for (loop.items, 0..) |c, i| {
-            const prev = points[loop.items[(i + loop.items.len - 1) % loop.items.len]];
-            const next = points[loop.items[(i + 1) % loop.items.len]];
-            const turn = vec.length(vec.cross(vec.sub(points[c], prev), vec.sub(next, points[c])));
-            if (turn > epsilon * (vec.distance(points[c], prev) + vec.distance(next, points[c]))) try corners.append(allocator, c);
-        }
-        if (corners.items.len < 3) {
-            corners.deinit(allocator);
-            continue;
-        }
-        try out.ensureUnusedCapacity(allocator, 1);
-        out.appendAssumeCapacity(try corners.toOwnedSlice(allocator));
-    }
-    return out.toOwnedSlice(allocator);
-}
-
-fn key(a: u32, b: u32) u64 {
-    return (@as(u64, a) << 32) | b;
-}
-
-/// The convex hull of `points` as a solid: a polyhedron over the points its faces use, in
-/// their order of first use, each face fanned from its first corner. Fewer than four
-/// points, or all of them coplanar, is `error.Degenerate`.
+/// The convex hull of `points` as a solid, every decision of sameness the interner's (D28:
+/// decided once): the points welded to its point records (the hull of those), each of
+/// quickhull's triangles given its plane record and sense, the triangles of one record and
+/// sense one face, bounded by their group's boundary (no fans: a group may be merged across a
+/// crease within the zone and so not convex), and a boundary point between two of the
+/// hull's faces on the line of its neighbours there, within the tolerance, dropped from
+/// both (a point quickhull kept on an edge of the hull). The hull's own coplanarity test
+/// grouped a flat tetrahedron's upper faces, 1.5e-5 apart at their far corners, as one,
+/// while the interner gave them two records: its fans did not sew (2026-11-14). Fewer than
+/// four points, or all of them within the zone of one plane, is `error.Degenerate`.
 pub fn hull(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, diag: *Diagnostics) Error!Body {
     try diagnostics.input.nonEmpty(diag, "points", points.len);
     for (points) |p| for (p) |c| try diagnostics.input.finite(diag, "a point", c);
-    var qh = Quickhull.init(allocator, points);
+    var b = try primitives.Builder.init(allocator, tol, .solid, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+
+    // The points as the interner keeps them, one record each
+    var records: std.ArrayList(geometry.PointIndex) = .empty;
+    defer records.deinit(allocator);
+    var kept: std.ArrayList(Vec3) = .empty;
+    defer kept.deinit(allocator);
+    var seen: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    defer seen.deinit(allocator);
+    for (points) |p| {
+        const r = try b.point(p);
+        if ((try seen.getOrPut(allocator, @backingInt(r))).found_existing) continue;
+        try records.append(allocator, r);
+        try kept.append(allocator, b.body.geometry.points.items[@backingInt(r)]);
+    }
+    var qh = Quickhull.init(allocator, kept.items);
     defer qh.deinit();
     qh.build() catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.Degenerate => return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the hull: fewer than four points off one plane", .measured = @floatFromInt(points.len) }),
+        error.Degenerate => return flat(diag, points.len),
     };
-    const raw = try qh.triangles(allocator);
-    defer allocator.free(raw);
-    const polygons = try facets(allocator, points, raw, qh.epsilon);
-    defer {
-        for (polygons) |f| allocator.free(f);
-        allocator.free(polygons);
+    const tris = try qh.triangles(allocator);
+    defer allocator.free(tris);
+
+    // Each triangle's plane record and sense: its group
+    var groups: std.AutoArrayHashMapUnmanaged(Group, void) = .empty;
+    defer groups.deinit(allocator);
+    const group_of = try allocator.alloc(u32, tris.len);
+    defer allocator.free(group_of);
+    for (tris, group_of, 0..) |t, *g, i| {
+        const p0 = kept.items[t[0]];
+        const p1 = kept.items[t[1]];
+        const p2 = kept.items[t[2]];
+        const n = vec.normalized(vec.cross(vec.sub(p1, p0), vec.sub(p2, p0))) orelse return diag.fail(error.Degenerate, .{ .code = .face_without_loop, .label = "a flat triangle of the hull", .measured = @floatFromInt(i) });
+        const x = vec.normalized(vec.sub(p1, p0)).?;
+        const facing = try b.facingPlane(geometry.Frame.init(p0, x, n), &.{ p0, p1, p2 });
+        const entry = try groups.getOrPut(allocator, .{ .plane = facing.surface.index, .same_sense = facing.same_sense });
+        g.* = @intCast(entry.index);
     }
-    var fans = std.ArrayList([3]u32).empty;
-    defer fans.deinit(allocator);
-    for (polygons) |poly| {
-        for (1..poly.len - 1) |k| try fans.append(allocator, .{ poly[0], poly[k], poly[k + 1] });
-    }
-    const tris = fans.items;
-    // Only the points the faces use, renumbered
-    const corner_of = try allocator.alloc(u32, points.len);
-    defer allocator.free(corner_of);
-    @memset(corner_of, NONE);
-    var corners = std.ArrayList(Vec3).empty;
-    defer corners.deinit(allocator);
-    for (tris) |*t| {
-        for (t) |*c| {
-            if (corner_of[c.*] == NONE) {
-                corner_of[c.*] = @intCast(corners.items.len);
-                try corners.append(allocator, points[c.*]);
+    // All within the zone of one plane: no solid
+    var one_plane = true;
+    for (groups.keys()) |key| one_plane = one_plane and key.plane == groups.keys()[0].plane;
+    if (one_plane) return flat(diag, points.len);
+
+    // Each group's boundary: its triangles' sides whose reverse is not in it
+    var sides: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer sides.deinit(allocator);
+    for (tris, group_of) |t, g| for (0..3) |k| try sides.put(allocator, .{ t[k], t[(k + 1) % 3] }, g);
+    var boundary: std.ArrayList(Side) = .empty;
+    defer boundary.deinit(allocator);
+    for (tris, group_of) |t, g| for (0..3) |k| {
+        const a = t[k];
+        const c = t[(k + 1) % 3];
+        if (sides.get(.{ c, a })) |other| if (other == g) continue;
+        try boundary.append(allocator, .{ .from = a, .to = c, .group = g });
+    };
+    const drop = try straightThrough(allocator, &b, kept.items, boundary.items, diag);
+    defer allocator.free(drop);
+
+    // Each group's cycles, the dropped points passed over, as faces
+    const vertex_of = try allocator.alloc(types.VertexIndex, kept.items.len);
+    defer allocator.free(vertex_of);
+    @memset(vertex_of, .none);
+    var specs: std.ArrayList(sew.FaceSpec) = .empty;
+    defer specs.deinit(allocator);
+    var loop_specs: std.ArrayList(sew.LoopSpec) = .empty;
+    defer loop_specs.deinit(allocator);
+    var edge_specs: std.ArrayList(sew.EdgeSpec) = .empty;
+    defer edge_specs.deinit(allocator);
+    // The faces' loops as ranges of `edge_specs`, set once it no longer grows
+    var loop_ranges: std.ArrayList([2]u32) = .empty;
+    defer loop_ranges.deinit(allocator);
+    var face_loops: std.ArrayList([2]u32) = .empty;
+    defer face_loops.deinit(allocator);
+    var next: std.AutoHashMapUnmanaged(u32, u32) = .empty;
+    defer next.deinit(allocator);
+    var cycle: std.ArrayList(u32) = .empty;
+    defer cycle.deinit(allocator);
+    var cycles: std.ArrayList([2]u32) = .empty;
+    defer cycles.deinit(allocator);
+    var points_of: std.ArrayList(u32) = .empty;
+    defer points_of.deinit(allocator);
+    for (groups.keys(), 0..) |key, g| {
+        // The group's boundary as a successor map; a point with two successors is a group
+        // touching itself, no face
+        next.clearRetainingCapacity();
+        for (boundary.items) |s| {
+            if (s.group != g) continue;
+            if ((try next.getOrPut(allocator, s.from)).found_existing) return diag.fail(error.Degenerate, .{ .code = .singular_vertex, .label = "a face of the hull touching itself" });
+            next.putAssumeCapacity(s.from, s.to);
+        }
+        // Its cycles, from the lowest point not yet used, without the dropped points
+        cycles.clearRetainingCapacity();
+        points_of.clearRetainingCapacity();
+        var starts: std.ArrayList(u32) = .empty;
+        defer starts.deinit(allocator);
+        var it = next.keyIterator();
+        while (it.next()) |k| try starts.append(allocator, k.*);
+        std.mem.sort(u32, starts.items, {}, std.sort.asc(u32));
+        for (starts.items) |start| {
+            if (drop[start] or next.get(start) == null) continue;
+            cycle.clearRetainingCapacity();
+            var v = start;
+            const most = next.count();
+            var steps: usize = 0;
+            while (steps <= most) : (steps += 1) {
+                if (!drop[v]) try cycle.append(allocator, v);
+                const w = next.fetchRemove(v) orelse break;
+                v = w.value;
+                if (v == start) break;
             }
-            c.* = corner_of[c.*];
+            if (v != start or cycle.items.len < 3) return diag.fail(error.Degenerate, .{ .code = .loop_not_closed, .label = "a face of the hull" });
+            try cycles.append(allocator, .{ @intCast(points_of.items.len), @intCast(cycle.items.len) });
+            try points_of.appendSlice(allocator, cycle.items);
+        }
+        // The outer cycle first: the one of the largest area about the face's outward normal
+        const plane = b.body.geometry.planes.items[key.plane];
+        const outward = if (key.same_sense) plane.frame.z else vec.neg(plane.frame.z);
+        var outer: usize = 0;
+        var largest = -std.math.inf(f64);
+        for (cycles.items, 0..) |range, ci| {
+            const area = vectorArea(kept.items, points_of.items[range[0]..][0..range[1]], outward);
+            if (area > largest) {
+                largest = area;
+                outer = ci;
+            }
+        }
+        std.mem.swap([2]u32, &cycles.items[0], &cycles.items[outer]);
+        const first_loop: u32 = @intCast(loop_ranges.items.len);
+        for (cycles.items) |range| {
+            const ring = points_of.items[range[0]..][0..range[1]];
+            const first_edge: u32 = @intCast(edge_specs.items.len);
+            for (ring, 0..) |a, i| {
+                const c = ring[(i + 1) % ring.len];
+                for ([_]u32{ a, c }) |q| {
+                    if (vertex_of[q] == .none) vertex_of[q] = try b.vertexAt(records.items[q]);
+                }
+                try edge_specs.append(allocator, try b.straight(vertex_of[a], vertex_of[c]));
+            }
+            try loop_ranges.append(allocator, .{ first_edge, @intCast(ring.len) });
+        }
+        try face_loops.append(allocator, .{ first_loop, @intCast(cycles.items.len) });
+        var uv = geometry.Box2.empty;
+        for (points_of.items) |q| {
+            const l = plane.frame.toLocal(kept.items[q]);
+            uv.grow(.{ l[0], l[1] });
+        }
+        try specs.append(allocator, .{ .surface = geometry.SurfaceRef.of(.plane, key.plane), .same_sense = key.same_sense, .loops = &.{}, .uv_box = uv });
+    }
+    for (loop_ranges.items) |range| try loop_specs.append(allocator, .{ .edges = edge_specs.items[range[0]..][0..range[1]] });
+    for (specs.items, face_loops.items) |*spec, range| spec.loops = loop_specs.items[range[0]..][0..range[1]];
+    return b.finish(specs.items, .outer);
+}
+
+/// A face of the hull: the plane record its triangles were given, and their sense on it.
+const Group = struct { plane: u32, same_sense: bool };
+
+/// A side of a group's boundary, from point `from` to `to` (indices of the welded points),
+/// the way the group's triangles run it.
+const Side = struct { from: u32, to: u32, group: u32 };
+
+/// Which points lie on a straight run of the hull's boundary, to be dropped from both of
+/// its faces: a point on exactly two boundary sides, one into it and one out of it in each
+/// face it bounds, whose neighbours there and it lie on one line within the tolerance (the
+/// interner's rule for lines, `canonical.sameLine`; at it to rounding, refused, D27).
+fn straightThrough(allocator: std.mem.Allocator, b: *primitives.Builder, kept: []const Vec3, boundary: []const Side, diag: *Diagnostics) Error![]bool {
+    const drop = try allocator.alloc(bool, kept.len);
+    errdefer allocator.free(drop);
+    @memset(drop, false);
+    // Each point's neighbours along the boundary, either way
+    var neighbours: std.AutoHashMapUnmanaged(u32, [3]u32) = .empty;
+    defer neighbours.deinit(allocator);
+    for (boundary) |s| for ([_][2]u32{ .{ s.from, s.to }, .{ s.to, s.from } }) |pair| {
+        const entry = try neighbours.getOrPut(allocator, pair[0]);
+        if (!entry.found_existing) entry.value_ptr.* = .{ NONE, NONE, NONE };
+        const list = entry.value_ptr;
+        if (list[0] == pair[1] or list[1] == pair[1]) continue;
+        if (list[0] == NONE) list[0] = pair[1] else if (list[1] == NONE) list[1] = pair[1] else list[2] = pair[1];
+    };
+    var it = neighbours.iterator();
+    while (it.next()) |entry| {
+        const list = entry.value_ptr.*;
+        if (list[1] == NONE or list[2] != NONE) continue;
+        const p = kept[entry.key_ptr.*];
+        const a = kept[list[0]];
+        const c = kept[list[1]];
+        const line = curves.Line.through(a, c) orelse continue;
+        const item = curves.Line.through(a, p) orelse continue;
+        switch (canonical.verdict(&canonical.sameLine(line, item, a, a, p, b.body.tol))) {
+            .same => drop[entry.key_ptr.*] = true,
+            .apart => {},
+            .at_tolerance => |cmp| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "a point of the hull on the line of its neighbours or not, the tolerance to rounding", .measured = cmp.measured, .threshold = cmp.limit }),
         }
     }
-    return primitives.polyhedron(allocator, tol, corners.items, tris, diag);
+    return drop;
+}
+
+/// The area of the polygon `ring` (indices of `points`) about `normal`, from its first corner.
+fn vectorArea(points: []const Vec3, ring: []const u32, normal: Vec3) f64 {
+    var twice = vec.ZERO3;
+    const from = points[ring[0]];
+    for (ring[1 .. ring.len - 1], ring[2..]) |p, q| twice = vec.add(twice, vec.cross(vec.sub(points[p], from), vec.sub(points[q], from)));
+    return vec.dot(twice, normal) / 2;
+}
+
+fn flat(diag: *Diagnostics, count: usize) Error {
+    return diag.fail(error.Degenerate, .{ .code = .empty_input, .label = "the hull: fewer than four points off one plane", .measured = @floatFromInt(count) });
 }

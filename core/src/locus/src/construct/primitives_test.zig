@@ -305,8 +305,9 @@ test "hull: a cube's corners with interior points give the cube; two cubes give 
     var h = try hull.hull(testing.allocator, tol, pts.items, &diag);
     defer h.deinit();
     try expectValid(&h);
+    // The cube's faces, one for each plane its triangles were given
     try testing.expectEqual(@as(usize, 8), h.counts().vertices);
-    try testing.expectEqual(@as(usize, 12), h.counts().faces);
+    try testing.expectEqual(@as(usize, 6), h.counts().faces);
     try testing.expectEqual(@as(usize, 6), h.geometry.planes.items.len);
     const box = try bbox.bodyBounds(&h);
     try expectVec(.{ 0, 0, 0 }, box.min, 1e-12);
@@ -322,6 +323,38 @@ test "hull: a cube's corners with interior points give the cube; two cubes give 
     // Coplanar or too few points
     try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 1, 1, 0 } }, &diag));
     try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, pts.items[0..3], &diag));
+}
+
+test "hull: faces by the interner's plane records, points by its point records: a flat tetrahedron, a cube with points within the zone of it" {
+    // Item 4 of the research review (Leo, 2026-11-14: decide once). A tetrahedron whose
+    // opposite edges are 1.5e-5 apart: its upper faces, 1.5e-5 apart at their far corners,
+    // were one face by the hull's own coplanarity test and two plane records by the
+    // interner's, and the fans did not sew
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var flat = try hull.hull(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 1.5e-5 }, .{ 0, 1, 1.5e-5 } }, &diag);
+    defer flat.deinit();
+    try expectValid(&flat);
+    try testing.expectEqual(@as(usize, 4), flat.counts().faces);
+    try testing.expectApproxEqAbs(@as(f64, 1e-5), (try mass.mass(&flat, .{}, &diag)).volume, 1e-15);
+    // A cube's corners, a point 1e-7 over its top's middle, another a corner's 1e-7 off, and
+    // its edges' middles: within the zone, the top's plane and the corner's point; on its
+    // edges, the lines of their neighbours. The cube, its eight corners and six faces
+    var pts = std.ArrayList(Vec3).empty;
+    defer pts.deinit(testing.allocator);
+    for ([_]f64{ 0, 10 }) |x| for ([_]f64{ 0, 10 }) |y| for ([_]f64{ 0, 10 }) |z| try pts.append(testing.allocator, .{ x, y, z });
+    try pts.append(testing.allocator, .{ 5, 5, 10 + 1e-7 });
+    try pts.append(testing.allocator, .{ 10 + 1e-7, 10, 10 });
+    for ([_]Vec3{ .{ 5, 0, 0 }, .{ 10, 5, 0 }, .{ 0, 0, 5 }, .{ 10, 10, 5 } }) |p| try pts.append(testing.allocator, p);
+    var cube = try hull.hull(testing.allocator, tol, pts.items, &diag);
+    defer cube.deinit();
+    try expectValid(&cube);
+    try testing.expectEqual(@as(usize, 8), cube.counts().vertices);
+    try testing.expectEqual(@as(usize, 12), cube.counts().edges);
+    try testing.expectEqual(@as(usize, 6), cube.counts().faces);
+    try testing.expectApproxEqAbs(@as(f64, 1000), (try mass.mass(&cube, .{}, &diag)).volume, 1e-4);
+    // All within the zone of one plane: no solid
+    try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 1, 1, 5e-6 } }, &diag));
 }
 
 fn areaOf(body: *const Body) !f64 {
