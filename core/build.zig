@@ -795,6 +795,14 @@ pub fn build(b: *std.Build) void {
         });
         // Its own tests (which draws files it reads after a crash) run with the others
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fuzz_run_exe.root_module })).step);
+        // scripts/bench_compare.zig, CI's benchmark gate (the Benchmark job runs it with `zig
+        // run`, against the commit before): its own tests (a case's line, the margin, the
+        // median) run with the others
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/bench_compare.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }) })).step);
         const fuzz_run = b.addRunArtifact(fuzz_run_exe);
         fuzz_run.addFileArg(std.Build.LazyPath.zig_exe);
         fuzz_run.addDirectoryArg(std.Build.LazyPath.cache_root);

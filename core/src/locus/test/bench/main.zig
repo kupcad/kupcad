@@ -3,7 +3,12 @@
 //! with a 20% margin; `zig build bench` fails on a regression past it. The §12 cases that
 //! need booleans, tessellation and ray casts join as M3–M5 land; the constructions, the
 //! hull, the BVH, STEP export, the JSON dump and compaction are timed, and since M4 the
-//! degeneracy corpus's boolean cases of size.
+//! degeneracy corpus's boolean cases of size. Each case is timed over its repetitions,
+//! about a tenth of a second's work, and reported per repetition, so a run is comparable
+//! with another commit's however its repetitions are set: CI times this file at the commit
+//! before a push and at the pushed one on one runner and fails a case more than 20% slower
+//! than before (core/scripts/bench_compare.zig), since a laptop's budget says nothing of a
+//! shared runner's speed.
 
 const std = @import("std");
 const locus = @import("locus");
@@ -14,21 +19,22 @@ const MARGIN: f64 = 1.2;
 const Case = struct {
     name: []const u8,
     run: *const fn (std.mem.Allocator) anyerror!void,
-    /// The budget in milliseconds, from the first measurement times the margin.
+    /// The budget in milliseconds a repetition, from the first measurement.
     budget_ms: f64,
-    /// Repetitions, so a fast case is timed over enough work.
+    /// Repetitions, so a fast case is timed over enough work (about a tenth of a second):
+    /// a few milliseconds is a shared machine's noise.
     repeat: u32 = 1,
 };
 
 const CASES = [_]Case{
-    .{ .name = "box ×1000", .run = boxCase, .budget_ms = 40, .repeat = 1 },
-    .{ .name = "cylinder ×1000", .run = cylinders, .budget_ms = 30, .repeat = 1 },
-    .{ .name = "hull of 10,000 points", .run = hullOfPoints, .budget_ms = 20, .repeat = 1 },
-    .{ .name = "polyhedron of 2,000 faces", .run = bigPolyhedron, .budget_ms = 10, .repeat = 1 },
-    .{ .name = "BVH: 10,000 boxes built and 10,000 queries", .run = bvhCase, .budget_ms = 5, .repeat = 1 },
-    .{ .name = "STEP of a 2,000-face polyhedron", .run = stepCase, .budget_ms = 25, .repeat = 1 },
-    .{ .name = "JSON dump and hash of a 2,000-face polyhedron", .run = jsonCase, .budget_ms = 35, .repeat = 1 },
-    .{ .name = "compact of 1,000,000 entities", .run = compactCase, .budget_ms = 10, .repeat = 1 },
+    .{ .name = "box ×1000", .run = boxCase, .budget_ms = 40, .repeat = 3 },
+    .{ .name = "cylinder ×1000", .run = cylinders, .budget_ms = 30, .repeat = 4 },
+    .{ .name = "hull of 10,000 points", .run = hullOfPoints, .budget_ms = 20, .repeat = 6 },
+    .{ .name = "polyhedron of 2,000 faces", .run = bigPolyhedron, .budget_ms = 10, .repeat = 10 },
+    .{ .name = "BVH: 10,000 boxes built and 10,000 queries", .run = bvhCase, .budget_ms = 5, .repeat = 30 },
+    .{ .name = "STEP of a 2,000-face polyhedron", .run = stepCase, .budget_ms = 25, .repeat = 4 },
+    .{ .name = "JSON dump and hash of a 2,000-face polyhedron", .run = jsonCase, .budget_ms = 35, .repeat = 3 },
+    .{ .name = "compact of 1,000,000 entities", .run = compactCase, .budget_ms = 10, .repeat = 15 },
     // The degeneracy corpus's two timed classes (research/solidcraft.md §1, tier 02: truck
     // grew 4–9× per doubling of pegs), measured 2026-11-13: the prisms 390 ms (1300 before
     // in_face's crossing count for planar faces), the pegs 480 ms, a chain of 64 steps each
@@ -228,7 +234,8 @@ pub fn main() !void {
     for (CASES) |case| {
         const started = std.Io.Timestamp.now(io, .awake);
         for (0..case.repeat) |_| try case.run(allocator);
-        const ms = @as(f64, @floatFromInt(started.durationTo(std.Io.Timestamp.now(io, .awake)).toNanoseconds())) / 1e6;
+        // Per repetition, as the budget is
+        const ms = @as(f64, @floatFromInt(started.durationTo(std.Io.Timestamp.now(io, .awake)).toNanoseconds())) / 1e6 / @as(f64, @floatFromInt(case.repeat));
         const over = ms > case.budget_ms * MARGIN;
         std.debug.print("{s:<48} {d:>9.2} ms  budget {d:>7.1} ms{s}\n", .{ case.name, ms, case.budget_ms, if (over) "  REGRESSION" else "" });
         failed = failed or over;

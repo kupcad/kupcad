@@ -233,6 +233,55 @@ jobs:
       - name: Test them installed
         uses: ./.github/actions/test-bindings
 
+  # Locus's benchmark (docs/architecture.md §12) built at the commit before and at this one,
+  # and run on one runner, alternately (core/scripts/bench_compare.zig): a case more than 20%
+  # slower than before fails. Its own budgets are a laptop's, which say nothing of a shared
+  # runner's speed; the commit before is the budget on this runner. A push compares with what
+  # main held before it, a pull request with its base; a push with nothing before it (a tag)
+  # compares with nothing.
+  bench:
+    name: Benchmark against the commit before
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: bench-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        with:
+          zig-version-file: .tool-versions
+          use-cache: ${{ env.ZIG_CACHE }}
+
+      # Built as `zig build bench` builds it (ReleaseFast), by hand, so any commit's builds alike
+      - name: Build the benchmark at the commit before and at this one
+        id: build
+        env:
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "::notice::No commit before this one to compare the benchmark with"
+            echo "compare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git worktree add --detach "$RUNNER_TEMP/before" "$BEFORE"
+          build() {
+            (cd "$1/core/src/locus" && zig build-exe -OReleaseFast --dep locus -Mroot=test/bench/main.zig -OReleaseFast -Mlocus=src/root.zig --name locus_bench -femit-bin="$2")
+          }
+          build "$RUNNER_TEMP/before" "$RUNNER_TEMP/bench-before"
+          build "$GITHUB_WORKSPACE" "$RUNNER_TEMP/bench-after"
+          echo "compare=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compare them
+        if: steps.build.outputs.compare == 'true'
+        run: zig run core/scripts/bench_compare.zig -- "$RUNNER_TEMP/bench-before" "$RUNNER_TEMP/bench-after" 7
+
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

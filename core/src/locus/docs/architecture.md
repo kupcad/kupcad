@@ -1465,13 +1465,20 @@ fixed inputs: a 1,000-face planar boolean, a 100-face quadric boolean, tessellat
 10,000 faces, a ray cast on a 10,000-face body (budget: well under a millisecond from the
 cache, since the viewer calls it per pointer move), STEP export of 1,000 faces, and a
 `compact()` of 1e6 entities. Budgets are set from the first measurements and the suite
-fails on a regression of more than 20%. Algorithmic choices in this plan (BVH culling,
+fails on a regression of more than 20% (`zig build bench`, each case timed over about a
+tenth of a second's repetitions and reported per repetition). In CI a laptop's budgets say
+nothing of a shared runner's speed, so the gate is the commit before: the Benchmark job
+builds the suite at it and at the pushed commit, runs both alternately on one runner seven
+times, and fails a case whose median is more than 20% over its median before
+(`core/scripts/bench_compare.zig`; Leo, 2026-11-14, after the prism union went from 370 to
+870 ms unseen). Algorithmic choices in this plan (BVH culling,
 grid welding, edges-first meshing) are the ones that remove quadratic behaviour; constant
 factors wait for the profiler.
 
 **CI.** Locus's own `zig build test` runs in Debug and ReleaseSafe on Linux, macOS and
 Windows, and under wasmtime for `wasm32-wasi`, in KupCAD's workflow; allocation-failure
-and determinism tests on every run; the fuzz harness for a fixed budget nightly.
+and determinism tests on every run; the benchmark against the commit before on every push
+and pull request; the fuzz harness for a fixed budget nightly.
 
 **Readiness.** A `kupcad dev brep-readiness` report runs every example and documentation
 snippet with `engine: :brep` and lists, per script, the features still refused; each
