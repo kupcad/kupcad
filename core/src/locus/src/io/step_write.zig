@@ -49,6 +49,10 @@ pub const Error = error{
 
 /// The entity ids of the header; bodies start after them.
 const HEADER_ENTITIES: u32 = 16;
+/// The longest a REAL is written in decimals (`Real`): a coordinate's seventeen
+/// significant digits with the zeros to a point between 1e-30 and 1e30; past that, with
+/// an exponent (at most 24 characters).
+const REAL_DIGITS = 64;
 /// The rounding share of a coordinate the error bound allows a reader: 64 ulp.
 const READER_ULPS: f64 = 64.0 * std.math.floatEps(f64);
 
@@ -108,14 +112,25 @@ const Writer = struct {
 };
 
 /// A number as STEP wants it: the shortest text that reads back exactly, with a decimal
-/// point or exponent (a REAL literal must have one).
+/// point (a REAL literal must have one). In decimals where they fit `REAL_DIGITS`; else
+/// with an exponent, as ISO 10303-21 writes one: a point in the mantissa, a capital E
+/// (`5.E-324`). A coordinate of 1e-300 is three hundred digits as decimals, and the writer
+/// panicked on it (the solids fuzzer through the STEP corpus, 2026-11-14: a solid moved by
+/// the least float).
 const Real = struct {
     value: f64,
     pub fn format(self: Real, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        var buf: [64]u8 = undefined;
-        const text = std.fmt.bufPrint(&buf, "{d}", .{self.value}) catch unreachable;
-        try w.writeAll(text);
-        if (std.mem.indexOfAny(u8, text, ".eE") == null) try w.writeAll(".");
+        var buf: [REAL_DIGITS]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "{d}", .{self.value})) |text| {
+            try w.writeAll(text);
+            if (std.mem.indexOfScalar(u8, text, '.') == null) try w.writeAll(".");
+            return;
+        } else |_| {}
+        const text = std.fmt.bufPrint(&buf, "{e}", .{self.value}) catch unreachable;
+        const e = std.mem.indexOfScalar(u8, text, 'e').?;
+        try w.writeAll(text[0..e]);
+        if (std.mem.indexOfScalar(u8, text[0..e], '.') == null) try w.writeAll(".");
+        try w.print("E{s}", .{text[e + 1 ..]});
     }
 };
 

@@ -310,3 +310,22 @@ test "step: the report counts what was written and bounds what a reader may find
     try testing.expect(spherical.report.error_bound >= 1e-6);
     try testing.expect(spherical.report.error_bound < 1.1e-6);
 }
+
+test "step: a coordinate too small or too large for decimals is written with an exponent, a point in its mantissa" {
+    // The solids fuzzer through the STEP corpus (2026-11-14): a solid moved by the least
+    // float had a corner at 4.9e-324, three hundred and twenty-four digits as decimals,
+    // and the writer panicked; ISO 10303-21 writes such a REAL as `5.E-324`
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.box(testing.allocator, tol, 2, 3, 4, false, &diag);
+    defer b.deinit();
+    var moved = try @import("../construct/transform.zig").transform(testing.allocator, &b, &@import("../math/mat.zig").Affine.translate(.{ std.math.floatTrueMin(f64), -1e-300, 0 }), .{}, &diag);
+    defer moved.deinit();
+    const text = try step_write.write(testing.allocator, &.{&moved});
+    defer testing.allocator.free(text);
+    try testing.expect(count(text, "CARTESIAN_POINT('',(5.E-324,-1.E-300,0.))") > 0);
+    try testing.expect(count(text, "CARTESIAN_POINT('',(5.E-324,-1.E-300,4.))") > 0);
+    // Every REAL of the entities has a capital exponent (the header's description is text)
+    const data = text[std.mem.indexOf(u8, text, "DATA;").?..];
+    try testing.expectEqual(@as(usize, 0), count(data, "e-"));
+}
