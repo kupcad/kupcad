@@ -96,6 +96,7 @@ pub const REFUSALS = [_]diagnostics.Code{
     .gap_too_large, // vertices merged into a ball past the zone
     .edge_too_short, // an edge too short to split where it is met
     .pinched, // a result one shell cannot hold, by design
+    .sliver_face, // a result with a face narrower than the zone, by design
 };
 
 /// What a boolean warns of, each exercised by the corpus too.
@@ -450,12 +451,20 @@ fn validAt(allocator: std.mem.Allocator, operand: *const Body, tol: Tolerance, k
 }
 
 /// The checker's first failure on `body` up to `level` as the operation's (`NotValid` with
-/// the finding); a pinch was refused before (`pinchedRecords`).
+/// the finding); a pinch was refused before (`pinchedRecords`). A face narrower than the
+/// zone (`sliver_face`) is a result the model cannot hold, refused by design
+/// (`Degenerate`) as the builder refuses such a body: the paves keep features past the
+/// intersection tolerance distinct, and a cut just past it from an edge leaves faces of an
+/// inradius under the zone (0.41 of the distance at a right angle). Only when slivers are
+/// all the checker finds, so no fault is named as one.
 fn refuseInvalid(allocator: std.mem.Allocator, body: *const Body, level: check.Level, diag: *Diagnostics) Error!void {
     var checked = try check.run(allocator, body, level);
     defer checked.deinit(allocator);
     const f = checked.first() orelse return;
-    return diag.fail(error.NotValid, f);
+    for (checked.findings.items) |g| {
+        if (g.severity == .failure and g.code != .sliver_face) return diag.fail(error.NotValid, g);
+    }
+    return diag.fail(error.Degenerate, f);
 }
 
 /// Refuses (`pinched`) a result whose records touch inside one solid (`overlap.Solids`):

@@ -20,6 +20,7 @@ const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
 const mass = @import("../measure/mass.zig");
 const decompose = @import("../construct/decompose.zig");
+const check = @import("../topology/check.zig");
 const pipeline = @import("pipeline.zig");
 const trim = @import("trim.zig");
 const helpers = @import("pipeline_test.zig");
@@ -547,6 +548,41 @@ test "degeneracy: a sliver one intersection tolerance thick, crossed by a face, 
         try testing.expectApproxEqAbs(va + vb, try volume(&u) + vi, slab);
         try testing.expectApproxEqAbs(va - vi, try volume(&d), slab);
     }
+}
+
+test "degeneracy: a cut parallel to an edge just past the intersection tolerance leaves end faces narrower than the zone, refused by design; farther, made" {
+    // The 10K fuzz session's find (2026-11-14), reduced: a plane 2.4e-5 from a box's edge,
+    // past the intersection tolerance so the paves keep the edge off it, its edge's side
+    // kept, a prism whose ends are right triangles the zone in inradius. The paves decide
+    // distances and keep everything past the tolerance distinct; how narrow a face may be
+    // is the checker's sliver rule, which a cut a distance d from an edge of dihedral
+    // angle θ meets with end faces of inradius d·sin(θ/2)/(1 + sin(θ/2)): 0.41·d at a right
+    // angle, under the zone until d is 1.2 tolerances. A result the model cannot hold is
+    // refused, as the builder refuses such a body, by the checker's own finding.
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    // (x − z)/√2 ≥ 1/√2 − d: the part within d of the edge x = 1, z = 0
+    const normal: Vec3 = .{ 1, 0, -1 };
+    const edge = 1.0 / @sqrt(2.0);
+    {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.Degenerate, trim.trimByPlane(testing.allocator, &a, normal, edge - 1.1 * tol.xsect, .{}, &diag, null));
+        errdefer std.debug.print("{f}\n", .{diag});
+        try testing.expectEqual(diagnostics.Code.sliver_face, diag.first().?.code);
+        try testing.expectEqual(diagnostics.EntityKind.face, diag.first().?.entity.kind);
+    }
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const d = 1.5 * tol.xsect;
+    var kept = try trim.trimByPlane(testing.allocator, &a, normal, edge - d, .{}, &diag, null);
+    defer kept.deinit();
+    var report = try check.run(testing.allocator, &kept, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    // A right triangle d from its hypotenuse is d² in area, the prism 1 long
+    try testing.expectApproxEqRel(d * d, try volume(&kept), 1e-6);
+    try testing.expectEqual(@as(usize, 5), kept.counts().faces);
 }
 
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {

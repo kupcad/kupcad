@@ -735,8 +735,13 @@ importing only those before it, which the layering test holds):**
   by `kemr` (never an edge with a copy either); `kevJoin` at
   vertices of two edges on one line, counted over the whole body; `kevMerge` of an edge no
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
-  `compact`, the checker; a warning (`solids_touch`) names each edge where two of the
-  result's solids touch along a line.
+  `compact`, the checker, whose findings are faults (`NotValid`) but for a face narrower
+  than the zone, which alone is refused by design (`Degenerate`, `sliver_face`, as the
+  builder refuses one; 2026-11-14, the 10K fuzz session): the paves keep features past
+  the intersection tolerance distinct, and a cut a distance d from an edge of dihedral
+  angle θ leaves end faces of inradius d·sin(θ/2)/(1 + sin(θ/2)), under the zone at a
+  right angle until d is 1.2 tolerances; a warning (`solids_touch`) names each edge
+  where two of the result's solids touch along a line.
 - The containment table (§7.4 step 0, as built): when the paves find the operands met
   nowhere (no vertex merged or lying on the other, no crossing, no coplanar or cut face
   pair: `Paves.apart`), every face is one whole fragment and each shell is classified once,
@@ -1102,7 +1107,8 @@ adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`,
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's
 domain; edge length > `δ`; a planar face's area more than `zone` times half its
 perimeter (`sliver_face`: no strip narrower than the zone, nor a face a couple of zones
-across; 2026-11-14, as SMLib and ACIS measure it); no two vertices within `zone` of each
+across; 2026-11-14, as SMLib and ACIS measure it; a boolean whose result has one refuses
+it by design, §7.4); no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:

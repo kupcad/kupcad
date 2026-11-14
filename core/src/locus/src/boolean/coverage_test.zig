@@ -260,6 +260,16 @@ fn pinched(cov: *Coverage) !void {
     try cov.boolean(&a, &through, .difference, .{}, .pinched);
 }
 
+fn sliverResult(cov: *Coverage) !void {
+    // A box cut 1.1 tolerances from an edge, the edge's side kept: a prism whose ends are
+    // right triangles of an inradius under the zone
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    try cov.refused(trim.trimByPlane(testing.allocator, &a, .{ 1, 0, -1 }, 1.0 / @sqrt(2.0) - 1.1 * tol.xsect, .{}, &diag, null), &diag, .sliver_face);
+}
+
 fn nearlyCoplanar(cov: *Coverage) !void {
     var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
     defer a.deinit();
@@ -460,6 +470,7 @@ const CASES = [_]struct { name: []const u8, run: *const fn (*Coverage) anyerror!
     .{ .name = "vertices merged past the zone", .run = gapPastTheZone },
     .{ .name = "an edge too short to split", .run = edgeTooShort },
     .{ .name = "a pinch at a point", .run = pinched },
+    .{ .name = "a result face narrower than the zone", .run = sliverResult },
     .{ .name = "walls a hair apart", .run = nearlyCoplanar },
     .{ .name = "an operand's loop that does not close", .run = corruptLoop },
     .{ .name = "an operand's face covering its plane twice", .run = overlappingFace },
