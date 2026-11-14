@@ -48,6 +48,7 @@ const grid = @import("../spatial/grid.zig");
 const bvh_mod = @import("../spatial/bvh.zig");
 const bbox = @import("../measure/bbox.zig");
 const in_face = @import("../query/in_face.zig");
+const face_edges = @import("../query/face_edges.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const curve_surface = @import("../intersect/curve_surface.zig");
 const predicates = @import("../math/predicates.zig");
@@ -351,8 +352,16 @@ const Filler = struct {
     face_boxes: [2][]Box3 = .{ &.{}, &.{} },
     /// Vertex–face and edge–face incidences found before they are collected.
     found: std.ArrayList(Incidence) = .empty,
+    /// Each face's edges in trees, built the first time `placeIn` asks of a face with many
+    /// (`face_edges.INDEXED_AT_LEAST`); null for a face scanned edge by edge.
+    indexed: [2]std.AutoHashMapUnmanaged(u32, ?face_edges.FaceEdges) = .{ .empty, .empty },
 
     fn deinit(self: *Filler) void {
+        for (&self.indexed) |*map| {
+            var it = map.valueIterator();
+            while (it.next()) |entry| if (entry.*) |*index| index.deinit(self.allocator);
+            map.deinit(self.allocator);
+        }
         for (0..2) |k| {
             self.allocator.free(self.edges[k]);
             self.allocator.free(self.faces[k]);
@@ -575,9 +584,33 @@ const Filler = struct {
         const operand = self.body(k);
         if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
         const allowance = self.p.tol.xsect + if (v) |m| self.p.gaps.items[m] else 0;
-        const distance = try in_face.boundaryDistance(operand, f, q, self.diag);
+        const index = try self.edgesOf(k, f);
+        // Within the allowance and D27's band, the trees' distance is the scan's
+        const distance = if (index) |i| i.boundaryDistance(operand, q, allowance + self.p.rounding) else try in_face.boundaryDistance(operand, f, q, self.diag);
         if (try self.within(distance, allowance, .of(.face, @backingInt(f)))) return .boundary;
-        return in_face.classify(operand, f, q, in_face.uvOf(operand, f, q), 0, self.diag);
+        const uv = in_face.uvOf(operand, f, q);
+        return if (index) |i| i.classify(operand, q, uv, self.diag) else in_face.classify(operand, f, q, uv, 0, self.diag);
+    }
+
+    /// Face `f` of operand `k`'s edges in trees, when it has many; built on first asking.
+    /// Their reach is the farthest `placeIn` asks: the tolerance, a gap (the zone at most)
+    /// and D27's band.
+    fn edgesOf(self: *Filler, k: usize, f: types.FaceIndex) Error!?*const face_edges.FaceEdges {
+        const entry = try self.indexed[k].getOrPut(self.allocator, @backingInt(f));
+        if (!entry.found_existing) {
+            entry.value_ptr.* = null;
+            var count: usize = 0;
+            var loops = traverse.Loops.init(self.body(k), f);
+            while (loops.next() catch return corrupt(self.diag)) |l| {
+                var it = traverse.Coedges.init(self.body(k), l);
+                while (it.next() catch return corrupt(self.diag)) |_| count += 1;
+            }
+            if (count >= face_edges.INDEXED_AT_LEAST) {
+                const p = self.p;
+                entry.value_ptr.* = try face_edges.FaceEdges.build(self.allocator, self.body(k), f, p.tol.xsect + p.tol.zone + p.rounding, self.diag);
+            }
+        }
+        return if (entry.value_ptr.*) |*index| index else null;
     }
 
     /// Whether merged vertex `v` is a pave of an edge of face `f` of operand `k`.
