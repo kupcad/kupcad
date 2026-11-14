@@ -34,6 +34,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
+const surfaces = @import("../geometry/surfaces.zig");
 const euler = @import("../topology/euler.zig");
 const in_face = @import("../query/in_face.zig");
 const canonical = @import("../geometry/canonical.zig");
@@ -81,11 +82,41 @@ pub fn run(body: *Body, diag: *Diagnostics, log: ?*Log) Error!void {
     if (log) |l| l.faces = try body.allocator.dupe(u32, remap.faces);
 }
 
-/// Whether faces `f` and `g` may be one face.
-fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex) bool {
+/// Whether faces `f` and `g` may be one face: of one attribute, and on one surface record
+/// the same way, or on two planes the same within the tolerance (OCCT's UnifySameDomain,
+/// as `sameLine` joins edges): their outward normals within the angular tolerance and each
+/// face's corners within the intersection tolerance and their gaps of the other's plane,
+/// decided with D27's band. By records alone, two faces in one plane kept apart or merged
+/// by which operand came first (D28 gives each its source's plane): A ∪ B had 20 faces and
+/// B ∪ A 19 (the solids fuzzer's operand-swap oracle, 2026-11-14).
+fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, diag: *Diagnostics) Error!bool {
     const a = body.face(f);
     const b = body.face(g);
-    return a.surface.eql(b.surface) and a.same_sense == b.same_sense and a.attribute == b.attribute;
+    if (a.attribute != b.attribute) return false;
+    if (a.surface.eql(b.surface)) return a.same_sense == b.same_sense;
+    if (a.surface.kind != .plane or b.surface.kind != .plane) return false;
+    const pa = body.geometry.planes.items[a.surface.index];
+    const pb = body.geometry.planes.items[b.surface.index];
+    const na = if (a.same_sense) pa.frame.z else vec.neg(pa.frame.z);
+    const nb = if (b.same_sense) pb.frame.z else vec.neg(pb.frame.z);
+    var tally: canonical.Tally = .{};
+    tally.add(canonical.Comparison.angle(1.0 - vec.dot(na, nb), body.tol.angle));
+    for ([_]types.FaceIndex{ f, g }, [_]surfaces.Plane{ pb, pa }) |face, other| {
+        var loops = traverse.Loops.init(body, face);
+        while (loops.next() catch return corrupt(diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(diag)) |c| {
+                const v = body.coedgeStart(c);
+                const p = body.point(v);
+                tally.add(canonical.Comparison.distance(@abs(other.height(p)), body.tol.xsect + body.vertex(v).gap, canonical.magnitude(&.{ p, other.frame.origin })));
+            }
+        }
+    }
+    return switch (tally.verdict()) {
+        .same => true,
+        .apart => false,
+        .at_tolerance => |at| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(g)), .label = "two faces meeting at an edge, on one plane or not, to within rounding", .measured = at.measured, .threshold = at.limit }),
+    };
 }
 
 /// Merges across edges between faces that may be one, but not across an edge with a copy
@@ -104,7 +135,7 @@ fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
         if (p == .none) continue;
         const f = body.loop(body.coedge(c).loop).face;
         const g = body.loop(body.coedge(p).loop).face;
-        if (f == g or !sameDomain(body, f, g)) continue;
+        if (f == g or !try sameDomain(body, f, g, diag)) continue;
         // The dying face is the one whose outer loop the edge is on
         const dying_coedge = if (body.face(f).first_loop == body.coedge(c).loop) c else if (body.face(g).first_loop == body.coedge(p).loop) p else continue;
         const dying = body.loop(body.coedge(dying_coedge).loop).face;
@@ -118,7 +149,20 @@ fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
             body.loop(hole).face = keep;
             hole = next;
         }
-        body.face(keep).uv_box = body.face(keep).uv_box.merge(body.face(dying).uv_box);
+        // Its box joins the face's: in the face's own plane's frame, when its record is another
+        if (body.face(keep).surface.eql(body.face(dying).surface)) {
+            body.face(keep).uv_box = body.face(keep).uv_box.merge(body.face(dying).uv_box);
+        } else {
+            const frame = body.geometry.planes.items[body.face(keep).surface.index].frame;
+            var loops = traverse.Loops.init(body, dying);
+            while (loops.next() catch return corrupt(diag)) |l| {
+                var it = traverse.Coedges.init(body, l);
+                while (it.next() catch return corrupt(diag)) |cc| {
+                    const local = frame.toLocal(body.point(body.coedgeStart(cc)));
+                    body.face(keep).uv_box.grow(.{ local[0], local[1] });
+                }
+            }
+        }
         euler.kef(body, dying_coedge) catch |err| return eulerError(diag, err);
         if (log) |l| try l.merged.append(body.allocator, .{ @backingInt(dying), @backingInt(keep) });
         changed = true;

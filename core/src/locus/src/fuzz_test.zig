@@ -1954,6 +1954,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         try testing.expectApproxEqAbs(va + vb, vu + vi, close + shifts[0] + shifts[1]);
         try testing.expectApproxEqAbs(va - vi, vd, close + shifts[1] + shifts[2]);
         try expectMembership(&current, &other, &results, @max(gaps[0], gaps[1], gaps[2]), &diag);
+        try expectSwapped(&current, &other, results[0..2], shifts[0..2], close, &diag);
         const keep: usize = switch (op) {
             .@"union" => 0,
             .intersection => 1,
@@ -1973,6 +1974,30 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
 
 /// A boolean step of a solid chain: its other operand and the operation the chain kept.
 const SolidStep = struct { other: Body, op: solid_boolean.pipeline.Op };
+
+/// The operands the other way round (the research review's item 19): B ∪ A and B ∩ A have
+/// the counts and shells of A ∪ B and A ∩ B (`results`), and their area and volume to the
+/// slab of faces closer than the tolerance (`close`) and both ways' shifts. The first
+/// operand's geometry is preferred where they agree (D28), so the records may differ; the
+/// shape may not. A refusal the other way round is a find: the paves decide pairs, not
+/// orders.
+fn expectSwapped(a: *const Body, b: *const Body, results: []const Body, shifts: []const f64, close: f64, diag: *Diagnostics) !void {
+    for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection }, results, shifts) |op, *forward, shift| {
+        var report = solid_boolean.pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        var swapped = try solid_boolean.pipeline.boolean(testing.allocator, b, a, op, .{}, diag, &report);
+        defer swapped.deinit();
+        errdefer std.debug.print("{s} the other way round: {any}, shells {any}; forward {any}, shells {any}\n", .{ @tagName(op), swapped.counts(), solid_boolean.tests.shellKinds(&swapped), forward.counts(), solid_boolean.tests.shellKinds(forward) });
+        try testing.expectEqual(forward.counts(), swapped.counts());
+        try testing.expectEqual(solid_boolean.tests.shellKinds(forward), solid_boolean.tests.shellKinds(&swapped));
+        const m = try mass.mass(forward, .{}, diag);
+        const ms = try mass.mass(&swapped, .{}, diag);
+        const slack = close + shift + report.shift;
+        errdefer std.debug.print("{s} the other way round: area {d}, volume {d}; forward {d}, {d}\n", .{ @tagName(op), ms.area, ms.volume, m.area, m.volume });
+        try testing.expectApproxEqAbs(m.volume, ms.volume, slack);
+        try testing.expectApproxEqAbs(m.area, ms.area, slack + forward.tol.xsect * m.area);
+    }
+}
 
 /// Membership where it is clear (research/li-chen-egc.md §4, Shapiro's set-membership
 /// classification): at a point farther than `MEMBERSHIP_CLEAR` intersection tolerances and

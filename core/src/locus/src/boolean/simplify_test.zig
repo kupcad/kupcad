@@ -214,3 +214,32 @@ test "simplify: an edge the checker finds too short by its chord collapses, thou
     try expectValid(&body);
     try testing.expectEqual(@as(usize, 8), body.counts().vertices);
 }
+
+test "simplify: two faces on planes the same within the tolerance, different records, become one" {
+    // The boolean gives each fragment its source's plane (D28): two faces in one plane
+    // could hold two records, and by records alone they stayed two, or not, by which
+    // operand came first (A ∪ B 20 faces, B ∪ A 19). The top's right half given its own
+    // record 1e-9 above the left's: one face, as for one record
+    var body = try splitTop(0, 0);
+    defer body.deinit();
+    var tops: [2]types.FaceIndex = undefined;
+    var n: usize = 0;
+    for (body.faces.items, 0..) |face, i| {
+        if (face.surface.kind != .plane) continue;
+        const plane = body.geometry.planes.items[face.surface.index];
+        if (@abs(plane.frame.z[2]) == 1 and plane.frame.origin[2] == 1) {
+            tops[n] = types.FaceIndex.of(i);
+            n += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 2), n);
+    var lifted = body.geometry.planes.items[body.face(tops[1]).surface.index];
+    lifted.frame.origin[2] += 1e-9;
+    try body.geometry.planes.append(testing.allocator, lifted);
+    body.face(tops[1]).surface.index = @intCast(body.geometry.planes.items.len - 1);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try simplify.run(&body, &diag, null);
+    try expectValid(&body);
+    try testing.expectEqual(@as(usize, 6), body.counts().faces);
+}
