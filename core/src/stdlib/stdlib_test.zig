@@ -416,6 +416,21 @@ test "Stdlib: a count that no integer holds says what is wrong, not the integer 
     });
 }
 
+test "Stdlib: a method the kernel refuses says why, not only that it could not" {
+    // intersects? (and decompose, contains?, …) gave "the geometry kernel could not compute
+    // a result" where the engine kept the reason (research/manifold-parity.md, P3); two
+    // B-Rep cubes the intersection tolerance apart to rounding are refused (D27)
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "CAD.config(engine: :brep)\na = cube(1)\nb = cube(1).translate(x: 1.00002)\n" ++ comptime rescued("a.intersects?(b)")));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    try testing.expect(r.isString());
+    const message = r.asString().chars;
+    errdefer std.debug.print("{s}\n", .{message});
+    try testing.expect(std.mem.startsWith(u8, message, "GeometryError: intersects? failed: "));
+    try testing.expect(std.mem.indexOf(u8, message, "could not compute") == null);
+}
+
 test "Stdlib: geometry keeps the settings it was made under, wherever it is evaluated" {
     // Solid is evaluated lazily; it used to be built under the settings in force then,
     // so CAD.with_config was lost on anything measured or exported after the block.

@@ -146,7 +146,7 @@ pub fn meshSweep(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     // reach and a corner's outer side
     const profile = try vm.ensureConcreteCrossSection(receiver);
     for ([_]kernel.Feature{ .extrude, .revolve, .sketch_contours }) |op| try vm.requireFeature(profile.engine, op);
-    const outline = kernel.crossSectionContours(vm.allocator, profile) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the profile's outline"});
+    const outline = kernel.crossSectionContours(vm.allocator, profile) orelse return vm.kernelFailed("the profile's outline");
     defer outline.deinit(vm.allocator);
     if (outline.points.len == 0) return vm.fail(.ValueError, "sweep: an empty sketch has no profile", .{});
     const sweep = Sweep{ .vm = vm, .profile = receiver.asCrossSection().dag_idx, .points = outline.points, .per_turn = opts.segments };
@@ -368,7 +368,7 @@ fn perTurnAbout(vm: *VM, receiver: value.Value, axis: Axis, ops: []const kernel.
     const profile = try vm.ensureConcreteCrossSection(receiver);
     for (ops) |op| try vm.requireFeature(profile.engine, op);
     try vm.requireFeature(profile.engine, .sketch_contours);
-    const contours = kernel.crossSectionContours(vm.allocator, profile) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the profile's outline"});
+    const contours = kernel.crossSectionContours(vm.allocator, profile) orelse return vm.kernelFailed("the profile's outline");
     defer contours.deinit(vm.allocator);
     if (contours.points.len == 0) return null;
     var radius: f64 = 0;

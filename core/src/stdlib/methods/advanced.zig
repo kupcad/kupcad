@@ -292,7 +292,7 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     try vm.requireFeature(handle.engine, .decompose);
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
     const parts = kernel.decompose(vm.allocator, handle) orelse {
-        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"decompose"});
+        return vm.kernelFailed("decompose");
     };
     defer vm.allocator.free(parts);
 
@@ -335,7 +335,7 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
     // cache owns). Registering it as a `.concrete` leaf hands ownership to the
     // DAG builder and keeps the result usable in later DAG ops.
     const simplified_handle = kernel.simplify(handle, tol) orelse {
-        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"simplify"});
+        return vm.kernelFailed("simplify");
     };
     const leaf_idx = vm.dag_builder.addConcrete(simplified_handle) catch |err| {
         kernel.destruct(simplified_handle);

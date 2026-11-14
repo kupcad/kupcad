@@ -4156,6 +4156,14 @@ pub const VM = struct {
         return error.RuntimeError;
     }
 
+    /// A kernel operation `name` (its script name) returned no result: a rescuable
+    /// GeometryError naming it, with the reason when the engine kept one
+    /// (kernel.takeFailure). Drivers never substitute an operand for a failed result.
+    pub fn kernelFailed(self: *VM, name: []const u8) error{RuntimeError} {
+        if (kernel.takeFailure()) |why| return self.fail(.GeometryError, error_kind.KERNEL_FAILED_WHY_FMT, .{ name, why });
+        return self.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{name});
+    }
+
     pub fn raiseError(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) InterpretResult {
         comptime {
             checkMessageLayout(fmt);

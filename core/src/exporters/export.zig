@@ -199,7 +199,7 @@ fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]
     errdefer if (name) |n| allocator.free(n);
     const handle = try vm.ensureConcreteCrossSection(sketch);
     try vm.requireFeature(handle.engine, .sketch_contours);
-    const contours = kernel.crossSectionOutlines(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
+    const contours = kernel.crossSectionOutlines(allocator, handle) orelse return vm.kernelFailed("the sketch's outlines");
     defer contours.deinit(allocator);
     const node = sketch.asCrossSection().dag_idx;
     var curves = try sketch_curves.collect(allocator, &vm.dag_builder, node);
@@ -245,7 +245,7 @@ fn exportSolids(
             for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
             if (handles.items.len > 1) try vm.requireBoolean(handles.items);
             return stl_exporter.buildStlOfParts(allocator, handles.items) catch |err| switch (err) {
-                error.UnionFailed => return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"}),
+                error.UnionFailed => return vm.kernelFailed("union"),
                 else => return err,
             };
         },

@@ -104,12 +104,9 @@ fn crossSectionOf(entry: StackEntry) !geom.CrossSectionHandle {
     };
 }
 
-/// A kernel operation returned no result: raise a rescuable GeometryError naming the
-/// operation, and the reason when the engine kept one (kernel.takeFailure). Drivers never
-/// substitute an operand for a failed result (kernel.zig).
+/// A kernel operation returned no result (`VM.kernelFailed`, by the operation's script name).
 fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
-    if (kernel.takeFailure()) |why| return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_WHY_FMT, .{ dag.scriptName(tag), why });
-    return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{dag.scriptName(tag)});
+    return vm.kernelFailed(dag.scriptName(tag));
 }
 
 /// Raises a GeometryError naming the kernel's range unless each of `coordinates` (the sizes

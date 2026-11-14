@@ -82,7 +82,7 @@ fn unitInterval(vm: *VM, comptime name: []const u8, n: f64) !f64 {
 fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
     const borrowed = try vm.ensureConcrete(ghost_geom);
     const owned = kernel.clone(borrowed) orelse {
-        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"ghost"});
+        return vm.kernelFailed("ghost");
     };
     vm.display_list.append(vm.allocator, owned) catch |err| {
         kernel.destruct(owned);

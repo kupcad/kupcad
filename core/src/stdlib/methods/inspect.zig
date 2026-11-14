@@ -82,7 +82,7 @@ pub fn meshCenterOfMass(vm: *VM, receiver: value.Value) !value.Value {
     // A measurement of its volume, made from its mesh
     try vm.requireFeature(handle.engine, .volume);
     try vm.requireFeature(handle.engine, .mesh);
-    const mesh = kernel.getMesh(vm.allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"center_of_mass"});
+    const mesh = kernel.getMesh(vm.allocator, handle) orelse return vm.kernelFailed("center_of_mass");
     defer vm.allocator.free(mesh.vert_props);
     defer vm.allocator.free(mesh.tri_verts);
     if (mesh.tri_verts.len == 0) return vm.fail(.ValueError, "center_of_mass: the Solid is empty, it has no volume to balance", .{});
@@ -121,7 +121,7 @@ pub fn meshIntersects(vm: *VM, receiver: value.Value, other: value.Value) !value
     try vm.requireSameEngine(handle.engine, other_handle.engine);
     try vm.requireBoolean(&.{ handle, other_handle });
     try vm.requireFeature(handle.engine, .volume);
-    const common = kernel.boolean(handle, other_handle, .intersection_op) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"intersects?"});
+    const common = kernel.boolean(handle, other_handle, .intersection_op) orelse return vm.kernelFailed("intersects?");
     defer kernel.destruct(common);
     const tolerance = vm.settingsOf(receiver).tolerance;
     return value.Value.initBool(kernel.volume(common) > tolerance * tolerance * tolerance);
@@ -158,15 +158,15 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     try vm.requireFeature(handle.engine, .bounding_box);
     // Infinity to an empty one: there is nothing in it to be near (its box has none)
     if (kernel.isEmpty(handle) or kernel.isEmpty(other_handle)) return value.Value.initNumber(std.math.inf(f64));
-    const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
-    const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
+    const box_a = kernel.boundingBox(handle) orelse return vm.kernelFailed("min_gap");
+    const box_b = kernel.boundingBox(other_handle) orelse return vm.kernelFailed("min_gap");
     return gapValue(vm, fullGap(handle, other_handle, box_a, box_b));
 }
 
 /// A gap the kernel measured; NaN is its failure to measure (a B-Rep part it can't mesh),
 /// not an overflow.
 fn gapValue(vm: *VM, gap: f64) !value.Value {
-    if (std.math.isNan(gap)) return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
+    if (std.math.isNan(gap)) return vm.kernelFailed("min_gap");
     return arguments.measured(vm, gap, "min_gap");
 }
 
@@ -204,7 +204,7 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
     try vm.requireFeature(handle.engine, .contains_point);
     const settings = vm.settingsOf(receiver);
     const inside = kernel.containsPoint(vm.allocator, handle, &settings, pt) orelse {
-        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"contains?"});
+        return vm.kernelFailed("contains?");
     };
     return value.Value.initBool(inside);
 }
@@ -224,7 +224,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const handle = try vm.ensureConcreteCrossSection(receiver);
     try vm.requireFeature(handle.engine, .sketch_contains);
     const inside = kernel.crossSectionContainsPoint(handle, .{ pt[0], pt[1] }, tolerance) orelse {
-        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"contains?"});
+        return vm.kernelFailed("contains?");
     };
     return value.Value.initBool(inside);
 }
