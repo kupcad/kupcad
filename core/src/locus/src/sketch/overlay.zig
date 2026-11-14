@@ -516,17 +516,28 @@ pub const Overlay = struct {
     }
 
     /// The crossings of two arcs inside both (cocircular arcs overlap along their ends).
+    /// Whether the circles meet is the exact sign on their centres and radii (D26,
+    /// `predicates.circlePair`), never a threshold on the square-rooted distance: a pair
+    /// missing by less than the zone took a touch point on neither circle. Touching, one
+    /// point on the line of the centres; crossing, `h²` in factored form,
+    /// `((r₁ + r₂)² − d²)(d² − (r₁ − r₂)²) / 4d²`, each factor positive.
     fn arcArc(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) usize {
         const ai = gi.arc.?;
         const aj = gj.arc.?;
         const between = vec.sub2(aj.c, ai.c);
         const dist = vec.length2(between);
+        // Concentric within the zone: one circle, welded (`addEdge`), overlapping
         if (dist <= self.tol.zone) return 0;
-        if (dist > ai.r + aj.r + self.tol.zone or dist < @abs(ai.r - aj.r) - self.tol.zone) return 0;
+        const pair = predicates.circlePair(ai.c, ai.r, aj.c, aj.r);
+        if (pair == .apart or pair == .nested) return 0;
         // The radical line: `x` along the centres, `h` across it
-        const x = (dist * dist + ai.r * ai.r - aj.r * aj.r) / (2 * dist);
-        const h2 = ai.r * ai.r - x * x;
-        const h = if (h2 > 0) @sqrt(h2) else 0;
+        const d2 = vec.dot2(between, between);
+        const x = (d2 + ai.r * ai.r - aj.r * aj.r) / (2 * dist);
+        const h = if (pair != .crossing) 0 else blk: {
+            const sum = ai.r + aj.r;
+            const diff = ai.r - aj.r;
+            break :blk @sqrt(@max((sum * sum - d2) * (d2 - diff * diff), 0)) / (2 * dist);
+        };
         const along = vec.scale2(between, 1.0 / dist);
         const across = Vec2{ -along[1], along[0] };
         const foot = vec.addScaled2(ai.c, along, x);

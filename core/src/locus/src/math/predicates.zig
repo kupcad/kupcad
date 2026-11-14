@@ -70,6 +70,8 @@ const COMPARE_ARC_CAP: usize = 1888;
 const ARC_LINE_CAP: usize = 672;
 /// `h₂N₁ − h₁N₂` of `compareLineX`, each `N` of 12: 2·2·12 + 2·2·12.
 const LINE_X_CAP: usize = 96;
+/// `d² − (r₁ ± r₂)²`: two squared differences (8 components each) and a squared sum (8).
+const CIRCLE_PAIR_CAP: usize = 32;
 
 /// A sum or product as the rounded result `hi` and the exact remainder `lo`: `hi + lo` is
 /// the exact value.
@@ -1062,6 +1064,32 @@ fn signPlusSqrt(a: anytype, s: f64, b: @TypeOf(a)) f64 {
 
 /// Positive when `p` lies inside the circle of centre `c` and radius `r`, negative when
 /// outside, zero when on it: the sign of `r² − |p − c|²`, exact.
+/// How two circles lie, exact (D26): from the signs of `d² − (r₁ + r₂)²` and
+/// `d² − (r₁ − r₂)²`, `d` the distance between their centres, on the given numbers, never
+/// on a square root of them.
+pub const CirclePair = enum { apart, touching_outside, crossing, touching_inside, nested };
+
+pub fn circlePair(c1: [2]f64, r1: f64, c2: [2]f64, r2: f64) CirclePair {
+    const outer = signOfGap(c1, c2, r1, r2);
+    if (outer > 0) return .apart;
+    if (outer == 0) return .touching_outside;
+    const inner = signOfGap(c1, c2, r1, -r2);
+    if (inner > 0) return .crossing;
+    if (inner == 0) return .touching_inside;
+    return .nested;
+}
+
+/// The sign of `|c₂ − c₁|² − (r₁ + s)²`, exact.
+fn signOfGap(c1: [2]f64, c2: [2]f64, r1: f64, s: f64) f64 {
+    if (gapIn(Approx, c1, c2, r1, s).sign()) |sign| return sign;
+    return gapIn(Exact(CIRCLE_PAIR_CAP), c1, c2, r1, s).sign();
+}
+
+fn gapIn(comptime N: type, c1: [2]f64, c2: [2]f64, r1: f64, s: f64) N {
+    const d2 = N.diff(c2[0], c1[0]).square().add(N.diff(c2[1], c1[1]).square());
+    return d2.sub(N.of(r1).add(N.of(s)).square());
+}
+
 pub fn inCircle(c: [2]f64, r: f64, p: [2]f64) f64 {
     if (inCircleIn(Approx, c, r, p).sign()) |s| return s;
     return inCircleIn(Exact(IN_CIRCLE_CAP), c, r, p).sign();

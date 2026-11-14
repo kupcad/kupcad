@@ -816,3 +816,18 @@ test "compareLineX: agrees with big-integer arithmetic on random near-degenerate
         }
     }
 }
+
+test "circlePair: how two circles lie, exactly, where the square-rooted distance says otherwise" {
+    const circlePair = predicates.circlePair;
+    // Dyadic numbers, every relation exact
+    try testing.expectEqual(predicates.CirclePair.apart, circlePair(.{ 0, 0 }, 1, .{ 3, 0 }, 1.5));
+    try testing.expectEqual(predicates.CirclePair.touching_outside, circlePair(.{ 0, 0 }, 1, .{ 0.75, 1 }, 0.25));
+    try testing.expectEqual(predicates.CirclePair.crossing, circlePair(.{ 0, 0 }, 1, .{ 1, 0 }, 1));
+    try testing.expectEqual(predicates.CirclePair.touching_inside, circlePair(.{ 0, 0 }, 3, .{ 0.75, 1 }, 1.75));
+    try testing.expectEqual(predicates.CirclePair.nested, circlePair(.{ 0, 0 }, 3, .{ 0.5, 0 }, 1));
+    // Centres √2 apart (d² = 2 exactly), radii fl(√2)/2 each: their sum fl(√2) is past √2,
+    // so they cross; `√d²` rounds to that same fl(√2) and would have them touch
+    const r = @sqrt(2.0) / 2.0;
+    try testing.expect(@sqrt(@as(f64, 2)) == r + r);
+    try testing.expectEqual(predicates.CirclePair.crossing, circlePair(.{ 0, 0 }, r, .{ 1, 1 }, r));
+}

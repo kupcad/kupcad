@@ -638,3 +638,36 @@ test "overlay: a ring doubling back along a tangent circle, a line crossing both
     try o.run();
     try expectPlanar(&o);
 }
+
+test "overlay: circles missing each other by less than the zone meet nowhere, exactly" {
+    // A circle inside another, 1e-6 short of it at the top, where neither has an end: the
+    // meeting test on the square-rooted distance with the zone's slack took them as
+    // touching there and cut both at a point on neither; the exact signs of their centres
+    // and radii say nested (D26)
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try circle(&o, .{ 0, 0 }, 2);
+    _ = try o.addInput();
+    try circle(&o, .{ 0, 1 }, 1 - 1e-6);
+    try o.run();
+    try testing.expectEqual(@as(usize, 4), o.points.items.len);
+    for (o.points.items) |p| try testing.expect(@abs(p[0]) > 0.5);
+    try expectPlanar(&o);
+}
+
+test "overlay: circles touching exactly meet at one vertex, crossing at two" {
+    // Internally tangent (centres 1.25 apart, radii 3 and 1.75), the touch at (2.4, 1.8)
+    // where neither has an end; and a pair crossing near tangency
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try circle(&o, .{ 0, 0 }, 3);
+    _ = try o.addInput();
+    try circle(&o, .{ 0.75, 1 }, 1.75);
+    try o.run();
+    var at_touch: usize = 0;
+    for (o.points.items) |p| at_touch += @intFromBool(vec.distance2(.{ p[0], p[1] }, .{ 1.8, 2.4 }) <= tol.zone);
+    try testing.expectEqual(@as(usize, 1), at_touch);
+    try expectPlanar(&o);
+}
