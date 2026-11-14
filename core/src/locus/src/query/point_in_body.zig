@@ -41,20 +41,28 @@ const TABLE = [_]Vec3{
 
 /// Inside, outside, or on the boundary of `body` within its zone.
 pub fn classify(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!Place {
-    try options.checkCancel();
-    const zone = body.tol.zone;
-    if (index.box.isEmpty() or !index.box.inflated(zone).contains(p)) return .outside;
+    return classifyWithin(allocator, body, index, p, body.tol.zone, options, diag);
+}
 
-    // On the boundary: within the zone of a face's surface inside the face, or of an edge
+/// Inside, outside, or on the boundary of `body` within `width`, at least its zone: a
+/// boolean's point of one operand is on the other within the intersection tolerance, the
+/// reach its paves decide contact by (`boolean/classify.zig`).
+pub fn classifyWithin(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, width: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Place {
+    try options.checkCancel();
+    std.debug.assert(width >= body.tol.zone);
+    const zone = body.tol.zone;
+    if (index.box.isEmpty() or !index.box.inflated(width).contains(p)) return .outside;
+
+    // On the boundary: within `width` of a face's surface inside the face, or of an edge
     var near: std.ArrayList(u32) = .empty;
     defer near.deinit(allocator);
-    try collectBox(allocator, index, Box3.ofPoint(p).inflated(zone), &near);
+    try collectBox(allocator, index, Box3.ofPoint(p).inflated(width), &near);
     for (near.items) |item| {
         const f = index.faces[item];
-        if (try in_face.nearEdge(body, f, p, zone, diag)) return .boundary;
+        if (try in_face.nearEdge(body, f, p, width, diag)) return .boundary;
         const uv = in_face.uvOf(body, f, p);
         const foot = body.geometry.surface(body.face(f).surface).eval(uv[0], uv[1]);
-        if (vec.distance(foot, p) <= zone and try in_face.classify(body, f, foot, uv, zone, diag) != .outside) return .boundary;
+        if (vec.distance(foot, p) <= width and try in_face.classify(body, f, foot, uv, width, diag) != .outside) return .boundary;
     }
 
     // The rays, long enough to leave the body's box from anywhere in it

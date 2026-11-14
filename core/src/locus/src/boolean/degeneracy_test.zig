@@ -796,6 +796,36 @@ test "degeneracy: a hull's edge within the tolerance of a plate's two front edge
     }
 }
 
+test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate's top, within the tolerance of it over a band: its piece takes its side from its pieces on the plate" {
+    // The nightly solids fuzzer (2026-11-14, locus), reduced: a tetrahedron 1.9 tolerances
+    // thick across a plate 1.25 thick, one top face rising 3.8e-5 rad from the plate's top,
+    // within the tolerance of it over a band 0.5 wide; their section is that face's edge on
+    // the plate's top edge. The face's piece over the plate was cast from a sample 1.2e-5
+    // above the top, outside, where its pieces on the plate put it under the top: inside.
+    // Both the piece and the plate's top were kept, and an edge had three faces in every
+    // operation. A ray starts beyond the intersection tolerance of the other, the reach
+    // the paves decide contact by; within it, a piece takes its side from the faces at its
+    // pieces. (With the plate first, the common block along the tetrahedron's upper edge
+    // takes the plate's line, D28, 1.65e-5 under the tetrahedron's faces: the order's
+    // part, not the classification's.)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var tet = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ 2, 3.99999, -9e-6 }, .{ 4, 3.99999, -9e-6 }, .{ 3, 2.99999, 2.9e-5 }, .{ 3, 4.99999, 2.9e-5 } }, &diag);
+    defer tet.deinit();
+    var plate = try box(.{ 1, 3, -1.25e-5 }, .{ 3, 4, 1.25e-5 });
+    defer plate.deinit();
+    var joined = try sound(&tet, &plate, .@"union");
+    defer joined.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+    var common = try sound(&tet, &plate, .intersection);
+    defer common.deinit();
+    var rest = try sound(&tet, &plate, .difference);
+    defer rest.deinit();
+    const slab = tol.xsect * (try areaOf(&tet) + try areaOf(&plate));
+    try testing.expectApproxEqAbs(try volume(&tet) + try volume(&plate), try volume(&joined) + try volume(&common), slab);
+    try testing.expectApproxEqAbs(try volume(&tet) - try volume(&common), try volume(&rest), slab);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's
