@@ -73,6 +73,8 @@ const TRIG_BARRIER = "math/trig.zig";
 const TEST_HELPERS = [_][]const u8{
     // The malformed corpus's list, the files embedded (checker tests and fuzz seeds)
     "fixtures/malformed.zig",
+    // The tests' boolean results written as STEP with `-Dstep-corpus` (only tests import it)
+    "boolean/step_corpus.zig",
 };
 
 const MAX_SOURCE = 1 << 22;
