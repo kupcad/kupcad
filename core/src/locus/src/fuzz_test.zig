@@ -56,6 +56,7 @@ const solid_query = struct {
     const point_in_body = @import("query/point_in_body.zig");
 };
 const edges = @import("mesh/edges.zig");
+const canonical = @import("geometry/canonical.zig");
 const solid_distance = @import("query/distance.zig");
 const geometry = @import("geometry/types.zig");
 const chords = @import("mesh/chords.zig");
@@ -1604,8 +1605,20 @@ const MIN_HULL_POINTS = 4;
 const MAX_HULL_POINTS = 8;
 /// A chain stops once its solid has this many faces: the work of every step is bounded.
 const SOLID_FACES_AT_MOST = 300;
-/// The turns a placement takes (radians): the grid's own, half of one, and one off it.
-const TURNS = [_]f64{ std.math.pi / 2.0, std.math.pi, std.math.pi / 4.0, 0.3 };
+/// The turns a placement takes (radians): the grid's own, half of one, and one off it;
+/// then at the tolerance (the research review's item 16): the turn whose `1 − cos` is the
+/// angular tolerance, and that turn less and more D27's band (64 ulps of `1 − cos`, the
+/// angle's rounding there), and turns of 1e-6 and 1e-9, far within it.
+const TURNS = [_]f64{ std.math.pi / 2.0, std.math.pi, std.math.pi / 4.0, 0.3, TURN_AT_ANGLE, TURN_AT_ANGLE - TURN_BAND, TURN_AT_ANGLE + TURN_BAND, 1e-6, 1e-9 };
+const TURN_AT_ANGLE: f64 = std.math.acos(1.0 - tol.angle);
+const TURN_BAND: f64 = canonical.AT_TOLERANCE_ULPS * std.math.floatEps(f64) / @sin(TURN_AT_ANGLE);
+/// The moves at the tolerance a placement draws past its half-steps, either way, in the
+/// merged tolerance of the solid and the chain's (the research review's item 16): a
+/// quarter and a half of the intersection tolerance (within the zone), the intersection
+/// tolerance itself, it less and more D27's band, and a hundred times it.
+const NEAR_MOVES = [_]NearMove{ .{ .xsect = 0.25 }, .{ .xsect = 0.5 }, .{ .xsect = 1 }, .{ .xsect = 1, .bands = -1 }, .{ .xsect = 1, .bands = 1 }, .{ .xsect = 100 } };
+/// The half-steps a placement moves by, either way.
+const HALF_STEPS = 2;
 const TURN_AXES = [_]vec.Vec3{ vec.X3, vec.Y3, vec.Z3, .{ 1, 2, 3 } };
 /// A scale per axis.
 const SCALES = [_]f64{ 0.5, 1, 2 };
@@ -1711,6 +1724,16 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // The nightly's (run 43525003122): locus_solids, a mixed-zone union 0.0095 too large while the result's planes were interned again (D28); locus, a ring doubling back along a tangent circle, a lens thinner than the zone made two edges
         "solids 1 4 3 3 2 1 4 2 1 1 3 1 1 2 0 3 1 2 2 -1 -2 14 3 1 1 5 2 1 0 2 2 4 0 2 1 1 1 0 2 0 3 0 1 1 1 -1 1 -1 6 0 2 0 2 3 3 4 2 4 3 0 2 0 2 0 0 1 9 1 2 2 2 4 2 4 1 2 1 1 1 0 0 1 1 10 1",
         "overlay 1 1 1 6 0 17 7 18 17 4 2 17 2 4 14 3 23 18 1 23 24 4 1 2 1 1 1 0 1 3 1 2 3 0 2 1 0 1 3 1",
+        // The plain run's draws at the tolerance (2026-11-14, the research review's item 16):
+        // a box and a plate 1.95e-4 apart at a tolerance of 2e-4, faces meeting at a merged
+        // vertex judged by the tolerance without its gap; then a box turned at the angular
+        // tolerance across the strip they left, a section across the strip taken for its
+        // side, and moved whole, a vertex's own gap left out where faces touch; a hull's
+        // wedge 1.5 tolerances under a plate, a vertex inside one side within the tolerance
+        // of the other, refused (`below_feature_size`)
+        "solids 0 2 4 3 4 0 2 3 1 4 -2 4 8 2 1 2 2 3 1 4 2 4 3 3 9 5 12 15 0",
+        "solids 0 2 4 3 4 0 2 3 1 4 -2 4 8 2 1 2 2 3 1 4 2 4 3 3 9 5 12 15 0 3 0 1 4 3 4 0 3 0 3 4 2 14 11 -2 4 0 3 2 2",
+        "solids 2 2 3 0 3 0 3 0 1 7 1 1 13 5 9 1 1 1 5 0 0 0 1 0 3 1 3 4 4 1 0 0 1 3 2 2 14 11 10 7 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
@@ -1734,7 +1757,7 @@ fn runSolids(source: anytype) !Outcome {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     errdefer std.debug.print("the findings: {f}\n", .{diag});
-    var current = (try generatedSolid(source, &log, &diag)) orelse return .refused;
+    var current = (try generatedSolid(source, &log, null, &diag)) orelse return .refused;
     defer current.deinit();
     try expectSolid(&current, &diag);
     // The chain's first solid and its boolean steps, for the chain moved whole
@@ -1771,7 +1794,7 @@ fn runSolids(source: anytype) !Outcome {
             try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area + front_report.shift + back_report.shift);
             continue;
         }
-        var other = (try generatedSolid(source, &log, &diag)) orelse continue;
+        var other = (try generatedSolid(source, &log, current.tol, &diag)) orelse continue;
         defer other.deinit();
         try expectSolid(&other, &diag);
         const op = pick(solid_boolean.pipeline.Op, source);
@@ -2010,13 +2033,25 @@ const SolidShape = union(enum) {
     }
 };
 
+/// A placement's move at the tolerance (`NEAR_MOVES`): `xsect` intersection tolerances,
+/// and `bands` of D27's band at the coordinates' size beyond.
+const NearMove = struct {
+    xsect: f64,
+    bands: f64 = 0,
+
+    fn distance(self: NearMove, merged: tolerance.Tolerance, scale: f64) f64 {
+        return self.xsect * merged.xsect + self.bands * canonical.Comparison.distance(0, merged.xsect, scale).band;
+    }
+};
+
 /// A box or the hull of grid points, placed: sometimes turned about an axis through the
-/// grid's middle, sometimes scaled per axis, moved by half-steps; one time in
+/// grid's middle, sometimes scaled per axis, moved by half-steps or at the tolerance of it
+/// merged with `with` (the chain's solid's, when there is one; `NEAR_MOVES`); one time in
 /// `EXTREME_ONE_IN` a placement takes a value a script would never write. Built at the
 /// tolerance of its own size (`Tolerance.fromSize` of its largest extent, placed: a chain
 /// mixes zones, which each boolean merges to the larger). Null for a clean refusal (a hull
 /// of points in a plane, an extreme placement refused).
-fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
+fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: *Diagnostics) !?Body {
     var drawn: SolidShape = undefined;
     const kind = source.valueRangeAtMost(u8, 0, 2);
     if (kind != 1) {
@@ -2066,8 +2101,19 @@ fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
         try log.add(", scaled ({d}, {d}, {d})", .{ by[0], by[1], by[2] });
         place = Affine.scaleBy(by).compose(&place);
     }
+    // A move past the half-steps is one at the tolerance (drawn in the same range, so a
+    // replay line recorded before them draws as it did)
     var move: vec.Vec3 = undefined;
-    for (&move) |*c| c.* = @as(f64, @floatFromInt(source.valueRangeAtMost(i32, -2, 2))) * 0.5;
+    var near: [3]?usize = @splat(null);
+    for (&move, &near) |*c, *n| {
+        const step = source.valueRangeAtMost(i32, -HALF_STEPS, HALF_STEPS + 2 * NEAR_MOVES.len);
+        if (step <= HALF_STEPS) {
+            c.* = @as(f64, @floatFromInt(step)) * 0.5;
+        } else {
+            c.* = 0;
+            n.* = @intCast(step - HALF_STEPS - 1);
+        }
+    }
     if (source.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1) move[source.index(3)] = EXTREMES[source.index(EXTREMES.len)];
     try log.add(", moved ({d}, {d}, {d})", .{ move[0], move[1], move[2] });
     place = Affine.translate(move).compose(&place);
@@ -2075,19 +2121,36 @@ fn generatedSolid(source: anytype, log: *Log, diag: *Diagnostics) !?Body {
         try log.add("\n", .{});
         return refusedSolid(err);
     };
-    // Again at the tolerance of its own size, when that is not the one it was built at
-    const own = tolerance.Tolerance.fromSize(largestExtent(&placed));
+    // Its own tolerance by its size (a move changes no extent), and the moves at the
+    // tolerance merged with the chain's
+    const box = bbox.bodyBounds(&placed) catch |err| {
+        placed.deinit();
+        return err;
+    };
+    const own = tolerance.Tolerance.fromSize(largestSide(box));
+    var nudge = vec.ZERO3;
+    if (near[0] != null or near[1] != null or near[2] != null) {
+        const merged = if (with) |w| own.merge(w) else own;
+        const scale = canonical.magnitude(&.{ box.min, box.max });
+        for (near, &nudge) |n, *c| if (n) |k| {
+            const d = NEAR_MOVES[k / 2].distance(merged, scale);
+            c.* = if (k % 2 == 0) d else -d;
+        };
+        try log.add(", nudged ({e}, {e}, {e})", .{ nudge[0], nudge[1], nudge[2] });
+    }
     try log.add(", zone {e}\n", .{own.zone});
-    if (own.zone == tol.zone) return placed;
+    const nudged = nudge[0] != 0 or nudge[1] != 0 or nudge[2] != 0;
+    if (own.zone == tol.zone and !nudged) return placed;
     placed.deinit();
+    place = Affine.translate(nudge).compose(&place);
+    if (own.zone == tol.zone) return transform.transform(testing.allocator, &shape, &place, .{}, diag) catch |err| refusedSolid(err);
     var resized = drawn.build(own, diag) catch |err| return refusedSolid(err);
     defer resized.deinit();
     return transform.transform(testing.allocator, &resized, &place, .{}, diag) catch |err| refusedSolid(err);
 }
 
-/// The largest side of the body's box.
-fn largestExtent(body: *const Body) f64 {
-    const box = bbox.bodyBounds(body) catch return 0;
+/// The largest side of a box.
+fn largestSide(box: geometry.Box3) f64 {
     const size = vec.sub(box.max, box.min);
     return @max(size[0], size[1], size[2]);
 }
