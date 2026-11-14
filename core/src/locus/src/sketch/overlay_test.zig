@@ -694,3 +694,38 @@ test "overlay: a sliver far from the origin is a face, its area as near the orig
     try testing.expectApproxEqAbs(@as(f64, 0.005), areas[0], 1e-15);
     try testing.expectApproxEqAbs(areas[0], areas[1], 1e-9);
 }
+
+test "overlay: a vertex the zone from coincident sides given either way round is on both or neither" {
+    // A point measured against a line from the given edge's start is 1.00000000003e-5
+    // from it one way round and 9.99999999997e-6 the other (the zone 1e-5): two triangles
+    // sharing that side, each giving it its own way, had it cut on one and not the other,
+    // the side kept whole beside its two pieces through the point, a sliver face one zone
+    // wide between them. Measured from the side's lower end, alike either way
+    const a = Vec2{ 0.5488586922664005, 2.483174774363169 };
+    const b = Vec2{ 5.959108785343814, 4.628549545013987 };
+    const p = Vec2{ 3.57730011599369, 3.684080446739448 };
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try polygon(&o, &.{ a, b, .{ 3, 6 } });
+    _ = try o.addInput();
+    try polygon(&o, &.{ b, a, .{ 3, 1 } });
+    // A small triangle with a corner on the point, reaching away from the side (its
+    // normal toward the point, (b − a) turned a quarter left), crossing nothing
+    const along = vec.scale2(vec.sub2(b, a), 1 / vec.distance2(a, b));
+    const away = Vec2{ -along[1], along[0] };
+    try polygon(&o, &.{ p, vec.add2(p, vec.add2(vec.scale2(away, 0.5), vec.scale2(along, 0.1))), vec.add2(p, vec.add2(vec.scale2(away, 0.5), vec.scale2(along, -0.1))) });
+    try o.run();
+    try expectPlanar(&o);
+    // The side is one edge from end to end or two through the point, never both
+    var ends: [3]u32 = undefined;
+    for ([_]Vec2{ a, b, p }, &ends) |q, *v| v.* = for (0..o.points.items.len) |i| {
+        if (vec.distance2(o.point(@intCast(i)), q) <= tol.zone) break @intCast(i);
+    } else unreachable;
+    var between: [3]usize = @splat(0);
+    for (o.edges.items) |e| for ([_][2]u32{ .{ ends[0], ends[1] }, .{ ends[0], ends[2] }, .{ ends[2], ends[1] } }, &between) |pair, *n| {
+        n.* += @intFromBool((e.a == pair[0] and e.b == pair[1]) or (e.a == pair[1] and e.b == pair[0]));
+    };
+    errdefer std.debug.print("edges a–b {d}, a–p {d}, p–b {d}\n", .{ between[0], between[1], between[2] });
+    try testing.expect(std.mem.eql(usize, &between, &.{ 1, 0, 0 }) or std.mem.eql(usize, &between, &.{ 0, 1, 1 }));
+}

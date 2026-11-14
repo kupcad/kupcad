@@ -441,7 +441,11 @@ pub const Overlay = struct {
 
     /// The parameter of `p` along a given edge when `p` lies inside it within the zone (a
     /// line's fraction of its length, an arc's angle from its start), else null. On an
-    /// arc, inside is told by the chord (`onArcStrictly`), never by an angle.
+    /// arc, inside is told by the chord (`onArcStrictly`), never by an angle. A line is
+    /// measured from its lower end (by x, then y), whichever way it was given: from either
+    /// end a point the zone from it rounds either side (1.00000000003e-5 one way,
+    /// 9.99999999997e-6 the other), and two coincident sides given opposite ways were cut
+    /// at it one and not the other, a sliver face one zone wide between them.
     fn paramOn(self: *const Overlay, g: Given, p: Vec2) ?f64 {
         const a = self.point(g.a);
         const b = self.point(g.b);
@@ -450,12 +454,14 @@ pub const Overlay = struct {
             if (!onArcStrictly(a, b, arc, p)) return null;
             return arcParam(a, b, arc, p);
         }
-        const d = vec.sub2(b, a);
+        const from_b = b[0] < a[0] or (b[0] == a[0] and b[1] < a[1]);
+        const lo = if (from_b) b else a;
+        const d = vec.sub2(if (from_b) a else b, lo);
         const len = vec.length2(d);
-        const t = vec.dot2(vec.sub2(p, a), d) / (len * len);
-        if (t <= 0 or t >= 1) return null;
-        if (vec.distance2(vec.addScaled2(a, d, t), p) > self.tol.zone) return null;
-        return t;
+        const s = vec.dot2(vec.sub2(p, lo), d) / (len * len);
+        if (s <= 0 or s >= 1) return null;
+        if (vec.distance2(vec.addScaled2(lo, d, s), p) > self.tol.zone) return null;
+        return if (from_b) 1 - s else s;
     }
 
     /// The crossing of two line segments inside both (an end on the other is a cut of its
