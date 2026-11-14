@@ -314,12 +314,19 @@ pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points
 }
 
 /// Points strictly inside the polygon, appended to `out`: the centroids of its
-/// triangulation's triangles, the furthest from the rings' edges and `avoid` first, then
-/// the centroids of the three triangles each centroid makes with its triangle's sides. A
-/// caller whose first point lands where it can decide nothing (on another body's boundary)
-/// tries the next: a single triangle's centroid, on the corner of a solid touching the face
-/// there, was once the only candidate (the solids fuzzer, 2026-11-13). None when the
-/// triangulator refuses the rings.
+/// triangulation's triangles, the furthest from the rings' edges and `avoid` first; then, in
+/// that order, each triangle's incenter (the point furthest from its sides), the centroids
+/// of the three triangles each centroid makes with its triangle's sides, and the points
+/// halfway from each centroid to its triangle's corners: each triangle covered at its middle
+/// and toward each corner. A caller whose first point lands where it can decide nothing (on
+/// another body's boundary) tries the next, since a region's every interior point has its
+/// class: a single triangle's centroid, on the corner of a solid touching the face there,
+/// was once the only candidate (the solids fuzzer, 2026-11-13); a thin triangle's centroid
+/// lies a third of the way across it, nearer one side than its incenter (the gap draws,
+/// 2026-11-14: a plane's section of a flat tetrahedron 4.2e-5 across, its centroid the zone
+/// from a face it crosses at 45°); and a face 3e-4 rad off another body's face, its edge
+/// within the tolerance over it, lies within the zone of it but toward its far corner (the
+/// same day). None when the triangulator refuses the rings.
 pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, points: []Vec2, starts: []const u32, avoid: []const [2]Vec2, out: *std.ArrayList(Vec3)) Error!void {
     if (starts.len < 2) return;
     // Counter-clockwise outer ring: mirrored when it runs the other way
@@ -374,9 +381,29 @@ pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, point
     std.mem.sort(Candidate, found.items, {}, Order.lessThan);
     for (found.items) |c| try out.append(allocator, frame.toWorld(.{ c.at[0], c.at[1], 0 }));
     for (found.items) |c| {
+        const q = incenterOf(c.corners[0], c.corners[1], c.corners[2]);
+        try out.append(allocator, frame.toWorld(.{ q[0], q[1], 0 }));
+    }
+    for (found.items) |c| {
         const k = c.corners;
         for ([_]Vec2{ centroidOf(k[0], k[1], c.at), centroidOf(k[1], k[2], c.at), centroidOf(k[2], k[0], c.at) }) |q| try out.append(allocator, frame.toWorld(.{ q[0], q[1], 0 }));
     }
+    for (found.items) |c| {
+        for (c.corners) |corner| {
+            const q = vec.lerp2(c.at, corner, 0.5);
+            try out.append(allocator, frame.toWorld(.{ q[0], q[1], 0 }));
+        }
+    }
+}
+
+/// The point of triangle `a b c` furthest from its sides: its corners weighted by the
+/// lengths of the sides facing them.
+fn incenterOf(a: Vec2, b: Vec2, c: Vec2) Vec2 {
+    const la = vec.distance2(b, c);
+    const lb = vec.distance2(c, a);
+    const lc = vec.distance2(a, b);
+    const sum = la + lb + lc;
+    return .{ (la * a[0] + lb * b[0] + lc * c[0]) / sum, (la * a[1] + lb * b[1] + lc * c[1]) / sum };
 }
 
 fn centroidOf(a: Vec2, b: Vec2, c: Vec2) Vec2 {

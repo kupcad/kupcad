@@ -1,15 +1,18 @@
 //! The boolean's third phase (docs/architecture.md §7.4 step 4, KNOWLEDGE §7; Hoffmann
 //! p.76–80, OCCT's `BRepClass3d_SClassifier`): each fragment classified once against the
-//! other operand, at a point strictly inside it (the centroid of the largest triangle of
-//! its triangulation). A fragment of a face lying in one plane with faces of the other
-//! operand is decided first by those: a fragment of one of them over the same pieces
-//! between merged vertices is its twin (OCCT's same-domain faces, splits with identical
-//! edge sets; architecture §7.4), the same domain, `on_same` when their outward normals
-//! agree and `on_opposite` when they are opposed, never by a ray; one with no twin that its
-//! samples put inside a partner face is the two imprints disagreeing, refused. The others are inside or outside the other operand by `query/point_in_body.zig`'s
-//! rays, one for each connected component of them (contagion, research/truck.md §3) and a
-//! second that must agree; a point found on the other operand's boundary is a
-//! contradiction of the paves (`unclassified`), refused.
+//! other operand, at a point strictly inside it off the other's boundary (its
+//! triangulation's clearest centroid, else its incenters and points toward its corners,
+//! `overlap.interiorPoints`: a fragment's every interior point has its class). A fragment
+//! of a face lying in one plane with faces of the other operand is decided first by those:
+//! a fragment of one of them over the same pieces between merged vertices is its twin
+//! (OCCT's same-domain faces, splits with identical edge sets; architecture §7.4), the same
+//! domain, `on_same` when their outward normals agree and `on_opposite` when they are
+//! opposed, never by a ray; one with no twin that its samples put inside a partner face is
+//! the two imprints disagreeing, refused. The others are inside or outside the other
+//! operand by `query/point_in_body.zig`'s rays, one for each connected component of them
+//! (contagion, research/truck.md §3) and a second that must agree; a fragment with no
+//! candidate off the other operand's boundary is a contradiction of the paves
+//! (`unclassified`), refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");

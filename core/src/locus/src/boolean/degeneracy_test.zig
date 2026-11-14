@@ -857,3 +857,53 @@ test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its
         try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
     }
 }
+
+test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its upper edge within the tolerance over it, is classified by a point clear of the plate" {
+    // The gap draws' first find (2026-11-14), at a zone of 1e-4: the tetrahedron's upper
+    // edge 5e-5 over the plate's top and its lower 2.5e-4 under it, so its upper faces
+    // cross the top at 3e-4 rad 1/6 from the edge; the paves take the edge's ends for where
+    // they meet (an edge meets a plane once), and the faces lie under the top within the
+    // zone of it but toward their lower corner, where neither centroid reached
+    // (`unclassified`). The tetrahedron is all but inside the plate: the intersection is it,
+    // the union the plate, the difference the plate less it
+    const t = Tolerance.fromZone(1e-4);
+    const top = 3 + 5e-5;
+    var plate = try helpers.boxAt(t, .{ -10, -10, 5e-5 }, .{ 10, 10, top });
+    defer plate.deinit();
+    const half = 0.75 * t.xsect;
+    // The upper edge 5e-5 over the top, the lower 2.5e-4 under it
+    const mid = top + 5e-5 - half;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var tetra = try @import("../construct/hull.zig").hull(testing.allocator, t, &.{ .{ -1, 2, mid - half }, .{ 1, 2, mid - half }, .{ 0, 1, mid + half }, .{ 0, 3, mid + half } }, &diag);
+    defer tetra.deinit();
+    var i = try sound(&plate, &tetra, .intersection);
+    defer i.deinit();
+    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&i));
+    try testing.expectApproxEqAbs(try volume(&tetra), try volume(&i), t.xsect * 4);
+    try expectIdentities(&plate, &tetra);
+}
+
+test "degeneracy: a plane between a flat tetrahedron's edges cuts a section 4.2e-5 across, classified at its incenter" {
+    // The gap draws' second find (2026-11-14): a tetrahedron whose opposite edges are 1.5
+    // intersection tolerances apart, cut by the plane x = z between them at 45°; the cut's
+    // section on the plane is a triangle 2 long and 4.2e-5 across, its centroid a third of
+    // the way across, the zone from the upper face, and no candidate clear of the
+    // tetrahedron but its incenter (`unclassified`)
+    const h = 0.75 * tol.xsect;
+    var flat = try tetrahedron(.{ -1, 0, -h }, .{ 1, 0, -h }, .{ 0, -1, h }, .{ 0, 1, h });
+    defer flat.deinit();
+    var tetra = try helpers.moved(&flat, .{ -2e-5, -2e-5, -5e-6 });
+    defer tetra.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var parts = try trim.splitByPlane(testing.allocator, &tetra, .{ 1, 0, -1 }, 0, .{}, &diag);
+    defer for (&parts) |*part| part.deinit();
+    for (&parts) |*part| {
+        var report = try @import("../topology/check.zig").run(testing.allocator, part, .global);
+        defer report.deinit(testing.allocator);
+        try testing.expect(report.ok());
+        try @import("../query/overlap.zig").check(testing.allocator, part, .{}, &diag);
+    }
+    try testing.expectApproxEqAbs(try volume(&tetra), try volume(&parts[0]) + try volume(&parts[1]), CLOSE);
+}
