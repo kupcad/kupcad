@@ -2,9 +2,11 @@
 //! p.76–80, OCCT's `BRepClass3d_SClassifier`): each fragment classified once against the
 //! other operand, at a point strictly inside it (the centroid of the largest triangle of
 //! its triangulation). A fragment of a face lying in one plane with faces of the other
-//! operand is decided first by those: inside one of them, it is the same domain, `on_same`
-//! when their outward normals agree and `on_opposite` when they are opposed, never by a
-//! ray. The others are inside or outside the other operand by `query/point_in_body.zig`'s
+//! operand is decided first by those: a fragment of one of them over the same pieces
+//! between merged vertices is its twin (OCCT's same-domain faces, splits with identical
+//! edge sets; architecture §7.4), the same domain, `on_same` when their outward normals
+//! agree and `on_opposite` when they are opposed, never by a ray; one with no twin that its
+//! samples put inside a partner face is the two imprints disagreeing, refused. The others are inside or outside the other operand by `query/point_in_body.zig`'s
 //! rays, one for each connected component of them (contagion, research/truck.md §3) and a
 //! second that must agree; a point found on the other operand's boundary is a
 //! contradiction of the paves (`unclassified`), refused.
@@ -80,17 +82,49 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     var samples: std.ArrayList(Vec3) = .empty;
     defer samples.deinit(allocator);
 
-    // The fragments lying on a coplanar face of the other operand, by their normals
+    // The fragments of faces in one plane with faces of the other operand: each region's
+    // pieces, sorted, to find its twin by
+    var coplanar: std.ArrayList(u32) = .empty;
+    defer coplanar.deinit(allocator);
+    var pieces: std.ArrayList([2]u32) = .empty;
+    defer pieces.deinit(allocator);
+    var ranges: std.ArrayList([2]u32) = .empty;
+    defer ranges.deinit(allocator);
     for (fragments.items.items, 0..) |fragment, i| {
-        try options.checkCancel();
         try paves.coplanarWith(fragment.operand, fragment.face, &partners);
         if (partners.items.len == 0) continue;
-        try samplesOf(allocator, paves, fragments, i, &samples, diag);
+        try coplanar.append(allocator, @intCast(i));
+        const start: u32 = @intCast(pieces.items.len);
+        try piecesOf(allocator, fragments, i, &pieces);
+        try ranges.append(allocator, .{ start, @intCast(pieces.items.len) });
+    }
+    for (coplanar.items, ranges.items) |i, range| {
+        try options.checkCancel();
+        const fragment = fragments.items.items[i];
+        try paves.coplanarWith(fragment.operand, fragment.face, &partners);
+        const own = pieces.items[range[0]..range[1]];
+        const twin: ?u32 = for (coplanar.items, ranges.items) |j, other_range| {
+            const other = fragments.items.items[j];
+            if (other.operand == fragment.operand) continue;
+            if (std.mem.indexOfScalar(u32, partners.items, other.face) == null) continue;
+            if (std.mem.eql([2]u32, own, pieces.items[other_range[0]..other_range[1]])) break j;
+        } else null;
         const body = paves.operands[fragment.operand];
-        if (try sameDomain(paves, body, types.FaceIndex.of(fragment.face), 1 - fragment.operand, samples.items, partners.items, diag)) |classified| {
-            classes[i] = classified;
+        const f = types.FaceIndex.of(fragment.face);
+        if (twin) |j| {
+            const g = fragments.items.items[j].face;
+            const other_body = paves.operands[1 - fragment.operand];
+            const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
+            const n_g = in_face.outwardNormal(other_body, types.FaceIndex.of(g), .{ 0, 0 });
+            classes[i] = .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
             decided[i] = true;
+            continue;
         }
+        // No twin: a fragment of the face outside its partners, which a ray classifies,
+        // unless its samples put it inside one, where the other imprint has no region
+        try samplesOf(allocator, paves, fragments, i, &samples, diag);
+        if (try sameDomain(paves, body, f, 1 - fragment.operand, samples.items, partners.items, diag) != null)
+            return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, fragment.face), .label = "a fragment of a face in one plane with the other operand's, inside one of them, with no fragment of it over the same pieces: the two imprints disagree" });
     }
 
     // The others' components, across the pieces the other operand touches nowhere
@@ -250,6 +284,27 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 /// first sample on no partner's boundary decides (one on a boundary gives way to the
 /// next), never a scan of every sample against every partner (a thousand-sided cap's
 /// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
+/// Fragment `i`'s pieces between merged vertices, each as its two vertices (the lesser
+/// first), sorted, appended to `out`: its region by its edges, whichever way it runs.
+fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: usize, out: *std.ArrayList([2]u32)) Error!void {
+    const start = out.items.len;
+    for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
+        for (vertices, 0..) |v, k| {
+            const w = vertices[(k + 1) % vertices.len];
+            try out.append(allocator, .{ @min(v, w), @max(v, w) });
+        }
+    }
+    const Less = struct {
+        fn lessThan(_: void, x: [2]u32, y: [2]u32) bool {
+            return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
+        }
+    };
+    std.mem.sort([2]u32, out.items[start..], {}, Less.lessThan);
+}
+
+/// Whether some sample of a fragment lies inside one of `partners` (the old decision by
+/// sampling, kept as the check that a fragment with no twin is no region of a partner).
 fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
     for (samples) |p| {
         var on_a_boundary = false;
