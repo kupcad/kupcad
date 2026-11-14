@@ -17,6 +17,7 @@ const types = @import("types.zig");
 const body_mod = @import("body.zig");
 const traverse = @import("traverse.zig");
 const condition = @import("condition.zig");
+const Tolerance = @import("../tolerance.zig").Tolerance;
 const Body = body_mod.Body;
 const Finding = diagnostics.Finding;
 const EntityRef = diagnostics.EntityRef;
@@ -386,7 +387,7 @@ const Checker = struct {
                 if (!(d <= tol.xsect)) try self.add(.degenerate_edge_not_point, .of(.edge, i), d, tol.xsect);
             } else {
                 const len = chordLength(curve, e.t0, e.t1);
-                if (len <= 2.0 * tol.zone) try self.add(.edge_too_short, .of(.edge, i), len, 2.0 * tol.zone);
+                if (len <= shortest(tol)) try self.add(.edge_too_short, .of(.edge, i), len, shortest(tol));
             }
             // The gaps are ordered: vertex ≥ edge
             if (b.vertex(e.start).gap + tol.zone * 0 < e.gap and b.vertex(e.start).gap < e.gap) try self.add(.gap_order, .of(.edge, i), e.gap, b.vertex(e.start).gap);
@@ -785,6 +786,19 @@ fn insidePolygon(polygon: []const Vec2, p: Vec2) bool {
 
 /// The length of the polyline through `EDGE_SAMPLES + 1` points of the curve over the
 /// range: a lower bound on the edge's length, enough to tell a short edge.
+/// The minimum feature size: an edge no longer than it is too short (`edge_too_short`).
+/// Simplify collapses by the same measure (`edgeLength`), so what the checker would find
+/// too short is gone first.
+pub fn shortest(tol: Tolerance) f64 {
+    return 2.0 * tol.zone;
+}
+
+/// An edge's length as the rule measures it: its curve's chord over its range (not the
+/// distance between its vertices, which lie off the curve by up to their gaps).
+pub fn edgeLength(body: *const Body, e: types.Edge) f64 {
+    return chordLength(body.geometry.curve(e.curve), e.t0, e.t1);
+}
+
 fn chordLength(curve: anytype, t0: f64, t1: f64) f64 {
     var len: f64 = 0;
     var prev = curve.eval(t0);

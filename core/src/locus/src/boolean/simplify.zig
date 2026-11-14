@@ -18,8 +18,9 @@
 //!   decided with D27's band), the second then given the first's line (OCCT's
 //!   `UnifySameDomain` joining edges through two-valent vertices). The boolean gives each
 //!   edge its source's line (D28), so pieces of two operands' edges meet so.
-//! - An edge no longer than the minimum feature size (twice the zone, the checker's
-//!   `edge_too_short`) collapses into its start (`kevMerge`), the edges at its end moved
+//! - An edge no longer than the minimum feature size (`check.shortest`, measured as the
+//!   checker measures it, `check.edgeLength`, D27's band beyond) collapses into its start
+//!   (`kevMerge`), the edges at its end moved
 //!   there and their ranges taken to it, when neither of its faces is left with fewer than
 //!   three edges; a sliver that would be is left for the checker to refuse. (The paves keep
 //!   merged vertices further apart than the intersection tolerance, so this is for what a
@@ -36,6 +37,7 @@ const traverse = @import("../topology/traverse.zig");
 const euler = @import("../topology/euler.zig");
 const in_face = @import("../query/in_face.zig");
 const canonical = @import("../geometry/canonical.zig");
+const check = @import("../topology/check.zig");
 const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -281,13 +283,19 @@ fn rebase(body: *Body, e: types.EdgeIndex, curve: @import("../geometry/types.zig
     if (partner != .none) body.coedge(partner).same_sense = !body.coedge(partner).same_sense;
 }
 
+/// Each edge the checker would find too short collapsed (see the file's comment). Measured
+/// as the checker measures it, the chord of its curve over its range: by the distance
+/// between its vertices, an edge 2.06e-5 between ends 1.05e-5 off its line, its chord
+/// 1.77e-5, was left, and the checker found it too short in the boolean's own result. D27's
+/// band beyond the minimum is a margin: what rounds to it either way goes.
 fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
     var changed = false;
-    const shortest = 2 * body.tol.zone;
+    const shortest = check.shortest(body.tol);
     for (0..body.edges.items.len) |i| {
         const e = body.edges.items[i];
         if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
-        if (vec.distance(body.point(e.start), body.point(e.end)) > shortest) continue;
+        const scale = canonical.magnitude(&.{ body.point(e.start), body.point(e.end) });
+        if (!(check.edgeLength(body, e) <= shortest + canonical.Comparison.distance(0, shortest, scale).band)) continue;
         const c = e.coedge;
         const p = body.coedge(c).partner;
         if (p == .none or body.coedge(c).loop == body.coedge(p).loop) continue;

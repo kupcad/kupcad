@@ -172,3 +172,45 @@ test "simplify: an edge shorter than the minimum feature size collapses into its
     try testing.expectEqual(@as(usize, 12), counts.edges);
     try testing.expectEqual(@as(usize, 8), counts.vertices);
 }
+
+test "simplify: an edge the checker finds too short by its chord collapses, though its ends are further apart" {
+    // The checker measures an edge by its curve's chord over its range, simplify measured
+    // the distance between its vertices: a vertex off its line by 1.05e-5 (within the
+    // tolerance) made an edge whose ends are 2.06e-5 apart and whose chord is 1.77e-5, at
+    // a minimum of 2e-5. The checker found it too short and simplify left it, so a
+    // boolean's result failed its own check. One measure, the checker's
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+    defer body.deinit();
+    const corner = for (body.vertices.items, 0..) |_, i| {
+        if (vec.length(body.point(types.VertexIndex.of(i))) == 0) break types.VertexIndex.of(i);
+    } else unreachable;
+    var up: types.CoedgeIndex = .none;
+    var around = traverse.Umbrella.init(&body, corner);
+    while (try around.next()) |c| {
+        if (body.point(body.coedgeEnd(c))[2] == 1) up = c;
+    }
+    var from_up = traverse.Umbrella.initFrom(&body, up);
+    _ = try from_up.next();
+    const next_around = (try from_up.next()).?;
+    // The new vertex 2.06e-5 from the corner, within the tolerance of the box's edges and
+    // faces there; the edge to it along (1, 1, 0), its chord 1.77e-5
+    const p: Vec3 = .{ 1.25e-5, 1.25e-5, 1.05e-5 };
+    const ends_apart = vec.length(p);
+    const along = vec.dot(p, vec.normalized(.{ 1, 1, 0 }).?);
+    const point = try body.geometry.addPoint(testing.allocator, p);
+    const line = try body.geometry.addLine(testing.allocator, curves.Line.through(.{ 0, 0, 0 }, .{ 1, 1, 0 }).?);
+    _ = try euler.mevSplitVertex(&body, up, next_around, point, .{ .curve = line, .t0 = 0, .t1 = along });
+    // The edge up, moved onto the new vertex: its range from where the vertex projects
+    const up_edge = &body.edges.items[@backingInt(body.coedge(up).edge)];
+    const up_line = body.geometry.curve(up_edge.curve).line;
+    if (up_edge.start == body.coedgeStart(up)) up_edge.t0 = up_line.project(p) else up_edge.t1 = up_line.project(p);
+    var before = try check.run(testing.allocator, &body, .geometric);
+    defer before.deinit(testing.allocator);
+    try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
+    try testing.expect(ends_apart > 2 * tol.zone and along < 2 * tol.zone);
+    try simplify.run(&body, &diag, null);
+    try expectValid(&body);
+    try testing.expectEqual(@as(usize, 8), body.counts().vertices);
+}
