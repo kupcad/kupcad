@@ -29,6 +29,7 @@ const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const sew = @import("sew.zig");
 const primitives = @import("primitives.zig");
+const overlap = @import("../query/overlap.zig");
 const Body = body_mod.Body;
 const Builder = primitives.Builder;
 const Vec3 = vec.Vec3;
@@ -151,7 +152,10 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
             fi += 2;
         }
     }
-    return b.finish(specs, .outer);
+    // The builder's body, which its errdefer frees on a refusal
+    const solid = try b.finish(specs, .outer);
+    try refusePinched(allocator, &solid, options, diag);
+    return solid;
 }
 
 /// The sheet turned about the axis through `origin` along `axis`, which must lie in the
@@ -314,7 +318,20 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
             }
         }
     }
-    return b.finishWithVoids(specs[0..fi]);
+    // The builder's body, which its errdefer frees on a refusal
+    const solid = try b.finishWithVoids(specs[0..fi]);
+    try refusePinched(allocator, &solid, options, diag);
+    return solid;
+}
+
+/// A swept solid touching itself inside one solid refused (`pinched`), as the boolean
+/// refuses one, by the overlap rules' one rule (`overlap.refusePinched`): a sheet through a
+/// point twice (its hole touching its side) extruded touches itself along a line, revolved
+/// its void touches its outer shell along a circle (Leo, 2026-11-14).
+fn refusePinched(allocator: std.mem.Allocator, solid: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+    var solids = try overlap.Solids.init(allocator, solid, options, diag);
+    defer solids.deinit(allocator);
+    try overlap.refusePinched(allocator, solid, &solids, diag);
 }
 
 /// Edges per side face at most (three on a plane whose inner arc is a point).

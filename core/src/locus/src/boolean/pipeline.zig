@@ -51,7 +51,6 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const check = @import("../topology/check.zig");
-const condition = @import("../topology/condition.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const trace = @import("../io/trace.zig");
 const primitives = @import("../construct/primitives.zig");
@@ -451,7 +450,7 @@ fn validAt(allocator: std.mem.Allocator, operand: *const Body, tol: Tolerance, k
 }
 
 /// The checker's first failure on `body` up to `level` as the operation's (`NotValid` with
-/// the finding); a pinch was refused before (`pinchedRecords`). A face narrower than the
+/// the finding); a pinch was refused before (`overlap.refusePinched`). A face narrower than the
 /// zone (`sliver_face`) is a result the model cannot hold, refused by design
 /// (`Degenerate`) as the builder refuses such a body: the paves keep features past the
 /// intersection tolerance distinct, and a cut just past it from an edge leaves faces of an
@@ -465,50 +464,6 @@ fn refuseInvalid(allocator: std.mem.Allocator, body: *const Body, level: check.L
         if (g.severity == .failure and g.code != .sliver_face) return diag.fail(error.NotValid, g);
     }
     return diag.fail(error.Degenerate, f);
-}
-
-/// Refuses (`pinched`) a result whose records touch inside one solid (`overlap.Solids`):
-/// a vertex whose faces about it are two fans of one solid (`condition.fans`: one shell
-/// touching itself at a point or along a line, two voids sharing a corner), or two edges
-/// between one pair of vertices, along one line (`pairTouching`'s one edge per solid), of
-/// one solid (a pocket meeting the face it was cut from along an edge; a void's edge lying
-/// on its outer shell's face, which was one shell through a two-edge loop of zero width,
-/// research/manifold-parity.md). Two solids touching so pass, and `warnTouching` warns of
-/// a line.
-fn pinchedRecords(allocator: std.mem.Allocator, body: *const Body, solids: *const overlap.Solids, diag: *Diagnostics) Error!void {
-    var fans: std.ArrayList(condition.Fan) = .empty;
-    defer fans.deinit(allocator);
-    condition.fans(allocator, body, &fans) catch |e| switch (e) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Corrupt => return corrupt(diag),
-    };
-    var start: usize = 0;
-    while (start < fans.items.len) {
-        var end = start;
-        while (end < fans.items.len and fans.items[end].vertex == fans.items[start].vertex) end += 1;
-        for (fans.items[start..end], 0..) |x, i| for (fans.items[start + i + 1 .. end]) |y| {
-            if (solids.same(x.shell, y.shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(x.shell)), .label = "the result (its faces about a vertex in two fans, inside one solid)" });
-        };
-        start = end;
-    }
-    var first: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
-    defer first.deinit(allocator);
-    for (body.edges.items, 0..) |e, i| {
-        if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none) continue;
-        const key: [2]u32 = .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) };
-        const entry = try first.getOrPut(allocator, key);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = @intCast(i);
-            continue;
-        }
-        const shell = edgeShell(body, @intCast(i));
-        if (solids.same(edgeShell(body, entry.value_ptr.*), shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (two edges along one line, inside one solid)" });
-    }
-}
-
-/// The shell of edge `e`'s faces.
-fn edgeShell(body: *const Body, e: u32) types.ShellIndex {
-    return body.face(body.loop(body.coedge(body.edge(types.EdgeIndex.of(e)).coedge).loop).face).shell;
 }
 
 /// A warning (`solids_touch`) for each place the result's solids touch along a line: two
@@ -717,7 +672,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         var solids = try overlap.Solids.init(allocator, &b.body, .{}, diag);
         defer solids.deinit(allocator);
         try pinchedAtPoint(paves, fragments, made.face_fragment, vertex_of, &b.body, &solids, diag);
-        try pinchedRecords(allocator, &b.body, &solids, diag);
+        try overlap.refusePinched(allocator, &b.body, &solids, diag);
     }
     made.body = b.body;
     return made;

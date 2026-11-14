@@ -43,6 +43,7 @@ const planar_faces = @import("../intersect/planar_faces.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const sketch_overlap = @import("../sketch/overlap.zig");
 const triangulate = @import("../mesh/triangulate.zig");
+const condition = @import("../topology/condition.zig");
 const Body = body_mod.Body;
 const Piece = planar_faces.Piece;
 const Vec2 = vec.Vec2;
@@ -299,6 +300,94 @@ pub const Solids = struct {
         return a != NO_SOLID and a == self.owner[@backingInt(t)];
     }
 };
+
+/// Where a body touches itself inside one solid, the shell it is in.
+pub const Pinch = union(enum) {
+    /// A vertex whose faces about it are two fans of one solid.
+    fans: types.ShellIndex,
+    /// Two edges between one pair of vertices along one curve, of one solid.
+    copies: types.ShellIndex,
+};
+
+/// Where `body` touches itself inside one solid (`solids`), null when nowhere: a vertex
+/// whose faces about it are two fans of one solid (`condition.fans`: one shell through a
+/// point or along a line twice, two voids sharing a corner), or two edges between one pair
+/// of vertices along one curve (both straight, or one curve record over one range: a sewn
+/// edge's copies), of one solid (a pocket meeting the face it was cut from along an edge; a
+/// void's edge on its outer shell's face; a sheet's hole touching its side, swept). What
+/// one solid cannot hold (ISO 10303-42: STEP's brep_with_voids holds a void apart from its
+/// outer shell and every other), whatever made it; solids touching each other so are not
+/// a pinch. One rule for the boolean, the sweeps and the fuzzers' oracle.
+pub fn pinchOf(allocator: std.mem.Allocator, body: *const Body, solids: *const Solids, diag: *Diagnostics) Error!?Pinch {
+    var fans: std.ArrayList(condition.Fan) = .empty;
+    defer fans.deinit(allocator);
+    condition.fans(allocator, body, &fans) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Corrupt => return corrupt(diag),
+    };
+    // The fans come by vertex
+    var start: usize = 0;
+    while (start < fans.items.len) {
+        var end = start;
+        while (end < fans.items.len and fans.items[end].vertex == fans.items[start].vertex) end += 1;
+        for (fans.items[start..end], 0..) |x, i| for (fans.items[start + i + 1 .. end]) |y| {
+            if (solids.same(x.shell, y.shell)) return .{ .fans = x.shell };
+        };
+        start = end;
+    }
+    // The edges by the vertices they join, each run compared within
+    const Joined = struct { lo: u32, hi: u32, edge: u32 };
+    var joined: std.ArrayList(Joined) = .empty;
+    defer joined.deinit(allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none) continue;
+        const a = @backingInt(e.start);
+        const b = @backingInt(e.end);
+        try joined.append(allocator, .{ .lo = @min(a, b), .hi = @max(a, b), .edge = @intCast(i) });
+    }
+    const ByEnds = struct {
+        fn lessThan(_: void, x: Joined, y: Joined) bool {
+            return x.lo < y.lo or (x.lo == y.lo and (x.hi < y.hi or (x.hi == y.hi and x.edge < y.edge)));
+        }
+    };
+    std.mem.sort(Joined, joined.items, {}, ByEnds.lessThan);
+    start = 0;
+    while (start < joined.items.len) {
+        var end = start + 1;
+        while (end < joined.items.len and joined.items[end].lo == joined.items[start].lo and joined.items[end].hi == joined.items[start].hi) end += 1;
+        for (joined.items[start..end], 0..) |x, i| for (joined.items[start + i + 1 .. end]) |y| {
+            if (!alongOneCurve(body, x.edge, y.edge)) continue;
+            const shell = edgeShell(body, x.edge);
+            if (solids.same(shell, edgeShell(body, y.edge))) return .{ .copies = shell };
+        };
+        start = end;
+    }
+    return null;
+}
+
+/// Refuses `body` (`Degenerate`, `pinched`, the shell named) where it touches itself
+/// inside one solid (`pinchOf`).
+pub fn refusePinched(allocator: std.mem.Allocator, body: *const Body, solids: *const Solids, diag: *Diagnostics) Error!void {
+    return switch ((try pinchOf(allocator, body, solids, diag)) orelse return) {
+        .fans => |s| diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(s)), .label = "a solid (its faces about a vertex in two fans)" }),
+        .copies => |s| diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(s)), .label = "a solid (two edges along one curve, inside it)" }),
+    };
+}
+
+/// Whether edges `x` and `y`, between one pair of vertices, run along one curve: both
+/// straight, or one curve record over one range (a circle's two halves between the same
+/// two vertices are not).
+fn alongOneCurve(body: *const Body, x: u32, y: u32) bool {
+    const a = body.edge(types.EdgeIndex.of(x));
+    const b = body.edge(types.EdgeIndex.of(y));
+    if (a.curve.kind == .line and b.curve.kind == .line) return true;
+    return a.curve.kind == b.curve.kind and a.curve.index == b.curve.index and a.t0 == b.t0 and a.t1 == b.t1;
+}
+
+/// The shell of edge `e`'s faces.
+fn edgeShell(body: *const Body, e: u32) types.ShellIndex {
+    return body.face(body.loop(body.coedge(body.edge(types.EdgeIndex.of(e)).coedge).loop).face).shell;
+}
 
 /// A point strictly inside one of shell `s`'s faces (`pointInside`), the first face's that
 /// has one; null when none does.

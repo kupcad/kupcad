@@ -177,6 +177,11 @@ const BREP_REFUSES = [_][]const u8{
     TOUCHING_INSIDE[2].script,
     TOUCHING_INSIDE[3].script,
     "cube(2) + cube(2).translate(2.00002, 0, 0)",
+    // A sweep of a sketch through a point twice (a hole touching its side): extruded it
+    // touches itself along a line, revolved its void touches its outer shell along a
+    // circle, refused at the source as the boolean refuses it (Leo, 2026-11-14)
+    "(square(4) - polygon([[2, 0], [3, 1], [2, 2], [1, 1]])).extrude(3)",
+    "(square(4) - polygon([[2, 0], [3, 1], [2, 2], [1, 1]])).translate(1, 0).revolve(segments: 64)",
     // Each feature the B-Rep engine does not have yet, named in its refusal
     "square(1).loft(square(2), 3)",
     "cube(1).hull(sphere(1).translate(x: 3))",

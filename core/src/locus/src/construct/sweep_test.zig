@@ -234,6 +234,41 @@ test "revolve: a sheet with a hole revolves into a solid with a void, the cavity
     try testing.expectApproxEqRel(72.0 * std.math.pi, (try mass.mass(&ring, .{}, &diag)).volume, 1e-9);
 }
 
+test "extrude and revolve: a sheet whose hole touches its side at a corner sweeps a solid touching itself, refused by design" {
+    // A square less a diamond whose corner lies on the square's side: one region through
+    // that corner twice. Extruded, the solid touches itself along the corner's line;
+    // revolved, its void touches its outer shell along the corner's circle. One solid
+    // cannot hold either (ISO 10303-42; the boolean refuses them by P1), so the sweeps
+    // refuse them at the source (Leo, 2026-11-14), by the overlap rules' one rule.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const outer = [_]vec.Vec2{ .{ 1, 0 }, .{ 5, 0 }, .{ 5, 4 }, .{ 1, 4 } };
+    const diamond = [_]vec.Vec2{ .{ 3, 0 }, .{ 4, 1 }, .{ 3, 2 }, .{ 2, 1 } };
+    var sheet = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &diamond }, &diag);
+    defer sheet.deinit();
+    try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 3 }, .{}, &diag));
+    try testing.expectEqual(@import("../diagnostics.zig").Code.pinched, diag.first().?.code);
+    var profile = try stoodUp(&sheet, &diag);
+    defer profile.deinit();
+    var again = Diagnostics.init(testing.allocator);
+    defer again.deinit();
+    try testing.expectError(error.Degenerate, sweep.revolve(testing.allocator, &profile, .{ 0, 0, 0 }, .{ 0, 0, 1 }, 2.0 * std.math.pi, .{}, &again));
+    try testing.expectEqual(@import("../diagnostics.zig").Code.pinched, again.first().?.code);
+
+    // The diamond a hair inside: a solid with a hole through it, and a ring with a void
+    const inside = [_]vec.Vec2{ .{ 3, 0.5 }, .{ 4, 1.5 }, .{ 3, 2.5 }, .{ 2, 1.5 } };
+    var apart = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inside }, &diag);
+    defer apart.deinit();
+    var solid = try sweep.extrude(testing.allocator, &apart, .{ 0, 0, 3 }, .{}, &diag);
+    defer solid.deinit();
+    try expectValid(&solid);
+    var standing = try stoodUp(&apart, &diag);
+    defer standing.deinit();
+    var ring = try sweep.revolve(testing.allocator, &standing, .{ 0, 0, 0 }, .{ 0, 0, 1 }, 2.0 * std.math.pi, .{}, &diag);
+    defer ring.deinit();
+    try expectValid(&ring);
+}
+
 /// The sketch stood up in the xz-plane: its x the radius, its y the height (what KupCAD
 /// revolves about z).
 fn stoodUp(sketch: *const Body, diag: *Diagnostics) !Body {

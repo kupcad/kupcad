@@ -546,9 +546,12 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
   four faces. A swept face takes its surface record as the interner gives it, which may
   be another face's facing the other way (a plane, `Builder.facingPlane`) or placed
   from another generator (a cone's or a cylinder's `v` read from the record's origin)
-  (2026-11-12: the examples `parabolic_dish` and `planetary_gearbox`). A full turn of a
-  region with a hole sweeps a cavity, its shell a void (`primitives.markVoids`, the
-  boolean's rule: a shell enclosing negative volume).
+  (2026-11-12: the examples `parabolic_dish` and `planetary_gearbox`). One region through
+  a vertex twice (a hole touching its side, a slit) sweeps one solid touching itself,
+  along the line or the circle: refused, `pinched`, by the rule the boolean refuses by
+  (`overlap.refusePinched`; Leo, 2026-11-14). A full turn of a region with a hole sweeps a
+  cavity, its shell a void (`primitives.markVoids`, the boolean's rule: a shell enclosing
+  negative volume).
 - Loft and sweep along a path (later): NURBS skinning (A10, §10.3) and the exact
   translational sweep (10.17); the general sweep is approximated by skinning placed
   profiles with the projection-normal frame (A10.1).
@@ -734,10 +737,12 @@ importing only those before it, which the layering test holds):**
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of
   material about it into one edge per solid (`EdgeSpec.copy`); a shell of negative volume
-  a void (`primitives.markVoids`). Shells of one solid touch nowhere (`overlap.Solids`: a void the innermost
-  outer shell around a point inside one of its faces): a touch point whose face piece and
-  faces about the vertex are of one solid, a vertex whose faces are two fans of one solid,
-  or two edges along one line of one solid, is a pinch and refused (`pinched`); then the
+  a void (`primitives.markVoids`). Shells of one solid touch nowhere (`overlap.Solids`: a
+  void the innermost outer shell around a point inside one of its faces): a touch point
+  whose face piece and faces about the vertex are of one solid, or where the body touches
+  itself inside one solid (`overlap.pinchOf`, the one rule the sweeps refuse by too: a
+  vertex whose faces are two fans of one solid, or two edges along one curve of one
+  solid), is a pinch and refused (`pinched`); then the
   checker's structural level on the assembled body, so no Euler operator runs on a body it
   fails (a fuzz find: a pinch the paves missed tripped `kef`'s debug check). Then `simplify.zig` (`kef` across edges between faces on one plane record of one
   sense and attribute, never across an edge with a copy, whose line the touching solid
