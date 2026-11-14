@@ -720,18 +720,22 @@ const Filler = struct {
 
     /// Every merged vertex against the faces of either operand near it (the minimum feature
     /// size, architecture §3; Hoffmann p.117: tests within a tolerance are not transitive).
-    /// A vertex inside a face of an operand, clear of its boundary, and within the
-    /// intersection tolerance and its gap of another face of that operand, inside it or on
-    /// its boundary, has two faces of one operand coming within the tolerance of each other
-    /// away from where they meet: features closer than twice the tolerance. No decision of
-    /// the tolerance makes them consistent, whether the paves put the vertex on the second
-    /// face or not: there, the face–face sections of the two faces run through one vertex
-    /// the tolerance from where either truly crosses (the result's faces did not pair); not
-    /// there, the result has a vertex on a face it does not touch (or, put on the face late,
-    /// a slit into it). Refused (`below_feature_size`). The solids fuzzer (2026-11-14): a
-    /// hull's wedge 42° open at its edge, the edge 3e-4 under a plate's bottom at an
-    /// intersection tolerance of 2e-4; the plate's edge crossed one side of the wedge 1.87e-4
-    /// from the other side's plane and 2.31e-4 from where it crossed that side.
+    /// A vertex within the intersection tolerance and its gap of two faces of one operand,
+    /// each inside it or on its boundary, must be within that reach of where the two meet,
+    /// an edge or a vertex of both: else the two faces come within the tolerance of each
+    /// other away from where they meet, features closer than twice the tolerance, and no
+    /// decision of the tolerance makes them consistent. Refused (`below_feature_size`). The
+    /// solids fuzzer (2026-11-14): a hull's wedge 42° open at its edge, the edge 3e-4 under
+    /// a plate's bottom at an intersection tolerance of 2e-4, the plate's edge crossing one
+    /// side 1.87e-4 from the other's plane (on one side, inside the other: the sections of
+    /// the two ran through one vertex the tolerance from where either truly crosses, or the
+    /// result had a vertex on a face it does not touch); and a box's corner 1e-5 from a
+    /// plate's front and 2e-4 less a hair from its side, near the boundary of each in its
+    /// own plane but 2.0025e-4 from the edge between them (the faces' imprints disagreed).
+    /// So too a vertex inside a face by its distance from the face's boundary but within
+    /// reach of the boundary by its foot on the face's plane: the face's imprint, in that
+    /// plane, has it on the boundary (the box's corner 1e-5 from the plate's side's edge
+    /// there, and its edge imprinted on the side then welded onto that edge).
     fn featureSize(self: *Filler) Error!void {
         const p = self.p;
         for (0..p.points.items.len) |i| {
@@ -740,23 +744,62 @@ const Filler = struct {
             const reach = p.tol.xsect + p.gaps.items[v];
             for (0..2) |k| {
                 const near = try self.facesNear(k, q);
-                var on: usize = 0;
-                var inside: ?types.FaceIndex = null;
-                var other: ?struct { face: types.FaceIndex, height: f64 } = null;
+                var on: [near.items.len]types.FaceIndex = undefined;
+                var count: usize = 0;
                 for (near.items[0..near.count]) |item| {
                     const f = self.faces[k][item];
                     const height = @abs(planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?).height(q));
                     if (!try self.within(height, reach, .of(.face, @backingInt(f)))) continue;
                     const place = try self.placeIn(k, f, q, v);
                     if (place == .outside) continue;
-                    on += 1;
-                    if (place == .inside and inside == null) inside = f else other = .{ .face = f, .height = height };
+                    if (place == .inside) {
+                        const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?);
+                        const foot = vec.addScaled(q, plane.n, -plane.height(q));
+                        const from_foot = try in_face.boundaryDistance(self.body(k), f, foot, self.diag);
+                        if (try self.within(from_foot, reach, .of(.face, @backingInt(f)))) return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .measured = from_foot, .threshold = reach });
+                    }
+                    on[count] = f;
+                    count += 1;
                 }
-                if (on < 2 or inside == null) continue;
-                const second = other.?;
-                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(second.face)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .measured = second.height, .threshold = reach });
+                for (on[0..count], 0..) |a, x| for (on[x + 1 .. count]) |b| {
+                    if (try self.meetNear(k, a, b, q, reach)) continue;
+                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(b)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .threshold = reach });
+                };
             }
         }
+    }
+
+    /// Whether faces `a` and `b` of operand `k` meet within `reach` of `q`: along an edge
+    /// both use, or at a vertex both use.
+    fn meetNear(self: *Filler, k: usize, a: types.FaceIndex, b: types.FaceIndex, q: Vec3, reach: f64) Error!bool {
+        const body_k = self.body(k);
+        var loops = traverse.Loops.init(body_k, a);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const coedge = body_k.coedge(c);
+                // An edge of both: its other coedge in `b`
+                if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == b) {
+                    if (try self.within(in_face.edgeDistance(body_k, coedge.edge, q), reach, .of(.face, @backingInt(b)))) return true;
+                }
+                // A vertex of both
+                const corner = body_k.coedgeStart(c);
+                if (try self.faceHasVertex(k, b, corner) and try self.within(vec.distance(body_k.point(corner), q), reach, .of(.face, @backingInt(b)))) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Whether vertex `v` of operand `k` is a corner of face `f`.
+    fn faceHasVertex(self: *Filler, k: usize, f: types.FaceIndex, v: types.VertexIndex) Error!bool {
+        const body_k = self.body(k);
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            if (body_k.loop(l).vertex == v) return true;
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| if (body_k.coedgeStart(c) == v) return true;
+        }
+        return false;
     }
 
     // --- edge–face ---

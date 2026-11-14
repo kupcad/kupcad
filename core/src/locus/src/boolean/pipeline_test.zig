@@ -1035,18 +1035,15 @@ fn fuzzPlaced(t: Tolerance, size: Vec3, lo: Vec3, axis: Vec3, turn: f64, move: V
     return transform.transform(testing.allocator, &shape, &place, .{}, &diag);
 }
 
-test "boolean: a section across a sliver one tolerance wide is imprinted on it; faces touching where a vertex reaches by its gap" {
+test "boolean: faces touching where a vertex reaches by its gap; the strip they leave, too thin to cut again, refused" {
     // The solids fuzzer's draws at the tolerance (2026-11-14): a box and a plate 1.95e-4
     // apart at an intersection tolerance of 2e-4 leave, united, a strip 2.05e-4 wide on the
-    // box's top, and a merged vertex with a gap of 9.75e-5 at its end. A box turned at the
-    // angular tolerance and moved the tolerance off the first box's back crosses the strip.
-    // The section across it, both ends on its long sides and its middle within the
-    // tolerance of both, was taken for the strip's boundary and not imprinted: the strip,
-    // whole, straddled the turned box, its ray said outside, and contagion carried that to
-    // the piece of the first box's back the turned box covers (an edge of three faces,
-    // refused). The chain moved whole (a quarter turn's half about (1, 2, 3), then far out):
-    // a face's edge from the merged vertex lies in its neighbour's plane by the vertex's
-    // gap, and the overlap rule did not give the vertex's own end that gap
+    // box's top, and a merged vertex with a gap of 9.75e-5 at its end. Moved whole (a
+    // quarter turn's half about (1, 2, 3), then far out), a face's edge from that vertex
+    // lies in its neighbour's plane by the vertex's gap, and the overlap rule did not give
+    // the vertex's own end that gap. A box turned at the angular tolerance across the strip
+    // is refused: the vertex reaches the box's left face and the plate's bottom, which meet
+    // nowhere near it, features closer than twice the tolerance
     const zone_4 = Tolerance.fromZone(1e-4);
     var a = try fuzzPlaced(tol, .{ 2, 1, 2 }, .{ 2, 3, 0 }, vec.Z3, 0, .{ 0, -1, 0 }, .{ -5e-6, 0, -5e-6 });
     defer a.deinit();
@@ -1068,8 +1065,31 @@ test "boolean: a section across a sliver one tolerance wide is imprinted on it; 
         var both = try sound(&operands[0], &operands[1], .@"union");
         defer both.deinit();
         for ([_]Op{ .@"union", .intersection, .difference }) |op| {
-            var result = try sound(&both, &operands[2], op);
-            result.deinit();
+            diag.clear();
+            try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &both, &operands[2], op, .{}, &diag, null));
+            try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
         }
     }
+}
+
+test "boolean: a section across a strip a little over the tolerance wide is imprinted on it, though its ends and middle are on the strip's boundary" {
+    // A step 1.025 intersection tolerances high (its riser a strip that wide), crossed by
+    // a box's face: the section across the riser has both ends on its long sides and its
+    // middle within the tolerance of both, and was taken for the strip's boundary, the
+    // strip left whole across the box. A piece is the boundary only where a run of the
+    // face's own pave blocks joins its ends within reach of it (OCCT's IsExistingPaveBlock)
+    const w = 1.025 * tol.xsect;
+    var low = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer low.deinit();
+    var high = try box(.{ 1, 0, 0 }, .{ 2, 1, 1 - w });
+    defer high.deinit();
+    var step = try sound(&low, &high, .@"union");
+    defer step.deinit();
+    var b = try box(.{ 0.5, 0.5, 0.5 }, .{ 1.5, 2, 2 });
+    defer b.deinit();
+    for ([_]Op{ .@"union", .intersection, .difference }) |op| {
+        var result = try sound(&step, &b, op);
+        result.deinit();
+    }
+    try expectIdentities(&step, &b);
 }

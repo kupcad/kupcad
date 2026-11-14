@@ -740,7 +740,9 @@ test "degeneracy: a hull's vertex the zone from a box's edge, near where a hull'
     // y = 4, and a hull edge from it crosses that edge 4.1e-5 along: both points within the
     // intersection tolerance of both edges, the edges shared the piece between them, 14
     // degrees off each, and the faces about it were ordered by noise (an edge of four
-    // coedges that did not pair). Two edges at an angle share no piece: refused
+    // coedges that did not pair). Two edges at an angle share no piece: refused, now
+    // before the edges' pieces are paired, by the minimum feature size: the intersection's
+    // vertex lies within the tolerance of two of its faces that meet nowhere near it
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const points = [_]Vec3{ .{ 2, 2, 3 }, .{ 4, 3, 4 }, .{ 2, 3, 3 }, .{ 1, 0, 3 }, .{ 1, 1, 2 }, .{ 4, 4, 0 }, .{ 3, 2, 3 }, .{ 4, 1, 4 } };
@@ -755,8 +757,8 @@ test "degeneracy: a hull's vertex the zone from a box's edge, near where a hull'
     defer piece.deinit();
     var post = try box(.{ 2.5, 0, -1 }, .{ 3.5, 4, 3 });
     defer post.deinit();
-    try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, &piece, &post, .@"union", .{}, &diag, null));
-    try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &piece, &post, .@"union", .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
 }
 
 test "degeneracy: a vertex the intersection tolerance off a face, its edge leaving it at a shallow angle" {

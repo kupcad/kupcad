@@ -1847,6 +1847,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 0 2 4 3 4 0 2 3 1 4 -2 4 8 2 1 2 2 3 1 4 2 4 3 3 9 5 12 15 0",
         "solids 0 2 4 3 4 0 2 3 1 4 -2 4 8 2 1 2 2 3 1 4 2 4 3 3 9 5 12 15 0 3 0 1 4 3 4 0 3 0 3 4 2 14 11 -2 4 0 3 2 2",
         "solids 2 2 3 0 3 0 3 0 1 7 1 1 13 5 9 1 1 1 5 0 0 0 1 0 3 1 3 4 4 1 0 0 1 3 2 2 14 11 10 7 2",
+        // The plain run under wasm (2026-11-14, the queue on 19616074): a box's corner 1e-5
+        // from a plate's front and 2e-4 less a hair from its side, inside the side by its
+        // distance from the side's edge (2.0025e-4) and on it by its foot (1e-5): its edge
+        // imprinted on the side, welded onto the side's edge there, the imprints apart
+        "solids 0 2 4 3 4 1 4 0 0 8 1 -1 5 -1 1 0 4 3 1 1 6 2 1 2 3 4 1 3 4 2 0 3 1 3 2 4 1 1 0 2 2 0 3 4 1 2 2 3 2 1 2 2 4 1 2 3 0 2 2 2 10 -2 5 13 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
