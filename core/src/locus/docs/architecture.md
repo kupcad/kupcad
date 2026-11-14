@@ -717,7 +717,16 @@ importing only those before it, which the layering test holds):**
   other operand are one component, which one ray classifies and a second, from its second
   fragment, checks (a disagreement is refused); the report counts rays, fragments by
   contagion and checks, and `Options.contagion = false` casts a ray from every fragment.
-  A coplanar fragment's first sample on no partner's boundary decides it.
+  A coplanar fragment's first sample on no partner's boundary decides it. Since
+  2026-11-14 (the 10K fuzz session; Leo): a fragment of the other operand over the same
+  pieces is a twin whatever planes the two faces lie in (OCCT's same-domain faces by their
+  edges: a strip of a face in the band where another face rising at 26.6° stays within the
+  tolerance of it was imprinted alike on both), and a fragment none of whose samples is
+  clear of the other's boundary takes its side from the faces about a piece of its
+  boundary lying on the other's (OCCT's IsInternalFace: behind the other's face it is a
+  section with, or in the wedge of material between the two faces of the other's edge it
+  is a piece of; a tetrahedron's tip 2.45e-5 through a face leaves a section 8.7e-6 in
+  inradius), `unclassified` only when no piece decides or two disagree.
 - `select.zig`: Mäntylä's table, a coincident face kept once, from `a`.
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge

@@ -1932,6 +1932,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // lying on it, one plane; the operands swapped, the group took the second plate's
         // plane, which held the first's corners but not the hull's edge (2.4e-5 off)
         "solids 3 0 2 0 2 4 4 1 4 3 1 2 1 0 7 5 6 3 1 1 7 0 2 3 1 0 4 4 4 3 4 0 0 0 3 2 1 0 2 0 2 2 1 3 2 3 3 9 0 1 3 0 2 4 1 2 0 3 4 2 0 3 1 1 1 2 14 0",
+        // Its fourth run (locus_solids): a hull's ridge in a box's side 2.5e-5 over the
+        // side's edge, its face rising at 26.6°; the strip between lies within the tolerance
+        // of that face, imprinted alike on both, no sample of it clear (twins now, whatever
+        // their planes)
+        "solids 0 2 4 2 3 3 4 1 3 14 2 4 3 3 2 2 0 1 3 4 1 2 1 3 3 2 4 15 0 3 1 8 1 2 1 2 1 2 1 3 4 1 2 4 0 1 4 2 0 4 0 1 0 2 4 2 2 3 1 4 0 4 0 2 1 7 4 4 3 2 3 4 4 0 1 0 0 1 3 3 1 2 3 3 0 3 1 0 1 1 3 6 0 9 14 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -666,6 +666,49 @@ test "degeneracy: a plate's bottom a hair under another's, one plane: the plane 
     try helpers.expectIdentitiesAtTolerance(&first, &upper);
 }
 
+test "degeneracy: a strip of a face under the other's face rising at 26.6°, no sample clear of it, takes its side from the faces at its section" {
+    // The 10K fuzz session's fourth run (2026-11-14, locus_solids), reduced: a hull's
+    // ridge lies in a box's side 2.5e-5 above the side's bottom edge, its far face rising
+    // from it at 26.6° to the side. The strip of the side under the ridge is inside the
+    // hull, but no point of it is farther than 1.1e-5 from the hull's face, so every sample
+    // lay within the zone of its boundary (`unclassified`). A fragment bordering a piece of
+    // the other's boundary takes its side from the faces there (OCCT's IsInternalFace; Leo,
+    // 2026-11-14): under the ridge, behind both the hull's faces, it is inside.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try box(.{ 1.998, 3, 2.999995 }, .{ 3.998, 4, 3.999995 });
+    defer a.deinit();
+    var b = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ 1.99999, 3, 0.00002 }, .{ 3.99999, 0, 3.00002 }, .{ -0.00001, 0, 3.00002 }, .{ -0.00001, 4, 1.00002 }, .{ 3.99999, 3, 3.00002 }, .{ 0.99999, 3, 3.00002 } }, &diag);
+    defer b.deinit();
+    try expectProbe(&a, &b);
+}
+
+test "degeneracy: a tetrahedron's tip through a box's top by 2.45e-5, its section's every sample within the zone of it, takes its side from the faces at its sections" {
+    // The section of a regular tetrahedron's tip 2.45e-5 through the top is an equilateral
+    // triangle 3e-5 a side (past the intersection tolerance) and 8.7e-6 in inradius, so no
+    // sample of it, nor of the tip's faces under the top, is farther than the zone from the
+    // other operand; neither has a twin. Each takes its side from the faces about its
+    // pieces (OCCT's IsInternalFace; Leo, 2026-11-14): the top's triangle behind the tip's
+    // three faces, inside; the tip's faces under the top, inside. Made, or refused for the
+    // slivers left, never unclassified.
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    const depth = 2.45e-5;
+    // A regular tetrahedron of height 1 standing on its tip: its base's circumradius √2/2
+    const r = @sqrt(2.0) / 2.0;
+    var corners: [4]Vec3 = undefined;
+    corners[0] = .{ 0.5, 0.5, 1 - depth };
+    for (0..3) |k| {
+        const angle = std.math.pi / 2.0 + @as(f64, @floatFromInt(k)) * 2.0 * std.math.pi / 3.0;
+        corners[k + 1] = .{ 0.5 + r * @cos(angle), 0.5 + r * @sin(angle), 2 - depth };
+    }
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var tip = try @import("../construct/hull.zig").hull(testing.allocator, tol, &corners, &diag);
+    defer tip.deinit();
+    try expectProbe(&a, &tip);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

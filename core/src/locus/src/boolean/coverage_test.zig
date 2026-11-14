@@ -25,6 +25,7 @@ const geometry = @import("../geometry/types.zig");
 const pave = @import("pave.zig");
 const imprint = @import("imprint.zig");
 const classify = @import("classify.zig");
+const in_face = @import("../query/in_face.zig");
 const select = @import("select.zig");
 const pipeline = @import("pipeline.zig");
 const trim = @import("trim.zig");
@@ -413,8 +414,10 @@ fn paveDropped(cov: *Coverage) !void {
 }
 
 fn coplanarForgotten(cov: *Coverage) !void {
-    // Boxes sharing their top and bottom planes, the paves' record of it dropped: the
-    // shared faces' pieces lie on the other operand's boundary and on none of its faces
+    // Boxes sharing their top and bottom planes, the paves' record of it dropped and the
+    // second's fragments of those planes too: the shared faces' pieces lie on the other
+    // operand's boundary, with no twin over the same pieces and no face of the other but
+    // in their plane to take a side from
     var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
     defer a.deinit();
     var b = try box(.{ 1, 1, 0 }, .{ 3, 3, 2 });
@@ -426,6 +429,12 @@ fn coplanarForgotten(cov: *Coverage) !void {
     paves.coplanar.clearRetainingCapacity();
     var fragments = try imprint.run(testing.allocator, &paves, .{}, &diag);
     defer fragments.deinit();
+    var k: usize = 0;
+    while (k < fragments.items.items.len) {
+        const fragment = fragments.items.items[k];
+        const up = in_face.outwardNormal(&b, types.FaceIndex.of(fragment.face), .{ 0, 0 })[2];
+        if (fragment.operand == 1 and @abs(up) == 1) _ = fragments.items.orderedRemove(k) else k += 1;
+    }
     var stats: classify.Stats = .{};
     const classes = classify.run(testing.allocator, &paves, &fragments, .{}, true, &diag, &stats);
     if (classes) |c| {

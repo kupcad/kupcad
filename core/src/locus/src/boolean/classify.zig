@@ -10,9 +10,10 @@
 //! opposed, never by a ray; one with no twin that its samples put inside a partner face is
 //! the two imprints disagreeing, refused. The others are inside or outside the other
 //! operand by `query/point_in_body.zig`'s rays, one for each connected component of them
-//! (contagion, research/truck.md §3) and a second that must agree; a fragment with no
-//! candidate off the other operand's boundary is a contradiction of the paves
-//! (`unclassified`), refused.
+//! (contagion, research/truck.md §3) and a second that must agree. A fragment with no
+//! candidate off the other operand's boundary takes its side from the faces about a piece
+//! of its boundary lying on the other's (`byDihedral`, OCCT's IsInternalFace); one with
+//! none is a contradiction of the paves (`unclassified`), refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -85,37 +86,29 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     var samples: std.ArrayList(Vec3) = .empty;
     defer samples.deinit(allocator);
 
-    // The fragments of faces in one plane with faces of the other operand: each region's
-    // pieces, sorted, to find its twin by
-    var coplanar: std.ArrayList(u32) = .empty;
-    defer coplanar.deinit(allocator);
+    // Every fragment's pieces, sorted: a fragment of the other operand over the same pieces
+    // between merged vertices is its twin, the same region within the tolerance whatever
+    // planes the two faces lie in (OCCT's same-domain faces, by their edges): a strip of a
+    // face in the band where another face rising at 26.6° stays within the tolerance of it
+    // was imprinted alike on both, and no sample of it was clear of the other (the 10K fuzz
+    // session, 2026-11-14)
     var pieces: std.ArrayList([2]u32) = .empty;
     defer pieces.deinit(allocator);
-    var ranges: std.ArrayList([2]u32) = .empty;
-    defer ranges.deinit(allocator);
-    for (fragments.items.items, 0..) |fragment, i| {
-        try paves.coplanarWith(fragment.operand, fragment.face, &partners);
-        if (partners.items.len == 0) continue;
-        try coplanar.append(allocator, @intCast(i));
+    const ranges = try allocator.alloc([2]u32, n);
+    defer allocator.free(ranges);
+    for (ranges, 0..) |*range, i| {
         const start: u32 = @intCast(pieces.items.len);
         try piecesOf(allocator, fragments, i, &pieces);
-        try ranges.append(allocator, .{ start, @intCast(pieces.items.len) });
+        range.* = .{ start, @intCast(pieces.items.len) };
     }
-    for (coplanar.items, ranges.items) |i, range| {
+    const twin_of = try twins(allocator, fragments, pieces.items, ranges);
+    defer allocator.free(twin_of);
+    for (fragments.items.items, 0..) |fragment, i| {
         try options.checkCancel();
-        const fragment = fragments.items.items[i];
-        try paves.coplanarWith(fragment.operand, fragment.face, &partners);
-        const own = pieces.items[range[0]..range[1]];
-        const twin: ?u32 = for (coplanar.items, ranges.items) |j, other_range| {
-            const other = fragments.items.items[j];
-            if (other.operand == fragment.operand) continue;
-            if (std.mem.indexOfScalar(u32, partners.items, other.face) == null) continue;
-            if (samePieces(own, pieces.items[other_range[0]..other_range[1]])) break j;
-        } else null;
         const body = paves.operands[fragment.operand];
         const f = types.FaceIndex.of(fragment.face);
-        if (twin) |j| {
-            const g = fragments.items.items[j].face;
+        if (twin_of[i] != NONE) {
+            const g = fragments.items.items[twin_of[i]].face;
             const other_body = paves.operands[1 - fragment.operand];
             const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
             const n_g = in_face.outwardNormal(other_body, types.FaceIndex.of(g), .{ 0, 0 });
@@ -123,8 +116,11 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             decided[i] = true;
             continue;
         }
-        // No twin: a fragment of the face outside its partners, which a ray classifies,
-        // unless its samples put it inside one, where the other imprint has no region
+        // No twin, of a face in one plane with faces of the other: a fragment outside its
+        // partners, which a ray classifies, unless its samples put it inside one, where the
+        // other imprint has no region
+        try paves.coplanarWith(fragment.operand, fragment.face, &partners);
+        if (partners.items.len == 0) continue;
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
         if (try sameDomain(paves, body, f, 1 - fragment.operand, samples.items, partners.items, diag) != null)
             return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, fragment.face), .label = "a fragment of a face in one plane with the other operand's, inside one of them, with no fragment of it over the same pieces: the two imprints disagree" });
@@ -155,7 +151,9 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             continue;
         }
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
-        const class = try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag);
+        const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag)) orelse
+            (try byDihedral(paves, fragments, i, diag)) orelse
+            return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
         stats.rays += 1;
         classes[i].class = class;
         if (class_of[root] == NO_CLASS) {
@@ -179,8 +177,9 @@ fn samplesOf(allocator: std.mem.Allocator, paves: *const Paves, fragments: *cons
 
 /// Inside or outside the other operand, by rays from the first of `samples` off its
 /// boundary (in a sliver one tolerance wide the clearest sample is within the zone of the
-/// other's face that bounds it, and the next is not; 2026-11-13).
-fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!Class {
+/// other's face that bounds it, and the next is not; 2026-11-13); null when every sample
+/// lies on it.
+fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
     const other = 1 - fragment.operand;
     for (samples) |p| {
         switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
@@ -189,7 +188,91 @@ fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]i
             .boundary => continue,
         }
     }
-    return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
+    return null;
+}
+
+/// Fragment `i`'s side of the other operand when no sample of it is clear of the other's
+/// boundary, by the faces about a piece of its boundary lying on the other's, as OCCT's
+/// `BOPTools_AlgoTools::IsInternalFace` takes a split face's state from the dihedral at a
+/// section edge (Leo, 2026-11-14): the direction from the piece into the fragment (square
+/// to it in the fragment's plane, the loop having the fragment on its left) against the
+/// other's face the piece is a section with, behind which is inside, or against the wedge
+/// of material between the other's two faces along the edge the piece is a piece of.
+/// Width plays no part: a strip 2.5e-5 wide under a face rising from its section at 26.6°
+/// has no point farther than 1.1e-5 from it, within the zone that `point_in_body` takes
+/// for on the boundary (the 10K fuzz session). Null when no piece decides (none lies on
+/// the other, or the faces there are in one plane within the angular tolerance) or two
+/// pieces disagree.
+fn byDihedral(paves: *const Paves, fragments: *const Fragments, i: usize, diag: *Diagnostics) Error!?Class {
+    const fragment = fragments.items.items[i];
+    const normal = in_face.outwardNormal(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face), .{ 0, 0 });
+    var found: ?Class = null;
+    for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
+        for (vertices, 0..) |x, k| {
+            const y = vertices[(k + 1) % vertices.len];
+            const into = vec.normalized(vec.cross(normal, vec.sub(paves.point(y), paves.point(x)))) orelse continue;
+            const class = (try pieceSide(paves, 1 - fragment.operand, x, y, normal, into, diag)) orelse continue;
+            if (found) |c| {
+                if (c != class) return null;
+            } else found = class;
+        }
+    }
+    return found;
+}
+
+/// The side of operand `other` that direction `into` leaves the piece from merged vertex
+/// `x` to `y` towards, in a face of normal `normal`: by the material between the two faces
+/// of `other`'s edge the piece is a piece of (behind both at a convex edge, behind either
+/// at a concave one), else by the face of `other` it is a section with; null for a piece
+/// on neither, or a face there in one plane with the fragment's.
+fn pieceSide(paves: *const Paves, other: u1, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+    const body = paves.operands[other];
+    const angle = paves.tol.angle;
+    for (paves.edge_paves[other], 0..) |list, e| {
+        if (list.items.len < 2) continue;
+        for (list.items[0 .. list.items.len - 1], list.items[1..]) |u, w| {
+            if (!((u.vertex == x and w.vertex == y) or (u.vertex == y and w.vertex == x))) continue;
+            const edge = body.edge(types.EdgeIndex.of(e));
+            const line = switch (body.geometry.curve(edge.curve)) {
+                .line => |l| l,
+                else => return null,
+            };
+            const first = edge.coedge;
+            const second = body.coedge(first).partner;
+            if (first == .none or second == .none) return corrupt(diag);
+            const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
+            const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
+            if (inOnePlane(normal, n1, angle) or inOnePlane(normal, n2, angle)) return null;
+            // Convex when the second face turns behind the first along the first's loop
+            const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
+            const convex = vec.dot(vec.cross(n1, n2), along) > 0;
+            const behind_first = vec.dot(into, n1) < 0;
+            const behind_second = vec.dot(into, n2) < 0;
+            const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
+            return if (inside) .inside else .outside;
+        }
+    }
+    const segment: [2]u32 = .{ @min(x, y), @max(x, y) };
+    for (paves.sections[other], 0..) |list, g| {
+        for (list.items) |s| {
+            if (s[0] != segment[0] or s[1] != segment[1]) continue;
+            const n_g = in_face.outwardNormal(body, types.FaceIndex.of(g), .{ 0, 0 });
+            if (inOnePlane(normal, n_g, angle)) return null;
+            return if (vec.dot(into, n_g) < 0) .inside else .outside;
+        }
+    }
+    return null;
+}
+
+/// Whether unit normals `a` and `b` are of one plane within the angular tolerance `angle`
+/// (`1 − cos`), either way round.
+fn inOnePlane(a: Vec3, b: Vec3, angle: f64) bool {
+    return 1 - @abs(vec.dot(a, b)) <= angle;
+}
+
+fn corrupt(diag: *Diagnostics) Error {
+    return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the other operand" });
 }
 
 /// Joins in `parent` the undecided fragments of one operand that share an edge piece
@@ -289,10 +372,55 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 /// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
 /// Whether two fragments' sorted pieces are the same pieces (compared by their vertices:
 /// `std.mem.eql` of arrays does not compile in the fuzzer's LLVM build).
-fn samePieces(a: []const [2]u32, b: []const [2]u32) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| if (x[0] != y[0] or x[1] != y[1]) return false;
-    return true;
+/// Each fragment's twin (`NONE` for none): the one fragment of the other operand over the
+/// same pieces (`ranges` into `pieces`, each fragment's sorted), when the pieces are one
+/// fragment's of each operand.
+fn twins(allocator: std.mem.Allocator, fragments: *const Fragments, pieces: []const [2]u32, ranges: []const [2]u32) Error![]u32 {
+    const n = ranges.len;
+    const twin_of = try allocator.alloc(u32, n);
+    errdefer allocator.free(twin_of);
+    @memset(twin_of, NONE);
+    const order = try allocator.alloc(u32, n);
+    defer allocator.free(order);
+    for (order, 0..) |*x, i| x.* = @intCast(i);
+    const ByPieces = struct {
+        pieces: []const [2]u32,
+        ranges: []const [2]u32,
+        fn of(ctx: @This(), i: u32) []const [2]u32 {
+            return ctx.pieces[ctx.ranges[i][0]..ctx.ranges[i][1]];
+        }
+        fn lessThan(ctx: @This(), x: u32, y: u32) bool {
+            return switch (comparePieces(ctx.of(x), ctx.of(y))) {
+                .lt => true,
+                .gt => false,
+                .eq => x < y,
+            };
+        }
+    };
+    const ctx: ByPieces = .{ .pieces = pieces, .ranges = ranges };
+    std.mem.sort(u32, order, ctx, ByPieces.lessThan);
+    var start: usize = 0;
+    while (start < n) {
+        var end = start + 1;
+        while (end < n and comparePieces(ctx.of(order[start]), ctx.of(order[end])) == .eq) end += 1;
+        defer start = end;
+        if (end - start != 2) continue;
+        const x = order[start];
+        const y = order[start + 1];
+        if (fragments.items.items[x].operand == fragments.items.items[y].operand) continue;
+        twin_of[x] = y;
+        twin_of[y] = x;
+    }
+    return twin_of;
+}
+
+/// Two fragments' sorted pieces in lexicographic order.
+fn comparePieces(a: []const [2]u32, b: []const [2]u32) std.math.Order {
+    for (a[0..@min(a.len, b.len)], b[0..@min(a.len, b.len)]) |x, y| {
+        if (x[0] != y[0]) return std.math.order(x[0], y[0]);
+        if (x[1] != y[1]) return std.math.order(x[1], y[1]);
+    }
+    return std.math.order(a.len, b.len);
 }
 
 /// Fragment `i`'s pieces between merged vertices, each as its two vertices (the lesser
