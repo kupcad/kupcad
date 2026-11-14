@@ -15,7 +15,7 @@
 //! - A vertex with two edges on one line meeting end to end goes (`kevJoin`, the edges
 //!   one): pieces of one curve record, or of two lines the same within the tolerance (the
 //!   angle, and the far end of the one on the other within the intersection tolerance,
-//!   decided with D27's band), the second then given the first's line (OCCT's
+//!   decided with D27's band, either way round), the one then given the other's line (OCCT's
 //!   `UnifySameDomain` joining edges through two-valent vertices). The boolean gives each
 //!   edge its source's line (D28), so pieces of two operands' edges meet so.
 //! - An edge no longer than the minimum feature size (`check.shortest`, measured as the
@@ -263,11 +263,18 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
         const e1 = body.edge(second);
         if (e0.curve.kind != .line or e1.curve.kind != .line) continue;
         if (!e0.curve.eql(e1.curve)) {
-            // Two lines: one when the same within the tolerance, the later edge given the
-            // earlier's line
-            const keep, const move = if (@backingInt(first) < @backingInt(second)) .{ first, second } else .{ second, first };
-            if (!try sameLine(body, keep, move, diag)) continue;
-            rebase(body, move, body.edge(keep).curve);
+            // Two lines: one when either holds the other edge within the tolerance, that
+            // edge then given its line, the earlier edge's line tried first. Either way
+            // round, as one line is: the earlier alone made the joining hang on the edges'
+            // numbering, the operands' order (two lines 9.4e-5 rad apart, the later holding
+            // the earlier edge's far end 1.7e-5 off and not the other way: an edge joined in
+            // A ∪ B and not in B ∪ A, the 10K fuzz session, 2026-11-15)
+            const lo, const hi = if (@backingInt(first) < @backingInt(second)) .{ first, second } else .{ second, first };
+            if (try sameLine(body, lo, hi, diag)) {
+                rebase(body, hi, body.edge(lo).curve);
+            } else if (try sameLine(body, hi, lo, diag)) {
+                rebase(body, lo, body.edge(hi).curve);
+            } else continue;
         }
         // A coedge arriving at the vertex, from the edge that runs into it along the line
         for (leaving[0..2]) |out| {

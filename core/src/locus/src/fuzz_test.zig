@@ -1919,6 +1919,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the block's plane taken, the wall's side moved 1.75e-5 from its cavity's side (2.5e-5
         // before): the union's void touched its outer shell
         "solids 3 0 2 1 0 2 4 0 1 2 2 4 2 3 4 3 15 3 2 0 3 4 2 3 3 4 1 3 5 -1 9 10 0 3 1 6 1 1 3 3 2 1 3 4 2 1 3 4 4 4 3 3 3 1 3 2 14 -2 10 2 2 2 3 1 0 3 1 3 2 0 4 1 0 2 2 -2 4 3 1 2 10 1",
+        // Its seventh run, the operands swapped (locus): two lines 9.4e-5 rad apart meeting
+        // end to end, joined in A ∪ B and not in B ∪ A, the joining asking only the earlier
+        // edge's line
+        "solids 1 4 0 0 1 3 3 1 0 3 1 3 0 2 3 0 1 2 2 2 7 13 3 2 2 1 7 1 2 3 2 4 2 0 2 2 2 0 0 1 2 3 2 2 4 0 4 3 0 3 7 0 1 1 1 7 3 10 4 1 1 0 1 3 0 4 2 3 0 1 6 1 12 9 0 15 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
