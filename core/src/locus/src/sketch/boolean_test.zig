@@ -248,3 +248,30 @@ test "sketch booleans: a lens beside two arcs rising either way from one lowest 
     try testing.expectApproxEqAbs(ap + aq, areas[0] + areas[1], 1e-9);
     try testing.expectApproxEqAbs(ap - areas[1], areas[2], 1e-9);
 }
+
+test "even-odd fill: a sliver far from the origin is a face of its area, and the checker finds it wound as it is" {
+    // Slivers 9e6 out, their areas about the world's origin summed from terms of 3e13.
+    // The first's cycle summed to -0.002, not 0.0015, and was a hole of nothing; the
+    // second's loop, sampled by the checker (its UV the world's, the plane's frame at the
+    // origin), to -0.0117, not 0.0001, and was found wound backwards. Each summed about a
+    // point of its own
+    const slivers = [_]struct { at: Vec2, apex: Vec2, area: f64 }{
+        .{ .at = .{ 9000001.35, 3000003.15 }, .apex = .{ 0.5, 0.153 }, .area = 0.0015 },
+        .{ .at = .{ 9e6, 3e6 }, .apex = .{ 0.5, 0.1502 }, .area = 0.0001 },
+    };
+    for (slivers) |s| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        errdefer std.debug.print("sliver at ({d}, {d}): {f}\n", .{ s.at[0], s.at[1], &diag });
+        const sliver = [_]Vec2{ s.at, vec.add2(s.at, .{ 1, 0.3 }), vec.add2(s.at, s.apex) };
+        var sheet = try boolean.evenOdd(testing.allocator, tol, &.{&sliver}, &diag);
+        defer sheet.deinit();
+        try expectCounts(&sheet, 3, 3, 1, 1);
+        // The apex where its coordinates round it, 9.3e-10 at most
+        try testing.expectApproxEqAbs(s.area, try areaOf(&sheet), 1e-9);
+        var report = try @import("../topology/check.zig").run(testing.allocator, &sheet, .global);
+        defer report.deinit(testing.allocator);
+        if (report.first()) |f| std.debug.print("checker: {f}\n", .{f});
+        try testing.expect(report.ok());
+    }
+}

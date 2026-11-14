@@ -671,3 +671,26 @@ test "overlay: circles touching exactly meet at one vertex, crossing at two" {
     try testing.expectEqual(@as(usize, 1), at_touch);
     try expectPlanar(&o);
 }
+
+test "overlay: a sliver far from the origin is a face, its area as near the origin" {
+    // A cycle's signed area summed about the world's origin: a sliver 1e7 out summed
+    // terms of 1e14 to an area of 0, and a cycle of no area is no face. About a point
+    // of the cycle the sum is as near as anywhere else (D27's rule: from a local point)
+    const sliver = [_]Vec2{ .{ 0, 0 }, .{ 1, 0 }, .{ 0.5, 0.01 } };
+    var areas: [2]f64 = undefined;
+    for ([_]Vec2{ .{ 0, 0 }, .{ 1e7, 1e7 } }, &areas) |at, *area| {
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        _ = try o.addInput();
+        var ring: [3]Vec2 = undefined;
+        for (sliver, &ring) |p, *q| q.* = vec.add2(p, at);
+        try polygon(&o, &ring);
+        try o.run();
+        try expectPlanar(&o);
+        try testing.expectEqual(@as(usize, 1), o.faces.items.len);
+        area.* = areaWhere(&o, 1, null).area;
+    }
+    // The far sliver's apex is where its coordinates round it, 1.9e-9 at most
+    try testing.expectApproxEqAbs(@as(f64, 0.005), areas[0], 1e-15);
+    try testing.expectApproxEqAbs(areas[0], areas[1], 1e-9);
+}

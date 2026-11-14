@@ -744,12 +744,15 @@ fn uvGap(a: Vec2, b: Vec2, slack: Vec2, periods: [2]?f64) f64 {
     return worst;
 }
 
-/// Twice the signed area of a polygon in UV: positive counter-clockwise.
+/// Twice the signed area of a polygon in UV: positive counter-clockwise. Summed about its
+/// first point, so that the terms are as small as the polygon (a plane's frame may be far
+/// from the face: about UV's origin, a sliver 1e7 out summed to an area of 0).
 fn shoelace(points: []const Vec2) f64 {
     var area: f64 = 0;
+    const from = points[0];
     for (points, 0..) |p, i| {
         const q = points[(i + 1) % points.len];
-        area += p[0] * q[1] - q[0] * p[1];
+        area += vec.cross2(vec.sub2(p, from), vec.sub2(q, from));
     }
     return area;
 }

@@ -777,10 +777,11 @@ pub const Overlay = struct {
             const first: u32 = @intCast(self.cycle_halves.items.len);
             var area: f64 = 0;
             var h: u32 = @intCast(start);
+            const from = self.point(self.origin(h));
             while (self.cycle_of.items[h] == UNBOUNDED) : (h = self.next.items[h]) {
                 self.cycle_of.items[h] = id;
                 try self.cycle_halves.append(allocator, h);
-                area += self.areaTerm(h);
+                area += self.areaTerm(h, from);
             }
             // A cycle that runs each of its edges both ways (a tree of edges: collinear
             // points, a slit standing alone) bounds nothing, its area exactly 0; the sum's
@@ -802,11 +803,13 @@ pub const Overlay = struct {
     }
 
     /// Twice the half-edge's share of its cycle's area (Green's theorem): the chord's
-    /// `a × b`, plus an arc's segment `r² (θ − sin θ)` with the sign of its turn.
-    fn areaTerm(self: *const Overlay, half: u32) f64 {
+    /// `a × b` about `from`, a point of the cycle (about the world's origin, a sliver 1e7
+    /// out summed terms of 1e14 to an area of 0), plus an arc's segment `r² (θ − sin θ)`
+    /// with the sign of its turn.
+    fn areaTerm(self: *const Overlay, half: u32, from: Vec2) f64 {
         const a = self.point(self.origin(half));
         const b = self.point(self.target(half));
-        var twice = a[0] * b[1] - b[0] * a[1];
+        var twice = chordTerm(a, b, from);
         if (self.arcOf(half)) |arc| {
             const theta = arcSpan(a, b, arc).sweep;
             const segment = arc.r * arc.r * (theta - @sin(theta));
@@ -1006,6 +1009,13 @@ fn sampleAlong(a: Vec2, b: Vec2, arc: ?Arc, reach: f64) Vec2 {
     const s = @min(reach, circle.r * span.sweep / 2.0);
     const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
     return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
+}
+
+/// Twice the signed area of the triangle `from`, `a`, `b`: a chord's share of its cycle's
+/// area, about a point of the cycle so that the terms are as small as the cycle (the sum
+/// is the same about any point, its rounding is not).
+pub fn chordTerm(a: Vec2, b: Vec2, from: Vec2) f64 {
+    return vec.cross2(vec.sub2(a, from), vec.sub2(b, from));
 }
 
 pub fn arcSweep(a: Vec2, b: Vec2, arc: Arc) f64 {

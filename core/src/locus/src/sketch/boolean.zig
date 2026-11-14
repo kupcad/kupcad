@@ -192,6 +192,7 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
     for (0..n_cycles) |ci| {
         spec_starts[ci] = si;
         var area: f64 = 0;
+        const from = o.point(pieces[piece_starts[ci]].a);
         for (pieces[piece_starts[ci]..piece_starts[ci + 1]]) |piece| {
             if (vertex_of[piece.a] == .none) vertex_of[piece.a] = try b.vertex(o.points.items[piece.a]);
             if (vertex_of[piece.b] == .none) vertex_of[piece.b] = try b.vertex(o.points.items[piece.b]);
@@ -201,7 +202,7 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
                 specs[si] = spec;
                 si += 1;
             }
-            area += areaTerm(o, piece);
+            area += areaTerm(o, piece, from);
         }
         areas[ci] = area / 2.0;
     }
@@ -357,11 +358,12 @@ fn rangeOf(o: *const Overlay, piece: Piece) [2]f64 {
     return .{ from, to };
 }
 
-/// Twice a piece's share of its cycle's area, as the overlay reckons it.
-fn areaTerm(o: *const Overlay, piece: Piece) f64 {
+/// Twice a piece's share of its cycle's area about `from`, a point of the cycle, as the
+/// overlay reckons it.
+fn areaTerm(o: *const Overlay, piece: Piece, from: Vec2) f64 {
     const a = o.point(piece.a);
     const b = o.point(piece.b);
-    var twice = a[0] * b[1] - b[0] * a[1];
+    var twice = overlay_mod.chordTerm(a, b, from);
     if (piece.arc) |arc| {
         const range = rangeOf(o, piece);
         const theta = range[1] - range[0];

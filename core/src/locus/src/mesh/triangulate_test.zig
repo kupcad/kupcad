@@ -14,11 +14,13 @@ const Polygon = triangulate.Polygon;
 /// How close the triangles' area is to the polygon's, relative.
 const CLOSE = 1e-12;
 
+/// About the ring's first point: about the origin, a ring far from it sums terms far
+/// larger than its area.
 fn signedArea(ring: []const Vec2) f64 {
     var twice: f64 = 0;
     for (ring, 0..) |p, i| {
         const q = ring[(i + 1) % ring.len];
-        twice += p[0] * q[1] - q[0] * p[1];
+        twice += vec.cross2(vec.sub2(p, ring[0]), vec.sub2(q, ring[0]));
     }
     return twice / 2;
 }
@@ -382,4 +384,16 @@ test "triangulate: the area refusal reports areas of any size or sign" {
         try testing.expectApproxEqRel(area, finding.threshold, 1e-9);
         try testing.expect(finding.measured != finding.threshold);
     }
+}
+
+test "triangulate: a polygon far from the origin is triangulated as near it" {
+    // The polygon's area, which the triangles' must match, summed about the origin: a
+    // sliver 1e7 out summed terms of 1e14 to an area of 0, and the polygon was refused as
+    // not simple. About each ring's first point; a square with a hole there too
+    const at = Vec2{ 1e7, 1e7 };
+    const sliver = [_]Vec2{ at, vec.add2(at, .{ 1, 0 }), vec.add2(at, .{ 0.5, 0.01 }) };
+    try expectPolygon(&sliver, &.{ 0, 3 });
+    var holed: [8]Vec2 = undefined;
+    for ([_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } }, &holed) |p, *q| q.* = vec.add2(at, p);
+    try expectPolygon(&holed, &.{ 0, 4, 8 });
 }

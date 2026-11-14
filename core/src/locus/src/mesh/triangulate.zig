@@ -210,14 +210,17 @@ fn reweave(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) E
     return .{ .points = points, .starts = try starts.toOwnedSlice(allocator), .source = source, .simple = graph.welded == n };
 }
 
-/// The signed area of the rings: positive for the region on their left.
+/// The signed area of the rings: positive for the region on their left. Each ring summed
+/// about its first point, so that the terms are as small as the ring (about the origin, a
+/// sliver 1e7 out summed to an area of 0).
 fn polygonArea(polygon: Polygon) f64 {
     var twice: f64 = 0;
     for (0..polygon.rings()) |r| {
         const ring = polygon.ring(r);
+        const from = ring[0];
         for (ring, 0..) |p, i| {
             const q = ring[(i + 1) % ring.len];
-            twice += p[0] * q[1] - q[0] * p[1];
+            twice += vec.cross2(vec.sub2(p, from), vec.sub2(q, from));
         }
     }
     return twice / 2;
