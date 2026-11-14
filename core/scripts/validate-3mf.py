@@ -1,8 +1,9 @@
 """Builds models that reach every branch of the 3MF exporter (copies placed by translate and
 rotate, a mirrored part, unnamed parts, colours and transparency, a title to escape, an Array
-as the model, --split) with the kupcad binary, and reads each file with lib3mf, the 3MF
-Consortium's library, in strict mode. Any warning, a refused file, or objects, build items or
-a title other than the model's fails. Run `pnpm check:3mf` from the repository root after
+as the model, --split, solids touching along an edge on the B-Rep engine) with the kupcad
+binary, and reads each file with lib3mf, the 3MF Consortium's library, in strict mode. Any
+warning, a refused file, an object not manifold by its indices (3MF core §4.1: each edge on
+exactly two triangles), or objects, build items or a title other than the model's fails. Run `pnpm check:3mf` from the repository root after
 `zig build`, with lib3mf installed (`pip install -r core/scripts/requirements.txt`).
 """
 
@@ -37,6 +38,9 @@ assemble(name: "colours", parts: [a, b, c, a.translate(0, 0, 5)])""",
         "colours",
     ),
     "array": ("[cube(1), cube(1).translate(3, 0, 0), sphere(2).translate(0, 9, 0)]", 2, 3, None),
+    # Two solids sharing an edge, one part: each its own vertices there, or the edge is on four
+    # triangles (research/manifold-parity.md)
+    "touching": ("CAD.config(engine: :brep)\ncube(1) + cube(1).translate(1, 1, 0)", 1, 1, None),
 }
 
 
@@ -71,6 +75,8 @@ def problems(path, objects, items, title):
         count += 1
         if mesh.GetTriangleCount() == 0:
             found.append(f"object {mesh.GetResourceID()} has no triangles")
+        elif not mesh.IsManifoldAndOriented():
+            found.append(f"object {mesh.GetResourceID()} is not manifold and oriented by its indices")
     if count != objects:
         found.append(f"{count} objects, not {objects}")
     if model.GetBuildItems().Count() != items:

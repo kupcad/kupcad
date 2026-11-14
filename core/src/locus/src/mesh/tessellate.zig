@@ -18,7 +18,8 @@
 //! mesh by more than a chord of that length may bow. Vertices are welded by
 //! construction: a body vertex is one mesh vertex, an edge's interior point one, so a
 //! closed body gives a mesh in which every edge appears once each way
-//! (`CHECK_EDGE_PAIRS`). A face the triangulator refuses is `.failed` with why, a warning
+//! (`CHECK_EDGE_PAIRS`); a vertex where solids touch is one mesh vertex for each solid, so
+//! each solid's mesh is closed by its indices too (3MF judges by them). A face the triangulator refuses is `.failed` with why, a warning
 //! names it, and it is filled leniently (a fan of its outer loop) so that the rest of the
 //! body is still delivered with no hole in the picture (a viewer wants the part it can
 //! draw). A `Budget` bounds a **provisional** mesh for a viewer while a part is being
@@ -39,6 +40,7 @@ const surfaces = @import("../geometry/surfaces.zig");
 const edges_mod = @import("edges.zig");
 const triangulate = @import("triangulate.zig");
 const chords = @import("chords.zig");
+const overlap = @import("../query/overlap.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -198,8 +200,13 @@ const Builder = struct {
     body: *const Body,
     edge_points: *const edges_mod.EdgePoints,
     positions: std.ArrayList(Vec3) = .empty,
-    /// Each body vertex's mesh vertex (`NONE` when tombstoned).
+    /// Each body vertex's mesh vertex (`NONE` when tombstoned): for the first solid that
+    /// uses it, where solids touch.
     vertex_id: []u32,
+    /// Where solids touch at a vertex: each shell's solid (`overlap.Solids`), and the mesh
+    /// vertex of each other solid using one (by vertex and solid). Null for one solid.
+    solids: ?*const overlap.Solids = null,
+    shared: ?*const std.AutoHashMapUnmanaged([2]u32, u32) = null,
     /// Where each edge's interior points start among the mesh vertices.
     interior_start: []u32,
     triangles: std.ArrayList([3]u32) = .empty,
@@ -236,6 +243,12 @@ const Builder = struct {
         self.grid_v.deinit(self.allocator);
     }
 
+    /// Body vertex `v`'s mesh vertex in the solid of shell `s`.
+    fn idOf(self: *const Builder, v: types.VertexIndex, s: types.ShellIndex) u32 {
+        const shared = self.shared orelse return self.vertex_id[@backingInt(v)];
+        return shared.get(.{ @backingInt(v), self.solids.?.owner[@backingInt(s)] }) orelse self.vertex_id[@backingInt(v)];
+    }
+
     /// The face's loops as rings in UV (`ring_uv`, `ring_id`, `starts`): each coedge's
     /// points the coedge's way, its last left to the next coedge, through the pcurve at
     /// the points' parameters, or projected onto a plane; a degenerate edge (a pole, an
@@ -245,6 +258,7 @@ const Builder = struct {
     fn collectRings(self: *Builder, f: types.FaceIndex, surface: surfaces.Surface, diag: *Diagnostics) Error!void {
         const body = self.body;
         const face = body.face(f);
+        const shell = face.shell;
         self.ring_uv.clearRetainingCapacity();
         self.ring_id.clearRetainingCapacity();
         self.starts.clearRetainingCapacity();
@@ -261,14 +275,14 @@ const Builder = struct {
                     if (coedge.pcurve.isNone()) continue;
                     const t = if (coedge.same_sense) e.t0 else e.t1;
                     try self.ring_uv.append(self.allocator, body.geometry.pcurve(coedge.pcurve).eval(t));
-                    try self.ring_id.append(self.allocator, self.vertex_id[@backingInt(e.start)]);
+                    try self.ring_id.append(self.allocator, self.idOf(e.start, shell));
                     continue;
                 }
                 const pts = self.edge_points.of(coedge.edge);
                 const params = self.edge_points.paramsOf(coedge.edge);
                 for (0..pts.len - 1) |step| {
                     const k = if (coedge.same_sense) step else pts.len - 1 - step;
-                    const id = if (k == 0) self.vertex_id[@backingInt(e.start)] else if (k == pts.len - 1) self.vertex_id[@backingInt(e.end)] else self.interior_start[@backingInt(coedge.edge)] + @as(u32, @intCast(k - 1));
+                    const id = if (k == 0) self.idOf(e.start, shell) else if (k == pts.len - 1) self.idOf(e.end, shell) else self.interior_start[@backingInt(coedge.edge)] + @as(u32, @intCast(k - 1));
                     const uv = if (coedge.pcurve.isNone()) surface.project(pts[k], body.tol.approx, 50) else body.geometry.pcurve(coedge.pcurve).eval(params[k]);
                     try self.ring_uv.append(self.allocator, uv);
                     try self.ring_id.append(self.allocator, id);
@@ -473,6 +487,30 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
         id.* = if (v.tombstone) NONE else @intCast(b.positions.items.len);
         if (!v.tombstone) try b.positions.append(allocator, body.geometry.point(v.point));
     }
+    // A vertex solids touch at, one more for each solid after the first that uses it (two
+    // cubes sharing an edge gave one mesh edge on four triangles, research/manifold-parity.md)
+    var solids: ?overlap.Solids = if (body.counts().shells > 1) try overlap.Solids.init(allocator, body, options, diag) else null;
+    defer if (solids) |*s| s.deinit(allocator);
+    var shared: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer shared.deinit(allocator);
+    if (solids) |*s| {
+        const first = try allocator.alloc(u32, body.vertices.items.len);
+        defer allocator.free(first);
+        @memset(first, overlap.NO_SOLID);
+        for (body.coedges.items, 0..) |c, i| {
+            if (c.tombstone) continue;
+            const v = body.coedgeStart(types.CoedgeIndex.of(i));
+            const solid = s.owner[@backingInt(body.face(body.loop(c.loop).face).shell)];
+            if (first[@backingInt(v)] == overlap.NO_SOLID) first[@backingInt(v)] = solid;
+            if (first[@backingInt(v)] == solid) continue;
+            const entry = try shared.getOrPut(allocator, .{ @backingInt(v), solid });
+            if (entry.found_existing) continue;
+            entry.value_ptr.* = @intCast(b.positions.items.len);
+            try b.positions.append(allocator, body.point(v));
+        }
+        b.solids = s;
+        b.shared = &shared;
+    }
     for (body.edges.items, 0..) |e, i| {
         interior_start[i] = @intCast(b.positions.items.len);
         if (e.flags.tombstone or e.flags.degenerate) continue;
@@ -487,11 +525,12 @@ fn build(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.
     for (body.edges.items, 0..) |e, i| {
         const first: u32 = @intCast(edge_vertices.items.len);
         if (!e.flags.tombstone) {
-            try edge_vertices.append(allocator, vertex_id[@backingInt(e.start)]);
+            const shell = if (e.coedge == .none) types.ShellIndex.of(0) else body.face(body.loop(body.coedge(e.coedge).loop).face).shell;
+            try edge_vertices.append(allocator, b.idOf(e.start, shell));
             if (!e.flags.degenerate) {
                 const n_inside = edge_points.of(types.EdgeIndex.of(i)).len - 2;
                 for (0..n_inside) |k| try edge_vertices.append(allocator, interior_start[i] + @as(u32, @intCast(k)));
-                try edge_vertices.append(allocator, vertex_id[@backingInt(e.end)]);
+                try edge_vertices.append(allocator, b.idOf(e.end, shell));
             }
         }
         try edge_ranges.append(allocator, .{ .edge = types.EdgeIndex.of(i), .first = first, .count = @intCast(edge_vertices.items.len - first), .regularity = e.regularity });

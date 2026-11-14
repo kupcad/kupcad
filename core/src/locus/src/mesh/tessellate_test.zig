@@ -579,3 +579,38 @@ test "tessellate: two long arcs tangent at a cusp, each sweeping past a quarter 
         try testing.expectApproxEqRel(exact, area(mesh), 0.05);
     }
 }
+
+test "tessellate: solids touching at a corner, along an edge or apex to apex are each closed by the mesh's indices" {
+    // research/manifold-parity.md: two cubes sharing an edge exported a 3MF object with an
+    // edge on four triangles (3MF judges by indices; lib3mf's IsManifoldAndOriented said
+    // no); a vertex where solids touch is now a mesh vertex for each, at one place
+    const pipeline = @import("../boolean/pipeline.zig");
+    const helpers = @import("../boolean/pipeline_test.zig");
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try helpers.box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var corner = try helpers.box(.{ 1, 1, 1 }, .{ 2, 2, 2 });
+    defer corner.deinit();
+    var edge = try helpers.box(.{ 1, 1, 0 }, .{ 2, 2, 1 });
+    defer edge.deinit();
+    const hull = @import("../construct/hull.zig");
+    var down = try hull.hull(testing.allocator, tol, &.{ .{ 0, 0, 0 }, .{ 1, -1, -2 }, .{ -1, -1, -2 }, .{ 0, 1.5, -2 } }, &diag);
+    defer down.deinit();
+    var up = try hull.hull(testing.allocator, tol, &.{ .{ 0, 0, 0 }, .{ 1, -1, 2 }, .{ -1, -1, 2 }, .{ 0, 1.5, 2 } }, &diag);
+    defer up.deinit();
+    const pairs = [_][2]*const Body{ .{ &a, &corner }, .{ &a, &edge }, .{ &down, &up } };
+    for (pairs, [_]usize{ 16, 16, 8 }) |pair, vertices| {
+        var u = try pipeline.boolean(testing.allocator, pair[0], pair[1], .@"union", .{}, &diag, null);
+        defer u.deinit();
+        try testing.expectEqual(@as(usize, 2), u.counts().shells);
+        var mesh = try meshOf(&u, .{});
+        defer mesh.deinit(testing.allocator);
+        const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
+        try testing.expect(verdict.isManifoldClosed());
+        // Each solid its own vertices where they touch
+        try testing.expectEqual(vertices, mesh.positions.len);
+        const want = (try mass.mass(pair[0], .{}, &diag)).volume + (try mass.mass(pair[1], .{}, &diag)).volume;
+        try testing.expectApproxEqAbs(want, signedVolume(mesh), 1e-12);
+    }
+}
