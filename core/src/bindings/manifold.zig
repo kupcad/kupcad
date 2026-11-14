@@ -131,6 +131,9 @@ extern fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
 extern fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
+extern fn manifold_meshgl_merge_length(m: ?*ManifoldMeshGL) usize;
+extern fn manifold_meshgl_merge_from_vert(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
+extern fn manifold_meshgl_merge_to_vert(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
 extern fn manifold_of_meshgl(mem: ?*ManifoldObj, mesh: ?*ManifoldMeshGL) ?*ManifoldObj;
 extern fn manifold_alloc_meshgl64() ?*ManifoldMeshGL64;
 extern fn manifold_delete_meshgl64(m: ?*ManifoldMeshGL64) void;
@@ -524,6 +527,18 @@ pub fn meshGLVertProperties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32 {
 }
 pub fn meshGLTriVerts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
     return manifold_meshgl_tri_verts(mem, m);
+}
+/// How many vertices the mesh split from another (a property seam): `meshGLMergeFromVert`'s
+/// and `meshGLMergeToVert`'s length.
+pub fn meshGLMergeLength(m: ?*ManifoldMeshGL) usize {
+    return manifold_meshgl_merge_length(m);
+}
+/// The vertices split from another, each merged into `meshGLMergeToVert`'s at its index.
+pub fn meshGLMergeFromVert(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
+    return manifold_meshgl_merge_from_vert(mem, m);
+}
+pub fn meshGLMergeToVert(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
+    return manifold_meshgl_merge_to_vert(mem, m);
 }
 
 pub fn allocMeshGL64() ?*ManifoldMeshGL64 {

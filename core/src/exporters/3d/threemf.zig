@@ -112,12 +112,31 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
 
 /// `part`'s mesh as the object `id`, its triangles in the materials they have (of
 /// `material_count`), each by its number in `used`; false (and nothing written) when the
-/// mesh has none.
+/// mesh has none. Each vertex of the surface is written once: 3MF judges a mesh by its
+/// indices (core §4.1, each edge on two triangles) and gives a triangle its material, while
+/// the kernel's mesh splits a vertex where its material changes (`kernel.getMeshMerged`
+/// joins them again; a seam written split was on one triangle an edge, lib3mf's check in
+/// CI, 2026-11-14).
 fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize, used: *material_groups.UsedSlots) !bool {
-    const mesh = try mesh_part.floatMesh(allocator, part.handle, part.preview);
-    defer allocator.free(mesh.vert_props);
-    defer allocator.free(mesh.tri_verts);
+    // A file: the part's own mesh, never a viewer's preview of it
+    const merged = try mesh_part.floatMeshMerged(allocator, part.handle);
+    defer merged.deinit(allocator);
+    const mesh = merged.mesh;
     if (mesh.tri_verts.len == 0) return false;
+    // Each surface vertex's index in the file: the mesh's own vertices in order, a copy
+    // taking its surface vertex's
+    const vertex_count = mesh.vert_props.len / mesh.num_prop;
+    const index = try allocator.alloc(u32, vertex_count);
+    defer allocator.free(index);
+    var written: u32 = 0;
+    for (index, merged.merge, 0..) |*x, m, v| {
+        if (m != v) continue;
+        x.* = written;
+        written += 1;
+    }
+    for (index, merged.merge, 0..) |*x, m, v| {
+        if (m != v) x.* = index[m];
+    }
 
     try w.print("  <object id=\"{d}\" type=\"model\" pid=\"{d}\" pindex=\"{d}\"", .{ id, MATERIALS_ID, kernel.DEFAULT_MATERIAL_SLOT });
     if (part.name) |name| {
@@ -126,16 +145,16 @@ fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, 
         try w.writeByte('"');
     }
     try w.writeAll(">\n   <mesh>\n    <vertices>\n");
-    var v: usize = 0;
-    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-        const p = mesh.vert_props[v..][0..3];
+    for (0..vertex_count) |v| {
+        if (merged.merge[v] != v) continue;
+        const p = mesh.vert_props[v * mesh.num_prop ..][0..3];
         try w.print("     <vertex x=\"{d}\" y=\"{d}\" z=\"{d}\"/>\n", .{ p[0], p[1], p[2] });
     }
     try w.writeAll("    </vertices>\n    <triangles>\n");
     var t: usize = 0;
     while (t < mesh.tri_verts.len) : (t += 3) {
         const tri = mesh.tri_verts[t..][0..3];
-        try w.print("     <triangle v1=\"{d}\" v2=\"{d}\" v3=\"{d}\"", .{ tri[0], tri[1], tri[2] });
+        try w.print("     <triangle v1=\"{d}\" v2=\"{d}\" v3=\"{d}\"", .{ index[tri[0]], index[tri[1]], index[tri[2]] });
         const slot = material_groups.slotOf(mesh, t, material_count);
         if (slot != kernel.DEFAULT_MATERIAL_SLOT) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, try used.numberOf(allocator, slot) });
         try w.writeAll("/>\n");

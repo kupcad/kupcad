@@ -123,14 +123,20 @@ fn exportAndCheck(source: []const u8) !struct { model: Model, xml: []u8 } {
     const solids = collected.solids.items;
     try testing.expectEqual(solids.len, model.items.items.len);
     for (solids, model.items.items) |solid, item| {
-        const mesh = kernel.getMesh(testing.allocator, try vm.ensureConcrete(solid)) orelse return error.NoMesh;
-        defer testing.allocator.free(mesh.vert_props);
-        defer testing.allocator.free(mesh.tri_verts);
-        const expected = try testing.allocator.alloc([3]f64, mesh.vert_props.len / mesh.num_prop);
+        // The surface's vertices: a vertex split where its material changes is written once
+        const merged = kernel.getMeshMerged(testing.allocator, try vm.ensureConcrete(solid)) orelse return error.NoMesh;
+        defer merged.deinit(testing.allocator);
+        const mesh = merged.mesh;
+        var own: usize = 0;
+        for (merged.merge, 0..) |m, v| own += @intFromBool(m == v);
+        const expected = try testing.allocator.alloc([3]f64, own);
         defer testing.allocator.free(expected);
-        for (expected, 0..) |*p, i| for (p, mesh.vert_props[i * mesh.num_prop ..][0..3]) |*c, v| {
-            c.* = v;
-        };
+        var next: usize = 0;
+        for (merged.merge, 0..) |m, v| {
+            if (m != v) continue;
+            for (&expected[next], mesh.vert_props[v * mesh.num_prop ..][0..3]) |*c, x| c.* = x;
+            next += 1;
+        }
         const object = model.vertices.get(item.object).?.items;
         const placed = try testing.allocator.alloc([3]f64, object.len);
         defer testing.allocator.free(placed);
@@ -215,6 +221,64 @@ test "3mf: B-Rep parts are placed as the kernel has them, their materials kept, 
     defer model.deinit();
     try testing.expectEqual(@as(usize, 3), model.meshes.len);
     for (model.meshes) |mesh| try mesh_check.expectClosed(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces });
+}
+
+test "3mf: a part of two materials is closed by its indices on either engine, the vertices where they meet written once" {
+    // 3MF judges a mesh by its indices (core §4.1, lib3mf's IsManifoldAndOriented): a
+    // mesh's vertex has one material, so the kernel's mesh is split where a red face meets
+    // an uncoloured one, and was written so: its seam's edges were on one triangle each
+    // (CI, check:3mf, 2026-11-14). A material is the triangle's in 3MF: the seam is one
+    // vertex. The file's own indices are checked (the importer welds by position).
+    for ([_][]const u8{ "", "CAD.config(engine: :brep)\n" }) |engine| {
+        var vm = try support.initVm();
+        defer vm.deinit();
+        const source = try std.mem.concat(testing.allocator, u8, &.{ engine, "cube(2).material(color: \"#FF0000\") + cube(2).translate(x: 1, y: 1)" });
+        defer testing.allocator.free(source);
+        try testing.expectEqual(.ok, try support.runOn(&vm, source));
+        const archive = try api.exportModelFromVm(testing.allocator, &vm, .@"3mf", .{});
+        defer testing.allocator.free(archive);
+        var package = try Package.open(archive);
+        defer package.close();
+        const xml = try package.read(threemf.MODEL_PATH);
+        defer testing.allocator.free(xml);
+        errdefer std.debug.print("engine: {s}\n", .{engine});
+        try expectClosedByIndices(xml);
+    }
+}
+
+/// Each object of the model `xml` closed and oriented by its triangles' indices: every
+/// directed edge on one triangle, and its reverse on another.
+fn expectClosedByIndices(xml: []const u8) !void {
+    var edges: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer edges.deinit(testing.allocator);
+    var lines = std.mem.splitScalar(u8, xml, '\n');
+    var objects: usize = 0;
+    while (lines.next()) |line| {
+        if (std.mem.find(u8, line, "<object ") != null) {
+            try expectPaired(&edges);
+            edges.clearRetainingCapacity();
+            objects += 1;
+        } else if (std.mem.find(u8, line, "<triangle ") != null) {
+            var v: [3]u32 = undefined;
+            for (&v, [_][]const u8{ attr(line, "v1").?, attr(line, "v2").?, attr(line, "v3").? }) |*x, s| x.* = try std.fmt.parseInt(u32, s, 10);
+            for (0..3) |k| {
+                const entry = try edges.getOrPut(testing.allocator, .{ v[k], v[(k + 1) % 3] });
+                entry.value_ptr.* = if (entry.found_existing) entry.value_ptr.* + 1 else 1;
+            }
+        }
+    }
+    try expectPaired(&edges);
+    try testing.expect(objects > 0);
+}
+
+fn expectPaired(edges: *const std.AutoHashMapUnmanaged([2]u32, u32)) !void {
+    var it = edges.iterator();
+    while (it.next()) |entry| {
+        const e = entry.key_ptr.*;
+        errdefer std.debug.print("edge {d}-{d}: {d} triangles, its reverse on {d}\n", .{ e[0], e[1], entry.value_ptr.*, edges.get(.{ e[1], e[0] }) orelse 0 });
+        try testing.expectEqual(@as(u32, 1), entry.value_ptr.*);
+        try testing.expectEqual(@as(?u32, 1), edges.get(.{ e[1], e[0] }));
+    }
 }
 
 test "3mf: every part is written whole with a collection at every allocation" {

@@ -562,6 +562,13 @@ pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     return dispatchOn("getMeshFn", handle.engine, .{ allocator, handle });
 }
 
+/// `getMesh`'s mesh with each vertex's surface vertex (`geom.MergedMesh`): the vertices the
+/// engine split where properties change, merged again by what the engine knows of them,
+/// never by position (solids touching at a point keep a vertex each there).
+pub inline fn getMeshMerged(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.MergedMesh {
+    return dispatchOn("getMeshMergedFn", handle.engine, .{ allocator, handle });
+}
+
 /// The mesh a viewer shows while the part is being edited: the part's own mesh when the
 /// engine has it at hand, else one bounded by the engine's preview budget and marked
 /// `provisional` (the B-Rep engine; the mesh engine's parts are their mesh). Never for a

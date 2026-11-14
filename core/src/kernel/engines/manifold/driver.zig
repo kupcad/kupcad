@@ -703,6 +703,11 @@ fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh
     const mesh_mem = manifold.allocMeshGL();
     defer manifold.deleteMeshGL(mesh_mem);
     const mesh = manifold.getMeshGL(mesh_mem, obj) orelse return error.MeshUnavailable;
+    return copyMeshGL(allocator, mesh);
+}
+
+/// `mesh`'s vertices and triangles in `allocator`'s memory.
+fn copyMeshGL(allocator: std.mem.Allocator, mesh: *manifold.ManifoldMeshGL) !geom.Mesh {
     // An empty solid has nothing to copy, and copying it is undefined behaviour: the C
     // binding memcpy's from the vector's data pointer, null for an empty vector on Linux,
     // which UBSan traps (CI aborted exporting the empty Solid; macOS never saw it).
@@ -712,6 +717,39 @@ fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh
     const tri_verts = try allocator.alloc(u32, manifold.meshGLTriLength(mesh));
     if (tri_verts.len > 0) _ = manifold.meshGLTriVerts(tri_verts.ptr, mesh);
     return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = manifold.meshGLNumProp(mesh) };
+}
+
+fn getMeshMergedImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.MergedMesh {
+    std.debug.assert(handle.engine == .manifold);
+    return copyMeshMerged(allocator, @ptrCast(@alignCast(handle.ptr))) catch null;
+}
+
+/// The mesh and its merge vectors from one MeshGL: each vertex Manifold split where its
+/// properties change merged into the vertex it was split from, one level (`GetMeshGL`
+/// merges every copy into the first index of its vertex).
+fn copyMeshMerged(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.MergedMesh {
+    const mesh_mem = manifold.allocMeshGL();
+    defer manifold.deleteMeshGL(mesh_mem);
+    const mesh = manifold.getMeshGL(mesh_mem, obj) orelse return error.MeshUnavailable;
+    const copied = try copyMeshGL(allocator, mesh);
+    errdefer {
+        allocator.free(copied.vert_props);
+        allocator.free(copied.tri_verts);
+    }
+    const merge = try allocator.alloc(u32, copied.vert_props.len / copied.num_prop);
+    errdefer allocator.free(merge);
+    for (merge, 0..) |*m, v| m.* = @intCast(v);
+    const pairs = manifold.meshGLMergeLength(mesh);
+    if (pairs > 0) {
+        const from = try allocator.alloc(u32, pairs);
+        defer allocator.free(from);
+        const to = try allocator.alloc(u32, pairs);
+        defer allocator.free(to);
+        _ = manifold.meshGLMergeFromVert(from.ptr, mesh);
+        _ = manifold.meshGLMergeToVert(to.ptr, mesh);
+        for (from, to) |f, w| merge[f] = w;
+    }
+    return .{ .mesh = copied, .merge = merge };
 }
 
 /// A mesh engine's part is its mesh: never provisional.
@@ -850,6 +888,7 @@ pub const driver = struct {
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
     pub const getPreviewMeshFn = getMeshImpl;
+    pub const getMeshMergedFn = getMeshMergedImpl;
     pub const previewIsProvisionalFn = previewIsProvisionalImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;

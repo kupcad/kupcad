@@ -23,13 +23,30 @@ pub const MeshPart = struct {
 /// own import_3mf neither).
 pub fn floatMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle, preview: bool) error{ MeshExtractionFailed, BeyondFloatRange }!geom.Mesh {
     const mesh = (if (preview) kernel.getPreviewMesh(allocator, handle) else kernel.getMesh(allocator, handle)) orelse return error.MeshExtractionFailed;
-    var v: usize = 0;
-    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-        for (mesh.vert_props[v..][0..3]) |c| if (!std.math.isFinite(c)) {
-            allocator.free(mesh.vert_props);
-            allocator.free(mesh.tri_verts);
-            return error.BeyondFloatRange;
-        };
+    if (!finite(mesh)) {
+        allocator.free(mesh.vert_props);
+        allocator.free(mesh.tri_verts);
+        return error.BeyondFloatRange;
     }
     return mesh;
+}
+
+/// `floatMesh` of the part's mesh with each vertex's surface vertex (`kernel.getMeshMerged`),
+/// for a file judged by its indices (3MF).
+pub fn floatMeshMerged(allocator: std.mem.Allocator, handle: geom.GeometryHandle) error{ MeshExtractionFailed, BeyondFloatRange }!geom.MergedMesh {
+    const merged = kernel.getMeshMerged(allocator, handle) orelse return error.MeshExtractionFailed;
+    if (!finite(merged.mesh)) {
+        merged.deinit(allocator);
+        return error.BeyondFloatRange;
+    }
+    return merged;
+}
+
+/// Whether every position of `mesh` is finite as a 32-bit float.
+fn finite(mesh: geom.Mesh) bool {
+    var v: usize = 0;
+    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+        for (mesh.vert_props[v..][0..3]) |c| if (!std.math.isFinite(c)) return false;
+    }
+    return true;
 }

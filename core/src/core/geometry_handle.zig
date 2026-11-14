@@ -113,6 +113,22 @@ pub const Mesh = struct {
     provisional: bool = false,
 };
 
+/// A mesh with, for each vertex, the vertex of the surface it is: itself, or for a vertex
+/// the engine split where its properties change (a red face meeting a blue one; a mesh
+/// vertex has one set), the first of its copies. What a file judged by its indices needs
+/// (3MF: each edge on two triangles), where a material is the triangle's. Owned by the
+/// allocator the engine was given.
+pub const MergedMesh = struct {
+    mesh: Mesh,
+    merge: []u32,
+
+    pub fn deinit(self: MergedMesh, allocator: std.mem.Allocator) void {
+        allocator.free(self.mesh.vert_props);
+        allocator.free(self.mesh.tri_verts);
+        allocator.free(self.merge);
+    }
+};
+
 pub const RayHit = struct {
     distance: f64,
     position: [3]f64,

@@ -267,6 +267,7 @@ pub const driver = struct {
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
     pub const getPreviewMeshFn = getPreviewMeshImpl;
+    pub const getMeshMergedFn = getMeshMergedImpl;
     pub const previewIsProvisionalFn = previewIsProvisionalImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;
@@ -1013,23 +1014,54 @@ fn meshWithin(src: *const BrepSolid, budget: locus.mesh.tessellate.Budget) ?locu
 /// face meets a blue one) is one vertex per material: each keeps its index for the first
 /// material its triangles meet it with, and the others follow the mesh's vertices.
 fn copyOut(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh) ?geom.Mesh {
+    return copyOutWith(allocator, body, mesh, null) catch null;
+}
+
+/// `copyOut`, the vertex each copy for a further material is of appended to `copies_of`
+/// (the copies follow the mesh's vertices, in order).
+fn copyOutWith(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh, copies_of: ?*std.ArrayList(u32)) error{OutOfMemory}!geom.Mesh {
     var any_material = false;
     for (mesh.faces) |range| any_material = any_material or body.face(range.face).attribute != kernel.DEFAULT_MATERIAL_SLOT;
     if (!any_material) {
-        const vert_props = allocator.alloc(f32, 3 * mesh.positions.len) catch return null;
+        const vert_props = try allocator.alloc(f32, 3 * mesh.positions.len);
         errdefer allocator.free(vert_props);
         for (mesh.positions, 0..) |p, i| {
             for (0..3) |k| vert_props[3 * i + k] = @floatCast(p[k]);
         }
-        const tri_verts = allocator.alloc(u32, 3 * mesh.triangles.len) catch return null;
+        const tri_verts = try allocator.alloc(u32, 3 * mesh.triangles.len);
         for (mesh.triangles, 0..) |t, i| tri_verts[3 * i ..][0..3].* = t;
         return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3, .provisional = mesh.provisional };
     }
-    return withMaterials(allocator, body, mesh) catch null;
+    return withMaterials(allocator, body, mesh, copies_of);
 }
 
-/// `copyOut`'s mesh with each vertex's material slot as its fourth property.
-fn withMaterials(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh) error{OutOfMemory}!geom.Mesh {
+fn getMeshMergedImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.MergedMesh {
+    const src = solidOf(handle.ptr);
+    const mesh = fullMesh(src) orelse return null;
+    return copyOutMerged(allocator, &src.body, mesh) catch null;
+}
+
+/// `copyOut`'s mesh with each vertex's surface vertex: a copy made for a further material
+/// merged into the vertex it is a copy of, every other vertex its own (Locus's mesh keeps
+/// a vertex a solid each where solids touch, which stays so).
+fn copyOutMerged(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh) error{OutOfMemory}!geom.MergedMesh {
+    var copies_of: std.ArrayList(u32) = .empty;
+    defer copies_of.deinit(backend_allocator);
+    const copied = try copyOutWith(allocator, body, mesh, &copies_of);
+    errdefer {
+        allocator.free(copied.vert_props);
+        allocator.free(copied.tri_verts);
+    }
+    const n = mesh.positions.len;
+    const merge = try allocator.alloc(u32, n + copies_of.items.len);
+    for (merge[0..n], 0..) |*m, v| m.* = @intCast(v);
+    @memcpy(merge[n..], copies_of.items);
+    return .{ .mesh = copied, .merge = merge };
+}
+
+/// `copyOut`'s mesh with each vertex's material slot as its fourth property, the vertex
+/// each copy for a further material is of appended to `copies_of` when given.
+fn withMaterials(allocator: std.mem.Allocator, body: *const Body, mesh: *const locus.mesh.tessellate.Mesh, copies_of: ?*std.ArrayList(u32)) error{OutOfMemory}!geom.Mesh {
     const n = mesh.positions.len;
     // Each vertex's first material, and the copies for the others: (vertex, slot) → index
     const first = try backend_allocator.alloc(?u32, n);
@@ -1072,6 +1104,10 @@ fn withMaterials(allocator: std.mem.Allocator, body: *const Body, mesh: *const l
         for (0..3) |k| vert_props[4 * i + k] = @floatCast(mesh.positions[v][k]);
         vert_props[4 * i + 3] = @floatFromInt(slot);
     }
+    if (copies_of) |out| out.appendSlice(backend_allocator, extra.items) catch |e| {
+        allocator.free(vert_props);
+        return e;
+    };
     return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 4, .provisional = mesh.provisional };
 }
 
