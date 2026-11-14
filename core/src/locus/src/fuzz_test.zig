@@ -1910,6 +1910,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // shell's own centre (34859304)
         "solids 1 5 0 1 1 1 1 0 1 4 3 4 2 0 1 3 1 2 0 0 0 1 9 9 11 12 3 3 1 6 0 2 0 0 1 3 4 3 1 4 3 4 4 1 3 1 2 3 1 2 -1 4 14 8 1 3 3 0 1 2 2 4 3 3 4 4 2 3 1 3 14 -2 13 2 2 1 4 1 3 2 0 3 3 0 4 2 3 4 3 2 2 10 -2 6 9 0 0 2 2",
         "solids 1 6 1 3 2 0 2 1 2 4 3 0 4 0 4 4 0 4 2 1 0 1 3 3 7 2 0 7 3 1 1 4 2 3 2 1 0 4 0 0 0 1 4 3 1 3 11 4 14 1 0 10 0 3 2 0 4 0 2 0 3 3 0 2 1 1 11 3 8 5 1 2 0 0 4 3 4 1 4 2 1 3 7 10 1 1 2 2 6 2",
+        // Its sixth run (locus): a hull's face cutting a box's corner 3.3e-5 to 4.75e-5 from the
+        // tip; the chord on two of the corner's faces taken as along their boundary through
+        // the tip, which the paves kept off the face, and not on the third: the tip's faces
+        // did not close (a run along the boundary is the section only through vertices on it)
+        "solids 1 5 0 1 1 3 1 3 2 3 3 2 4 3 2 4 0 2 3 13 -1 4 4 3 2 1 7 3 2 0 3 2 2 0 4 2 1 0 1 4 0 1 1 0 4 4 0 4 0 3 6 1 2 11 3 11 0 0 1 -1 -1 5 5 3 0 2 3 3 4 2 4 3 0 0 0 0 13 8 11 13 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

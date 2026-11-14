@@ -1047,27 +1047,33 @@ const Filler = struct {
 
     /// Whether the piece from `u` to `w`, its middle at `place` against face `f` of operand
     /// `k`, lies inside the face for the imprint: inside, or on the boundary by its middle
-    /// but not along it (`alongBoundary`): a piece from the boundary to an end the paves put
-    /// off it (one intersection tolerance long, from an edge's tolerance out, its middle is
-    /// within the zone of the edge), or a chord across a sliver.
-    fn imprinted(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place) Error!bool {
+    /// but not along it (`alongBoundary`, `other` the face the piece is a section with): a
+    /// piece from the boundary to an end the paves put off it (one intersection tolerance
+    /// long, from an edge's tolerance out, its middle is within the zone of the edge), or a
+    /// chord across a sliver or a corner.
+    fn imprinted(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place, other: FaceRef) Error!bool {
         return switch (place) {
             .inside => true,
             .outside => false,
-            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w) or !try self.alongBoundary(k, f, u, w),
+            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w) or !try self.alongBoundary(k, f, u, w, other),
         };
     }
 
     /// Whether merged vertices `u` and `w` are joined along face `f`'s boundary by a run of
     /// its pave blocks within reach of the piece between them (the intersection tolerance
-    /// and their gaps): the piece is that run, already the face's (OCCT's
-    /// `IsExistingPaveBlock`: a section block with an existing block's ends, its middle on
-    /// it). Both ends on the boundary and the middle near it is not enough: a chord across
-    /// a sliver one tolerance wide has them (the solids fuzzer, 2026-11-14: a strip 2.05e-4
-    /// wide at a tolerance of 2e-4 left whole, straddling the other solid's face, and its
-    /// ray's class spread to a fragment inside). The edges are lines (M4): a block whose
-    /// ends are within reach of the piece is within reach along it.
-    fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32) Error!bool {
+    /// and their gaps), each vertex between on face `other`, the one the piece is a section
+    /// with: the piece is that run, already the face's (OCCT's `IsExistingPaveBlock`: a
+    /// section block with an existing block's ends, its middle on it). Both ends on the
+    /// boundary and the middle near it is not enough: a chord across a sliver one tolerance
+    /// wide has them (the solids fuzzer, 2026-11-14: a strip 2.05e-4 wide at a tolerance of
+    /// 2e-4 left whole, straddling the other solid's face, and its ray's class spread to a
+    /// fragment inside). Nor is a run within reach through a vertex the paves kept off the
+    /// other face: the run is the section only through vertices on it, and a box's corner
+    /// 3.3e-5 from where a face cut its three edges was the section's on one of its faces
+    /// and not on another, by a hair of reach, and the corner's faces did not close (the
+    /// 10K fuzz session, 2026-11-15). The edges are lines (M4): a block whose ends are
+    /// within reach of the piece is within reach along it.
+    fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, other: FaceRef) Error!bool {
         const p = self.p;
         const operand = self.body(k);
         const a = p.point(u);
@@ -1094,6 +1100,7 @@ const Filler = struct {
                     while (i != start) : (i = (i + step) % n) {
                         const x = ring.items[i];
                         if (x == w) return true;
+                        if (!Incidence.in(p.incidences.items, .{ .face = other, .vertex = x })) break;
                         const off = vec.distance(p.point(x), closestOnSegment(a, b, p.point(x)));
                         if (!try self.within(off, reach, .of(.face, @backingInt(f)))) break;
                     }
@@ -1207,8 +1214,8 @@ const Filler = struct {
                 const in_b = try self.placeIn(1, fb, mid, null);
                 if (in_b == .outside) continue;
                 const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
-                const imprint_a = try self.imprinted(0, fa, u, w, in_a);
-                const imprint_b = try self.imprinted(1, fb, u, w, in_b);
+                const imprint_a = try self.imprinted(0, fa, u, w, in_a, .{ .operand = 1, .face = @backingInt(fb) });
+                const imprint_b = try self.imprinted(1, fb, u, w, in_b, .{ .operand = 0, .face = @backingInt(fa) });
                 if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
                 if (imprint_a or imprint_b) {
@@ -1389,7 +1396,7 @@ const Filler = struct {
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
-                    if (!try self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
+                    if (!try self.imprinted(other, g, x.vertex, y.vertex, place, .{ .operand = @intCast(k), .face = @backingInt(f) })) continue;
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                     self.tally();
                 }
