@@ -127,6 +127,31 @@ const Incidence = struct {
         if (x.face.operand != y.face.operand or x.face.face != y.face.face) return x.face.lessThan(y.face);
         return x.vertex < y.vertex;
     }
+
+    /// Whether sorted `items` hold `key`.
+    fn in(items: []const Incidence, key: Incidence) bool {
+        var lo: usize = 0;
+        var hi: usize = items.len;
+        while (lo < hi) {
+            const mid = (lo + hi) / 2;
+            if (lessThan({}, items[mid], key)) lo = mid + 1 else hi = mid;
+        }
+        return lo < items.len and !lessThan({}, key, items[lo]);
+    }
+};
+
+/// The faces of one operand whose grown boxes hold a point, from its face tree: at most
+/// as many as `items` holds, a query that fills it being refused (`limit_exceeded`).
+const NearFaces = struct {
+    items: [64]u32 = undefined,
+    count: usize = 0,
+
+    fn visit(c: *NearFaces, item: u32) bool {
+        if (c.count == c.items.len) return false;
+        c.items[c.count] = item;
+        c.count += 1;
+        return true;
+    }
 };
 
 pub const Paves = struct {
@@ -283,6 +308,7 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     try options.checkCancel();
     stage.* = .face_face;
     try filler.collectIncidences();
+    try filler.featureSize();
     try filler.commonBlocks();
     try filler.faceFace();
     try filler.nearlyCoplanar();
@@ -670,20 +696,8 @@ const Filler = struct {
 
     fn onFaces(self: *Filler, k: usize, v: u32) Error!void {
         const q = self.p.point(v);
-        const Collect = struct {
-            out: [64]u32 = undefined,
-            count: usize = 0,
-            fn visit(c: *@This(), item: u32) bool {
-                if (c.count == c.out.len) return false;
-                c.out[c.count] = item;
-                c.count += 1;
-                return true;
-            }
-        };
-        var collect: Collect = .{};
-        self.face_tree[k].query(Box3.ofPoint(q), &collect, Collect.visit);
-        if (collect.count == collect.out.len) return self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "faces near one vertex", .measured = @floatFromInt(collect.count) });
-        for (collect.out[0..collect.count]) |item| {
+        const near = try self.facesNear(k, q);
+        for (near.items[0..near.count]) |item| {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
             if (!try self.within(@abs(planar_faces.planeOf(frame).height(q)), self.p.tol.xsect + self.p.gaps.items[v], .of(.face, @backingInt(f)))) continue;
@@ -693,6 +707,55 @@ const Filler = struct {
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
             self.tally();
             if (place == .inside) try self.p.touches.append(self.allocator, .{ .operand = @intCast(k), .face = @backingInt(f), .vertex = v });
+        }
+    }
+
+    /// The faces of operand `k` whose grown boxes hold `q`.
+    fn facesNear(self: *Filler, k: usize, q: Vec3) Error!NearFaces {
+        var near: NearFaces = .{};
+        self.face_tree[k].query(Box3.ofPoint(q), &near, NearFaces.visit);
+        if (near.count == near.items.len) return self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "faces near one vertex", .measured = @floatFromInt(near.count) });
+        return near;
+    }
+
+    /// Every merged vertex against the faces of either operand near it (the minimum feature
+    /// size, architecture §3; Hoffmann p.117: tests within a tolerance are not transitive).
+    /// A vertex inside a face of an operand, clear of its boundary, and within the
+    /// intersection tolerance and its gap of another face of that operand, inside it or on
+    /// its boundary, has two faces of one operand coming within the tolerance of each other
+    /// away from where they meet: features closer than twice the tolerance. No decision of
+    /// the tolerance makes them consistent, whether the paves put the vertex on the second
+    /// face or not: there, the face–face sections of the two faces run through one vertex
+    /// the tolerance from where either truly crosses (the result's faces did not pair); not
+    /// there, the result has a vertex on a face it does not touch (or, put on the face late,
+    /// a slit into it). Refused (`below_feature_size`). The solids fuzzer (2026-11-14): a
+    /// hull's wedge 42° open at its edge, the edge 3e-4 under a plate's bottom at an
+    /// intersection tolerance of 2e-4; the plate's edge crossed one side of the wedge 1.87e-4
+    /// from the other side's plane and 2.31e-4 from where it crossed that side.
+    fn featureSize(self: *Filler) Error!void {
+        const p = self.p;
+        for (0..p.points.items.len) |i| {
+            const v: u32 = @intCast(i);
+            const q = p.point(v);
+            const reach = p.tol.xsect + p.gaps.items[v];
+            for (0..2) |k| {
+                const near = try self.facesNear(k, q);
+                var on: usize = 0;
+                var inside: ?types.FaceIndex = null;
+                var other: ?struct { face: types.FaceIndex, height: f64 } = null;
+                for (near.items[0..near.count]) |item| {
+                    const f = self.faces[k][item];
+                    const height = @abs(planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?).height(q));
+                    if (!try self.within(height, reach, .of(.face, @backingInt(f)))) continue;
+                    const place = try self.placeIn(k, f, q, v);
+                    if (place == .outside) continue;
+                    on += 1;
+                    if (place == .inside and inside == null) inside = f else other = .{ .face = f, .height = height };
+                }
+                if (on < 2 or inside == null) continue;
+                const second = other.?;
+                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(second.face)), .label = if (k == 0) "a face of the first operand" else "a face of the second operand", .measured = second.height, .threshold = reach });
+            }
         }
     }
 
@@ -791,28 +854,65 @@ const Filler = struct {
 
     /// Whether the paves put merged vertex `v` on the boundary of face `f` of operand `k`.
     fn onBoundary(self: *const Filler, k: usize, f: types.FaceIndex, v: u32) bool {
-        const key: Incidence = .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v };
-        const items = self.p.boundary.items;
-        var lo: usize = 0;
-        var hi: usize = items.len;
-        while (lo < hi) {
-            const mid = (lo + hi) / 2;
-            if (Incidence.lessThan({}, items[mid], key)) lo = mid + 1 else hi = mid;
-        }
-        return lo < items.len and !Incidence.lessThan({}, key, items[lo]);
+        return Incidence.in(self.p.boundary.items, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
     }
 
     /// Whether the piece from `u` to `w`, its middle at `place` against face `f` of operand
     /// `k`, lies inside the face for the imprint: inside, or on the boundary by its middle
-    /// alone with an end the paves put off the boundary (a piece one intersection tolerance
-    /// long, from an edge's tolerance out, has its middle within the zone of the edge; the
-    /// paves decided its end is not on it, and they decide once).
-    fn imprinted(self: *const Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place) bool {
+    /// but not along it (`alongBoundary`): a piece from the boundary to an end the paves put
+    /// off it (one intersection tolerance long, from an edge's tolerance out, its middle is
+    /// within the zone of the edge), or a chord across a sliver.
+    fn imprinted(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place) Error!bool {
         return switch (place) {
             .inside => true,
             .outside => false,
-            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w),
+            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w) or !try self.alongBoundary(k, f, u, w),
         };
+    }
+
+    /// Whether merged vertices `u` and `w` are joined along face `f`'s boundary by a run of
+    /// its pave blocks within reach of the piece between them (the intersection tolerance
+    /// and their gaps): the piece is that run, already the face's (OCCT's
+    /// `IsExistingPaveBlock`: a section block with an existing block's ends, its middle on
+    /// it). Both ends on the boundary and the middle near it is not enough: a chord across
+    /// a sliver one tolerance wide has them (the solids fuzzer, 2026-11-14: a strip 2.05e-4
+    /// wide at a tolerance of 2e-4 left whole, straddling the other solid's face, and its
+    /// ray's class spread to a fragment inside). The edges are lines (M4): a block whose
+    /// ends are within reach of the piece is within reach along it.
+    fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32) Error!bool {
+        const p = self.p;
+        const operand = self.body(k);
+        const a = p.point(u);
+        const b = p.point(w);
+        const reach = p.tol.xsect + @max(p.gaps.items[u], p.gaps.items[w]);
+        var ring: std.ArrayList(u32) = .empty;
+        defer ring.deinit(self.allocator);
+        var loops = traverse.Loops.init(operand, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            // The loop as its merged vertices in order, each coedge's paves its way round
+            ring.clearRetainingCapacity();
+            var it = traverse.Coedges.init(operand, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const coedge = operand.coedge(c);
+                const list = p.edge_paves[k][@backingInt(coedge.edge)].items;
+                for (0..list.len - 1) |i| try ring.append(self.allocator, if (coedge.same_sense) list[i].vertex else list[list.len - 1 - i].vertex);
+            }
+            const n = ring.items.len;
+            for (ring.items, 0..) |v, start| {
+                if (v != u) continue;
+                // From `u` either way round, while the boundary keeps within reach
+                for ([_]usize{ 1, n - 1 }) |step| {
+                    var i = (start + step) % n;
+                    while (i != start) : (i = (i + step) % n) {
+                        const x = ring.items[i];
+                        if (x == w) return true;
+                        const off = vec.distance(p.point(x), closestOnSegment(a, b, p.point(x)));
+                        if (!try self.within(off, reach, .of(.face, @backingInt(f)))) break;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     // --- common blocks ---
@@ -919,8 +1019,8 @@ const Filler = struct {
                 const in_b = try self.placeIn(1, fb, mid, null);
                 if (in_b == .outside) continue;
                 const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
-                const imprint_a = self.imprinted(0, fa, u, w, in_a);
-                const imprint_b = self.imprinted(1, fb, u, w, in_b);
+                const imprint_a = try self.imprinted(0, fa, u, w, in_a);
+                const imprint_b = try self.imprinted(1, fb, u, w, in_b);
                 if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
                 if (imprint_a or imprint_b) {
@@ -1010,7 +1110,7 @@ const Filler = struct {
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
-                    if (!self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
+                    if (!try self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                     self.tally();
                 }
@@ -1018,6 +1118,14 @@ const Filler = struct {
         }
     }
 };
+
+/// The point of the segment from `a` to `b` nearest `q`.
+fn closestOnSegment(a: Vec3, b: Vec3, q: Vec3) Vec3 {
+    const d = vec.sub(b, a);
+    const len2 = vec.dot(d, d);
+    if (len2 == 0) return a;
+    return vec.addScaled(a, d, std.math.clamp(vec.dot(vec.sub(q, a), d) / len2, 0, 1));
+}
 
 /// The parameters along two lines `p + s·d` and `q + u·e` of their closest points; null
 /// when they are parallel.

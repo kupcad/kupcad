@@ -21,6 +21,8 @@
 //! 7. the checker: the result passes it or the operation fails with its finding.
 //!
 //! Typed findings name the entity: failures `TooSmallEdge` (an operand's edge, `pave`),
+//! `below_feature_size` (a face of an operand another of its faces comes within the
+//! tolerance of, away from where they meet, at a merged vertex, `pave`),
 //! `imprint_unmatched` and `unclassified` (an operand's face), `pinched` (a result's shell
 //! touching itself along a line or at a point inside one solid, refused by design), the
 //! checker's on the result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
@@ -84,6 +86,7 @@ pub const REFUSALS = [_]diagnostics.Code{
     .too_large_for_tolerance, // a coordinate past what the tolerance can weld
     .limit_exceeded, // more edges or faces near one vertex than the paves keep apart
     .at_tolerance, // a distance the intersection tolerance to rounding (D27)
+    .below_feature_size, // features closer than twice the tolerance (intransitive)
     .gap_too_large, // vertices merged into a ball past the zone
     .edge_too_short, // an edge too short to split where it is met
     .pinched, // a result one shell cannot hold, by design

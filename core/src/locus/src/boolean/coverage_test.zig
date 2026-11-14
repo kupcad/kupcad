@@ -205,6 +205,19 @@ fn atTheTolerance(cov: *Coverage) !void {
     try cov.boolean(&a, &b, .@"union", .{}, .at_tolerance);
 }
 
+fn belowFeatureSize(cov: *Coverage) !void {
+    // A wedge 38° open along its bottom edge, under a box whose bottom is one and a half
+    // intersection tolerances above that edge: the box's bottom edges cross each side of
+    // the wedge 0.98 tolerances from the other side's plane, inside it, and 1.03 tolerances
+    // from where they cross it
+    const half = 19.0 * std.math.pi / 180.0;
+    var wedge = try tetrahedron(.{ 1, @tan(half), 1 }, .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 1, -@tan(half), 1 });
+    defer wedge.deinit();
+    var b = try box(.{ 0.9, -1, 1.5 * tol.xsect }, .{ 1.1, 1, 2 });
+    defer b.deinit();
+    try cov.boolean(&wedge, &b, .@"union", .{}, .below_feature_size);
+}
+
 fn gapPastTheZone(cov: *Coverage) !void {
     // A corner with the gap an earlier boolean recorded, merged with another the zone away
     var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
@@ -403,6 +416,7 @@ const CASES = [_]struct { name: []const u8, run: *const fn (*Coverage) anyerror!
     .{ .name = "coordinates past the tolerance", .run = pastTheTolerance },
     .{ .name = "edges crowding one vertex", .run = edgesCrowdingOneVertex },
     .{ .name = "faces the tolerance apart to rounding", .run = atTheTolerance },
+    .{ .name = "features closer than twice the tolerance", .run = belowFeatureSize },
     .{ .name = "vertices merged past the zone", .run = gapPastTheZone },
     .{ .name = "an edge too short to split", .run = edgeTooShort },
     .{ .name = "a pinch at a point", .run = pinched },

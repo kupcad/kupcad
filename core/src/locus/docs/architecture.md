@@ -458,7 +458,11 @@ one time and the result posted to both bodies; the "mark A on B, then B on A" sy
 design is not used because the two passes can disagree. Decisions test against surfaces
 and input data, not against derived curves (S p.751). A minimum feature size `δ > 2·zone`
 is enforced: edges shorter than it are collapsed by `merge_vertices` at the end of an
-operation (H p.117–118).
+operation (H p.117–118). Where two faces of one operand come within the intersection
+tolerance of each other away from where they meet (a merged vertex inside one, clear of
+its boundary, within the tolerance of the other), no decision of the tolerance is
+consistent, and a boolean refuses it (`below_feature_size`, the paves; the solids fuzzer's
+draws at the tolerance, 2026-11-14).
 
 **Determinism**: every module sets `@setFloatMode(.strict)`; no fused multiply-add in
 anything that decides topology; transcendental functions (`sin`, `cos`, `atan2`) appear

@@ -133,8 +133,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             if (edge.flags.degenerate) continue;
             any = true;
             const curve = body.geometry.curve(edge.curve);
-            const reach = tol.xsect + @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap);
-            const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, reach, diag);
+            const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, edgeReach(body, edge, tol), diag);
             if (found.lies_in) {
                 try marks.append(allocator, body.point(edge.start));
                 try marks.append(allocator, body.point(edge.end));
@@ -152,6 +151,14 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
         }
     }
     return any and every_in;
+}
+
+/// How near an edge a plane or a point must come to be on it: the intersection tolerance
+/// and the larger of its ends' gaps, as a boolean takes a vertex to lie on a face
+/// (`boolean/pave.zig`'s vertex–face). One reach for an edge lying in a plane
+/// (`crossings`) and a point on a face's boundary (`query/overlap.zig`).
+pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64 {
+    return tol.xsect + @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap);
 }
 
 /// Whether `p` lies in both faces, their boundaries included.
