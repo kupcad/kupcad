@@ -5,6 +5,8 @@
 //! come up often) put through chains of its operations. Every result is a sheet the checker
 //! passes or a clean error, nothing leaks, the area identities of the booleans hold, the
 //! triangulation's area is the sheet's, and no run can hang: the counts bound every loop.
+//! Each chain and each overlay arrangement runs again moved whole (a turn about z, a shift
+//! as far as 2e6), checked as it was, a chain's area the same.
 //! A failing chain is printed as its rings and operations, so it can become a parity case.
 //! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
 //! points and plates 50 times wider, placed by turns, scales and half-steps (an extreme one
@@ -137,6 +139,10 @@ const LABEL_PROBE_CLEAR = 10;
 /// welding (the zone along its perimeter, twice: its own ends moved, and an arc piece
 /// within the zone of its chord taken as the chord).
 const WINDING_CLOSE = 1e-9;
+/// The shifts the 2D targets move a chain or an arrangement whole by, after a turn from
+/// `TURNS` about z: near, and far out (2e6, where a coordinate's ulp is 4.7e-10 and a
+/// cross product about the origin rounds by 1e-3, a sliver's whole area).
+const MOVE_SHIFTS_2D = [_]Vec2{ .{ 0.5, -1 }, .{ 1e3, -2e3 }, .{ 1e5, -2e5 }, .{ 2e6, -3e6 } };
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: the body JSON reader takes any input" {
@@ -702,7 +708,7 @@ fn runArrangement(source: anytype) !Outcome {
             for (ring[0..n]) |e| {
                 o.addEdge(e) catch |err| return clean(err);
                 try given[k].append(testing.allocator, e);
-                own_area[k] += greenTerm(e) / 2;
+                own_area[k] += greenTerm(e, given[k].items[0].a) / 2;
                 perimeter[k] += edgeLength(e);
             }
         }
@@ -724,7 +730,48 @@ fn runArrangement(source: anytype) !Outcome {
     var inputs: [MAX_INPUTS][]const overlay_mod.InputEdge = undefined;
     for (given[0..n_inputs], inputs[0..n_inputs]) |g, *i| i.* = g.items;
     try expectLabels(&o, inputs[0..n_inputs]);
+    try expectArrangementMovedWhole(source, inputs[0..n_inputs]);
     return .checked;
+}
+
+/// The arrangement again under one drawn rigid move (a turn about z, then a shift near or
+/// far out): planar, labelled and weighed as the arrangement is. Its counts are not
+/// compared: a tangency is decided exactly (D26), and the move's rounding turns a touch
+/// into a crossing whose two points are √(2rδ) apart, 3e-5 for δ = 1e-10, past the zone
+/// (the fuzzer, 2026-11-14: 80 vertices, 82 moved). A refusal of the moved arrangement is
+/// clean (a coordinate past the welder's grid).
+fn expectArrangementMovedWhole(source: anytype, inputs: []const []const overlay_mod.InputEdge) !void {
+    const angle = TURNS[source.index(TURNS.len)];
+    const shift = MOVE_SHIFTS_2D[source.index(MOVE_SHIFTS_2D.len)];
+    errdefer std.debug.print("moved whole: turned {d} about z, shifted ({d}, {d})\n", .{ angle, shift[0], shift[1] });
+    const turn: Vec2 = .{ @cos(angle), @sin(angle) };
+    var moved = overlay_mod.Overlay.init(testing.allocator, tol);
+    defer moved.deinit();
+    var own_area: [MAX_INPUTS]f64 = @splat(0);
+    var perimeter: [MAX_INPUTS]f64 = @splat(0);
+    var given: [MAX_INPUTS]std.ArrayList(overlay_mod.InputEdge) = @splat(.empty);
+    defer for (&given) |*g| g.deinit(testing.allocator);
+    for (inputs, 0..) |edges_k, k| {
+        _ = moved.addInput() catch |err| return refusedMove(err);
+        for (edges_k) |e| {
+            var m: overlay_mod.InputEdge = .{ .a = movedPoint(e.a, turn, shift), .b = movedPoint(e.b, turn, shift) };
+            if (e.arc) |arc| m.arc = .{ .c = movedPoint(arc.c, turn, shift), .r = arc.r, .ccw = arc.ccw };
+            moved.addEdge(m) catch |err| return refusedMove(err);
+            try given[k].append(testing.allocator, m);
+            own_area[k] += greenTerm(m, given[k].items[0].a) / 2;
+            perimeter[k] += edgeLength(m);
+        }
+    }
+    moved.run() catch |err| return refusedMove(err);
+    try expectWeighed(&moved, own_area[0..inputs.len], perimeter[0..inputs.len]);
+    var moved_inputs: [MAX_INPUTS][]const overlay_mod.InputEdge = undefined;
+    for (given[0..inputs.len], moved_inputs[0..inputs.len]) |g, *i| i.* = g.items;
+    try expectLabels(&moved, moved_inputs[0..inputs.len]);
+}
+
+/// `p` turned about the origin by the angle whose cosine and sine are `turn`, then shifted.
+fn movedPoint(p: Vec2, turn: Vec2, shift: Vec2) Vec2 {
+    return .{ turn[0] * p[0] - turn[1] * p[1] + shift[0], turn[1] * p[0] + turn[0] * p[1] + shift[1] };
 }
 
 /// The overlay's labels against a count of their own: at a point inside each face (just
@@ -880,7 +927,7 @@ test "Fuzz overlay: the oracle on a nesting find of 2026-11-12, two arcs meeting
         _ = try o.addInput();
         for (edges_k) |e| {
             try o.addEdge(e);
-            own_area[k] += greenTerm(e) / 2;
+            own_area[k] += greenTerm(e, edges_k[0].a) / 2;
             perimeter[k] += edgeLength(e);
         }
     }
@@ -940,9 +987,11 @@ fn finePoint(source: anytype) Vec2 {
 }
 
 /// Twice the edge's share of the area its cycles enclose (the overlay's `areaTerm` on an
-/// input edge): the chord's cross product, plus an arc's segment by its turn.
-fn greenTerm(e: overlay_mod.InputEdge) f64 {
-    var twice = e.a[0] * e.b[1] - e.b[0] * e.a[1];
+/// input edge): the chord's cross product about `from`, a point of its input (summed over
+/// closed rings, the same about any point; about a near one, rounded as little), plus an
+/// arc's segment by its turn.
+fn greenTerm(e: overlay_mod.InputEdge, from: Vec2) f64 {
+    var twice = overlay_mod.chordTerm(e.a, e.b, from);
     if (e.arc) |arc| {
         const theta = overlay_mod.arcSweep(e.a, e.b, arc);
         const segment = arc.r * arc.r * (theta - @sin(theta));
@@ -991,6 +1040,17 @@ fn runChain(smith: anytype) !Outcome {
     var current = (try sheet(smith, &log, &diag)) orelse return .refused;
     defer current.deinit();
     try expectSound(&current, &diag);
+    // The chain's first sheet and the steps that made the next, for the chain moved whole
+    var first = try current.clone(testing.allocator);
+    defer first.deinit();
+    var steps: std.ArrayList(SheetStep) = .empty;
+    defer {
+        for (steps.items) |*step| switch (step.*) {
+            .boolean => |*s| s.other.deinit(),
+            else => {},
+        };
+        steps.deinit(testing.allocator);
+    }
 
     const ops = smith.valueRangeAtMost(u8, 0, MAX_OPS);
     for (0..ops) |_| {
@@ -1004,6 +1064,11 @@ fn runChain(smith: anytype) !Outcome {
                 var result = boolean.boolean(testing.allocator, &.{ &current, &other }, op, .{}, &diag) catch |err| return clean(err);
                 errdefer result.deinit();
                 try expectSound(&result, &diag);
+                var kept = try other.clone(testing.allocator);
+                steps.append(testing.allocator, .{ .boolean = .{ .other = kept, .op = op } }) catch |err| {
+                    kept.deinit();
+                    return err;
+                };
                 current.deinit();
                 current = result;
             },
@@ -1018,6 +1083,7 @@ fn runChain(smith: anytype) !Outcome {
                 try expectSound(&result, &diag);
                 // Shrunk, the sheet holds its result; grown, the result holds the sheet
                 if (delta < 0) try expectWithin(&result, &current, &diag) else try expectWithin(&current, &result, &diag);
+                try steps.append(testing.allocator, .{ .offset = .{ .delta = delta, .join = join, .limit = limit } });
                 current.deinit();
                 current = result;
             },
@@ -1028,6 +1094,7 @@ fn runChain(smith: anytype) !Outcome {
                 try expectSound(&result, &diag);
                 // A hull holds its own vertices and is convex
                 try testing.expect(try query.isConvex(&result, &diag));
+                try steps.append(testing.allocator, .hull);
                 current.deinit();
                 current = result;
             },
@@ -1048,7 +1115,77 @@ fn runChain(smith: anytype) !Outcome {
             },
         }
     }
+    try expectSheetMovedWhole(smith, &log, &first, steps.items, &current, &diag);
     return .checked;
+}
+
+/// A step of a sketch chain that made its next sheet, for the chain moved whole.
+const SheetStep = union(enum) {
+    boolean: struct { other: Body, op: boolean.Op },
+    offset: struct { delta: f64, join: offset.Join, limit: f64 },
+    hull,
+};
+
+/// The chain again with its first sheet and every other operand under one drawn rigid
+/// move (a turn about z, then a shift near or far out): every sheet on the way sound, and
+/// the result's area the chain's to the welding's slack and the rounding where the move
+/// took it. Its counts are not compared, unlike a solid chain's: an arc is split at its
+/// circle's seam, to +x of its centre (D7), which a turn moves along the arc (the fuzzer,
+/// 2026-11-14: a seam vertex the chain's result did not have), and a tangency is decided
+/// exactly (D26; `expectArrangementMovedWhole`). A hull of a sheet with arcs ends the
+/// check: it takes each arc's extreme points along the axes, which a turn moves (D24's
+/// stand-in, refused by KupCAD as `curved_hull`; the fuzzer, 2026-11-14: 16.52 turned,
+/// 17.19 not). A step the moved chain refuses is clean (D27: a distance near the tolerance
+/// moves by a rounding, at most onto the refused side); a failure is a find.
+fn expectSheetMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []const SheetStep, result: *const Body, diag: *Diagnostics) !void {
+    const angle = TURNS[source.index(TURNS.len)];
+    const shift = MOVE_SHIFTS_2D[source.index(MOVE_SHIFTS_2D.len)];
+    try log.add("moved whole: turned {d} about z, shifted ({d}, {d})\n", .{ angle, shift[0], shift[1] });
+    const move = Affine.translate(.{ shift[0], shift[1], 0 }).compose(&Affine.rotate(vec.Z3, angle));
+    var moved = transform.transform(testing.allocator, first, &move, .{}, diag) catch |err| return refusedMove(err);
+    defer moved.deinit();
+    try expectSound(&moved, diag);
+    for (steps) |step| {
+        if (step == .hull and hasArcs(&moved)) return;
+        var next = switch (step) {
+            .boolean => |s| made: {
+                var other = transform.transform(testing.allocator, &s.other, &move, .{}, diag) catch |err| return refusedMove(err);
+                defer other.deinit();
+                break :made boolean.boolean(testing.allocator, &.{ &moved, &other }, s.op, .{}, diag);
+            },
+            .offset => |s| offset.offset(testing.allocator, &moved, s.delta, s.join, s.limit, .{}, diag),
+            .hull => hull.hull(testing.allocator, &.{&moved}, .{}, diag),
+        } catch |err| {
+            _ = try clean(err);
+            return;
+        };
+        defer next.deinit();
+        try expectSound(&next, diag);
+        std.mem.swap(Body, &moved, &next);
+    }
+    const a = (try mass.mass(result, .{}, diag)).area;
+    const am = (try mass.mass(&moved, .{}, diag)).area;
+    const close = try weldingSlack(result, diag) + IDENTITY_CLOSE * @max(a, 1) + try moveRounding(result, vec.length2(shift), diag);
+    errdefer std.debug.print("moved whole: area {d}; the chain's: {d}\n", .{ am, a });
+    try testing.expectApproxEqAbs(a, am, close);
+}
+
+/// Whether any edge of the sheet is an arc.
+fn hasArcs(body: *const Body) bool {
+    for (body.edges.items) |e| {
+        if (!e.flags.tombstone and body.geometry.curve(e.curve) == .circle) return true;
+    }
+    return false;
+}
+
+/// What a sheet's area may move by under a rigid move by `distance`: each vertex by
+/// `MOVE_ROUNDING_ULPS` of where it went (its box's reach plus the distance), along the
+/// perimeter; nothing for the empty sheet.
+fn moveRounding(body: *const Body, distance: f64, diag: *Diagnostics) !f64 {
+    if (body.counts().faces == 0) return 0;
+    const box = try bbox.bodyBounds(body);
+    const reach = @max(vec.length(box.min), vec.length(box.max));
+    return MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * (reach + distance) * try perimeterOf(body, diag);
 }
 
 /// One value of an enum, the Smith's choice.
@@ -1390,8 +1527,13 @@ fn expectWithin(inner: *const Body, outer: *const Body, diag: *Diagnostics) !voi
 }
 
 /// How much a sheet's area may move when an overlay welds its vertices and arcs: the zone
-/// along its perimeter (chorded at the default resolution, a fair measure of it).
+/// along its perimeter.
 fn weldingSlack(body: *const Body, diag: *Diagnostics) !f64 {
+    return tol.zone * try perimeterOf(body, diag);
+}
+
+/// A sheet's perimeter, chorded at the default resolution (a fair measure of it).
+fn perimeterOf(body: *const Body, diag: *Diagnostics) !f64 {
     var outline = try query.contours(testing.allocator, body, .{}, diag);
     defer outline.deinit(testing.allocator);
     var perimeter: f64 = 0;
@@ -1399,7 +1541,7 @@ fn weldingSlack(body: *const Body, diag: *Diagnostics) !f64 {
         const contour = outline.contour(i);
         for (contour, 0..) |p, k| perimeter += vec.distance2(p, contour[(k + 1) % contour.len]);
     }
-    return tol.zone * perimeter;
+    return perimeter;
 }
 
 /// A(P ∪ Q) + A(P ∩ Q) = A(P) + A(Q) and A(P − Q) = A(P) − A(P ∩ Q), where every one of the

@@ -540,11 +540,12 @@ pub fn outlines(allocator: std.mem.Allocator, tol: Tolerance, contours: []const 
 
 /// Twice the signed area of a polygon: positive when counter-clockwise (exact in sign for
 /// the usual cases; a polygon this close to zero area is refused by the checker anyway).
+/// Summed about its first point, so that the terms are as small as the polygon.
 pub fn signedArea(points: []const Vec2) f64 {
     var area: f64 = 0;
     for (points, 0..) |p, i| {
         const q = points[(i + 1) % points.len];
-        area += p[0] * q[1] - q[0] * p[1];
+        area += vec.cross2(vec.sub2(p, points[0]), vec.sub2(q, points[0]));
     }
     return area;
 }
