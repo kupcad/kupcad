@@ -19,6 +19,12 @@
 //!   inside a void, wound outward) sum to 0 for an outer shell and to 1 for a void. That is
 //!   "voids inside an outer shell and not inside each other, shells apart" in one count,
 //!   and right for any nesting (a solid in a void of another solid, a void in it).
+//! - Shells of one solid touch nowhere (ISO 10303-42: a void apart from its outer shell and
+//!   from every other void, which STEP's `brep_with_voids` cannot hold otherwise; Tu §22.3:
+//!   the boundary of a solid is a 2-manifold, and a point where it touches itself is not a
+//!   manifold point): faces of two shells of one solid (`Solids`) meeting anywhere, or faces
+//!   of one shell touching away from where they share an edge or a vertex, are a pinch
+//!   (`pinched`); faces of two solids may touch, at a point or along their edges.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -31,6 +37,7 @@ const traverse = @import("../topology/traverse.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
+const point_in_body = @import("point_in_body.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const sketch_overlap = @import("../sketch/overlap.zig");
@@ -47,20 +54,118 @@ const Error = diagnostics.Error;
 const WHOLE: f64 = 0.25;
 const FOUR_PI: f64 = 4.0 * std.math.pi;
 
+/// No solid: a shell taken away, or a void inside no outer shell.
+pub const NO_SOLID: u32 = std.math.maxInt(u32);
+
 /// Fails with `faces_intersect` or `shell_overlaps` (`error.NotValid`) when `body` overlaps
-/// itself; a sheet with `faces_overlap` (`sketch/overlap.zig`).
+/// itself, with `pinched` (`error.Degenerate`) when a solid touches itself; a sheet with
+/// `faces_overlap` (`sketch/overlap.zig`).
 pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     if (body.kind == .sheet) return sketch_overlap.check(allocator, body, diag);
     if (body.isEmpty()) return;
     const tol = options.tolerance orelse body.tol;
     var index = try index_mod.FaceIndex.build(allocator, body, diag);
     defer index.deinit(allocator);
-    try facePairs(allocator, body, &index, tol, options, diag);
+    var solids = try Solids.init(allocator, body, options, diag);
+    defer solids.deinit(allocator);
+    try facePairs(allocator, body, &index, &solids, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
 }
 
+/// Which solid each shell of a body belongs to (ISO 10303-42: a solid is an outer shell and
+/// the voids inside it; solids may touch each other, its own shells may not): an outer shell
+/// its own; a void the innermost outer shell around a point strictly inside one of its
+/// faces (`pointInside`: a void's vertex may lie on the shell around it, a void touching
+/// it, and classifies nothing there; research/manifold-parity.md's octahedral void, every
+/// vertex on the outer shell).
+pub const Solids = struct {
+    /// Each shell's (by index) outer shell, `NO_SOLID` for one taken away or a void inside
+    /// no outer shell.
+    owner: []u32,
+
+    pub fn init(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!Solids {
+        const owner = try allocator.alloc(u32, body.shells.items.len);
+        errdefer allocator.free(owner);
+        @memset(owner, NO_SOLID);
+        var outers: std.ArrayList(types.ShellIndex) = .empty;
+        defer outers.deinit(allocator);
+        var voids: std.ArrayList(types.ShellIndex) = .empty;
+        defer voids.deinit(allocator);
+        var shells = traverse.Shells.init(body);
+        while (shells.next() catch return corrupt(diag)) |s| {
+            if (body.shell(s).kind == .void) {
+                try voids.append(allocator, s);
+            } else {
+                owner[@backingInt(s)] = @backingInt(s);
+                try outers.append(allocator, s);
+            }
+        }
+        if (voids.items.len == 0) return .{ .owner = owner };
+        const indexes = try allocator.alloc(index_mod.FaceIndex, outers.items.len);
+        var built: usize = 0;
+        defer {
+            for (indexes[0..built]) |*i| i.deinit(allocator);
+            allocator.free(indexes);
+        }
+        for (outers.items, indexes) |s, *i| {
+            i.* = try index_mod.FaceIndex.buildShell(allocator, body, s, diag);
+            built += 1;
+        }
+        for (voids.items) |v| {
+            try options.checkCancel();
+            const p = try shellPoint(allocator, body, v, diag) orelse continue;
+            // Innermost: of the outer shells around it, the one inside the others
+            var best: ?usize = null;
+            for (outers.items, indexes, 0..) |o, *index, k| {
+                if (try point_in_body.classify(allocator, body, index, p, options, diag) != .inside) continue;
+                if (best) |b| {
+                    const q = try shellPoint(allocator, body, o, diag) orelse continue;
+                    if (try point_in_body.classify(allocator, body, &indexes[b], q, options, diag) != .inside) continue;
+                }
+                best = k;
+            }
+            if (best) |b| owner[@backingInt(v)] = @backingInt(outers.items[b]);
+        }
+        return .{ .owner = owner };
+    }
+
+    pub fn deinit(self: *Solids, allocator: std.mem.Allocator) void {
+        allocator.free(self.owner);
+        self.* = undefined;
+    }
+
+    /// Whether shells `s` and `t` are of one solid.
+    pub fn same(self: *const Solids, s: types.ShellIndex, t: types.ShellIndex) bool {
+        const a = self.owner[@backingInt(s)];
+        return a != NO_SOLID and a == self.owner[@backingInt(t)];
+    }
+};
+
+/// A point strictly inside one of shell `s`'s faces (`pointInside`), the first face's that
+/// has one; null when none does.
+fn shellPoint(allocator: std.mem.Allocator, body: *const Body, s: types.ShellIndex, diag: *Diagnostics) Error!?Vec3 {
+    var faces = traverse.Faces.init(body, s);
+    while (faces.next() catch return corrupt(diag)) |f| {
+        if (try pointInside(allocator, body, f, diag)) |p| return p;
+    }
+    return null;
+}
+
+/// A point strictly inside face `f`: a planar face with straight edges its clearest
+/// centroid (`facePoint`); another the middle of its parameter box, when inside it; null
+/// when neither gives one.
+pub fn pointInside(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error!?Vec3 {
+    if (try facePoint(allocator, body, f, diag)) |p| return p;
+    const face = body.face(f);
+    const box = face.uv_box;
+    if (box.isEmpty()) return null;
+    const uv: Vec2 = .{ (box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2 };
+    const p = body.geometry.surface(face.surface).eval(uv[0], uv[1]);
+    return if (try in_face.classify(body, f, p, uv, 0, diag) == .inside) p else null;
+}
+
 /// The first rule over every pair of faces whose boxes overlap, in order of their items.
-fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, solids: *const Solids, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     const Collect = struct {
         allocator: std.mem.Allocator,
         out: std.ArrayList([2]u32) = .empty,
@@ -92,16 +197,23 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
         if (planar_faces.frameOf(body, f) == null or planar_faces.frameOf(body, g) == null) continue;
         pieces.clearRetainingCapacity();
         const relation = try planar_faces.meet(allocator, body, f, body, g, tol, &pieces, diag);
-        const overlaps = switch (relation) {
-            .apart => false,
-            .crossing => blk: {
-                const apart = body.face(f).shell != body.face(g).shell;
-                for (pieces.items) |piece| if (!try onBoundaries(body, f, g, piece, apart, tol, diag)) break :blk true;
-                break :blk false;
+        const shell_f = body.face(f).shell;
+        const shell_g = body.face(g).shell;
+        switch (relation) {
+            .apart => {},
+            .crossing => {
+                const apart = shell_f != shell_g;
+                // Two shells of one solid meet nowhere; two solids may touch
+                if (apart and solids.same(shell_f, shell_g) and pieces.items.len > 0) return pinch(diag, shell_f, g);
+                for (pieces.items) |piece| {
+                    if (try onBoundaries(body, f, g, piece, apart, tol, diag)) continue;
+                    // One shell touching itself (on a face's boundary, inside the other)
+                    if (!apart and try touching(body, f, g, piece, tol, diag)) return pinch(diag, shell_f, g);
+                    return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) });
+                }
             },
-            .coplanar => try coplanarOverlap(allocator, body, f, g, tol, diag),
-        };
-        if (overlaps) return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) });
+            .coplanar => if (try coplanarOverlap(allocator, body, f, g, tol, diag)) return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) }),
+        }
     }
 }
 
@@ -121,6 +233,23 @@ fn onBoundaries(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece
     for (points[0..count]) |p| {
         const own = try gapAt(body, f, g, p, diag);
         if (!try nearBoundary(body, f, p, own, tol, diag) or !try nearBoundary(body, g, p, own, tol, diag)) return false;
+    }
+    return true;
+}
+
+/// A solid touching itself where shell `s`'s face meets face `g` (`pinched`, by design).
+fn pinch(diag: *Diagnostics, s: types.ShellIndex, g: types.FaceIndex) Error {
+    return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(s)), .label = "the body", .measured = @floatFromInt(@backingInt(g)) });
+}
+
+/// Whether every point of `piece` (its ends and middle) lies on face `f`'s boundary or on
+/// `g`'s: the two faces touch there, neither passing through the other.
+fn touching(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    const points = [3]Vec3{ piece.a, vec.lerp(piece.a, piece.b, 0.5), piece.b };
+    const count: usize = if (piece.isPoint()) 1 else 3;
+    for (points[0..count]) |p| {
+        const own = try gapAt(body, f, g, p, diag);
+        if (!try nearBoundary(body, f, p, own, tol, diag) and !try nearBoundary(body, g, p, own, tol, diag)) return false;
     }
     return true;
 }

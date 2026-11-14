@@ -440,33 +440,57 @@ fn validAt(allocator: std.mem.Allocator, operand: *const Body, tol: Tolerance, k
     };
 }
 
-/// The checker's first failure on `body` up to `level` as the operation's, a pinch as
-/// `pinched` (refused by design), any other as `NotValid` with the finding.
+/// The checker's first failure on `body` up to `level` as the operation's (`NotValid` with
+/// the finding); a pinch was refused before (`pinchedRecords`).
 fn refuseInvalid(allocator: std.mem.Allocator, body: *const Body, level: check.Level, diag: *Diagnostics) Error!void {
     var checked = try check.run(allocator, body, level);
     defer checked.deinit(allocator);
     const f = checked.first() orelse return;
-    if (f.code == .euler_poincare) if (try pinchedShell(allocator, body, f)) |s| {
-        return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, s), .label = "the result" });
-    };
     return diag.fail(error.NotValid, f);
 }
 
-/// The shell an Euler–Poincaré finding names when it is pinched: one shell touching itself
-/// along a line or at a point, so a vertex of it is singular (its faces about it two fans
-/// or more, `topology/condition.zig`), which no count of one shell admits. Null for any
-/// other failure of the count.
-fn pinchedShell(allocator: std.mem.Allocator, body: *const Body, finding: diagnostics.Finding) Error!?u32 {
-    var grades: std.ArrayList(condition.ShellGrade) = .empty;
-    defer grades.deinit(allocator);
-    condition.ofBody(allocator, body, &grades) catch |e| switch (e) {
+/// Refuses (`pinched`) a result whose records touch inside one solid (`overlap.Solids`):
+/// a vertex whose faces about it are two fans of one solid (`condition.fans`: one shell
+/// touching itself at a point or along a line, two voids sharing a corner), or two edges
+/// between one pair of vertices, along one line (`pairTouching`'s one edge per solid), of
+/// one solid (a pocket meeting the face it was cut from along an edge; a void's edge lying
+/// on its outer shell's face, which was one shell through a two-edge loop of zero width,
+/// research/manifold-parity.md). Two solids touching so pass, and `warnTouching` warns of
+/// a line.
+fn pinchedRecords(allocator: std.mem.Allocator, body: *const Body, solids: *const overlap.Solids, diag: *Diagnostics) Error!void {
+    var fans: std.ArrayList(condition.Fan) = .empty;
+    defer fans.deinit(allocator);
+    condition.fans(allocator, body, &fans) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.Corrupt => return null,
+        error.Corrupt => return corrupt(diag),
     };
-    for (grades.items) |g| {
-        if (@backingInt(g.shell) == finding.entity.index and g.grade.singular_vertices > 0) return finding.entity.index;
+    var start: usize = 0;
+    while (start < fans.items.len) {
+        var end = start;
+        while (end < fans.items.len and fans.items[end].vertex == fans.items[start].vertex) end += 1;
+        for (fans.items[start..end], 0..) |x, i| for (fans.items[start + i + 1 .. end]) |y| {
+            if (solids.same(x.shell, y.shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(x.shell)), .label = "the result (its faces about a vertex in two fans, inside one solid)" });
+        };
+        start = end;
     }
-    return null;
+    var first: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer first.deinit(allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none) continue;
+        const key: [2]u32 = .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) };
+        const entry = try first.getOrPut(allocator, key);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = @intCast(i);
+            continue;
+        }
+        const shell = edgeShell(body, @intCast(i));
+        if (solids.same(edgeShell(body, entry.value_ptr.*), shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (two edges along one line, inside one solid)" });
+    }
+}
+
+/// The shell of edge `e`'s faces.
+fn edgeShell(body: *const Body, e: u32) types.ShellIndex {
+    return body.face(body.loop(body.coedge(body.edge(types.EdgeIndex.of(e)).coedge).loop).face).shell;
 }
 
 /// A warning (`solids_touch`) for each place the result's solids touch along a line: two
@@ -673,7 +697,12 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         while (shells.next() catch return corrupt(diag)) |s| {
             if (try shellVolume(&b.body, s, diag) < 0) b.body.shell(s).kind = .void;
         }
-        try pinchedAtPoint(paves, fragments, made.face_fragment, vertex_of, &b.body, diag);
+        // A pinch is refused before simplification, whose Euler operators take a valid
+        // body (one rule for every pinch: shells of one solid touch nowhere, `overlap.Solids`)
+        var solids = try overlap.Solids.init(allocator, &b.body, .{}, diag);
+        defer solids.deinit(allocator);
+        try pinchedAtPoint(paves, fragments, made.face_fragment, vertex_of, &b.body, &solids, diag);
+        try pinchedRecords(allocator, &b.body, &solids, diag);
     }
     made.body = b.body;
     return made;
@@ -695,10 +724,11 @@ fn fragmentArea(paves: *const pave.Paves, fragments: *const imprint.Fragments, i
 
 /// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
 /// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
-/// face's pieces, whose face piece and whose faces about the vertex are in one shell (a
-/// pocket meeting the face it was cut from at a corner). Two solids touching so are two
-/// shells, and pass.
-fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, face_fragment: []const u32, vertex_of: []const types.VertexIndex, body: *const Body, diag: *Diagnostics) Error!void {
+/// face's pieces, whose face piece and whose faces about the vertex are in shells of one
+/// solid (a pocket meeting the face it was cut from at a corner; a void's corner on its
+/// outer shell, research/manifold-parity.md's octahedral void). Two solids touching so
+/// pass.
+fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, face_fragment: []const u32, vertex_of: []const types.VertexIndex, body: *const Body, solids: *const overlap.Solids, diag: *Diagnostics) Error!void {
     for (paves.touches.items) |touch| {
         const v = vertex_of[touch.vertex];
         if (v == .none) continue;
@@ -714,7 +744,7 @@ fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments,
         const shell = body.faces.items[j].shell;
         for (body.coedges.items, 0..) |c, ci| {
             if (c.tombstone or body.coedgeStart(types.CoedgeIndex.of(ci)) != v) continue;
-            if (body.face(body.loop(c.loop).face).shell == shell) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand on a face of the other, inside one solid)" });
+            if (solids.same(body.face(body.loop(c.loop).face).shell, shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand on a face of the other, inside one solid)" });
         }
     }
 }

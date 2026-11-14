@@ -317,7 +317,7 @@ fn expectCommutes(a: *const Body, b: *const Body, op: pipeline.Op, slack: f64) !
 
 /// Pairs of hulls of grid points, each pair meeting where boxes cannot: slanted faces
 /// touching, corners on faces, edges crossing slanted faces.
-const HULLS = [_]struct { name: []const u8, a: []const Vec3, b: []const Vec3 }{
+const HULLS = [_]struct { name: []const u8, a: []const Vec3, b: []const Vec3, pinched: ?pipeline.Op = null }{
     .{
         // Two tetrahedra sharing a slanted face whole
         .name = "tetrahedra face to face",
@@ -325,10 +325,13 @@ const HULLS = [_]struct { name: []const u8, a: []const Vec3, b: []const Vec3 }{
         .b = &.{ .{ 2, 0, 0 }, .{ 0, 2, 0 }, .{ 0, 0, 2 }, .{ 2, 2, 2 } },
     },
     .{
-        // An octahedron in a cube, each corner on a face of the cube
+        // An octahedron in a cube, each corner on a face of the cube: the difference is a
+        // void touching its outer shell at six points, refused by design (Leo, 2026-11-14;
+        // STEP's brep_with_voids cannot hold it, OpenCascade read two solids)
         .name = "an octahedron's corners on a cube's faces",
         .a = &.{ .{ 0, 0, 0 }, .{ 4, 0, 0 }, .{ 0, 4, 0 }, .{ 4, 4, 0 }, .{ 0, 0, 4 }, .{ 4, 0, 4 }, .{ 0, 4, 4 }, .{ 4, 4, 4 } },
         .b = &.{ .{ 2, 2, 0 }, .{ 2, 2, 4 }, .{ 2, 0, 2 }, .{ 2, 4, 2 }, .{ 0, 2, 2 }, .{ 4, 2, 2 } },
+        .pinched = .difference,
     },
     .{
         // A pyramid through a wedge: edges crossing slanted faces
@@ -360,6 +363,14 @@ test "corpus: rigid moves commute with the boolean on hulls, every operation" {
         defer a.deinit();
         var b = try solid_hull.hull(testing.allocator, tol, pair.b, &diag);
         defer b.deinit();
-        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectCommutes(&a, &b, op, CLOSE);
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            if (pair.pinched == op) {
+                diag.clear();
+                try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null));
+                try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+                continue;
+            }
+            try expectCommutes(&a, &b, op, CLOSE);
+        }
     }
 }

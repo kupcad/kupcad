@@ -42,6 +42,8 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
     defer allocator.free(edges);
     const loops = try allocator.alloc([1]sew.LoopSpec, 6 * specs.len);
     defer allocator.free(loops);
+    var vertex_at: std.AutoHashMapUnmanaged(u32, types.VertexIndex) = .empty;
+    defer vertex_at.deinit(allocator);
     for (specs, 0..) |spec, k| {
         const lo = spec.lo;
         const hi = spec.hi;
@@ -50,7 +52,13 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
             .{ lo[0], lo[1], hi[2] }, .{ hi[0], lo[1], hi[2] }, hi,                       .{ lo[0], hi[1], hi[2] },
         };
         var v: [8]types.VertexIndex = undefined;
-        for (corners, 0..) |p, i| v[i] = try b.vertex(p);
+        for (corners, 0..) |p, i| {
+            // One vertex record per point: boxes sharing a corner share its vertex
+            const at = try b.point(p);
+            const entry = try vertex_at.getOrPut(allocator, @backingInt(at));
+            if (!entry.found_existing) entry.value_ptr.* = try b.vertexAt(at);
+            v[i] = entry.value_ptr.*;
+        }
         for (quads, normals, 0..) |q, n, f| {
             const i = 6 * k + f;
             var order = q;
@@ -244,4 +252,23 @@ test "overlap: faces meeting at a merged vertex touch within its gap, its edges 
         defer body.deinit();
         try expectSound(&body);
     }
+}
+
+test "overlap: two voids of one solid sharing a corner are a pinch; two solids sharing one pass" {
+    // research/manifold-parity.md (2026-11-14): shells of one solid touch nowhere
+    var voids = try boxes(testing.allocator, &.{
+        .{ .lo = .{ 0, 0, 0 }, .hi = .{ 6, 6, 6 } },
+        .{ .lo = .{ 1, 1, 1 }, .hi = .{ 3, 3, 3 }, .void = true },
+        .{ .lo = .{ 3, 3, 3 }, .hi = .{ 5, 5, 5 }, .void = true },
+    });
+    defer voids.deinit();
+    try expectChecked(&voids);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &voids, .{}, &diag));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    try testing.expectEqual(diagnostics.EntityKind.shell, diag.first().?.entity.kind);
+    var solids = try boxes(testing.allocator, &.{ .{ .lo = .{ 0, 0, 0 }, .hi = .{ 1, 1, 1 } }, .{ .lo = .{ 1, 1, 1 }, .hi = .{ 2, 2, 2 } } });
+    defer solids.deinit();
+    try expectSound(&solids);
 }

@@ -139,6 +139,21 @@ const SHAPES = [_][]const u8{
     "(cube(2) + cube(2).translate(1, 1, 1)).translate(1000, -700, 300)",
 };
 
+/// A void touching its outer shell or another void (research/manifold-parity.md, cases a,
+/// b, h, l), and what the mesh engine makes of it: the contact kept as coincident vertices
+/// of separate components, each void a part of its own, inside out (genus 1 − χ/2 over the
+/// whole mesh).
+const TOUCHING_INSIDE = [_]struct { script: []const u8, parts: f64, genus: f64 }{
+    // An octahedron's corners on a cube's faces, cut out
+    .{ .script = "cube(4) - polyhedron(points: [[2, 2, 0], [2, 2, 4], [2, 0, 2], [2, 4, 2], [0, 2, 2], [4, 2, 2]], faces: [[1, 5, 3], [1, 3, 4], [1, 4, 2], [1, 2, 5], [0, 3, 5], [0, 4, 3], [0, 2, 4], [0, 5, 2]])", .parts = 2, .genus = -1 },
+    // A diamond prism's edge on a face
+    .{ .script = "cube(4) - polygon([[2, 0], [3, 1], [2, 2], [1, 1]]).extrude(2).translate(z: 1)", .parts = 2, .genus = -1 },
+    // Two voids corner to corner
+    .{ .script = "cube(6) - cube(2).translate(1, 1, 1) - cube(2).translate(3, 3, 3)", .parts = 3, .genus = -2 },
+    // A tetrahedron's one corner on the bottom
+    .{ .script = "cube(4) - polyhedron(points: [[2, 2, 0], [3, 1.5, 2], [1, 1.5, 2], [2, 3, 2]], faces: [[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]])", .parts = 2, .genus = -1 },
+};
+
 /// What the B-Rep engine refuses and the mesh engine builds: a non-uniform scale of a
 /// curved part has no exact surfaces (architecture D20), so it is refused rather than
 /// approximated; the mesh engine, which has no exact surfaces to keep, scales its mesh.
@@ -150,10 +165,15 @@ const BREP_REFUSES = [_][]const u8{
     "cube(2) - cylinder(r: 0.5, h: 3, segments: 64)",
     "cylinder(r: 1, h: 3, segments: 64).trim_by_plane(0, 0, 1, 1)",
     // Refused by design (§9.3's allowed differences): a result one solid would hold
-    // touching itself along a line, a pinch, which one shell cannot hold (M4's degeneracy
-    // corpus); operands the intersection tolerance apart to rounding (D27), which the mesh
-    // engine decides one way
+    // touching itself along a line or at a point, a pinch, which one solid cannot hold
+    // (M4's degeneracy corpus; research/manifold-parity.md: a void touching its outer shell
+    // or another void too, `TOUCHING_INSIDE`); operands the intersection tolerance apart to
+    // rounding (D27), which the mesh engine decides one way
     "cube(2, 2, 1) - polygon([[1, 0], [2, 2], [0, 2]]).extrude(2).rotate(x: 90).translate(y: 1)",
+    TOUCHING_INSIDE[0].script,
+    TOUCHING_INSIDE[1].script,
+    TOUCHING_INSIDE[2].script,
+    TOUCHING_INSIDE[3].script,
     "cube(2) + cube(2).translate(2.00002, 0, 0)",
     // Each feature the B-Rep engine does not have yet, named in its refusal
     "square(1).loft(square(2), 3)",
@@ -288,6 +308,17 @@ test "parity: a non-uniform scale of a curved part, and a boolean of one, are re
         errdefer std.debug.print("script: {s}\n", .{source});
         _ = try boxOn(.manifold, source);
         try testing.expectError(error.RuntimeError, stepBoxOf(source));
+    }
+}
+
+test "parity: a void touching its own solid, refused by the B-Rep engine, is separate components on the mesh engine" {
+    // Measures cannot see a pinch (a set of measure zero): parts and genus can
+    inline for (TOUCHING_INSIDE) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.script});
+        var buf: [2]f64 = undefined;
+        const got = try numbersOn(.manifold, "s = " ++ case.script, "[s.decompose.size, s.genus]", &buf);
+        try testing.expectEqual(case.parts, got[0]);
+        try testing.expectEqual(case.genus, got[1]);
     }
 }
 

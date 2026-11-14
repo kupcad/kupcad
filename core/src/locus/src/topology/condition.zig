@@ -6,7 +6,11 @@
 //! their apex, two squares touching at a corner), which no edge count sees. The checker
 //! reports a body's shells in these words (`check.Report.shells`) and the mesh validator
 //! an output mesh's (`mesh/validate.zig`), so `CHECK_EDGE_PAIRS` is `closed` with no
-//! singular vertex, whichever is graded.
+//! singular vertex, whichever is graded. The singular-vertex test is Edelsbrunner's link
+//! test on the records (a vertex's link one cycle, IV.13), which presumes the records form
+//! a proper complex: contacts that are no shared record (a corner inside a face, two edges
+//! on one segment) are the overlap rules' and the boolean's (`query/overlap.zig`,
+//! `Solids`).
 
 const std = @import("std");
 const diagnostics = @import("../diagnostics.zig");
@@ -180,37 +184,75 @@ fn collectLeaving(allocator: std.mem.Allocator, body: *const Body, s: types.Shel
     }
 }
 
-/// The vertices whose leaving coedges fall into more than one fan, in increasing order: a
-/// coedge and the partner of the coedge before it in its loop leave the vertex from
-/// neighbouring faces; a degenerate coedge before it leaves the vertex too, from the same
-/// face.
+/// The vertices whose leaving coedges fall into more than one fan, in increasing order.
 fn singularVertices(allocator: std.mem.Allocator, body: *const Body, leaving: *const Leaving, out: *std.ArrayList(u32)) Error!void {
     var fan: std.AutoHashMapUnmanaged(CoedgeIndex, CoedgeIndex) = .empty;
     defer fan.deinit(allocator);
     var vertices = leaving.iterator();
     while (vertices.next()) |entry| {
-        const list = entry.value_ptr.items;
-        if (list.len < 2) continue;
-        fan.clearRetainingCapacity();
-        for (list) |c| try fan.put(allocator, c, c);
-        for (list) |c| {
-            const prev = body.coedge(c).prev;
-            if (prev == .none) continue;
-            // A degenerate edge before it (a pole, an apex) starts and ends here: the fan
-            // runs straight through it, in the same face
-            if (body.edge(body.coedge(prev).edge).flags.degenerate and fan.contains(prev)) {
-                unite(&fan, c, prev);
-                continue;
-            }
-            const around = body.coedge(prev).partner;
-            if (around == .none or !fan.contains(around)) continue;
-            unite(&fan, c, around);
-        }
-        var roots: usize = 0;
-        for (list) |c| roots += @intFromBool(find(&fan, c) == c);
-        if (roots > 1) try out.append(allocator, entry.key_ptr.*);
+        if (try fansOf(allocator, body, entry.value_ptr.items, &fan) > 1) try out.append(allocator, entry.key_ptr.*);
     }
     std.mem.sort(u32, out.items, {}, std.sort.asc(u32));
+}
+
+/// The coedges `list` leaving one vertex grouped into fans in `fan` (each coedge to its
+/// fan's root, the lowest index), and how many fans: a coedge and the partner of the coedge
+/// before it in its loop leave the vertex from neighbouring faces; a degenerate coedge
+/// before it leaves the vertex too, from the same face.
+fn fansOf(allocator: std.mem.Allocator, body: *const Body, list: []const CoedgeIndex, fan: *std.AutoHashMapUnmanaged(CoedgeIndex, CoedgeIndex)) Error!usize {
+    fan.clearRetainingCapacity();
+    if (list.len < 2) return list.len;
+    for (list) |c| try fan.put(allocator, c, c);
+    for (list) |c| {
+        const prev = body.coedge(c).prev;
+        if (prev == .none) continue;
+        // A degenerate edge before it (a pole, an apex) starts and ends here: the fan
+        // runs straight through it, in the same face
+        if (body.edge(body.coedge(prev).edge).flags.degenerate and fan.contains(prev)) {
+            unite(fan, c, prev);
+            continue;
+        }
+        const around = body.coedge(prev).partner;
+        if (around == .none or !fan.contains(around)) continue;
+        unite(fan, c, around);
+    }
+    var roots: usize = 0;
+    for (list) |c| roots += @intFromBool(find(fan, c) == c);
+    return roots;
+}
+
+/// One fan of a singular vertex: the vertex, and the shell of the faces about it.
+pub const Fan = struct { vertex: u32, shell: types.ShellIndex };
+
+/// Every fan of every singular vertex of `body` (a vertex whose faces about it are more
+/// than one fan: shells touching there, or one touching itself), appended to `out` by
+/// vertex, each vertex's fans by their lowest coedge.
+pub fn fans(allocator: std.mem.Allocator, body: *const Body, out: *std.ArrayList(Fan)) Error!void {
+    var leaving: Leaving = .empty;
+    defer deinitLeaving(allocator, &leaving);
+    var shells = traverse.Shells.init(body);
+    while (try shells.next()) |s| try collectLeaving(allocator, body, s, &leaving);
+    var vertices: std.ArrayList(u32) = .empty;
+    defer vertices.deinit(allocator);
+    var keys = leaving.keyIterator();
+    while (keys.next()) |v| try vertices.append(allocator, v.*);
+    std.mem.sort(u32, vertices.items, {}, std.sort.asc(u32));
+    var fan: std.AutoHashMapUnmanaged(CoedgeIndex, CoedgeIndex) = .empty;
+    defer fan.deinit(allocator);
+    var roots: std.ArrayList(CoedgeIndex) = .empty;
+    defer roots.deinit(allocator);
+    for (vertices.items) |v| {
+        const list = leaving.get(v).?.items;
+        if (try fansOf(allocator, body, list, &fan) < 2) continue;
+        roots.clearRetainingCapacity();
+        for (list) |c| if (find(&fan, c) == c) try roots.append(allocator, c);
+        std.mem.sort(CoedgeIndex, roots.items, {}, lessCoedge);
+        for (roots.items) |c| try out.append(allocator, .{ .vertex = v, .shell = body.face(body.loop(body.coedge(c).loop).face).shell });
+    }
+}
+
+fn lessCoedge(_: void, a: CoedgeIndex, b: CoedgeIndex) bool {
+    return @backingInt(a) < @backingInt(b);
 }
 
 fn find(parent: *std.AutoHashMapUnmanaged(CoedgeIndex, CoedgeIndex), c: CoedgeIndex) CoedgeIndex {

@@ -448,7 +448,7 @@ test "degeneracy: two 1000-sided prisms overlapping, and 64 pegs joined to a pla
     try expectShape(&studded, 256 + 64 * 2, 6 + 64 * 5, 1);
 }
 
-test "degeneracy: a cut whose corner touches the face it was cut from is pinched at a point, refused by design" {
+test "degeneracy: a cut whose corner touches the face it was cut from is pinched at a point, and a void touching it so, refused by design" {
     // The solids fuzzer's first find (2026-11-13): a tetrahedron through a box's bottom, its
     // apex on the box's side from within; the pocket the difference leaves, open at the
     // bottom, meets that side at one point no edge records, inside one solid
@@ -466,14 +466,20 @@ test "degeneracy: a cut whose corner touches the face it was cut from is pinched
     var i = try sound(&a, &through, .intersection);
     defer i.deinit();
     try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&i));
-    // Wholly inside, the cut is a void touching the side at its corner: two shells, which
-    // pass
+    // Wholly inside, the cut is a void touching the side at its corner: shells of one solid
+    // touching, refused by design as the pocket is (Leo, 2026-11-14: a void apart from its
+    // outer shell, as STEP's brep_with_voids holds it); union and intersection are sound
     var inside = try tetrahedron(.{ 2, 1, 1 }, .{ 1, 0.5, 0.5 }, .{ 1, 1.5, 0.5 }, .{ 1, 1, 1.5 });
     defer inside.deinit();
-    var hollow = try sound(&a, &inside, .difference);
-    defer hollow.deinit();
-    try testing.expectEqual([2]usize{ 1, 1 }, shellKinds(&hollow));
-    try testing.expectApproxEqAbs(8 - try volume(&inside), try volume(&hollow), CLOSE);
+    diag.clear();
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &a, &inside, .difference, .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    var whole = try sound(&a, &inside, .@"union");
+    defer whole.deinit();
+    try expectShape(&whole, 8, 6, 1);
+    var held = try sound(&a, &inside, .intersection);
+    defer held.deinit();
+    try testing.expectApproxEqAbs(try volume(&inside), try volume(&held), CLOSE);
     // From outside, the corner on the face makes two solids touching at a point, which pass
     var outside = try tetrahedron(.{ 2, 1, 1 }, .{ 3, 0.5, 0.5 }, .{ 3, 1.5, 0.5 }, .{ 3, 1, 1.5 });
     defer outside.deinit();
@@ -483,8 +489,7 @@ test "degeneracy: a cut whose corner touches the face it was cut from is pinched
     var cut = try sound(&a, &outside, .difference);
     defer cut.deinit();
     try expectShape(&cut, 8, 6, 1);
-    // The identities where a result is made: the cut inside and the corner from outside
-    try expectIdentities(&a, &inside);
+    // The identities where every result is made: the corner from outside
     try expectIdentities(&a, &outside);
 }
 
@@ -923,7 +928,7 @@ test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its uppe
     // they meet (an edge meets a plane once), and the faces lie under the top within the
     // zone of it but toward their lower corner, where neither centroid reached
     // (`unclassified`). The tetrahedron is all but inside the plate: the intersection is it,
-    // the union the plate, the difference the plate less it
+    // the union the plate
     const t = Tolerance.fromZone(1e-4);
     const top = 3 + 5e-5;
     var plate = try helpers.boxAt(t, .{ -10, -10, 5e-5 }, .{ 10, 10, top });
@@ -939,7 +944,12 @@ test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its uppe
     defer i.deinit();
     try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&i));
     try testing.expectApproxEqAbs(try volume(&tetra), try volume(&i), t.xsect * 4);
-    try expectIdentities(&plate, &tetra);
+    var u = try sound(&plate, &tetra, .@"union");
+    defer u.deinit();
+    try testing.expectApproxEqAbs(try volume(&plate), try volume(&u), t.xsect * 4);
+    // The difference is a void whose edge lies on the plate's top within the tolerance: a
+    // void touching its outer shell along a line, refused by design
+    try expectPinched(&plate, &tetra);
 }
 
 test "degeneracy: a plane between a flat tetrahedron's edges cuts a section 4.2e-5 across, classified at its incenter" {
@@ -964,4 +974,70 @@ test "degeneracy: a plane between a flat tetrahedron's edges cuts a section 4.2e
         try @import("../query/overlap.zig").check(testing.allocator, part, .{}, &diag);
     }
     try testing.expectApproxEqAbs(try volume(&tetra), try volume(&parts[0]) + try volume(&parts[1]), CLOSE);
+}
+
+test "degeneracy: a void touching its outer shell along a line, at a point, or another void at a corner is refused by design; a solid in a cavity touching it is two solids" {
+    // research/manifold-parity.md (2026-11-14): shells of one solid touch nowhere (a void
+    // apart from its outer shell and every other void, ISO 10303-42), solids may touch.
+    // A diamond prism's edge on a cube's face, cut out: it was one shell through a two-edge
+    // loop of zero width on that face (genus 0, OpenCascade's InvalidImbricationOfWires)
+    var cube = try box(.{ 0, 0, 0 }, .{ 4, 4, 4 });
+    defer cube.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outline = try primitives.polygon(testing.allocator, tol, &.{ .{ 2, 0 }, .{ 3, 1 }, .{ 2, 2 }, .{ 1, 1 } }, &diag);
+    defer outline.deinit();
+    var diamond0 = try @import("../construct/sweep.zig").extrude(testing.allocator, &outline, .{ 0, 0, 2 }, .{}, &diag);
+    defer diamond0.deinit();
+    var diamond = try helpers.moved(&diamond0, .{ 0, 0, 1 });
+    defer diamond.deinit();
+    try expectPinched(&cube, &diamond);
+    // A tetrahedron's one corner on the cube's bottom (it passed by the void's vertex order)
+    var tet = try tetrahedron(.{ 2, 2, 0 }, .{ 3, 1.5, 2 }, .{ 1, 1.5, 2 }, .{ 2, 3, 2 });
+    defer tet.deinit();
+    try expectPinched(&cube, &tet);
+    // Two voids touching corner to corner
+    var big = try box(.{ 0, 0, 0 }, .{ 6, 6, 6 });
+    defer big.deinit();
+    var first = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer first.deinit();
+    var hollow = try sound(&big, &first, .difference);
+    defer hollow.deinit();
+    var second = try box(.{ 3, 3, 3 }, .{ 5, 5, 5 });
+    defer second.deinit();
+    try expectPinched(&hollow, &second);
+    // An octahedron in a hollow cube's cavity, its corners on the floor and the roof: a
+    // solid touching the cavity of another, two solids, which pass
+    var cavity = try box(.{ 1, 1, 1 }, .{ 5, 5, 5 });
+    defer cavity.deinit();
+    var shell = try sound(&big, &cavity, .difference);
+    defer shell.deinit();
+    var octa = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ 3, 3, 1 }, .{ 3, 3, 5 }, .{ 3, 1.5, 3 }, .{ 3, 4.5, 3 }, .{ 1.5, 3, 3 }, .{ 4.5, 3, 3 } }, &diag);
+    defer octa.deinit();
+    var both = try sound(&shell, &octa, .@"union");
+    defer both.deinit();
+    try testing.expectEqual([2]usize{ 2, 1 }, shellKinds(&both));
+    try testing.expectApproxEqAbs(216 - 64 + try volume(&octa), try volume(&both), CLOSE);
+    const parts = try @import("../construct/decompose.zig").decompose(testing.allocator, &both, .{}, &diag);
+    defer {
+        for (parts) |*part| part.deinit();
+        testing.allocator.free(parts);
+    }
+    try testing.expectEqual(@as(usize, 2), parts.len);
+}
+
+/// The difference of `a` and `b` refused by design (`pinched`).
+fn expectPinched(a: *const Body, b: *const Body) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (pipeline.boolean(testing.allocator, a, b, .difference, .{}, &diag, null)) |result| {
+        var made = result;
+        made.deinit();
+        return error.TestExpectedError;
+    } else |e| {
+        errdefer std.debug.print("{f}\n", .{diag});
+        try testing.expectEqual(error.Degenerate, e);
+    }
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    try testing.expectEqual(diagnostics.EntityKind.shell, diag.first().?.entity.kind);
 }

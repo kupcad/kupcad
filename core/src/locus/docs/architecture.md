@@ -718,10 +718,12 @@ importing only those before it, which the layering test holds):**
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of
   material about it into one edge per solid (`EdgeSpec.copy`); a shell of negative volume
-  a void. A touch point whose face piece and the faces about the vertex are in one shell
-  is a pinch at a point and refused (`pinched`), as a line pinch is; then the checker's
-  structural level on the assembled body, so no Euler operator runs on a body it fails
-  (a fuzz find: a pinch the paves missed tripped `kef`'s debug check). Then `simplify.zig` (`kef` across edges between faces on one plane record of one
+  a void. Shells of one solid touch nowhere (`overlap.Solids`: a void the innermost
+  outer shell around a point inside one of its faces): a touch point whose face piece and
+  faces about the vertex are of one solid, a vertex whose faces are two fans of one solid,
+  or two edges along one line of one solid, is a pinch and refused (`pinched`); then the
+  checker's structural level on the assembled body, so no Euler operator runs on a body it
+  fails (a fuzz find: a pinch the paves missed tripped `kef`'s debug check). Then `simplify.zig` (`kef` across edges between faces on one plane record of one
   sense and attribute, never across an edge with a copy, whose line the touching solid
   needs; spurs whose far vertex nothing else uses, a hole that was a lone slit then a
   point that goes too (`kvh`, when the vertex's own record has no edge leaving it), bridges
@@ -777,13 +779,17 @@ importing only those before it, which the layering test holds):**
   piece of a split face a `split` row of it and faces made one a `merged` row, under the
   host's operation number (`Options.tag_op`).
 - Refused, each by its own finding: operands with a curved face or edge (M5); and, by
-  design (decided 2026-11-13 with the degeneracy corpus), a result with one shell touching
-  itself along a line or at a point inside one solid (`pinched`, naming the shell: a
+  design (decided 2026-11-13 with the degeneracy corpus, widened 2026-11-14 to every shell
+  of one solid, research/manifold-parity.md), a result that touches itself along a line or
+  at a point inside one solid (`pinched`, naming the shell): one shell touching itself (a
   pocket meeting a face along an edge of its own, a V groove stopped short of the far side),
-  which no Euler–Poincaré count of one shell admits and which a shell could hold only with
-  two vertex records at one point, which the model forbids. Solids touching each other
-  are not pinched: they separate into shells of their own (a V groove right across leaves
-  two solids touching along its bottom line), as touching unions do.
+  a void touching its outer shell (an octahedron's corners on a cube's faces, cut out; a
+  diamond prism's edge on a face) or another void (two corner to corner). A shell could hold
+  it only with two vertex records at one point, which the model forbids, and a STEP solid
+  only as shells that touch, which `brep_with_voids` forbids (OpenCascade read the
+  octahedral void as two solids). Solids touching each other are not pinched: they separate
+  into shells of their own (a V groove right across leaves two solids touching along its
+  bottom line; a solid in another's cavity may touch its floor), as touching unions do.
 - The finding codes a boolean gives are closed lists, each with its meaning:
   `pipeline.REFUSALS` (what a valid input can provoke), `WARNINGS`, and `GUARDS` (checks
   of the operands' and the pipeline's own consistency, which no valid input reaches but
@@ -1252,8 +1258,11 @@ over the surface.
 *Allowed differences.* Exactness itself (Locus's circle is a circle, Manifold's the
 polygon; the bound above is that difference) and what `supports` says is missing; and,
 each a decision of Leo's and in the parity tables, what Locus refuses by design where the
-mesh engine builds (a pinch one shell cannot hold, M4's degeneracy corpus; operands the
-intersection tolerance apart to rounding, D27) and `decompose` keeping each solid with its
+mesh engine builds (a pinch one solid cannot hold: a shell touching itself, or a void
+touching its outer shell or another void, at a point or along a line, M4's degeneracy
+corpus and research/manifold-parity.md, where the mesh engine keeps the contact as
+coincident vertices of separate components, each void a part of its own, inside out;
+operands the intersection tolerance apart to rounding, D27) and `decompose` keeping each solid with its
 voids where Manifold's components make a void a part of its own, inside out (2026-11-12). Where the mesh engine approximates by design (offset by shrink-then-grow,
 curved hull as a polyhedron), the approximation is documented and the exact result is
 allowed to differ by the documented amount. A third kind of difference is a bug on one
