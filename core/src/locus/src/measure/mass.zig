@@ -59,20 +59,34 @@ pub fn mass(body: *const Body, options: diagnostics.Options, diag: *Diagnostics)
     const extent = place.extent;
     var total = Totals{ .centre = place.centre, .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
     var shells = traverse.Shells.init(body);
-    while (shells.next() catch return corrupt(diag)) |s| {
-        total.centre = try shellCentre(body, s, diag) orelse place.centre;
-        var faces = traverse.Faces.init(body, s);
-        while (faces.next() catch return corrupt(diag)) |f| {
-            try options.checkCancel();
-            if (body.face(f).surface.kind == .plane) try planarFace(body, f, &total, diag) else try curvedFace(body, f, &total, diag);
-        }
-    }
+    while (shells.next() catch return corrupt(diag)) |s| try addShell(body, s, place, &total, options, diag);
     return .{
         .volume = if (body.kind == .sheet) 0 else total.volume / 3.0,
         .area = total.area,
         .volume_error = total.volume_error / 3.0,
         .area_error = total.area_error,
     };
+}
+
+/// The volume shell `s` of `body` encloses, signed by its faces' outward sense: negative
+/// for a void's (a cavity's faces facing into it), what tells a closed shell a void.
+pub fn shellVolume(body: *const Body, s: types.ShellIndex, options: diagnostics.Options, diag: *Diagnostics) Error!f64 {
+    try options.checkCancel();
+    const place = placeOf(body);
+    const extent = place.extent;
+    var total = Totals{ .centre = place.centre, .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
+    try addShell(body, s, place, &total, options, diag);
+    return total.volume / 3.0;
+}
+
+/// Shell `s`'s faces' terms into `total`, taken about the shell's own centre.
+fn addShell(body: *const Body, s: types.ShellIndex, place: Place, total: *Totals, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+    total.centre = try shellCentre(body, s, diag) orelse place.centre;
+    var faces = traverse.Faces.init(body, s);
+    while (faces.next() catch return corrupt(diag)) |f| {
+        try options.checkCancel();
+        if (body.face(f).surface.kind == .plane) try planarFace(body, f, total, diag) else try curvedFace(body, f, total, diag);
+    }
 }
 
 /// The genus of `body` as the mesh engine counts it over every shell at once: `1 − χ/2`

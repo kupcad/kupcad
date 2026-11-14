@@ -83,6 +83,8 @@ const SHAPES = [_][]const u8{
     "polygon([[0, 0], [2, 0], [0, 3]]).revolve(segments: 64)",
     "circle(r: 1, segments: 64).translate(3, 0).revolve(segments: 64)",
     "square(2).translate(1, 0).revolve(segments: 64).translate(1, 2, 3).rotate(x: 90)",
+    // A sketch with a hole revolved: a ring with a void, the cavity the hole sweeps
+    "(square(4) - square(2).translate(1, 1)).translate(1, 0).revolve(segments: 64)",
     // Moves, turns, scales and mirrors (M0): the matrix is the images of the axes, then
     // the translation; a cylinder turned a quarter keeps its extremes on the axes
     "cube(2).translate(1, 2, 3)",

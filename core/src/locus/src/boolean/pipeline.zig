@@ -711,10 +711,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     if (faces.items.len > 0) {
         _ = sew.sew(&b.body, faces.items, .outer) catch |e| return b.fail(e);
         // A shell enclosing negative volume bounds a void
-        var shells = traverse.Shells.init(&b.body);
-        while (shells.next() catch return corrupt(diag)) |s| {
-            if (try shellVolume(&b.body, s, diag) < 0) b.body.shell(s).kind = .void;
-        }
+        try primitives.markVoids(&b.body, diag);
         // A pinch is refused before simplification, whose Euler operators take a valid
         // body (one rule for every pinch: shells of one solid touch nowhere, `overlap.Solids`)
         var solids = try overlap.Solids.init(allocator, &b.body, .{}, diag);
@@ -1196,22 +1193,6 @@ pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []se
         }
         for (paired) |p| if (!p) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(n) });
     }
-}
-
-/// The volume shell `s` encloses, by the fan of each face about its first vertex:
-/// negative for a void's. Planar faces with straight edges.
-fn shellVolume(body: *const Body, s: types.ShellIndex, diag: *Diagnostics) Error!f64 {
-    var volume: f64 = 0;
-    var faces = traverse.Faces.init(body, s);
-    while (faces.next() catch return corrupt(diag)) |f| {
-        const apex = body.point(body.coedgeStart(body.loop(body.face(f).first_loop).first));
-        var loops = traverse.Loops.init(body, f);
-        while (loops.next() catch return corrupt(diag)) |l| {
-            var it = traverse.Coedges.init(body, l);
-            while (it.next() catch return corrupt(diag)) |c| volume += vec.dot(apex, vec.cross(body.point(body.coedgeStart(c)), body.point(body.coedgeEnd(c)))) / 6.0;
-        }
-    }
-    return volume;
 }
 
 fn corrupt(diag: *Diagnostics) Error {

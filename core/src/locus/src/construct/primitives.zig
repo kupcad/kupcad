@@ -19,6 +19,8 @@ const body_mod = @import("../topology/body.zig");
 const check = @import("../topology/check.zig");
 const Interner = @import("../spatial/intern.zig").Interner;
 const sew = @import("sew.zig");
+const traverse = @import("../topology/traverse.zig");
+const mass = @import("../measure/mass.zig");
 const sketch_boolean = @import("../sketch/boolean.zig");
 const overlay = @import("../sketch/overlay.zig");
 const Body = body_mod.Body;
@@ -151,13 +153,36 @@ pub const Builder = struct {
     /// cannot until the 2D kernel nests them.
     pub fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
         _ = sew.sew(&self.body, faces, kind) catch |e| return self.fail(e);
-        const level: check.Level = if (kind == .sheet) .global else .geometric;
+        return self.checked(if (kind == .sheet) .global else .geometric);
+    }
+
+    /// `finish` of a solid whose sewn shells may bound voids: each enclosing negative
+    /// volume is one (`markVoids`: a revolved sheet's hole sweeps a cavity). The other
+    /// builders keep `finish`, where a shell wound inward is their fault, found.
+    pub fn finishWithVoids(self: *Builder, faces: []const sew.FaceSpec) Error!Body {
+        _ = sew.sew(&self.body, faces, .outer) catch |e| return self.fail(e);
+        try markVoids(&self.body, self.diag);
+        return self.checked(.geometric);
+    }
+
+    fn checked(self: *Builder, level: check.Level) Error!Body {
         var report = check.run(self.body.allocator, &self.body, level) catch return error.OutOfMemory;
         defer report.deinit(self.body.allocator);
         if (report.first()) |f| return self.diag.fail(error.NotValid, f);
         return self.body;
     }
 };
+
+/// Each outer shell of `body` enclosing negative volume made a void (`mass.shellVolume`):
+/// a cavity's faces, sewn as an outer shell's, face into it. One rule for the builders of
+/// voids, the boolean's assembly and a revolved sheet with a hole.
+pub fn markVoids(body: *Body, diag: *Diagnostics) Error!void {
+    var shells = traverse.Shells.init(body);
+    while (shells.next() catch return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the body" })) |s| {
+        if (body.shell(s).kind != .outer) continue;
+        if (try mass.shellVolume(body, s, .{}, diag) < 0) body.shell(s).kind = .void;
+    }
+}
 
 /// A box of `x` by `y` by `z` from the origin along each axis, or about the origin when
 /// `center`. Six planar faces with outward normals, twelve edges, eight vertices.

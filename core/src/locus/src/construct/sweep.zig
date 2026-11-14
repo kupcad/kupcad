@@ -314,7 +314,7 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
             }
         }
     }
-    return b.finish(specs[0..fi], .outer);
+    return b.finishWithVoids(specs[0..fi]);
 }
 
 /// Edges per side face at most (three on a plane whose inner arc is a point).

@@ -209,6 +209,31 @@ test "extrude: a plate with a hole has the hole through it; downward and askew s
     try testing.expectError(error.InvalidInput, sweep.extrude(testing.allocator, &plate, .{ 0, 0, 0 }, .{}, &diag));
 }
 
+test "revolve: a sheet with a hole revolves into a solid with a void, the cavity its hole sweeps" {
+    // The hole's faces, sewn as an outer shell's, face into the cavity: a shell enclosing
+    // negative volume is a void (`primitives.markVoids`, the boolean's rule), where every
+    // shell was taken for an outer one and the checker found the cavity's wound inward
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const outer = [_]vec.Vec2{ .{ 1, 0 }, .{ 5, 0 }, .{ 5, 4 }, .{ 1, 4 } };
+    const hole = [_]vec.Vec2{ .{ 2, 1 }, .{ 4, 1 }, .{ 4, 3 }, .{ 2, 3 } };
+    var sheet = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &hole }, &diag);
+    defer sheet.deinit();
+    var profile = try stoodUp(&sheet, &diag);
+    defer profile.deinit();
+    var ring = try sweep.revolve(testing.allocator, &profile, .{ 0, 0, 0 }, .{ 0, 0, 1 }, 2.0 * std.math.pi, .{}, &diag);
+    defer ring.deinit();
+    try expectValid(&ring);
+    var kinds = [2]usize{ 0, 0 };
+    for (ring.shells.items) |s| {
+        if (s.tombstone) continue;
+        kinds[@intFromBool(s.kind == .void)] += 1;
+    }
+    try testing.expectEqual([2]usize{ 1, 1 }, kinds);
+    // Pappus: the sheet's area (16 less 4) about the axis at its centroid's radius, 3
+    try testing.expectApproxEqRel(72.0 * std.math.pi, (try mass.mass(&ring, .{}, &diag)).volume, 1e-9);
+}
+
 /// The sketch stood up in the xz-plane: its x the radius, its y the height (what KupCAD
 /// revolves about z).
 fn stoodUp(sketch: *const Body, diag: *Diagnostics) !Body {
