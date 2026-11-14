@@ -22,7 +22,8 @@ const MODELS = {
   (cube(2).material(color: "#0000FF") + cube(2).translate(x: 1)).translate(y: 10),
 ]`,
   ghost: 'cube(4).translate(y: 10).ghost\ncube(2)',
-  named: 'lid = cube(1).named("lid")\nassemble(name: "box", parts: [lid, lid.translate(x: 3), cube(2).translate(x: 6)])',
+  named:
+    'lid = cube(1).named("lid")\nassemble(name: "box", parts: [lid, lid.translate(x: 3), cube(2).translate(x: 6)])',
 };
 
 const VARIANTS = [
@@ -52,7 +53,8 @@ try {
       if (numErrors + numWarnings > 0) {
         failed = true;
         console.error(`${label}: ${numErrors} errors, ${numWarnings} warnings`);
-        for (const m of messages.filter((m) => m.severity <= 1)) console.error(`  ${m.code} at ${m.pointer ?? '-'}: ${m.message}`);
+        for (const m of messages.filter((m) => m.severity <= 1))
+          console.error(`  ${m.code} at ${m.pointer ?? '-'}: ${m.message}`);
       } else {
         console.log(`${label}: valid`);
       }

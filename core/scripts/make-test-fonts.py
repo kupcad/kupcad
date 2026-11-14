@@ -32,11 +32,27 @@ GLYPHS = {
     "space": (250, []),
     "A": (600, [[(0, 0), (300, 700), (600, 0)]]),
     "V": (600, [[(0, 700), (600, 700), (300, 0)]]),
-    "T": (600, [[(0, 600), (0, 700), (600, 700), (600, 600), (350, 600), (350, 0), (250, 0), (250, 600)]]),
-    "o": (500, [[(50, 0), (50, 500), (450, 500), (450, 0)], [(150, 100), (350, 100), (350, 400), (150, 400)]]),
+    "T": (
+        600,
+        [[(0, 600), (0, 700), (600, 700), (600, 600), (350, 600), (350, 0), (250, 0), (250, 600)]],
+    ),
+    "o": (
+        500,
+        [
+            [(50, 0), (50, 500), (450, 500), (450, 0)],
+            [(150, 100), (350, 100), (350, 400), (150, 400)],
+        ],
+    ),
     "l": (500, [[(200, 0), (200, 700), (300, 700), (300, 0)]]),
 }
-CMAP = {ord(" "): "space", ord("A"): "A", ord("V"): "V", ord("T"): "T", ord("o"): "o", ord("l"): "l"}
+CMAP = {
+    ord(" "): "space",
+    ord("A"): "A",
+    ord("V"): "V",
+    ord("T"): "T",
+    ord("o"): "o",
+    ord("l"): "l",
+}
 
 # The kern table's pairs, in font units
 KERN_PAIRS = {("A", "V"): -100, ("V", "A"): -90, ("T", "o"): -80}
@@ -70,11 +86,16 @@ def builder(family):
 
 
 def finish(fb, family, path, drop=()):
-    metrics = {name: (advance, min((x for c in contours for x, _ in c), default=0)) for name, (advance, contours) in GLYPHS.items()}
+    metrics = {
+        name: (advance, min((x for c in contours for x, _ in c), default=0))
+        for name, (advance, contours) in GLYPHS.items()
+    }
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=ASCENT, descent=DESCENT)
     fb.setupNameTable({"familyName": family, "styleName": "Regular"})
-    fb.setupOS2(sTypoAscender=ASCENT, sTypoDescender=DESCENT, usWinAscent=ASCENT, usWinDescent=-DESCENT)
+    fb.setupOS2(
+        sTypoAscender=ASCENT, sTypoDescender=DESCENT, usWinAscent=ASCENT, usWinDescent=-DESCENT
+    )
     fb.setupPost()
     # A font that lacks a table text needs
     for tag in drop:

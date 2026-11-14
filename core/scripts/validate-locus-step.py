@@ -24,7 +24,9 @@ LOCUS = HERE.parent / "src" / "locus"
 # The tests whose results are written: every case `pipeline_test.sound` passes, and the
 # solids fuzzer's plain run
 FILTERS = ["corpus", "degeneracy", "boolean:", "coverage", "Fuzz solids"]
-LINE = re.compile(r"^(\S+) solids=(\d+) faces=(\d+) volume=(\S+) area=(\S+) gap=(\S+) shift=(\S+) (.*)$")
+LINE = re.compile(
+    r"^(\S+) solids=(\d+) faces=(\d+) volume=(\S+) area=(\S+) gap=(\S+) shift=(\S+) (.*)$"
+)
 
 # Loaded from its file (its name has a hyphen), its bytecode not written beside it
 sys.dont_write_bytecode = True
@@ -54,8 +56,12 @@ def check(directory):
         if match is None:
             raise SystemExit(f"{manifest}: not a manifest line: {line}")
         name, solids, faces, volume, area, gap, shift, what = match.groups()
-        slack = validate_step.VOLUME_TOLERANCE * float(volume) + float(gap) * float(area) + float(shift)
-        found = validate_step.problems(pathlib.Path(directory) / name, int(faces), int(solids), float(volume), slack)
+        slack = (
+            validate_step.VOLUME_TOLERANCE * float(volume) + float(gap) * float(area) + float(shift)
+        )
+        found = validate_step.problems(
+            pathlib.Path(directory) / name, int(faces), int(solids), float(volume), slack
+        )
         if found:
             failed += 1
             print(f"{name} ({what}): {len(found)} problems", file=sys.stderr)

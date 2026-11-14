@@ -175,27 +175,27 @@ test "invariants on the B-Rep engine: booleans of flat solids keep the volumes t
     // chain, a turned operand, a cut and its other side
     try support.expectScripts(&.{
         .{ .src = BREP_PRELUDE ++
-        \\a = cube(3)
-        \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
-        \\r = ((a + b).volume + (a & b).volume - a.volume - b.volume).abs < 1e-9 * a.volume
+            \\a = cube(3)
+            \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
+            \\r = ((a + b).volume + (a & b).volume - a.volume - b.volume).abs < 1e-9 * a.volume
         , .expected = .{ .boolean = true } },
         .{ .src = BREP_PRELUDE ++
-        \\a = cube(3)
-        \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
-        \\r = ((a - b).volume - (a.volume - (a & b).volume)).abs < 1e-9 * a.volume
+            \\a = cube(3)
+            \\b = cube(2).rotate(20, 30, 40).translate(2, 1, 1)
+            \\r = ((a - b).volume - (a.volume - (a & b).volume)).abs < 1e-9 * a.volume
         , .expected = .{ .boolean = true } },
         .{ .src = BREP_PRELUDE ++
-        \\a = cube(4) - cube(2).translate(1, 1, 1)
-        \\r = (a.volume - 56).abs < 1e-9 && (a.rotate(37, 11, 5).translate(3, -2, 9).mirror([1, 1, 0]).volume - 56).abs < 1e-9
+            \\a = cube(4) - cube(2).translate(1, 1, 1)
+            \\r = (a.volume - 56).abs < 1e-9 && (a.rotate(37, 11, 5).translate(3, -2, 9).mirror([1, 1, 0]).volume - 56).abs < 1e-9
         , .expected = .{ .boolean = true } },
         .{ .src = BREP_PRELUDE ++
-        \\a = union([cube(2), cube(2).translate(1, 1, 1), cube(2).translate(2, 2, 2)])
-        \\r = (a.scale(2).volume - 8 * a.volume).abs < 1e-9 * a.volume
+            \\a = union([cube(2), cube(2).translate(1, 1, 1), cube(2).translate(2, 2, 2)])
+            \\r = (a.scale(2).volume - 8 * a.volume).abs < 1e-9 * a.volume
         , .expected = .{ .boolean = true } },
         .{ .src = BREP_PRELUDE ++
-        \\a = cube(4).rotate(30, 40, 50)
-        \\parts = a.split_by_plane(1, 1, 0, 1)
-        \\r = (parts[0].volume + parts[1].volume - a.volume).abs < 1e-9 * a.volume
+            \\a = cube(4).rotate(30, 40, 50)
+            \\parts = a.split_by_plane(1, 1, 0, 1)
+            \\r = (parts[0].volume + parts[1].volume - a.volume).abs < 1e-9 * a.volume
         , .expected = .{ .boolean = true } },
     });
 }

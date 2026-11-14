@@ -1,0 +1,3 @@
+# The bindings' Python style (bindings/python/pyproject.toml), for the scripts here
+line-length = 100
+target-version = "py310"

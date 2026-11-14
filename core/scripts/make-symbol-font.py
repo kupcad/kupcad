@@ -24,7 +24,13 @@ from fontTools.merge import Merger
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
-OUT = pathlib.Path(__file__).resolve().parent.parent / "src" / "core" / "fonts" / "KupCADSymbols-Regular.ttf"
+OUT = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "src"
+    / "core"
+    / "fonts"
+    / "KupCADSymbols-Regular.ttf"
+)
 SOURCES = {
     "math": "NotoSansMath-Regular.ttf",
     "symbols": "NotoSansSymbols[wght].ttf",
@@ -84,7 +90,18 @@ def cut(font, codepoints):
     options.hinting = False
     options.glyph_names = False
     options.notdef_outline = True
-    options.drop_tables += ["GSUB", "GPOS", "GDEF", "MATH", "BASE", "STAT", "vhea", "vmtx", "gasp", "DSIG"]
+    options.drop_tables += [
+        "GSUB",
+        "GPOS",
+        "GDEF",
+        "MATH",
+        "BASE",
+        "STAT",
+        "vhea",
+        "vmtx",
+        "gasp",
+        "DSIG",
+    ]
     subsetter = subset.Subsetter(options)
     subsetter.populate(unicodes=codepoints)
     subsetter.subset(font)

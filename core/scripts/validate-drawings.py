@@ -35,11 +35,23 @@ MODELS = {
         4,
     ),
     # Each a circle, through what projects or slices it
-    "cylinders": ("[cylinder(r: 5, h: 10).project, cylinder(r1: 5, r2: 2, h: 10).translate(x: 20).project, cylinder(r: 4, h: 10).rotate(z: 30).translate(x: 40).slice(3)]", 3, 3),
+    "cylinders": (
+        "[cylinder(r: 5, h: 10).project, cylinder(r1: 5, r2: 2, h: 10).translate(x: 20).project, cylinder(r: 4, h: 10).rotate(z: 30).translate(x: 40).slice(3)]",
+        3,
+        3,
+    ),
     # Names repeated, and spelt alike in a format (a:b and a/b), each kept apart
-    "names": ('[square(1).named("plate"), square(1).translate(x: 3).named("plate"), square(1).translate(x: 6).named("a:b"), square(1).translate(x: 9).named("a/b")]', 4, 4),
+    "names": (
+        '[square(1).named("plate"), square(1).translate(x: 3).named("plate"), square(1).translate(x: 6).named("a:b"), square(1).translate(x: 9).named("a/b")]',
+        4,
+        4,
+    ),
     # Glyphs: curves, and curves beside an arc in one outline
-    "text": ('[text("O", 10).named("o"), text("L", 10).translate(x: 12), text("O", 10) + circle(r: 2).translate(x: 1, y: 4)]', 3, 5),
+    "text": (
+        '[text("O", 10).named("o"), text("L", 10).translate(x: 12), text("O", 10) + circle(r: 2).translate(x: 1, y: 4)]',
+        3,
+        5,
+    ),
     "paths": (
         """hook = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])
 [hook.named("outline").material(color: "#00AA00"), hook.close.translate(y: 20), hook.stroke(1).translate(y: 40)]""",
@@ -136,7 +148,9 @@ def dxf_problems(path, shapes, contours):
 
 
 def build(script, *args):
-    result = subprocess.run([str(KUPCAD), "build", str(script), *args], capture_output=True, text=True)
+    result = subprocess.run(
+        [str(KUPCAD), "build", str(script), *args], capture_output=True, text=True
+    )
     if result.returncode != 0:
         sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"kupcad build {script.name} {' '.join(args)} failed")
@@ -159,7 +173,12 @@ def main():
             build(script, "--split", str(parts), "-f", "dxf")
             for part in sorted(parts.glob("*.dxf")):
                 doc = ezdxf.readfile(str(part))
-                checks.append((f"{name} --split {part.name}", dxf_problems(part, 1, len(list(doc.modelspace())))))
+                checks.append(
+                    (
+                        f"{name} --split {part.name}",
+                        dxf_problems(part, 1, len(list(doc.modelspace()))),
+                    )
+                )
             for label, found in checks:
                 if found:
                     failed = True

@@ -76,20 +76,28 @@ def problems(path, objects, items, title):
         if mesh.GetTriangleCount() == 0:
             found.append(f"object {mesh.GetResourceID()} has no triangles")
         elif not mesh.IsManifoldAndOriented():
-            found.append(f"object {mesh.GetResourceID()} is not manifold and oriented by its indices")
+            found.append(
+                f"object {mesh.GetResourceID()} is not manifold and oriented by its indices"
+            )
     if count != objects:
         found.append(f"{count} objects, not {objects}")
     if model.GetBuildItems().Count() != items:
         found.append(f"{model.GetBuildItems().Count()} build items, not {items}")
     metadata = model.GetMetaDataGroup()
-    titles = [metadata.GetMetaData(i).GetValue() for i in range(metadata.GetMetaDataCount()) if metadata.GetMetaData(i).GetName() == "Title"]
+    titles = [
+        metadata.GetMetaData(i).GetValue()
+        for i in range(metadata.GetMetaDataCount())
+        if metadata.GetMetaData(i).GetName() == "Title"
+    ]
     if title is not ANY_TITLE and titles != ([title] if title else []):
         found.append(f"title {titles}, not {title!r}")
     return found
 
 
 def build(script, *args):
-    result = subprocess.run([str(KUPCAD), "build", str(script), *args], capture_output=True, text=True)
+    result = subprocess.run(
+        [str(KUPCAD), "build", str(script), *args], capture_output=True, text=True
+    )
     if result.returncode != 0:
         sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"kupcad build {script.name} {' '.join(args)} failed")

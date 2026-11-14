@@ -34,7 +34,9 @@ FONTS = [
 
 def main(folder):
     for written, source, chars in FONTS:
-        font = instantiateVariableFont(TTFont(pathlib.Path(folder) / source), {"wght": 400, "wdth": 100})
+        font = instantiateVariableFont(
+            TTFont(pathlib.Path(folder) / source), {"wght": 400, "wdth": 100}
+        )
         options = subset.Options()
         options.layout_features = ["*"]
         options.hinting = False
@@ -48,7 +50,9 @@ def main(folder):
         # Saving stamps the time into head.modified unless told not to
         font.recalcTimestamp = False
         font.save(OUT / written)
-        print(f"{written}: {(OUT / written).stat().st_size} bytes, {font['maxp'].numGlyphs} glyphs for {chars}")
+        print(
+            f"{written}: {(OUT / written).stat().st_size} bytes, {font['maxp'].numGlyphs} glyphs for {chars}"
+        )
 
 
 if __name__ == "__main__":

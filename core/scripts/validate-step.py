@@ -34,7 +34,12 @@ MODELS = {
     "cylinder": ("cylinder(r: 2, h: 5)", 4, 1, PI * 4 * 5),
     "sphere": ("sphere(r: 3)", 2, 1, 4 / 3 * PI * 27),
     "cone": ("cylinder(r1: 2, r2: 1, h: 3)", 4, 1, PI * 3 / 3 * (4 + 2 + 1)),
-    "slab": ("polygon([[0, 0], [10, 0], [10, 10], [0, 10], [2, 2], [2, 4], [4, 4], [4, 2]], paths: [[0, 1, 2, 3], [4, 5, 6, 7]]).extrude(3)", 10, 1, 96 * 3),
+    "slab": (
+        "polygon([[0, 0], [10, 0], [10, 10], [0, 10], [2, 2], [2, 4], [4, 4], [4, 2]], paths: [[0, 1, 2, 3], [4, 5, 6, 7]]).extrude(3)",
+        10,
+        1,
+        96 * 3,
+    ),
     "drum": ("circle(r: 2).extrude(5)", 4, 1, PI * 4 * 5),
     "ring": ("square(2, 3).translate(1, 0).revolve(segments: 64)", 8, 1, PI * (9 - 1) * 3),
     "spun_cone": ("polygon([[0, 0], [2, 0], [0, 3]]).revolve(segments: 64)", 4, 1, PI * 4 * 3 / 3),
@@ -44,12 +49,22 @@ MODELS = {
     # A cube-shaped void: one solid of two shells, the inner one facing in
     "void": ("cube(4, 4, 4) - cube(2, 2, 2).translate(1, 1, 1)", 12, 1, 64 - 8),
     # A box with a void beside a cube: written by its parts, one with its void
-    "void_and_apart": ("(cube(4, 4, 4) - cube(2, 2, 2).translate(1, 1, 1)) + cube(1, 1, 1).translate(6, 0, 0)", 18, 2, 64 - 8 + 1),
+    "void_and_apart": (
+        "(cube(4, 4, 4) - cube(2, 2, 2).translate(1, 1, 1)) + cube(1, 1, 1).translate(6, 0, 0)",
+        18,
+        2,
+        64 - 8 + 1,
+    ),
     # Two cubes sharing an edge: two solids, each keeping its own copy of the edge
     "edge_touching": ("cube(1, 1, 1) + cube(1, 1, 1).translate(1, 1, 0)", 12, 2, 2),
     # The plane 2x + y + 2z = 1 (the normal 3 long, the offset along its unit) takes a
     # corner off: a tetrahedron of legs 1/2, 1, 1/2, its volume a sixth of their product
-    "slanted_cut": ("cube(2, 2, 2).trim_by_plane(normal: [2, 1, 2], offset: 1.0 / 3)", 7, 1, 8 - 0.5 * 1 * 0.5 / 6),
+    "slanted_cut": (
+        "cube(2, 2, 2).trim_by_plane(normal: [2, 1, 2], offset: 1.0 / 3)",
+        7,
+        1,
+        8 - 0.5 * 1 * 0.5 / 6,
+    ),
 }
 VOLUME_TOLERANCE = 1e-6
 
@@ -109,10 +124,14 @@ def problems(path, faces, solids, volume, slack=None):
         found.append("no report in the header")
     else:
         if report.get("faces") != count:
-            found.append(f"the header reports {report.get('faces')} faces, OpenCascade finds {count}")
+            found.append(
+                f"the header reports {report.get('faces')} faces, OpenCascade finds {count}"
+            )
         solids = count_of(shape, TopAbs_SOLID)
         if report.get("solids") != solids:
-            found.append(f"the header reports {report.get('solids')} solids, OpenCascade finds {solids}")
+            found.append(
+                f"the header reports {report.get('solids')} solids, OpenCascade finds {solids}"
+            )
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(shape, props)
     if abs(props.Mass() - volume) > (VOLUME_TOLERANCE * volume if slack is None else slack):
@@ -121,7 +140,9 @@ def problems(path, faces, solids, volume, slack=None):
 
 
 def build(script, *args):
-    result = subprocess.run([str(KUPCAD), "build", str(script), *args], capture_output=True, text=True)
+    result = subprocess.run(
+        [str(KUPCAD), "build", str(script), *args], capture_output=True, text=True
+    )
     if result.returncode != 0:
         sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"kupcad build {script.name} {' '.join(args)} failed")
