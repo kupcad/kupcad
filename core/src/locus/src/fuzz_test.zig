@@ -6,7 +6,8 @@
 //! passes or a clean error, nothing leaks, the area identities of the booleans hold, the
 //! triangulation's area is the sheet's, and no run can hang: the counts bound every loop.
 //! Each chain and each overlay arrangement runs again moved whole (a turn about z, a shift
-//! as far as 2e6), checked as it was, a chain's area the same.
+//! as far as 2e6), checked as it was, a chain's area the same. A plain run tallies its
+//! refusals by code, and fails when one takes more than its share of the runs.
 //! A failing chain is printed as its rings and operations, so it can become a parity case.
 //! And booleans of solids (M4, `-Dfuzz-target=locus_solids`): boxes and hulls of grid
 //! points and plates 50 times wider, placed by turns, scales and half-steps (an extreme one
@@ -148,6 +149,13 @@ const WINDING_CLOSE = 1e-9;
 /// `TURNS` about z: near, and far out (2e6, where a coordinate's ulp is 4.7e-10 and a
 /// cross product about the origin rounds by 1e-3, a sliver's whole area).
 const MOVE_SHIFTS_2D = [_]Vec2{ .{ 0.5, -1 }, .{ 1e3, -2e3 }, .{ 1e5, -2e5 }, .{ 2e6, -3e6 } };
+/// The most of a plain run's runs one refusal may take (`RefusalTally`): a band or a rule
+/// grown too wide shows as one code refusing more. Twice the most any took on 2026-11-14
+/// (the solid chains' `at_tolerance`, 3 of 40; the sketch chains' `empty_input`, 3 of 200;
+/// the arrangements none of 300).
+const REFUSAL_SHARE_AT_MOST = 0.15;
+/// The overlay's refusals are errors with no finding, tallied by name: this many kinds.
+const TALLIED_ERRORS = 8;
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: the body JSON reader takes any input" {
@@ -292,20 +300,22 @@ fn sketchChain(_: void, smith: *Smith) anyerror!void {
     var recording: Recording(*Smith) = .init(smith, .chain, try fuzzRun(.chain));
     defer recording.deinit();
     errdefer recording.report("chain");
-    _ = try runChain(&recording);
+    _ = try runChain(&recording, null);
 }
 
 test "Fuzz chains: generated sketch chains run clean on a plain test run, most of them checked" {
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED);
     var source = RandomSource{ .random = prng.random() };
     var checked: usize = 0;
+    var tally: RefusalTally = .{};
     for (0..PLAIN_RUN_CHAINS) |_| {
         var recording: Recording(*RandomSource) = .{ .inner = &source };
         defer recording.deinit();
         errdefer recording.report("chain");
-        checked += @intFromBool(try runChain(&recording) == .checked);
+        checked += @intFromBool(try runChain(&recording, &tally) == .checked);
     }
     try testing.expect(checked >= PLAIN_RUN_CHECKED_AT_LEAST);
+    try tally.expectSpread("the sketch chains");
 }
 
 /// A source of draws (the fuzzer's Smith, or `RandomSource`) that keeps every value it
@@ -550,10 +560,10 @@ fn replayLine(line: []const u8) !void {
     while (words.next()) |w| try draws.append(testing.allocator, std.fmt.parseInt(i64, w, 10) catch return error.InvalidReplay);
     var source: ScriptedSource = .{ .draws = draws.items };
     switch (kind) {
-        .chain => _ = try runChain(&source),
+        .chain => _ = try runChain(&source, null),
         .chords => try checkFreeFormChords(&source),
-        .overlay => _ = try runArrangement(&source),
-        .solids => _ = try runSolids(&source),
+        .overlay => _ = try runArrangement(&source, null),
+        .solids => _ = try runSolids(&source, null),
     }
 }
 
@@ -582,19 +592,19 @@ test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve, an
             var first: Recording(*RandomSource) = .{ .inner = &source };
             defer first.deinit();
             switch (kind) {
-                .chain => _ = try runChain(&first),
+                .chain => _ = try runChain(&first, null),
                 .chords => try checkFreeFormChords(&first),
-                .overlay => _ = try runArrangement(&first),
-                .solids => _ = try runSolids(&first),
+                .overlay => _ = try runArrangement(&first, null),
+                .solids => _ = try runSolids(&first, null),
             }
             var scripted: ScriptedSource = .{ .draws = first.draws.items };
             var again: Recording(*ScriptedSource) = .{ .inner = &scripted };
             defer again.deinit();
             switch (kind) {
-                .chain => _ = try runChain(&again),
+                .chain => _ = try runChain(&again, null),
                 .chords => try checkFreeFormChords(&again),
-                .overlay => _ = try runArrangement(&again),
-                .solids => _ = try runSolids(&again),
+                .overlay => _ = try runArrangement(&again, null),
+                .solids => _ = try runSolids(&again, null),
             }
             try testing.expectEqualSlices(i64, first.draws.items, again.draws.items);
         }
@@ -604,7 +614,7 @@ test "Fuzz replay: a recorded run plays back draw for draw, a chain, a curve, an
     defer line.deinit(testing.allocator);
     var recorded: Recording(*RandomSource) = .{ .inner = &source };
     defer recorded.deinit();
-    _ = try runChain(&recorded);
+    _ = try runChain(&recorded, null);
     try line.appendSlice(testing.allocator, "chain");
     for (recorded.draws.items) |v| try line.print(testing.allocator, " {d}", .{v});
     try replayLine(line.items);
@@ -620,7 +630,7 @@ fn overlayArrangement(_: void, smith: *Smith) anyerror!void {
     var recording: Recording(*Smith) = .init(smith, .overlay, try fuzzRun(.overlay));
     defer recording.deinit();
     errdefer recording.report("overlay");
-    _ = try runArrangement(&recording);
+    _ = try runArrangement(&recording, null);
 }
 
 test "Fuzz watchdog: a run past its budget has expired, one within it or ended has not" {
@@ -655,7 +665,7 @@ test "Fuzz replay: a run's draws are written down as drawn; a run that never end
         var recording: Recording(*RandomSource) = .init(&source, .solids, .{ .log = &log });
         var ended = false;
         defer if (!ended) recording.deinit();
-        _ = try runSolids(&recording);
+        _ = try runSolids(&recording, null);
         // As a panic in the run's last call would leave it
         const text = try tmp.dir.readFileAlloc(io, DRAWS_FILE_PREFIX ++ "solids.txt", testing.allocator, .limited(1 << 20));
         defer testing.allocator.free(text);
@@ -674,17 +684,47 @@ test "Fuzz replay: a run's draws are written down as drawn; a run that never end
     }
 }
 
+test "Fuzz tally: a refusal past its share of the runs fails a plain run, refusals spread pass" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var spread: RefusalTally = .{};
+    var dominant: RefusalTally = .{};
+    for (0..20) |i| {
+        diag.clear();
+        // One run in ten refused at the tolerance, the same code twice in one run counted once
+        if (i % 10 == 0) for (0..2) |_| {
+            try diag.add(.{ .code = .at_tolerance });
+        };
+        try diag.warn(.{ .code = .nearly_coplanar });
+        spread.add(&diag);
+        diag.clear();
+        if (i % 2 == 0) try diag.add(.{ .code = .at_tolerance });
+        dominant.add(&diag);
+    }
+    try testing.expectEqual(@as(usize, 2), spread.codes[@backingInt(diagnostics.Code.at_tolerance)]);
+    try testing.expectEqual(@as(usize, 0), spread.codes[@backingInt(diagnostics.Code.nearly_coplanar)]);
+    try testing.expect(spread.spread());
+    try testing.expect(!dominant.spread());
+    var overlay: RefusalTally = .{};
+    for (0..10) |i| overlay.addError(if (i < 2) error.TooMany else null);
+    try testing.expectEqualStrings("TooMany", overlay.errors[0].name);
+    try testing.expectEqual(@as(usize, 2), overlay.errors[0].count);
+    try testing.expect(!overlay.spread());
+}
+
 test "Fuzz overlay: generated arrangements label by their inputs' areas on a plain test run" {
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x0e71a7);
     var source = RandomSource{ .random = prng.random() };
     var checked: usize = 0;
+    var tally: RefusalTally = .{};
     for (0..PLAIN_RUN_ARRANGEMENTS) |_| {
         var recording: Recording(*RandomSource) = .{ .inner = &source };
         defer recording.deinit();
         errdefer recording.report("overlay");
-        checked += @intFromBool(try runArrangement(&recording) == .checked);
+        checked += @intFromBool(try runArrangement(&recording, &tally) == .checked);
     }
     try testing.expect(checked >= PLAIN_RUN_ARRANGEMENTS / 2);
+    try tally.expectSpread("the overlay's arrangements");
 }
 
 /// One generated arrangement, fed to the overlay as it is (no sheet built first), dense in
@@ -696,7 +736,15 @@ test "Fuzz overlay: generated arrangements label by their inputs' areas on a pla
 /// input k the faces' windings weigh their areas to its own: the sum of winding_k × area
 /// over the faces is the signed area its edges enclose (Green's theorem on the edges as
 /// given), within the welding. A misnested cycle breaks that, by its own area.
-fn runArrangement(source: anytype) !Outcome {
+fn runArrangement(source: anytype, tally: ?*RefusalTally) !Outcome {
+    var refused: ?anyerror = null;
+    const outcome = try arrangement(source, &refused);
+    if (tally) |t| t.addError(refused);
+    return outcome;
+}
+
+/// `runArrangement`'s run; a refusal's error into `refused`.
+fn arrangement(source: anytype, refused: *?anyerror) !Outcome {
     var o = overlay_mod.Overlay.init(testing.allocator, tol);
     defer o.deinit();
     const n_inputs = source.valueRangeAtMost(u8, 1, MAX_INPUTS);
@@ -705,13 +753,13 @@ fn runArrangement(source: anytype) !Outcome {
     var given: [MAX_INPUTS]std.ArrayList(overlay_mod.InputEdge) = @splat(.empty);
     defer for (&given) |*g| g.deinit(testing.allocator);
     for (0..n_inputs) |k| {
-        _ = o.addInput() catch |err| return clean(err);
+        _ = o.addInput() catch |err| return refuse(refused, err);
         const rings = source.valueRangeAtMost(u8, 1, MAX_INPUT_RINGS);
         for (0..rings) |_| {
             var ring: [MAX_POINTS]overlay_mod.InputEdge = undefined;
             const n = try arrangementRing(source, &ring);
             for (ring[0..n]) |e| {
-                o.addEdge(e) catch |err| return clean(err);
+                o.addEdge(e) catch |err| return refuse(refused, err);
                 try given[k].append(testing.allocator, e);
                 own_area[k] += greenTerm(e, given[k].items[0].a) / 2;
                 perimeter[k] += edgeLength(e);
@@ -730,7 +778,7 @@ fn runArrangement(source: anytype) !Outcome {
             }
         }
     }
-    o.run() catch |err| return clean(err);
+    o.run() catch |err| return refuse(refused, err);
     try expectWeighed(&o, own_area[0..n_inputs], perimeter[0..n_inputs]);
     var inputs: [MAX_INPUTS][]const overlay_mod.InputEdge = undefined;
     for (given[0..n_inputs], inputs[0..n_inputs]) |g, *i| i.* = g.items;
@@ -1035,12 +1083,13 @@ const Log = struct {
 
 const Op = enum { boolean, offset, hull, extrude, queries };
 
-fn runChain(smith: anytype) !Outcome {
+fn runChain(smith: anytype, tally: ?*RefusalTally) !Outcome {
     var log: Log = .{};
     defer log.text.deinit(testing.allocator);
     errdefer std.debug.print("the chain that failed:\n{s}", .{log.text.items});
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
+    defer if (tally) |t| t.add(&diag);
 
     var current = (try sheet(smith, &log, &diag)) orelse return .refused;
     defer current.deinit();
@@ -1199,6 +1248,12 @@ fn pick(comptime T: type, smith: anytype) T {
     return values[smith.index(values.len)];
 }
 
+/// `clean`, the refusal's error kept for the tally.
+fn refuse(refused: *?anyerror, err: anyerror) anyerror!Outcome {
+    refused.* = err;
+    return clean(err);
+}
+
 /// A clean error: the operation refused, saying what; never a crash. Out of memory is
 /// the test harness's own.
 fn clean(err: anyerror) anyerror!Outcome {
@@ -1209,6 +1264,61 @@ fn clean(err: anyerror) anyerror!Outcome {
 /// What a chain did: ran to its checks, or was refused somewhere on the way (a clean
 /// error, which is no failure but checks nothing further).
 const Outcome = enum { checked, refused };
+
+/// The refusals of a plain run, by what refused (the research review's item 17): each
+/// failure a run's diagnostics hold when it ends (the run refused, or a check of it skipped
+/// on a clean refusal), by its code, once a run; the overlay's, which are errors with no
+/// finding, by the error's name. A band or a rule grown too wide shows as one of them
+/// taking more of the runs than `REFUSAL_SHARE_AT_MOST`.
+const RefusalTally = struct {
+    runs: usize = 0,
+    codes: [std.enums.values(diagnostics.Code).len]usize = @splat(0),
+    errors: [TALLIED_ERRORS]struct { name: []const u8 = "", count: usize = 0 } = @splat(.{}),
+
+    /// A run ended with `diag`'s findings: its failures' codes, each once.
+    fn add(self: *RefusalTally, diag: *const Diagnostics) void {
+        self.runs += 1;
+        var seen: [std.enums.values(diagnostics.Code).len]bool = @splat(false);
+        for (diag.findings.items) |f| {
+            if (f.severity == .failure) seen[@backingInt(f.code)] = true;
+        }
+        for (seen, &self.codes) |s, *n| n.* += @intFromBool(s);
+    }
+
+    /// A run of the overlay ended: refused with `err`, or not (null).
+    fn addError(self: *RefusalTally, err: ?anyerror) void {
+        self.runs += 1;
+        const e = err orelse return;
+        const name = @errorName(e);
+        for (&self.errors) |*slot| {
+            if (slot.count > 0 and !std.mem.eql(u8, slot.name, name)) continue;
+            slot.* = .{ .name = name, .count = slot.count + 1 };
+            return;
+        }
+    }
+
+    /// No refusal takes more than `REFUSAL_SHARE_AT_MOST` of the runs; each printed when
+    /// one does.
+    fn expectSpread(self: *const RefusalTally, what: []const u8) !void {
+        if (self.spread()) return;
+        std.debug.print("{s}, the refusals of {d} runs:\n", .{ what, self.runs });
+        self.print();
+        return error.RefusalsTooMany;
+    }
+
+    /// Whether no refusal takes more than `REFUSAL_SHARE_AT_MOST` of the runs.
+    fn spread(self: *const RefusalTally) bool {
+        var most: usize = 0;
+        for (self.codes) |n| most = @max(most, n);
+        for (self.errors) |slot| most = @max(most, slot.count);
+        return @as(f64, @floatFromInt(most)) <= REFUSAL_SHARE_AT_MOST * @as(f64, @floatFromInt(self.runs));
+    }
+
+    fn print(self: *const RefusalTally) void {
+        for (self.codes, 0..) |n, c| if (n > 0) std.debug.print("  {s}: {d}\n", .{ @tagName(@as(diagnostics.Code, @fromBackingInt(@intCast(c)))), n });
+        for (self.errors) |slot| if (slot.count > 0) std.debug.print("  error.{s}: {d}\n", .{ slot.name, slot.count });
+    }
+};
 
 /// A sheet from rings of grid points, some of their edges arcs, by the even-odd rule, or
 /// null when the rings make no region (a clean refusal). The rings are logged, an arc as
@@ -1660,20 +1770,22 @@ fn solidChain(_: void, smith: *Smith) anyerror!void {
     var recording: Recording(*Smith) = .init(smith, .solids, try fuzzRun(.solids));
     defer recording.deinit();
     errdefer recording.report("solids");
-    _ = try runSolids(&recording);
+    _ = try runSolids(&recording, null);
 }
 
 test "Fuzz solids: generated chains of booleans of solids run clean on a plain test run, most of them checked" {
     var prng = std.Random.DefaultPrng.init(PLAIN_RUN_SEED ^ 0x5011d5);
     var source = RandomSource{ .random = prng.random() };
     var checked: usize = 0;
+    var tally: RefusalTally = .{};
     for (0..PLAIN_RUN_SOLIDS) |_| {
         var recording: Recording(*RandomSource) = .{ .inner = &source };
         defer recording.deinit();
         errdefer recording.report("solids");
-        checked += @intFromBool(try runSolids(&recording) == .checked);
+        checked += @intFromBool(try runSolids(&recording, &tally) == .checked);
     }
     try testing.expect(checked >= PLAIN_RUN_SOLIDS / 2);
+    try tally.expectSpread("the solid chains");
 }
 
 test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and the nightly's" {
@@ -1750,12 +1862,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
 /// chain goes on with one of them. A cut's two sides make the whole. A refusal by design (a
 /// pinch, an edge too short to split, an argument out of range) is clean; the general path
 /// failing on valid planar operands (`NotValid`, `IntersectionFailed`) is a find.
-fn runSolids(source: anytype) !Outcome {
+fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
     var log: Log = .{};
     defer log.text.deinit(testing.allocator);
     errdefer std.debug.print("the solid chain that failed:\n{s}", .{log.text.items});
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
+    defer if (tally) |t| t.add(&diag);
     errdefer std.debug.print("the findings: {f}\n", .{diag});
     var current = (try generatedSolid(source, &log, null, &diag)) orelse return .refused;
     defer current.deinit();
