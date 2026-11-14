@@ -100,6 +100,7 @@ pub const Code = enum(u16) {
     loop_winding,
     shell_inside_out,
     vertices_too_close,
+    sliver_face,
     // Global (level 2)
     hole_outside_outer,
     redundant_topology,
@@ -163,6 +164,7 @@ pub const Code = enum(u16) {
             .loop_winding => "runs the wrong way round in UV: an outer loop is counter-clockwise about the outward normal, a hole clockwise",
             .shell_inside_out => "has its loops wound inward: its signed volume has the wrong sign",
             .vertices_too_close => "is within the zone of another vertex",
+            .sliver_face => "is a sliver: its area (the measured value) is within the zone times half its perimeter (the limit), as a strip narrower than the zone is",
             .hole_outside_outer => "has a hole loop that is not inside its outer loop, or is inside another hole",
             .redundant_topology => "could be merged: its two faces lie on one surface the same way, or are one face",
             .singular_vertex => "is singular: the faces about it are not one fan (a solid touching itself at a point)",

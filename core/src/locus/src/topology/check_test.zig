@@ -557,3 +557,19 @@ test "global rules: the pcurves of every curved primitive and of a rounded extru
         try expectRule(&astray, .global, .pcurves_disjoint);
     }
 }
+
+test "check: a planar face narrower than the zone is a sliver, its edges long and its vertices apart" {
+    // A tetrahedron on a triangle 1 long and 1.5e-5 high: its base is a sliver (area
+    // 7.5e-6 against the zone times half its perimeter, 1e-5), which no rule of edges or
+    // vertices sees: its edges are long, its corners apart, its third corner beyond the
+    // zone of the opposite edge
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0.5, 1.5e-5, 0 }, .{ 0.5, -0.3, 1 } };
+    const triangles = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ 2, 0, 3 } };
+    // The builder checks what it makes, so the sliver is refused as it is built
+    try testing.expectError(error.NotValid, @import("../construct/primitives.zig").polyhedron(testing.allocator, tol, &points, &triangles, &diag));
+    const first = diag.first().?;
+    try testing.expectEqual(@import("../diagnostics.zig").Code.sliver_face, first.code);
+    try testing.expectApproxEqRel(@as(f64, 7.5e-6), first.measured, 1e-6);
+}

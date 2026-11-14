@@ -442,6 +442,45 @@ const Checker = struct {
         }
         try self.windings();
         try self.verticesApart();
+        try self.slivers();
+    }
+
+    /// No planar face a sliver (architecture §9.1's "face area > zone²", measured as SMLib
+    /// and ACIS measure it, against the boundary): its area within the zone times half its
+    /// perimeter is a strip narrower than the zone (a strip `w` wide has an area of about
+    /// `w/2` times its perimeter), its sides as near each other as vertices this checker
+    /// finds too close, or a face a couple of zones across. The area is its loops' about
+    /// the outward normal (the surface's, by `same_sense`), holes taking theirs away, each
+    /// from its first point. A face of no area at all is a lamina or a spur mid-
+    /// construction, as for the windings; curved faces are M5's (their boundary's polygon
+    /// is not their area).
+    fn slivers(self: *Checker) Error!void {
+        const b = self.body;
+        var uv = std.ArrayList(Vec2).empty;
+        defer uv.deinit(self.allocator);
+        var xyz = std.ArrayList(Vec3).empty;
+        defer xyz.deinit(self.allocator);
+        for (b.faces.items, 0..) |face, i| {
+            if (face.flags.tombstone or face.surface.kind != .plane) continue;
+            const n = b.geometry.surface(face.surface).normal(0, 0);
+            const outward = if (face.same_sense) n else vec.neg(n);
+            var area: f64 = 0;
+            var perimeter: f64 = 0;
+            var loops = traverse.Loops.init(b, types.FaceIndex.of(i));
+            while (loops.next() catch return) |l| {
+                if (b.loop(l).first == .none) continue;
+                _ = try self.sampleLoop(l, &uv, &xyz);
+                const from = xyz.items[0];
+                for (xyz.items, 0..) |p, k| {
+                    const q = xyz.items[(k + 1) % xyz.items.len];
+                    area += vec.dot(vec.cross(vec.sub(p, from), vec.sub(q, from)), outward) / 2;
+                    perimeter += vec.distance(p, q);
+                }
+            }
+            if (@abs(area) <= b.tol.param * b.tol.param) continue;
+            const least = b.tol.zone * perimeter / 2;
+            if (!(area > least)) try self.add(.sliver_face, .of(.face, i), area, least);
+        }
     }
 
     /// Every loop runs counter-clockwise in UV about its face's outward normal when it is

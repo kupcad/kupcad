@@ -1071,7 +1071,9 @@ volume (divergence theorem) is positive for an outer shell and negative for a vo
 *Geometric*: vertex points on their edges' curves within `xsect`; edge curves on both
 adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`, tested at
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's
-domain; edge length > `δ`; face area > `zone²`; no two vertices within `zone` of each
+domain; edge length > `δ`; a planar face's area more than `zone` times half its
+perimeter (`sliver_face`: no strip narrower than the zone, nor a face a couple of zones
+across; 2026-11-14, as SMLib and ACIS measure it); no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:
