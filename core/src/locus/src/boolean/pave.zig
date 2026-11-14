@@ -363,8 +363,12 @@ const Filler = struct {
     // --- vertex–vertex ---
 
     /// Every vertex of `a` a merged vertex of its own; each of `b`'s merged with the first
-    /// of `a`'s within the tolerance, else one of its own. Merged vertices take the centre
-    /// of their points' box, their gap reaching the furthest.
+    /// of `a`'s within the tolerance and both their gaps (the sum of tolerances every other
+    /// class reaches by, and the overlap rules: research/consistent-tolerances.md's gapped
+    /// corner, 2.3e-5 under another with a gap of 6.4e-6 at a tolerance of 2e-5, was left
+    /// unmerged and then found on that corner's edges at its end), else one of its own.
+    /// Merged vertices take the centre of their points' box, their gap reaching the
+    /// furthest.
     fn vertexVertex(self: *Filler) Error!void {
         const p = self.p;
         const a = self.body(0);
@@ -376,7 +380,11 @@ const Filler = struct {
             p.vertex_of[0][i] = try self.addPoint(a.point(types.VertexIndex.of(i)), v.gap, 1);
             try a_vertex.append(self.allocator, types.VertexIndex.of(i));
         }
-        const from_a: u32 = @intCast(p.points.items.len);
+        // `a`'s points in a grid wide enough for the tolerance and two gaps, each at most the
+        // zone (a ball past it is refused below)
+        var near = grid.Grid.init(2 * (p.tol.xsect + 2 * p.tol.zone + p.rounding));
+        defer near.deinit(self.allocator);
+        for (p.points.items, 0..) |q, i| near.insert(self.allocator, @intCast(i), q) catch |e| return welderError(self.diag, e);
         const b = self.body(1);
         // The points each merged vertex of `a` took from `b`, to place it once all are in
         var taken: std.ArrayList([2]u32) = .empty;
@@ -384,13 +392,13 @@ const Filler = struct {
         for (b.vertices.items, 0..) |v, i| {
             if (v.tombstone) continue;
             const q = b.point(types.VertexIndex.of(i));
-            if (try self.find(q)) |found| if (found < from_a) {
+            if (try self.mergedWith(&near, q, v.gap)) |found| {
                 p.vertex_of[1][i] = found;
                 p.owners.items[found] |= 2;
                 try taken.append(self.allocator, .{ found, @intCast(i) });
                 self.tally();
                 continue;
-            };
+            }
             p.vertex_of[1][i] = try self.addPoint(q, v.gap, 2);
         }
         // Each merged vertex at the centre of its points' box
@@ -423,6 +431,34 @@ const Filler = struct {
         p.welder.deinit(self.allocator);
         p.welder = grid.PointWelder.initWithMargin(p.tol.xsect, p.rounding);
         for (0..p.points.items.len) |i| try self.register(@intCast(i));
+    }
+
+    /// The first of `a`'s merged vertices (all of them in `near`) within the intersection
+    /// tolerance and both gaps of `q`, a vertex of `b` with gap `gap`; one at that reach to
+    /// rounding is refused (D27).
+    fn mergedWith(self: *Filler, near: *const grid.Grid, q: Vec3, gap: f64) Error!?u32 {
+        const p = self.p;
+        const Search = struct {
+            p: *const Paves,
+            q: Vec3,
+            gap: f64,
+            best: u32 = NONE,
+            at: u32 = NONE,
+            fn visit(s: *@This(), i: u32) bool {
+                const d = vec.distance(s.p.points.items[i], s.q);
+                const reach = s.p.tol.xsect + s.p.gaps.items[i] + s.gap;
+                if (@abs(d - reach) <= s.p.rounding) {
+                    s.at = @min(s.at, i);
+                } else if (d <= reach) {
+                    s.best = @min(s.best, i);
+                }
+                return true;
+            }
+        };
+        var search: Search = .{ .p = p, .q = q, .gap = gap };
+        near.query(q, p.tol.xsect + 2 * p.tol.zone + p.rounding, &search, Search.visit) catch |e| return welderError(self.diag, e);
+        if (search.at != NONE) return self.atTolerance(vec.distance(p.points.items[search.at], q), p.tol.xsect + p.gaps.items[search.at] + gap, .of(.vertex, search.at));
+        return if (search.best == NONE) null else search.best;
     }
 
     fn addPoint(self: *Filler, q: Vec3, gap: f64, owners: u2) Error!u32 {
@@ -804,29 +840,30 @@ const Filler = struct {
                     count += 1;
                 }
                 for (on[0..count], 0..) |a, x| for (on[x + 1 .. count]) |b| {
-                    if (try self.meetNear(k, a, b, q, reach)) continue;
+                    if (try self.meetAt(k, a, b, v)) continue;
                     return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(b)), .label = if (k == 0) "two faces of the first operand within reach of one vertex," else "two faces of the second operand within reach of one vertex,", .threshold = reach });
                 };
             }
         }
     }
 
-    /// Whether faces `a` and `b` of operand `k` meet within `reach` of `q`: along an edge
-    /// both use, or at a vertex both use.
-    fn meetNear(self: *Filler, k: usize, a: types.FaceIndex, b: types.FaceIndex, q: Vec3, reach: f64) Error!bool {
+    /// Whether faces `a` and `b` of operand `k` meet at merged vertex `m`, as the paves
+    /// decided it: `m` a pave of an edge both use (its ends among them), or the merged vertex
+    /// of a vertex both use. Measured again (`m` within reach of the edge or the vertex), a
+    /// second decision of the same could disagree with the first (D28).
+    fn meetAt(self: *Filler, k: usize, a: types.FaceIndex, b: types.FaceIndex, m: u32) Error!bool {
         const body_k = self.body(k);
         var loops = traverse.Loops.init(body_k, a);
         while (loops.next() catch return corrupt(self.diag)) |l| {
+            if (body_k.loop(l).vertex != .none and self.p.vertex_of[k][@backingInt(body_k.loop(l).vertex)] == m and try self.faceHasVertex(k, b, body_k.loop(l).vertex)) return true;
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const coedge = body_k.coedge(c);
                 // An edge of both: its other coedge in `b`
-                if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == b) {
-                    if (try self.within(in_face.edgeDistance(body_k, coedge.edge, q), reach, .of(.face, @backingInt(b)))) return true;
-                }
+                if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == b and self.hasPave(k, coedge.edge, m)) return true;
                 // A vertex of both
                 const corner = body_k.coedgeStart(c);
-                if (try self.faceHasVertex(k, b, corner) and try self.within(vec.distance(body_k.point(corner), q), reach, .of(.face, @backingInt(b)))) return true;
+                if (self.p.vertex_of[k][@backingInt(corner)] == m and try self.faceHasVertex(k, b, corner)) return true;
             }
         }
         return false;

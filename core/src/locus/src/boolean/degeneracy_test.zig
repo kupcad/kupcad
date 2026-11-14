@@ -1041,3 +1041,28 @@ fn expectPinched(a: *const Body, b: *const Body) !void {
     try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
     try testing.expectEqual(diagnostics.EntityKind.shell, diag.first().?.entity.kind);
 }
+
+test "degeneracy: a corner 2.3e-5 under one with a gap of 6.4e-6 merges with it by both reaches, a ball past the zone, refused" {
+    // research/consistent-tolerances.md's gapped corner: two boxes 9e-6 apart at an edge,
+    // united, leave its ends merged with a gap of 6.36e-6; a box whose top corner lies
+    // 2.3e-5 under one is within the tolerance and that gap of it, as vertex–edge and
+    // vertex–face reach, but vertex–vertex reached the tolerance alone, left the two apart,
+    // and an edge of one was found ending at the other: refused as an edge 0 long of 3.
+    // Merged, their ball's radius is past the zone (`gap_too_large`), naming the vertex
+    var p = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer p.deinit();
+    var q = try box(.{ 1.000009, 1.000009, 0 }, .{ 2, 2, 1 });
+    defer q.deinit();
+    var u = try sound(&p, &q, .@"union");
+    defer u.deinit();
+    var g: Vec3 = undefined;
+    var gap: f64 = 0;
+    for (u.vertices.items, 0..) |v, i| if (!v.tombstone and v.gap > gap and u.point(VertexIndex.of(i))[2] == 0) {
+        gap = v.gap;
+        g = u.point(VertexIndex.of(i));
+    };
+    try testing.expectApproxEqAbs(@as(f64, 6.36e-6), gap, 1e-8);
+    var r = try box(.{ g[0] - 3, g[1] - 3, -3 }, .{ g[0], g[1], -2.3e-5 });
+    defer r.deinit();
+    try expectRefused(&u, &r, .gap_too_large);
+}
