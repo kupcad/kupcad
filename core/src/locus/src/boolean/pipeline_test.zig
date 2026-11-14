@@ -17,6 +17,7 @@ const mat = @import("../math/mat.zig");
 const mass = @import("../measure/mass.zig");
 const overlap = @import("../query/overlap.zig");
 const pipeline = @import("pipeline.zig");
+const step_corpus = @import("step_corpus.zig");
 const types = @import("../topology/types.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
@@ -62,6 +63,8 @@ pub fn sound(a: *const Body, b: *const Body, op: Op) !Body {
         std.debug.print("boolean {s}, the overlap rules: {f}\n", .{ @tagName(op), diag });
         return e;
     };
+    var what_buf: [64]u8 = undefined;
+    try step_corpus.add(&result, std.fmt.bufPrint(&what_buf, "{s} of {d} and {d} faces", .{ @tagName(op), a.counts().faces, b.counts().faces }) catch "a boolean", r.max_gap);
     return result;
 }
 

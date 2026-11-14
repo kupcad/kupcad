@@ -40,6 +40,11 @@ pub fn build(b: *std.Build) void {
     if (b.option(std.Build.LazyPath, "fuzz-draws", "The directory a fuzz worker writes each run's draws in (core's `zig build fuzz-run` reads them after a crash)")) |dir| {
         test_paths.addOptionPathUntracked("fuzz_draws", dir);
     } else test_paths.addOption([]const u8, "fuzz_draws", "");
+    // Where the tests write the boolean results they check as STEP, for OpenCascade to
+    // read back (src/boolean/step_corpus.zig; `pnpm check:locus-step`); empty, none are.
+    if (b.option(std.Build.LazyPath, "step-corpus", "The directory the tests write their boolean results to as STEP files, with a manifest")) |dir| {
+        test_paths.addOptionPathUntracked("step_corpus", dir);
+    } else test_paths.addOption([]const u8, "step_corpus", "");
     module.addOptions("test_paths", test_paths);
 
     const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};

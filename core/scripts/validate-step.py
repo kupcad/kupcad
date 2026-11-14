@@ -86,9 +86,10 @@ def reported(path):
     return {name: int(n) for n, name in re.findall(r"(\d+) (\w+)", match.group(1))}
 
 
-def problems(path, faces, solids, volume):
+def problems(path, faces, solids, volume, slack=None):
     """What is wrong with the STEP file at `path`, which should read as a valid shape of
-    `faces` faces, `solids` solids and `volume`."""
+    `faces` faces, `solids` solids and `volume`, to `slack` (by default, VOLUME_TOLERANCE
+    of it)."""
     try:
         shape, complained = read(path)
     except (ValueError, RuntimeError) as err:
@@ -114,7 +115,7 @@ def problems(path, faces, solids, volume):
             found.append(f"the header reports {report.get('solids')} solids, OpenCascade finds {solids}")
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(shape, props)
-    if abs(props.Mass() - volume) > VOLUME_TOLERANCE * volume:
+    if abs(props.Mass() - volume) > (VOLUME_TOLERANCE * volume if slack is None else slack):
         found.append(f"volume {props.Mass()}, not {volume}")
     return found
 

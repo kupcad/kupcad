@@ -1759,6 +1759,7 @@ const solid_boolean = struct {
     const pipeline = @import("boolean/pipeline.zig");
     const trim = @import("boolean/trim.zig");
     const tests = @import("boolean/pipeline_test.zig");
+    const step_corpus = @import("boolean/step_corpus.zig");
 };
 const solid_hull = @import("construct/hull.zig");
 
@@ -1926,6 +1927,11 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             made += 1;
             try expectSolid(&results[made - 1], &diag);
             try solid_boolean.tests.expectReportFits(&report, &current, &other, &results[made - 1], each);
+            try solid_boolean.step_corpus.add(&results[made - 1], switch (each) {
+                .@"union" => "the solids fuzzer's union",
+                .intersection => "the solids fuzzer's intersection",
+                .difference => "the solids fuzzer's difference",
+            }, report.max_gap);
         }
         const ma = try mass.mass(&current, .{}, &diag);
         const mb = try mass.mass(&other, .{}, &diag);
