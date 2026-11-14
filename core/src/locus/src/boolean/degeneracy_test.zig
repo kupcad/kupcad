@@ -18,6 +18,8 @@ const diagnostics = @import("../diagnostics.zig");
 const mat = @import("../math/mat.zig");
 const Body = @import("../topology/body.zig").Body;
 const primitives = @import("../construct/primitives.zig");
+const mass = @import("../measure/mass.zig");
+const decompose = @import("../construct/decompose.zig");
 const pipeline = @import("pipeline.zig");
 const trim = @import("trim.zig");
 const helpers = @import("pipeline_test.zig");
@@ -35,6 +37,19 @@ const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
+/// OCCT's C6 and D4 (corpus_test.zig's `TURNED`): a box √31/4 long, ¼ or ½ wide, turned
+/// 34.73° about its corner at the origin against the unit box.
+const BAR_TURN = std.math.degreesToRadians(34.73);
+const BAR_LENGTH = @sqrt(31.0) / 4.0;
+/// The scales the probes take D4's neck to (3.85e-4 wide at 1: 19, 2, 1 and ½
+/// intersection tolerances) and C6's spike (1.53e-3 at 1: 77, 2, 1 and ½).
+const D4_SCALES = [_]f64{ 1, 0.104, 0.052, 0.026 };
+const C6_SCALES = [_]f64{ 1, 0.026, 0.013, 0.0065 };
+/// H7's bar (0.1 wide) thinned to these many intersection tolerances.
+const H7_WIDTHS = [_]f64{ 5, 3, 1.5 };
+/// How far the spec case's second box stands over the first's height and depth: within
+/// the zone, and five intersection tolerances.
+const OVERSIZES = [_]f64{ 1e-6, 1e-4 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -1065,4 +1080,354 @@ test "degeneracy: a corner 2.3e-5 under one with a gap of 6.4e-6 merges with it 
     var r = try box(.{ g[0] - 3, g[1] - 3, -3 }, .{ g[0], g[1], -2.3e-5 });
     defer r.deinit();
     try expectRefused(&u, &r, .gap_too_large);
+}
+
+fn areaOf(body: *const Body) !f64 {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return (try mass.mass(body, .{}, &diag)).area;
+}
+
+/// The unit box and a box `lo`–`hi` turned `angle` about the z axis through `pivot`.
+fn unitAndTurned(lo: Vec3, hi: Vec3, pivot: Vec3, angle: f64) ![2]Body {
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    errdefer a.deinit();
+    var b = try box(lo, hi);
+    defer b.deinit();
+    return .{ a, try turned(&b, pivot, vec.Z3, angle) };
+}
+
+test "degeneracy: OCCT's H9, a hole through the box touching its side along a line, refused pinched; the rest made" {
+    // After OCCT `tests/boolean/bop*_simple/H9`: its coordinates and areas; volumes and
+    // counts worked out here. A square ½ on a side turned 30° about (¼,¼), corners (¼,¼),
+    // (¼ + √3/4, ½), (√3/4, ½ + √3/4) and (0, ¼ + √3/4), the last on the side x = 0 to the
+    // turn's rounding. The difference is the box with a square hole through it whose edge
+    // lies on the side: one shell touching itself along a line, which OCCT keeps (area
+    // 7.5) and Locus refuses by design. The intersection is the turned box (2 · ¼ + 2 ·
+    // 1, ¼), the union the box, the swapped difference empty
+    var pair = try unitAndTurned(.{ 0.25, 0.25, 0 }, .{ 0.75, 0.75, 1 }, .{ 0.25, 0.25, 0 }, std.math.degreesToRadians(30.0));
+    defer for (&pair) |*body| body.deinit();
+    try expectPinched(&pair[0], &pair[1]);
+    var i = try sound(&pair[0], &pair[1], .intersection);
+    defer i.deinit();
+    try expectShape(&i, 0.25, 6, 1);
+    try testing.expectApproxEqAbs(@as(f64, 2.5), try areaOf(&i), CLOSE);
+    var u = try sound(&pair[0], &pair[1], .@"union");
+    defer u.deinit();
+    try expectShape(&u, 1, 6, 1);
+    try testing.expectEqual(@as(usize, 8), u.counts().vertices);
+    var s = try sound(&pair[1], &pair[0], .difference);
+    defer s.deinit();
+    try testing.expect(s.isEmpty());
+}
+
+test "degeneracy: OCCT's N3, a box under the box, its top's corner on the box's bottom edge: the bottom's one loop through that corner twice" {
+    // After OCCT `tests/boolean/bop*_simple/N3`: its coordinates and areas; volumes and
+    // counts worked out here. H9's turned square under the box (z from −1 to 0), its top
+    // inside the box's bottom but for its corner (0, ¼ + √3/4, 0) on the bottom's edge.
+    // The union is one solid whose bottom face is the square less the turned one: a hole
+    // touching the outer boundary at that corner, one loop passing it twice (a hole loop
+    // of its own sharing the corner would leave V − E + F − (L − F) one short of 2). The
+    // box's 8 corners and the turned box's 8, one of them splitting the box's edge: V 16,
+    // E 12 + 1 + 12, F 6 + 5, a loop each (16 − 25 + 11 = 2); area 6 + 5/2 − 2 · ¼, volume
+    // 1¼. Nothing in common; each difference its first operand
+    var pair = try unitAndTurned(.{ 0.25, 0.25, -1 }, .{ 0.75, 0.75, 0 }, .{ 0.25, 0.25, 0 }, std.math.degreesToRadians(30.0));
+    defer for (&pair) |*body| body.deinit();
+    var u = try sound(&pair[0], &pair[1], .@"union");
+    defer u.deinit();
+    try expectShape(&u, 1.25, 11, 1);
+    try testing.expectApproxEqAbs(@as(f64, 8), try areaOf(&u), CLOSE);
+    const counts = u.counts();
+    try testing.expectEqual(@as(usize, 16), counts.vertices);
+    try testing.expectEqual(@as(usize, 25), counts.edges);
+    try testing.expectEqual(@as(usize, 11), counts.loops);
+    // The corner on the edge, and the one loop that passes it twice
+    const corner: Vec3 = .{ 0, 0.25 + @sqrt(3.0) / 4.0, 0 };
+    var at: ?VertexIndex = null;
+    for (u.vertices.items, 0..) |v, k| if (!v.tombstone and vec.length(vec.sub(u.point(VertexIndex.of(k)), corner)) < 1e-9) {
+        at = VertexIndex.of(k);
+    };
+    var twice: usize = 0;
+    for (u.loops.items, 0..) |l, k| {
+        if (l.tombstone or l.first == .none) continue;
+        var passes: usize = 0;
+        var coedges = @import("../topology/traverse.zig").Coedges.init(&u, types.LoopIndex.of(k));
+        while (try coedges.next()) |c| passes += @intFromBool(u.coedgeStart(c) == at.?);
+        if (passes == 2) twice += 1 else try testing.expect(passes < 2);
+    }
+    try testing.expectEqual(@as(usize, 1), twice);
+    // Touching face to face, nothing inside the other: the contacts are the turned box's
+    // four top corners, the one on the edge among them
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var again = try helpers.reported(&pair[0], &pair[1], .@"union", .{}, &r);
+    again.deinit();
+    try testing.expectEqual(@as(usize, 4), r.contacts.items.len);
+    var at_corner: usize = 0;
+    for (r.contacts.items) |p| {
+        try testing.expectApproxEqAbs(@as(f64, 0), p[2], 1e-12);
+        at_corner += @intFromBool(vec.length(vec.sub(p, corner)) < 1e-9);
+    }
+    try testing.expectEqual(@as(usize, 1), at_corner);
+    var i = try sound(&pair[0], &pair[1], .intersection);
+    defer i.deinit();
+    try testing.expect(i.isEmpty());
+    var d = try sound(&pair[0], &pair[1], .difference);
+    defer d.deinit();
+    try expectShape(&d, 1, 6, 1);
+    var s = try sound(&pair[1], &pair[0], .difference);
+    defer s.deinit();
+    try expectShape(&s, 0.25, 6, 1);
+    try expectIdentities(&pair[0], &pair[1]);
+}
+
+test "degeneracy: OCCT's F5, G2 and G8, what a turned box inside the box leaves: rings of solids touching along edges" {
+    // After OCCT `tests/boolean/bop*_simple/F5`, `G2` and `G8`: their coordinates and
+    // areas; volumes and counts worked out here. Each difference is the box less a prism
+    // whose corners lie on its sides, so its solids are prisms touching along the vertical
+    // edges at those corners: one warning per edge, each solid's volume and faces. F5: the
+    // diamond on the edge midpoints leaves four triangles of legs ½, a ring (⅛ each). G2:
+    // corners (¼,0), (1,⅜) and (0,½) on the sides leave the triangles (0,0) (¼,0) (0,½)
+    // and (¼,0) (1,0) (1,⅜) and the pentagon (0,½) (¾,⅞) (1,⅜) (1,1) (0,1), a ring of three
+    // (1/16, 9/64, 21/64). G8: corners (0,¼) and (√3/4,0) leave the triangle they make with
+    // the origin and the rest of the box, a heptagon, touching at both (√3/32, ¾ − √3/32)
+    const Ring = struct { name: []const u8, lo: Vec3, size: Vec3, turn: f64, touching: usize, volumes: []const f64, faces: []const usize };
+    const sqrt3: f64 = @sqrt(3.0);
+    const rings = [_]Ring{
+        .{ .name = "F5", .lo = .{ 0, 0.5, 0 }, .size = .{ std.math.sqrt2 / 2.0, std.math.sqrt2 / 2.0, 1 }, .turn = std.math.degreesToRadians(-45.0), .touching = 4, .volumes = &.{ 0.125, 0.125, 0.125, 0.125 }, .faces = &.{ 5, 5, 5, 5 } },
+        .{ .name = "G2", .lo = .{ 0.25, 0, 0 }, .size = .{ 3 * @sqrt(5.0) / 8.0, @sqrt(5.0) / 4.0, 1 }, .turn = std.math.atan2(@as(f64, 1), 2), .touching = 3, .volumes = &.{ 1.0 / 16.0, 9.0 / 64.0, 21.0 / 64.0 }, .faces = &.{ 5, 5, 7 } },
+        .{ .name = "G8", .lo = .{ 0, 0.25, 0 }, .size = .{ 0.5, 0.5, 1 }, .turn = std.math.degreesToRadians(-30.0), .touching = 2, .volumes = &.{ sqrt3 / 32, 0.75 - sqrt3 / 32 }, .faces = &.{ 5, 9 } },
+    };
+    for (rings) |ring| {
+        errdefer std.debug.print("{s}\n", .{ring.name});
+        var pair = try unitAndTurned(ring.lo, vec.add(ring.lo, ring.size), ring.lo, ring.turn);
+        defer for (&pair) |*body| body.deinit();
+        var d = try sound(&pair[0], &pair[1], .difference);
+        defer d.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var again = try pipeline.boolean(testing.allocator, &pair[0], &pair[1], .difference, .{}, &diag, null);
+        again.deinit();
+        try testing.expectEqual(ring.touching, warned(&diag, .solids_touch));
+        const parts = try decompose.decompose(testing.allocator, &d, .{}, &diag);
+        defer {
+            for (parts) |*part| part.deinit();
+            testing.allocator.free(parts);
+        }
+        try testing.expectEqual(ring.volumes.len, parts.len);
+        // Smallest first, as the rows list them
+        var order: [4]usize = .{ 0, 1, 2, 3 };
+        var volumes: [4]f64 = undefined;
+        for (parts, 0..) |*part, k| volumes[k] = try volume(part);
+        std.mem.sort(usize, order[0..parts.len], volumes[0..parts.len], struct {
+            fn lessThan(v: []const f64, x: usize, y: usize) bool {
+                return v[x] < v[y];
+            }
+        }.lessThan);
+        for (order[0..parts.len], ring.volumes, ring.faces) |k, want_volume, want_faces| {
+            try testing.expectApproxEqAbs(want_volume, volumes[k], CLOSE);
+            try testing.expectEqual(want_faces, parts[k].counts().faces);
+        }
+    }
+}
+
+test "degeneracy: OCCT's Q9, a turned box's edge lying in the other's top as it crosses it: one edge there in every result" {
+    // After OCCT `tests/boolean/bop*_simple/Q9`: its coordinates and areas; volumes and
+    // counts worked out here (corpus_test.zig's `TURNED` has them). The turned box's edge
+    // from (1,1,3) to (2,1,3) lies in the big box's top: imprinted from both operands' faces
+    // and the section, it must be one edge of each result, not two, nor split
+    var a = try box(.{ 0, 0, 0 }, .{ 3, 3, 3 });
+    defer a.deinit();
+    var b0 = try box(.{ 1, 1, 3 }, .{ 2, 2, 4 });
+    defer b0.deinit();
+    var b = try turned(&b0, .{ 1, 1, 3 }, vec.X3, std.math.degreesToRadians(-30.0));
+    defer b.deinit();
+    const Pair = struct { first: *const Body, second: *const Body, op: pipeline.Op };
+    for ([_]Pair{ .{ .first = &a, .second = &b, .op = .intersection }, .{ .first = &a, .second = &b, .op = .difference }, .{ .first = &a, .second = &b, .op = .@"union" }, .{ .first = &b, .second = &a, .op = .difference } }) |p| {
+        errdefer std.debug.print("{s}{s}\n", .{ @tagName(p.op), if (p.first == &b) ", swapped" else "" });
+        var r = try sound(p.first, p.second, p.op);
+        defer r.deinit();
+        var on: usize = 0;
+        var length: f64 = 0;
+        for (r.edges.items) |e| {
+            if (e.flags.tombstone) continue;
+            const s = r.point(e.start);
+            const t = r.point(e.end);
+            const along = @abs(s[1] - 1) < 1e-9 and @abs(s[2] - 3) < 1e-9 and @abs(t[1] - 1) < 1e-9 and @abs(t[2] - 3) < 1e-9;
+            if (!along) continue;
+            on += 1;
+            length += @abs(t[0] - s[0]);
+        }
+        try testing.expectEqual(@as(usize, 1), on);
+        try testing.expectApproxEqAbs(@as(f64, 1), length, CLOSE);
+    }
+}
+
+test "degeneracy: OCCT's bug25354_33 and _34, a turned box touching a box at one point: a corner on an edge, two edges crossing" {
+    // After OCCT `tests/bugs/modalg_5/bug25354_33` and `_34`: their coordinates and their
+    // section's one vertex; measures and counts worked out here. A cube of 10 under and in
+    // front of the cube of 10 at the origin, turned −45° about the z axis through
+    // (5,0,0): its top (in the other's bottom's plane) a diamond whose corner (5,0,0) lies
+    // on the other's edge y = z = 0. _34 raises it by 6 and turns it 45° about the x axis
+    // through (5,0,0) too: its vertical edge through that point now crosses the other's
+    // edge there, both at an inner point. Either way they touch at that point alone: the
+    // union two cubes (12 faces, 1200, 2000), nothing in common, the difference the first,
+    // and the report's one contact the point
+    var a = try box(.{ 0, 0, 0 }, .{ 10, 10, 10 });
+    defer a.deinit();
+    for ([_]bool{ false, true }) |skew| {
+        errdefer std.debug.print("{s}\n", .{if (skew) "bug25354_34" else "bug25354_33"});
+        var b0 = try box(.{ 5, -10, if (skew) -4 else -10 }, .{ 15, 0, if (skew) 6 else 0 });
+        defer b0.deinit();
+        var b1 = try turned(&b0, .{ 5, 0, 0 }, vec.Z3, std.math.degreesToRadians(-45.0));
+        defer b1.deinit();
+        var b = if (skew) try turned(&b1, .{ 5, 0, 0 }, vec.X3, std.math.degreesToRadians(45.0)) else try b1.clone(testing.allocator);
+        defer b.deinit();
+        var u = try sound(&a, &b, .@"union");
+        defer u.deinit();
+        try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+        try testing.expectEqual(@as(usize, 12), u.counts().faces);
+        try testing.expectApproxEqAbs(@as(f64, 2000), try volume(&u), CLOSE);
+        try testing.expectApproxEqAbs(@as(f64, 1200), try areaOf(&u), CLOSE);
+        var i = try sound(&a, &b, .intersection);
+        defer i.deinit();
+        try testing.expect(i.isEmpty());
+        var d = try sound(&a, &b, .difference);
+        defer d.deinit();
+        try expectShape(&d, 1000, 6, 1);
+        try testing.expectEqual(@as(usize, 8), d.counts().vertices);
+        for ([_]pipeline.Op{ .@"union", .difference }) |op| {
+            var r = pipeline.Report.init(testing.allocator);
+            defer r.deinit();
+            var again = try helpers.reported(&a, &b, op, .{}, &r);
+            again.deinit();
+            try testing.expectEqual(@as(usize, 1), r.contacts.items.len);
+            try testing.expect(vec.length(vec.sub(r.contacts.items[0], .{ 5, 0, 0 })) < 1e-9);
+        }
+        try expectIdentities(&a, &b);
+    }
+}
+
+/// A probe's operation (research/occt-tests.md §4 a): a result `sound` passes, or null,
+/// refused with a code of `pipeline.REFUSALS` (`refused`), never a guard's. `shift` gets
+/// the result's reported shift.
+fn madeOrRefused(a: *const Body, b: *const Body, op: pipeline.Op, refused: *?diagnostics.Code, shift: *f64) !?Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var report = pipeline.Report.init(testing.allocator);
+    defer report.deinit();
+    refused.* = null;
+    shift.* = 0;
+    if (pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, &report)) |result| {
+        var made = result;
+        made.deinit();
+        shift.* = report.shift;
+        return try sound(a, b, op);
+    } else |e| {
+        errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), diag });
+        const code = diag.first().?.code;
+        try testing.expect(std.mem.indexOfScalar(diagnostics.Code, &pipeline.REFUSALS, code) != null);
+        refused.* = code;
+        return null;
+    }
+}
+
+/// The probes' oracle, weaker by design than the corpus's: each operation of `a` and `b`,
+/// and of `b` and `a`, made and sound or refused by type; the volume identities among
+/// those made, to the slab the tolerance may count either way (its thickness over both
+/// operands' faces) and the results' reported shifts; the union and the intersection the
+/// same either way round, both made (their solids alike, their volumes within that slab)
+/// or both refused with one code.
+fn expectProbe(a: *const Body, b: *const Body) !void {
+    const ops = [_]pipeline.Op{ .@"union", .intersection, .difference };
+    var results: [2][3]?Body = @splat(@splat(null));
+    defer for (&results) |*row| for (row) |*r| if (r.*) |*body| body.deinit();
+    var codes: [2][3]?diagnostics.Code = undefined;
+    var shifts: [2][3]f64 = undefined;
+    var volumes: [2][3]f64 = @splat(@splat(0));
+    for ([2][2]*const Body{ .{ a, b }, .{ b, a } }, 0..) |operands, k| {
+        errdefer std.debug.print("{s} first\n", .{if (k == 0) "a" else "b"});
+        for (ops, 0..) |op, j| {
+            results[k][j] = try madeOrRefused(operands[0], operands[1], op, &codes[k][j], &shifts[k][j]);
+            if (results[k][j]) |*r| volumes[k][j] = try volume(r);
+        }
+    }
+    const slab = tol.xsect * (try areaOf(a) + try areaOf(b));
+    const operand_volumes = [2]f64{ try volume(a), try volume(b) };
+    for (0..2) |k| {
+        errdefer std.debug.print("{s} first\n", .{if (k == 0) "a" else "b"});
+        const made = [3]bool{ results[k][0] != null, results[k][1] != null, results[k][2] != null };
+        if (made[0] and made[1]) try testing.expectApproxEqAbs(operand_volumes[0] + operand_volumes[1], volumes[k][0] + volumes[k][1], slab + shifts[k][0] + shifts[k][1]);
+        if (made[1] and made[2]) try testing.expectApproxEqAbs(operand_volumes[k] - volumes[k][1], volumes[k][2], slab + shifts[k][1] + shifts[k][2]);
+    }
+    for (0..2) |j| {
+        errdefer std.debug.print("{s} either way round: {any} and {any}\n", .{ @tagName(ops[j]), codes[0][j], codes[1][j] });
+        try testing.expectEqual(codes[0][j], codes[1][j]);
+        if (results[0][j]) |*r| {
+            try testing.expectEqual(shellKinds(r), shellKinds(&results[1][j].?));
+            try testing.expectApproxEqAbs(volumes[0][j], volumes[1][j], slab + shifts[0][j] + shifts[1][j]);
+        }
+    }
+}
+
+test "degeneracy: OCCT's D4 and C6 scaled until the neck and the spike are 2, 1 and ½ intersection tolerances: made and sound, or refused by type" {
+    // research/occt-tests.md §2 C: one geometry at several scales, the feature the
+    // tolerance has to decide on shrinking past it: D4's neck between the bar's end and
+    // the box's corner, C6's spike past the box's side
+    for ([_][]const f64{ &D4_SCALES, &C6_SCALES }, [_]f64{ 0.5, 0.25 }) |scales, width| {
+        for (scales) |s| {
+            errdefer std.debug.print("{s} at scale {d}\n", .{ if (width == 0.5) "D4" else "C6", s });
+            var a = try box(.{ 0, 0, 0 }, .{ s, s, s });
+            defer a.deinit();
+            var b0 = try box(.{ 0, 0, 0 }, .{ s * BAR_LENGTH, s * width, s });
+            defer b0.deinit();
+            var b = try turned(&b0, .{ 0, 0, 0 }, vec.Z3, BAR_TURN);
+            defer b.deinit();
+            try expectProbe(&a, &b);
+        }
+    }
+}
+
+test "degeneracy: OCCT's H7 thinned to 5, 3 and 1.5 intersection tolerances, the twin path on a sliver: made and sound, or refused alike either way round" {
+    // research/occt-tests.md §4 a (research-review item 2's open question): H7's bar,
+    // whose top and bottom lie in the box's, as thin as a few tolerances, so its common
+    // part with the box is a strip of coincident faces that thin
+    for (H7_WIDTHS) |n| {
+        errdefer std.debug.print("{d} intersection tolerances wide\n", .{n});
+        var pair = try unitAndTurned(.{ 0, 0.25, 0 }, .{ n * tol.xsect, 0.75, 1 }, .{ 0, 0.25, 0 }, std.math.degreesToRadians(240.0));
+        defer for (&pair) |*body| body.deinit();
+        try expectProbe(&pair[0], &pair[1]);
+    }
+}
+
+test "degeneracy: OCCT's spec case, a box 1e-6 and 1e-4 taller and deeper than the one it is joined to, united either way round" {
+    // After OCCT's `dox/specification/boolean_operations` §11a.1.1, case 2: a cube of 10
+    // and the next box along x, 10 + δ high and deep. Within the zone (δ = 1e-6) the tops
+    // and backs are one plane each (D28: the first operand's), so either union is a box,
+    // 6 faces, 20 · 10² one way and 20 · (10 + δ)² the other, each to its reported shift;
+    // at five intersection tolerances (δ = 1e-4) the steps stay, both unions the same nine
+    // faces (the ends, bottom and front whole, two tops, two backs, the second's L-shaped
+    // strip at x = 10 left uncovered), 1000 + 10 · (10 + δ)²
+    for (OVERSIZES) |over| {
+        errdefer std.debug.print("{e} over\n", .{over});
+        var a = try box(.{ 0, 0, 0 }, .{ 10, 10, 10 });
+        defer a.deinit();
+        var b = try box(.{ 10, 0, 0 }, .{ 20, 10 + over, 10 + over });
+        defer b.deinit();
+        try expectProbe(&a, &b);
+        const within = over < tol.zone;
+        for ([_]bool{ false, true }) |swapped| {
+            errdefer std.debug.print("{s}\n", .{if (swapped) "b ∪ a" else "a ∪ b"});
+            var r = pipeline.Report.init(testing.allocator);
+            defer r.deinit();
+            var u = try helpers.reported(if (swapped) &b else &a, if (swapped) &a else &b, .@"union", .{}, &r);
+            defer u.deinit();
+            try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&u));
+            try testing.expectEqual(@as(usize, if (within) 6 else 9), u.counts().faces);
+            const side = if (within and !swapped) 10 else 10 + over;
+            const want = if (within) 20 * side * side else 1000 + 10 * side * side;
+            if (within) try testing.expect(r.shift > 0);
+            try testing.expectApproxEqAbs(want, try volume(&u), r.shift + CLOSE);
+        }
+    }
 }
