@@ -640,6 +640,32 @@ test "degeneracy: a hull through a wall 1.25 tolerances thick into its cavity: t
     try expectIdentities(&h, &wall);
 }
 
+test "degeneracy: a plate's bottom a hair under another's, one plane: the plane chosen holds the pieces lying on either, whichever operand comes first" {
+    // The 10K fuzz session's fourth run (2026-11-14, locus), reduced: a plate 1.9
+    // tolerances thick with a hull's edge 1.4e-5 over its bottom, lying on it, and a second
+    // plate whose bottom is 1e-5 under the first's. The paves found the bottoms in one
+    // plane; with the second plate first, the group took its plane, which held the first
+    // bottom's corners but not the hull's edge on it (2.4e-5 off, past the tolerance the
+    // checker holds an edge to): the union failed the checker, the operands swapped. The
+    // plane chosen holds every piece's line too: the first bottom's, either way round.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = 1.9 * tol.xsect / 2;
+    var lower = try box(.{ 2, 1.00002, 3 - half + 1e-5 }, .{ 4, 4.00002, 3 + half + 1e-5 });
+    defer lower.deinit();
+    const corners = [_]Vec3{ .{ 0, 2, 3 }, .{ 1, 0, 4 }, .{ 4, 4, 3 }, .{ 4, 0, 0 }, .{ 0, 3, 2 }, .{ 1, 0, 2 }, .{ 0, 2, 2 } };
+    var points: [corners.len]Vec3 = undefined;
+    for (corners, &points) |c, *p| p.* = vec.add(c, .{ 1, 5e-6, 5e-6 });
+    var h = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h.deinit();
+    var first = try sound(&lower, &h, .@"union");
+    defer first.deinit();
+    var upper = try box(.{ 1.5, 3.5, 3 - half }, .{ 2.5, 4.5, 3 + half });
+    defer upper.deinit();
+    try helpers.expectIdentitiesAtTolerance(&upper, &first);
+    try helpers.expectIdentitiesAtTolerance(&first, &upper);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

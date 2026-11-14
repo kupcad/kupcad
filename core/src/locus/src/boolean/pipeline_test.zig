@@ -127,6 +127,29 @@ pub fn expectIdentities(a: *const Body, b: *const Body) !void {
     try testing.expectApproxEqAbs(va - vi, try volume(&d), CLOSE);
 }
 
+/// The volume identities as the solids fuzzer holds them where the operands have faces or
+/// features within the intersection tolerance of each other: to the slab the tolerance may
+/// count either way (its thickness times the smaller operand's area) and what each
+/// result's faces moved onto their coplanar groups' planes (the reports' shift, D28).
+pub fn expectIdentitiesAtTolerance(a: *const Body, b: *const Body) !void {
+    var reports: [3]pipeline.Report = .{ .init(testing.allocator), .init(testing.allocator), .init(testing.allocator) };
+    defer for (&reports) |*r| r.deinit();
+    var u = try soundReported(a, b, .@"union", &reports[0]);
+    defer u.deinit();
+    var i = try soundReported(a, b, .intersection, &reports[1]);
+    defer i.deinit();
+    var d = try soundReported(a, b, .difference, &reports[2]);
+    defer d.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const ma = try mass.mass(a, .{}, &diag);
+    const mb = try mass.mass(b, .{}, &diag);
+    const slab = CLOSE * @max(ma.volume + mb.volume, 1) + Tolerance.merge(a.tol, b.tol).xsect * @min(ma.area, mb.area);
+    const vi = try volume(&i);
+    try testing.expectApproxEqAbs(ma.volume + mb.volume, try volume(&u) + vi, slab + reports[0].shift + reports[1].shift);
+    try testing.expectApproxEqAbs(ma.volume - vi, try volume(&d), slab + reports[1].shift + reports[2].shift);
+}
+
 test "boolean: two boxes overlapping at a corner, every operation, and the identities" {
     var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
     defer a.deinit();

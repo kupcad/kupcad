@@ -650,7 +650,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     var normals: std.ArrayList(Vec3) = .empty;
     defer normals.deinit(allocator);
     // Every plane and line the result is given, by where it comes from (D28)
-    var from = try Provenance.init(allocator, paves, diag);
+    var from = try Provenance.init(allocator, paves, fragments, keeps, diag);
     defer from.deinit();
 
     for (fragments.items.items, keeps, 0..) |fragment, keep, i| {
@@ -902,6 +902,9 @@ fn builderVertex(b: *primitives.Builder, paves: *const pave.Paves, vertex_of: []
 const Provenance = struct {
     allocator: std.mem.Allocator,
     paves: *const pave.Paves,
+    /// The fragments and which are kept: the pieces a group's plane must hold.
+    fragments: *const imprint.Fragments,
+    keeps: []const select.Keep,
     /// Each operand's face's plane: the face whose record it takes.
     plane_of: [2][]Face = .{ &.{}, &.{} },
     /// Each piece between two merged vertices (the smaller first): its source.
@@ -919,14 +922,13 @@ const Provenance = struct {
     /// index there.
     const Copy = struct { from: u2, index: u32 };
 
-    fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, diag: *Diagnostics) Error!Provenance {
-        var self: Provenance = .{ .allocator = allocator, .paves = paves };
+    fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, keeps: []const select.Keep, diag: *Diagnostics) Error!Provenance {
+        var self: Provenance = .{ .allocator = allocator, .paves = paves, .fragments = fragments, .keeps = keeps };
         errdefer self.deinit();
         for (0..2) |k| {
             self.plane_of[k] = try allocator.alloc(Face, paves.operands[k].faces.items.len);
             for (self.plane_of[k], 0..) |*face, i| face.* = .{ .operand = @intCast(k), .face = @intCast(i) };
         }
-        try self.samePlanes(diag);
         // Pieces of operand edges, the first operand's first (a common block is one edge of
         // it), then the section segments
         for (0..2) |k| for (paves.edge_paves[k], 0..) |list, e| {
@@ -941,6 +943,8 @@ const Provenance = struct {
             const entry = try self.line_of.getOrPut(allocator, section.key_ptr.*);
             if (!entry.found_existing) entry.value_ptr.* = .{ .section = section.value_ptr.* };
         }
+        // Then the planes, which must hold the pieces on their lines
+        try self.samePlanes(diag);
         return self;
     }
 
@@ -956,11 +960,15 @@ const Provenance = struct {
     /// The groups of faces the paves found in one plane (`Paves.coplanar`, joined through
     /// shared faces), each given one face's plane: the first, the first operand's before
     /// the second's and by index (OCCT's same-domain representative), whose plane holds
-    /// every face of the group within the intersection tolerance, its own corners and the
-    /// merged vertices on it (the pairs were found by one face lying in the other's plane,
-    /// which a face a hair off parallel and larger need not). A face the zone from it to
-    /// within rounding is refused (`at_tolerance`), and a group no plane of its own holds
-    /// too (`gap_too_large`: one plane for it would move a face past the tolerance).
+    /// every face of the group within the intersection tolerance: its own corners, the
+    /// merged vertices on it and the ends of its kept fragments' pieces on their lines,
+    /// since each piece keeps its source's line (the pairs were found by one face lying in
+    /// the other's plane, which a face a hair off parallel and larger need not; and a
+    /// plate's bottom 1e-5 under another's, given its plane, left a hull's edge lying on
+    /// the upper one 2.4e-5 off, past the tolerance the checker holds an edge to: the 10K
+    /// fuzz session, 2026-11-14, the operands swapped). A face the zone from it to within
+    /// rounding is refused (`at_tolerance`), and a group no plane of its own holds too
+    /// (`gap_too_large`: one plane for it would move a face past the tolerance).
     fn samePlanes(self: *Provenance, diag: *Diagnostics) Error!void {
         const p = self.paves;
         const n_a: u32 = @intCast(p.operands[0].faces.items.len);
@@ -1022,7 +1030,8 @@ const Provenance = struct {
         return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.face, first.face), .label = "faces the paves found in one plane, which no plane of theirs holds within the intersection tolerance", .threshold = p.tol.xsect });
     }
 
-    /// Face `g`'s corners and the merged vertices on it, into `points`.
+    /// Face `g`'s corners, the merged vertices on it and where its kept fragments' pieces
+    /// end on their lines, into `points`.
     fn facePoints(self: *Provenance, g: Face, diag: *Diagnostics) Error!void {
         const p = self.paves;
         const body = p.operands[g.operand];
@@ -1034,6 +1043,27 @@ const Provenance = struct {
         }
         try p.verticesOn(g.operand, g.face, &self.merged);
         for (self.merged.items) |m| try self.points.append(self.allocator, p.point(m));
+        for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
+            if (keep == .drop or fragment.operand != g.operand or fragment.face != g.face) continue;
+            for (self.fragments.loopsOf(i)) |loop| {
+                const vertices = self.fragments.loopVertices(loop);
+                for (vertices, 0..) |x, j| {
+                    const y = vertices[(j + 1) % vertices.len];
+                    const line = self.lineOf(x, y) orelse continue;
+                    for ([_]u32{ x, y }) |m| try self.points.append(self.allocator, line.eval(line.project(p.point(m))));
+                }
+            }
+        }
+    }
+
+    /// The line the piece between merged vertices `x` and `y` takes, its source's; null for
+    /// a piece of none (refused when it is made, `piece`).
+    fn lineOf(self: *const Provenance, x: u32, y: u32) ?curves.Line {
+        const source = self.line_of.get(.{ @min(x, y), @max(x, y) }) orelse return null;
+        return switch (source) {
+            .edge => |e| self.paves.operands[e.operand].geometry.curve(self.paves.operands[e.operand].edge(types.EdgeIndex.of(e.edge)).curve).line,
+            .section => |index| self.paves.section_lines.items[index],
+        };
     }
 
     /// The plane face `face` of `operand` takes, facing `outward`.
