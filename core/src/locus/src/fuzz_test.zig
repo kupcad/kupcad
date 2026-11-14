@@ -13,7 +13,9 @@
 //! time in sixteen), each at the tolerance of its own size (`Tolerance.fromSize`: a plate's
 //! zone is ten times a box's, so a chain mixes zones), put
 //! through chains of booleans and cuts by planes; every result through the checker, the
-//! overlap rules and its report, the volume identities holding, and the chain moved whole
+//! overlap rules and its report, the volume identities holding, membership in each
+//! boolean's results the operation on membership in its operands at points clear of
+//! their boundaries (Shapiro's set-membership classification), and the chain moved whole
 //! by a drawn rigid move (near or far out) giving the same result. A fuzz worker writes each
 //! run's draws down as it draws them and runs a watchdog: a run that panics or passes its
 //! wall-clock bound (`RUN_BUDGET_S`) leaves its `replay:` line for `zig build fuzz-run`.
@@ -54,6 +56,8 @@ const solid_query = struct {
     const point_in_body = @import("query/point_in_body.zig");
 };
 const edges = @import("mesh/edges.zig");
+const solid_distance = @import("query/distance.zig");
+const geometry = @import("geometry/types.zig");
 const chords = @import("mesh/chords.zig");
 const curves = @import("geometry/curves.zig");
 const Vec2 = vec.Vec2;
@@ -1620,6 +1624,13 @@ const SOLID_REACH: f64 = 2 * @as(f64, SOLID_GRID) * PLATE_STRETCH * @sqrt(3.0);
 /// A measure's rounding where a move takes it, in ulps of the distance times the area:
 /// mass sums terms that size (as D27 reckons, 64).
 const MOVE_ROUNDING_ULPS = 64;
+/// Points each boolean step of a solid chain checks membership at (`expectMembership`).
+const MEMBERSHIP_POINTS = 24;
+/// How far a membership point keeps from both operands' boundaries, in intersection
+/// tolerances beyond the step's largest gap: a result's faces lie within the tolerance of
+/// the operands' (D28: a plane holds its group's faces within it, a merged vertex is within
+/// it and its gap of what it merged), and a point is classified within the zone.
+const MEMBERSHIP_CLEAR = 4;
 
 const solid_boolean = struct {
     const pipeline = @import("boolean/pipeline.zig");
@@ -1767,6 +1778,7 @@ fn runSolids(source: anytype) !Outcome {
         try log.add("  {s}\n", .{@tagName(op)});
         var results: [3]Body = undefined;
         var shifts: [3]f64 = undefined;
+        var gaps: [3]f64 = undefined;
         var made: usize = 0;
         defer for (results[0..made]) |*r| r.deinit();
         for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |each| {
@@ -1774,6 +1786,7 @@ fn runSolids(source: anytype) !Outcome {
             defer report.deinit();
             results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return cleanSolid(err);
             shifts[made] = report.shift;
+            gaps[made] = report.max_gap;
             made += 1;
             try expectSolid(&results[made - 1], &diag);
             try solid_boolean.tests.expectReportFits(&report, &current, &other, &results[made - 1], each);
@@ -1793,6 +1806,7 @@ fn runSolids(source: anytype) !Outcome {
         // report says (D28)
         try testing.expectApproxEqAbs(va + vb, vu + vi, close + shifts[0] + shifts[1]);
         try testing.expectApproxEqAbs(va - vi, vd, close + shifts[1] + shifts[2]);
+        try expectMembership(&current, &other, &results, @max(gaps[0], gaps[1], gaps[2]), &diag);
         const keep: usize = switch (op) {
             .@"union" => 0,
             .intersection => 1,
@@ -1812,6 +1826,118 @@ fn runSolids(source: anytype) !Outcome {
 
 /// A boolean step of a solid chain: its other operand and the operation the chain kept.
 const SolidStep = struct { other: Body, op: solid_boolean.pipeline.Op };
+
+/// Membership where it is clear (research/li-chen-egc.md §4, Shapiro's set-membership
+/// classification): at a point farther than `MEMBERSHIP_CLEAR` intersection tolerances and
+/// the step's largest gap from both operands' boundaries, the union, the intersection and
+/// the difference (`results`, in that order) each hold the point exactly when their
+/// operation on its membership in the operands says so, and none has it on its boundary.
+/// The volume identities hold for a result whose pieces are wrongly placed but sized
+/// right; this does not. The points from a skewed sequence, every other one over the
+/// overlap of the operands' boxes (where both hold points), the rest over both boxes;
+/// their distances to the operands' boundaries exact on their meshes (planar faces mesh
+/// exactly); a classification refused (every ray met an edge) skips its point.
+fn expectMembership(a: *const Body, b: *const Body, results: *const [3]Body, gap: f64, diag: *Diagnostics) !void {
+    const fault = (try membershipFault(a, b, results, gap, diag)) orelse return;
+    const p = fault.p;
+    std.debug.print("membership at ({d}, {d}, {d}), {d} clear: a {s}, b {s}; union {s}, intersection {s}, difference {s}\n", .{ p[0], p[1], p[2], fault.clear, @tagName(fault.places[0]), @tagName(fault.places[1]), @tagName(fault.places[2]), @tagName(fault.places[3]), @tagName(fault.places[4]) });
+    return error.MembershipDisagrees;
+}
+
+/// A point where membership disagrees (`expectMembership`): where it is, how far it keeps
+/// from the operands' boundaries, and its place in a, b and the three results.
+const MembershipFault = struct { p: vec.Vec3, clear: f64, places: [5]solid_query.point_in_body.Place };
+
+fn membershipFault(a: *const Body, b: *const Body, results: *const [3]Body, gap: f64, diag: *Diagnostics) !?MembershipFault {
+    const clear = MEMBERSHIP_CLEAR * tolerance.Tolerance.merge(a.tol, b.tol).xsect + gap;
+    var meshes: [2]tessellate.Mesh = undefined;
+    var meshed: usize = 0;
+    defer for (meshes[0..meshed]) |*m| m.deinit(testing.allocator);
+    var indexes: [5]solid_query.FaceIndex = undefined;
+    var indexed: usize = 0;
+    defer for (indexes[0..indexed]) |*x| x.deinit(testing.allocator);
+    for ([_]*const Body{ a, b }) |operand| {
+        meshes[meshed] = try tessellate.tessellate(testing.allocator, operand, .{}, .{}, diag);
+        meshed += 1;
+    }
+    for ([_]*const Body{ a, b, &results[0], &results[1], &results[2] }) |body| {
+        indexes[indexed] = try solid_query.FaceIndex.build(testing.allocator, body, diag);
+        indexed += 1;
+    }
+    const both = indexes[0].box.merge(indexes[1].box);
+    var common: geometry.Box3 = undefined;
+    for (0..3) |c| {
+        common.min[c] = @max(indexes[0].box.min[c], indexes[1].box.min[c]);
+        common.max[c] = @min(indexes[0].box.max[c], indexes[1].box.max[c]);
+    }
+    for (0..MEMBERSHIP_POINTS) |i| {
+        const box = if (i % 2 == 0 and !common.isEmpty()) common else both;
+        const span = box.size();
+        const k: f64 = @floatFromInt(i);
+        const p: vec.Vec3 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1], box.min[2] + @mod(k * 0.7549 + 0.37, 1) * span[2] };
+        if (distanceToMesh(&meshes[0], p) <= clear or distanceToMesh(&meshes[1], p) <= clear) continue;
+        var places: [5]solid_query.point_in_body.Place = undefined;
+        var refused = false;
+        for (&places, 0..) |*place, j| {
+            const body = switch (j) {
+                0 => a,
+                1 => b,
+                else => &results[j - 2],
+            };
+            place.* = solid_query.point_in_body.classify(testing.allocator, body, &indexes[j], p, .{}, diag) catch |err| {
+                _ = try cleanSolid(err);
+                refused = true;
+                break;
+            };
+        }
+        if (refused) continue;
+        const in_a = places[0] == .inside;
+        const in_b = places[1] == .inside;
+        const want = [3]bool{ in_a or in_b, in_a and in_b, in_a and !in_b };
+        var agrees = true;
+        for (places) |place| agrees = agrees and place != .boundary;
+        for (want, places[2..]) |w, place| agrees = agrees and w == (place == .inside);
+        if (!agrees) return .{ .p = p, .clear = clear, .places = places };
+    }
+    return null;
+}
+
+test "Fuzz solids: membership finds a union of the right volume misplaced, which the identities pass" {
+    // Two boxes overlapping at a corner, their three booleans; then the union moved a
+    // quarter along x: every volume the same, so the identities hold, but points of the
+    // operands it no longer covers are found outside it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try primitives.box(testing.allocator, tol, 2, 2, 2, false, &diag);
+    defer a.deinit();
+    var b = try transform.transform(testing.allocator, &a, &Affine.translate(.{ 1, 1, 1 }), .{}, &diag);
+    defer b.deinit();
+    var results: [3]Body = undefined;
+    var made: usize = 0;
+    defer for (results[0..made]) |*r| r.deinit();
+    for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        results[made] = try solid_boolean.pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null);
+        made += 1;
+    }
+    try expectMembership(&a, &b, &results, 0, &diag);
+    var moved = try transform.transform(testing.allocator, &results[0], &Affine.translate(.{ 0.25, 0, 0 }), .{}, &diag);
+    std.mem.swap(Body, &results[0], &moved);
+    moved.deinit();
+    const fault = (try membershipFault(&a, &b, &results, 0, &diag)).?;
+    // A point of a the union no longer covers
+    try testing.expectEqual(.inside, fault.places[0]);
+    try testing.expectEqual(.outside, fault.places[2]);
+}
+
+/// The distance from `p` to the nearest triangle of `mesh`.
+fn distanceToMesh(mesh: *const tessellate.Mesh, p: vec.Vec3) f64 {
+    var nearest = std.math.inf(f64);
+    for (mesh.triangles) |t| {
+        const corners = [3]vec.Vec3{ mesh.positions[t[0]], mesh.positions[t[1]], mesh.positions[t[2]] };
+        nearest = @min(nearest, vec.distance(p, solid_distance.closestOnTriangle(p, corners)));
+    }
+    return nearest;
+}
 
 /// The chain again with its first solid and every other operand under one drawn rigid move
 /// (§9.2's invariance of measures): the same counts and shells as the chain's result, its
