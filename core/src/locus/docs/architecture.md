@@ -684,6 +684,14 @@ importing only those before it, which the layering test holds):**
   section segments there and back (input 1); each region input 0 winds about is a fragment,
   its cycles read back as merged vertices by their coordinates. A vertex the overlay made
   itself is a crossing the paves missed and is refused (`imprint_unmatched`), never sewn.
+  The overlay's weld at its zone is part of the design (Leo, 2026-11-14): the paves decide
+  in space at the intersection tolerance, and the weld makes what they leave on a face an
+  exact planar map. A walk of the paves' pieces alone (OCCT's WireSplitter, tried that day)
+  fails where a section piece runs up to the tolerance outside its face (its middle within
+  the tolerance of the boundary), which the overlay drops in its outside region, and where
+  pieces nearer than the zone would leave fragments that thin. A later refinement, if finds
+  point here: the paves clip sections to their face and snap their ends onto its edges'
+  paves, so the set is planar before the overlay sees it.
 - `classify.zig`: per fragment a point strictly inside it, the triangle centroid of its
   triangulation (spurs taken out) furthest from its edges, spurs included (a centroid once
   fell on a slit's tip, where the other operand touched the face); inside a coplanar face
@@ -1329,7 +1337,7 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D6 | Exact predicates for 2D combinatorics, thick tolerances for 3D classification | One epsilon everywhere | Consistent sweeps and flips; tolerances where exactness is impossible (RTCD ch. 11) |
 | D7 | Faces are never periodic: split at seams | One face with a seam edge | Removes a class of defects every seam-based kernel still has; SolveSpace's experience |
 | D8 | Analytic surfaces plus extrusion and revolution kinds; NURBS only where needed | Everything as NURBS | Exact primitives, exact extrude/revolve, trivial STEP, cheap intersections for most of KupCAD's models |
-| D9 | Map overlay in UV as the one face-splitting engine | 3D segment slicing per face | Exact combinatorics; shared between 2D and 3D; the deleted attempt's slicer is what hung |
+| D9 | Map overlay in UV as the one face-splitting engine, its weld at the zone included (kept by Leo, 2026-11-14) | 3D segment slicing per face; a walk of the paves' pieces with no second weld (OCCT's WireSplitter, tried 2026-11-14) | Exact combinatorics; shared between 2D and 3D; the deleted attempt's slicer is what hung. The walk failed where sections stray up to the tolerance outside their face and where pieces nearer than the zone would leave fragments that thin: the weld is what makes the paves' decisions an exact planar map (§7.4) |
 | D10 | Stroud's stepwise boolean, Hoffmann's once-only incidence, no post-repair | Split then heal | §2 |
 | D11 | Approximate curves and pcurves allowed, flagged, within `approx` | Exact or nothing | Plane∩torus and cylinder∩cylinder have no closed form; every kernel approximates here |
 | D12 | Degenerate edges for poles and apices | Vertex loops, pole-free spheres | Standard in OCCT/SMLib/STEP; keeps every face a UV box |
