@@ -287,11 +287,12 @@ fn arcWinding(edge: Edge, arc: overlay.Arc, p: Vec2) i32 {
     return total;
 }
 
-/// Whether the corner from `prev` to `next` turns left (or goes straight on).
+/// Whether the corner from `prev` to `next` turns left (or goes straight on, within the
+/// angular tolerance), as the overlay decides a corner (`overlay.turnAt`): by the tangents
+/// alone a reflex cusp (an arc ending tangent to a line, the tangents opposite) was a turn
+/// of 0, left enough, and its sketch convex (2026-11-14).
 fn turnsLeft(prev: Edge, next: Edge, tol: tolerance.Tolerance) bool {
-    const t1 = endTangent(prev);
-    const t2 = startTangent(next);
-    return vec.cross2(t1, t2) >= -tol.angle;
+    return overlay.turnAt(prev.b, prev.a, prev.arc, endTangent(prev), next.b, next.arc, startTangent(next), tol.zone) >= -tol.angle;
 }
 
 fn startTangent(edge: Edge) Vec2 {

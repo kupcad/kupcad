@@ -1011,6 +1011,29 @@ const Span = struct {
 /// along it and exact there. The overlay's order about a vertex goes by it, and so does
 /// the offset's turn at a cusp (offset.zig), so the two read curves leaving a vertex one
 /// way alike.
+/// Which way a boundary turns at `v`, arriving along the curve from `a` (straight, or along
+/// `arc`) with tangent `t1` there and leaving along the curve to `b` (straight, or along
+/// `next_arc`) with tangent `t2`: positive to the left, negative to the right. Within a
+/// quarter turn of straight on, the tangents' cross: the turn's size and side are the
+/// tangents' alone, however the curves bend. Past it, the side as the overlay orders the
+/// two curves about `v` (`orderSample`, the predicate exact on those points), +1 or −1: at
+/// a cusp (an arc ending tangent to a line) the tangents oppose and their cross is 0 or a
+/// rounding either way, while the turn is a half turn to the side the face lies on, which
+/// only the curves' bend tells; elsewhere the two agree, the overlay having cut the curves
+/// where they cross. The offset's corners and the convexity query decide a corner by it
+/// (the fuzzer, 2026-11-14: a round join at a cusp left out in place and put in turned;
+/// a reflex cusp taken for convex).
+pub fn turnAt(v: Vec2, a: Vec2, arc: ?Arc, t1: Vec2, b: Vec2, next_arc: ?Arc, t2: Vec2, zone: f64) f64 {
+    if (vec.dot2(t1, t2) >= 0) return vec.cross2(t1, t2);
+    const back: ?Arc = if (arc) |circle| .{ .c = circle.c, .r = circle.r, .ccw = !circle.ccw } else null;
+    const behind = orderSample(v, a, back, zone);
+    const ahead = orderSample(v, b, next_arc, zone);
+    // Left when the curve back lies within a half turn counter-clockwise of the one ahead:
+    // the face, between them that way round, is the narrower side
+    const side = predicates.orient2d(v, ahead, behind);
+    return if (side > 0) 1 else if (side < 0) -1 else 0;
+}
+
 pub fn orderSample(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Vec2 {
     const circle = arc orelse return b;
     const span = arcSpan(a, b, circle);

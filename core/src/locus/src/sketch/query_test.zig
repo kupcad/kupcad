@@ -196,3 +196,23 @@ test "hull: of two squares apart, of a disc (its extreme points), and of points 
     defer testing.allocator.free(ring);
     try testing.expectEqual(@as(usize, 2), ring.len);
 }
+
+test "query: a sketch with a reflex cusp is not convex: an arc ending tangent to a line, turning back" {
+    // 2026-11-14 (found beside the offset's cusp): a 270° arc about (0, 1) from (0, 0) to
+    // (−1, 1), counter-clockwise, then lines round to (2, 0) and back to (0, 0), arriving
+    // along −x where the arc leaves along +x: the tangents' cross is 0, which the corner
+    // test took for a turn left; the curves' order says it turns right, a half turn
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const arc: primitives.OutlineArc = .{ .c = .{ 0, 1 }, .r = 1, .ccw = true };
+    var cusp = try primitives.outlines(testing.allocator, tol, &.{&.{
+        .{ .a = .{ 0, 0 }, .b = .{ -1, 1 }, .arc = arc },
+        .{ .a = .{ -1, 1 }, .b = .{ -1, -1 } },
+        .{ .a = .{ -1, -1 }, .b = .{ 2, -1 } },
+        .{ .a = .{ 2, -1 }, .b = .{ 2, 0 } },
+        .{ .a = .{ 2, 0 }, .b = .{ 0, 0 } },
+    }}, &diag);
+    defer cusp.deinit();
+    try testing.expectEqual(@as(usize, 1), cusp.counts().faces);
+    try testing.expect(!try query.isConvex(&cusp, &diag));
+}

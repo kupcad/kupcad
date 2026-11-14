@@ -15,7 +15,6 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
-const predicates = @import("../math/predicates.zig");
 const diagnostics = @import("../diagnostics.zig");
 const trace = @import("../io/trace.zig");
 const body_mod = @import("../topology/body.zig");
@@ -234,28 +233,13 @@ const Band = struct {
         }
     }
 
-    /// Which way the boundary turns where `piece` meets `next`: positive to the left,
-    /// negative to the right (only the sign counts). Within a quarter turn of straight
-    /// on, by the tangents' cross: the gap between the two sweeps is the tangents' alone,
-    /// however the curves bend. Past it, by the order of the two curves about the
-    /// corner as the overlay orders them (`overlay.orderSample`: points a hundred zones
-    /// along each, the predicate exact on those): at a cusp (an arc ending tangent to a
-    /// line) the tangents oppose and their cross is 0 or a rounding either way, while the
-    /// turn is a half turn to the side the face lies on, which only the curves' bend
-    /// tells; elsewhere the two agree, the overlay having cut the curves where they cross
-    /// (the fuzzer, 2026-11-14: a round join at a cusp left out in place, the cross 0,
-    /// and put in on the sheet turned, the cross a rounding above 0; 13.81 against 16.98).
+    /// Which way the boundary turns where `piece` meets `next` (only the sign counts): the
+    /// overlay's rule (`overlay.turnAt`), the tangents' cross within a quarter turn and
+    /// the curves' order about the corner past it (a round join at a cusp left out in
+    /// place, the cross 0, and put in on the sheet turned, a rounding above 0; the fuzzer,
+    /// 2026-11-14, 13.81 against 16.98).
     fn turnAt(self: *const Band, piece: Piece, next: Piece) f64 {
-        const t1 = piece.endTangent();
-        const t2 = next.startTangent();
-        if (vec.dot2(t1, t2) >= 0) return vec.cross2(t1, t2);
-        const v = piece.b;
-        const back: ?Arc = if (piece.arc) |arc| .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw } else null;
-        const behind = overlay_mod.orderSample(v, piece.a, back, self.zone);
-        const ahead = overlay_mod.orderSample(v, next.b, next.arc, self.zone);
-        // Left when the curve back lies within a half turn counter-clockwise of the one
-        // ahead: the face, between them that way round, is the narrower side
-        return predicates.orient2d(v, ahead, behind);
+        return overlay_mod.turnAt(piece.b, piece.a, piece.arc, piece.endTangent(), next.b, next.arc, next.startTangent(), self.zone);
     }
 
     /// The corner capped: the line at the offset distance from the corner along the
