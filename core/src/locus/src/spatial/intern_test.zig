@@ -308,3 +308,19 @@ test "Interner: two planes a fraction of a degree apart through one point are on
     const own = try interner.plane(testing.allocator, &g, .{ .frame = Frame.init(vec.ZERO3, vec.X3, tilted) }, &.{ vec.ZERO3, .{ 1, 0, 0 }, far_corner });
     try testing.expect(!flat.eql(own));
 }
+
+test "Interner: two circles a fraction of a degree apart about one centre are two records, their rims apart past the zone" {
+    // The circles' normals were compared by the angular tolerance alone (1 − cos ≤ 1e-4,
+    // 0.014 rad): two circles of radius 2 tilted 0.005 rad about one centre were one record,
+    // their rims 0.01 apart, an edge given the other's circle 500 zones off its own. A
+    // circle's extent is its radius: the tilt is a distance, the radius times its sine
+    var g: Geometry = .empty;
+    defer g.deinit(testing.allocator);
+    var interner = Interner.init(Tolerance.fromZone(1e-5));
+    defer interner.deinit(testing.allocator);
+    const tilt = 0.005;
+    const ci = try interner.circle(testing.allocator, &g, curves.Circle.inPlane(.{ 1, 1, 1 }, vec.Z3, 2));
+    try testing.expect(!ci.eql(try interner.circle(testing.allocator, &g, curves.Circle.inPlane(.{ 1, 1, 1 }, .{ 0, @sin(tilt), @cos(tilt) }, 2))));
+    // A tilt whose rim moves a fraction of the zone is the same circle
+    try testing.expect(ci.eql(try interner.circle(testing.allocator, &g, curves.Circle.inPlane(.{ 1, 1, 1 }, .{ 0, @sin(1e-6), @cos(1e-6) }, 2))));
+}

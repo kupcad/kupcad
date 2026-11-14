@@ -118,12 +118,16 @@ pub fn lineOffset(line: curves.Line, p: Vec3) f64 {
     return vec.length(vec.addScaled(d, line.d, -vec.dot(d, line.d)));
 }
 
+/// The same circle: the same centre and radius, and its plane tilted so little that its
+/// rim moves within the zone, the radius times the tilt's sine (a circle's extent is its
+/// radius; by the angular tolerance alone, 0.014 rad, two circles of radius 2 tilted 0.005
+/// rad were one, their rims 0.01 apart). Either way round is the same circle.
 pub fn sameCircle(a: curves.Circle, b: curves.Circle, tol: Tolerance) [3]Comparison {
     const scale = @max(magnitude(&.{ a.c, b.c }), @max(a.r, b.r));
     return .{
         Comparison.distance(vec.distance(a.c, b.c), tol.zone, scale),
         Comparison.distance(@abs(a.r - b.r), tol.zone, scale),
-        Comparison.angle(oneMinusAbsCos(a.normal(), b.normal()), tol.angle),
+        Comparison.distance(@max(a.r, b.r) * vec.length(vec.cross(a.normal(), b.normal())), tol.zone, scale),
     };
 }
 
