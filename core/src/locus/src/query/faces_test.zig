@@ -92,3 +92,25 @@ test "faces: a stadium slab's top is its exact area and centroid; a plate's top 
     defer testing.allocator.free(side);
     try testing.expectEqual(@as(usize, 0), side.len);
 }
+
+test "faces: a small face far from its plane's origin has its own area and centroid" {
+    // The bottom's plane is the sketch's, its frame at the world's origin: the moments
+    // about there summed terms of 1e13 for a face of 1e-4, and the centroid divided their
+    // rounding by its area. About a point of the face
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const at = Vec2{ 9e6, 3e6 };
+    const square = [_]Vec2{ at, vec.add2(at, .{ 0.01, 0 }), vec.add2(at, .{ 0.01, 0.01 }), vec.add2(at, .{ 0, 0.01 }) };
+    var sheet = try primitives.polygon(testing.allocator, tol, &square, &diag);
+    defer sheet.deinit();
+    var post = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 0.01 }, .{}, &diag);
+    defer post.deinit();
+    for ([_]Vec3{ .{ 0, 0, 1 }, .{ 0, 0, -1 } }, [_]f64{ 0.01, 0 }) |dir, z| {
+        const found = try faces.byDirection(testing.allocator, &post, dir, &diag);
+        defer testing.allocator.free(found);
+        try testing.expectEqual(@as(usize, 1), found.len);
+        // The corners where their coordinates round them, 1.9e-9 at most
+        try testing.expectApproxEqAbs(@as(f64, 1e-4), found[0].area, 1e-10);
+        for (0..3) |k| try testing.expectApproxEqAbs((Vec3{ at[0] + 0.005, at[1] + 0.005, z })[k], found[0].centroid[k], 1e-8);
+    }
+}

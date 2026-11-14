@@ -52,7 +52,7 @@ pub fn byDirection(allocator: std.mem.Allocator, body: *const Body, direction: V
             if (1 - vec.dot(normal, d) > body.tol.angle) continue;
             const moments = try planarMoments(body, f, diag);
             if (moments.area == 0) continue;
-            const uv: Vec2 = .{ moments.u / moments.area, moments.v / moments.area };
+            const uv: Vec2 = .{ moments.about[0] + moments.u / moments.area, moments.about[1] + moments.v / moments.area };
             const centroid = plane.eval(uv[0], uv[1]);
             try out.append(allocator, .{ .face = f, .normal = normal, .centroid = centroid, .area = @abs(moments.area), .depth = vec.dot(centroid, d), .tag = face.tag });
         }
@@ -61,14 +61,18 @@ pub fn byDirection(allocator: std.mem.Allocator, body: *const Body, direction: V
     return out.toOwnedSlice(allocator);
 }
 
-/// A planar face's signed area and first moments in its plane's coordinates: `A = ½∮(u dv −
-/// v du)`, `∬u = ∮ u²/2 dv`, `∬v = −∮ v²/2 du` (Green), over every loop the way it runs, so
-/// holes subtract; the signs cancel in the centroid whichever way the plane faces.
-const Moments = struct { area: f64, u: f64, v: f64 };
+/// A planar face's signed area and first moments in its plane's coordinates about `about`, a
+/// point of its boundary: `A = ½∮(u dv − v du)`, `∬u = ∮ u²/2 dv`, `∬v = −∮ v²/2 du`
+/// (Green), over every loop the way it runs, so holes subtract; the signs cancel in the
+/// centroid whichever way the plane faces. About the plane's origin, which may be far from
+/// the face (a sketch's plane is the world's), a face of 1e-4 9e6 out summed moments of
+/// 1e13 and its centroid was 7.7 off (§9.2: from a local point).
+const Moments = struct { area: f64, u: f64, v: f64, about: Vec2 };
 
 fn planarMoments(body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error!Moments {
     const plane = body.geometry.surface(body.face(f).surface).plane;
-    var m: Moments = .{ .area = 0, .u = 0, .v = 0 };
+    var m: Moments = .{ .area = 0, .u = 0, .v = 0, .about = .{ 0, 0 } };
+    var about: ?Vec2 = null;
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
         var it = traverse.Coedges.init(body, l);
@@ -85,7 +89,8 @@ fn planarMoments(body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Erro
                 for (mass.GAUSS_10.nodes, mass.GAUSS_10.weights) |x, w| {
                     const t = a + step * (x + 1) / 2;
                     const s = curve.sample(t);
-                    const p = plane.project(s.p);
+                    if (about == null) about = plane.project(s.p);
+                    const p = vec.sub2(plane.project(s.p), about.?);
                     // The tangent in the plane's coordinates: the frame's axes' components
                     const dp: Vec2 = .{ vec.dot(s.d1, plane.frame.x), vec.dot(s.d1, plane.frame.y) };
                     const weight = w * step / 2;
@@ -96,6 +101,7 @@ fn planarMoments(body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Erro
             }
         }
     }
+    m.about = about orelse m.about;
     return m;
 }
 
