@@ -1926,6 +1926,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // face: a corner in one union and not the other
         "solids 1 4 0 0 1 3 3 1 0 3 1 3 0 2 3 0 1 2 2 2 7 13 3 2 2 1 7 1 2 3 2 4 2 0 2 2 2 0 0 1 2 3 2 2 4 0 4 3 0 3 7 0 1 1 1 7 3 10 4 1 1 0 1 3 0 4 2 3 0 1 6 1 12 9 0 15 0",
         "solids 1 4 0 0 1 3 3 2 0 2 2 2 2 2 1 1 13 0 3 13 3 2 1 6 2 2 4 0 1 4 0 2 0 2 3 3 1 2 1 1 1 0 3 0 2 0 2 11 0 13 11 1 2 0 2 4 2 4 0 2 1 0 2 2 2 12 12 -1 13 0 3 3 2 1 3 2 3 3 1 3 2 1 2 2 0 10 12 6 1",
+        // The nightly run of 2026-11-14 (locus_solids): a hull's edge 1.9e-5 from a plate's top
+        // front edge and 1.8e-6 from its bottom one, 2.5e-5 below: the top crossing welded to
+        // the bottom one's vertex, the top edge's piece ending 2.56e-5 off its line
+        "solids 3 0 0 3 0 2 3 1 2 0 3 4 1 -1 0 3 11 3 0 0 1 -1 10 1 0 0 0 0 10 1 3 1 6 1 1 2 4 4 1 1 4 0 0 3 3 0 0 0 0 3 3 3 3 4 5 -2 4 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -165,6 +165,25 @@ const NearFaces = struct {
     }
 };
 
+/// An edge or a face of operand `k`: what made an intersection point (`Filler.weld`).
+const Feature = union(enum) {
+    edge: struct { k: usize, e: types.EdgeIndex },
+    face: struct { k: usize, f: types.FaceIndex },
+
+    fn operand(self: Feature) usize {
+        return switch (self) {
+            inline else => |x| x.k,
+        };
+    }
+
+    fn entity(self: Feature) diagnostics.EntityRef {
+        return switch (self) {
+            .edge => |x| .of(.edge, @backingInt(x.e)),
+            .face => |x| .of(.face, @backingInt(x.f)),
+        };
+    }
+};
+
 pub const Paves = struct {
     allocator: std.mem.Allocator,
     tol: Tolerance,
@@ -515,10 +534,66 @@ const Filler = struct {
         self.p.welder.add(self.allocator, self.p.points.items, i) catch |e| return welderError(self.diag, e);
     }
 
-    /// The merged vertex at `q`: the first within the tolerance, else a new one.
-    fn weld(self: *Filler, q: Vec3, gap: f64) Error!u32 {
-        if (try self.find(q)) |found| return found;
-        return self.addPoint(q, gap, 0);
+    /// The merged vertex at `q`, a point an intersection of the two features `made_on` made
+    /// (edge–edge, edge–face) with gap `gap`: the first within the tolerance, else a new
+    /// one. A merged vertex already there stands for the point only within its reach (the
+    /// tolerance and its gap) of each of the features, the reach vertex–edge and
+    /// vertex–face decide "on" by: one beyond the reach of a feature was made by others
+    /// within the tolerance of the point, which come within twice the tolerance of the
+    /// feature where they do not meet it. Refused (`below_feature_size`), naming the
+    /// feature, never a pave the feature's own reach denies. The solids fuzzer
+    /// (2026-11-14): a hull's edge 1.9e-5 from a plate's top edge and 1.8e-6 from its
+    /// bottom one, 2.5e-5 below, at a tolerance of 2e-5: the top crossing welded to the
+    /// bottom one's vertex, the top edge's piece ending 2.56e-5 off its line.
+    fn weld(self: *Filler, q: Vec3, gap: f64, made_on: [2]Feature) Error!u32 {
+        const found = try self.find(q) orelse return self.addPoint(q, gap, 0);
+        const reach = self.p.tol.xsect + self.p.gaps.items[found];
+        for (made_on) |feature| {
+            const beyond = try self.beyondReach(found, reach, feature) orelse continue;
+            const first = feature.operand() == 0;
+            return self.diag.fail(error.Degenerate, .{
+                .code = .below_feature_size,
+                .entity = feature.entity(),
+                .label = switch (feature) {
+                    .edge => if (first) "an edge of the first operand and the vertex its crossing merged with," else "an edge of the second operand and the vertex its crossing merged with,",
+                    .face => if (first) "a face of the first operand and the vertex its crossing merged with," else "a face of the second operand and the vertex its crossing merged with,",
+                },
+                .measured = beyond,
+                .threshold = reach,
+            });
+        }
+        return found;
+    }
+
+    /// How far merged vertex `v` lies from `feature` when beyond `reach` of it, as
+    /// vertex–edge and vertex–face decide (a face: its plane, then its boundary for a
+    /// vertex outside it); null within reach.
+    fn beyondReach(self: *Filler, v: u32, reach: f64, feature: Feature) Error!?f64 {
+        const point = self.p.point(v);
+        switch (feature) {
+            .edge => |e| {
+                const distance = self.edgeDistance(e.k, e.e, point);
+                return if (try self.within(distance, reach, feature.entity())) null else distance;
+            },
+            .face => |f| {
+                const operand = self.body(f.k);
+                const plane = planar_faces.planeOf(planar_faces.frameOf(operand, f.f).?);
+                const height = @abs(plane.height(point));
+                if (!try self.within(height, reach, feature.entity())) return height;
+                if (try self.placeIn(f.k, f.f, point, v) != .outside) return null;
+                return try in_face.boundaryDistance(operand, f.f, vec.addScaled(point, plane.n, -plane.height(point)), self.diag);
+            },
+        }
+    }
+
+    /// How far `q` lies from edge `e` of operand `k`, the segment between its merged ends.
+    fn edgeDistance(self: *const Filler, k: usize, e: types.EdgeIndex, q: Vec3) f64 {
+        const v = self.ends(k, e);
+        const p0 = self.p.point(v[0]);
+        const d = vec.sub(self.p.point(v[1]), p0);
+        const len_sq = vec.lengthSq(d);
+        const s = if (len_sq == 0) 0 else std.math.clamp(vec.dot(vec.sub(q, p0), d) / len_sq, 0, 1);
+        return vec.distance(q, vec.addScaled(p0, d, s));
     }
 
     // --- the trees and each edge's ends ---
@@ -763,7 +838,7 @@ const Filler = struct {
             const mid = vec.lerp(c0, c1, 0.5);
             // Away from both edges' ends: an end there is vertex–edge's or vertex–vertex's
             if (self.along(0, ea, mid) == null or self.along(1, eb, mid) == null) continue;
-            const v = try self.weld(mid, gap / 2);
+            const v = try self.weld(mid, gap / 2, .{ .{ .edge = .{ .k = 0, .e = ea } }, .{ .edge = .{ .k = 1, .e = eb } } });
             for ([2]usize{ 0, 1 }, [2]types.EdgeIndex{ ea, eb }) |k, e| {
                 if (self.hasPave(k, e, v)) continue;
                 const at = self.along(k, e, self.p.point(v)) orelse continue;
@@ -984,7 +1059,7 @@ const Filler = struct {
                 const place = try self.placeIn(other, f, q, null);
                 if (place == .outside) continue;
                 const before = self.p.points.items.len;
-                const w = try self.weld(q, 0);
+                const w = try self.weld(q, 0, .{ .{ .edge = .{ .k = k, .e = e } }, .{ .face = .{ .k = other, .f = f } } });
                 if (!self.hasPave(k, e, w)) {
                     if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at) else try self.endStrip(k, e, w);
                 }

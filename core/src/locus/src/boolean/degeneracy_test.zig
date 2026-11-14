@@ -761,6 +761,41 @@ test "degeneracy: two walls' sides in one plane, each 1.25 tolerances off its ca
     }
 }
 
+test "degeneracy: a hull's edge within the tolerance of a plate's two front edges 2.5e-5 apart: its crossings merge beyond the reach of one, refused" {
+    // The nightly solids fuzzer (2026-11-14, locus_solids), reduced: a plate 1.25
+    // tolerances thick, a hull's edge rising at 45° across its front 1.9e-5 from the top
+    // edge and 1.8e-6 from the bottom one. Its crossing with the top edge welded to the
+    // bottom one's vertex, 1.8e-5 along it, and the top edge's piece ended at that vertex
+    // 2.56e-5 off its line (the checker: a vertex off its curve's end). A crossing welds to
+    // a vertex only within its reach of both edges; beyond it, the features are closer
+    // than the minimum feature size, refused either way round.
+    var plate = try box(.{ -0.5, 1, -7.5e-6 }, .{ 1.5, 2, 1.75e-5 });
+    defer plate.deinit();
+    const corners = [_]Vec3{ .{ 1, 1, 2 }, .{ 4, 4, 1 }, .{ 1, 4, 0 }, .{ 0, 3, 3 }, .{ 0, 0, 0 } };
+    var points: [corners.len]Vec3 = undefined;
+    for (corners, &points) |c, *p| p.* = vec.add(c, .{ -5e-6, 1e-5, -1 });
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer hull.deinit();
+    for ([2][2]*const Body{ .{ &plate, &hull }, .{ &hull, &plate } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var refusal = Diagnostics.init(testing.allocator);
+            defer refusal.deinit();
+            if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &refusal, null)) |made| {
+                var result = made;
+                result.deinit();
+                return error.TestExpectedError;
+            } else |e| {
+                errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), refusal });
+                try testing.expectEqual(error.Degenerate, e);
+                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
+                try testing.expect(std.mem.indexOf(u8, refusal.first().?.label, "its crossing merged with") != null);
+            }
+        }
+    }
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

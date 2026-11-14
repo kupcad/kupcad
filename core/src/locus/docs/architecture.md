@@ -681,7 +681,12 @@ importing only those before it, which the layering test holds):**
   `2·xsect` is not split but refused, `TooSmallEdge` naming it);
   edge–edge by the closest points of the two lines (parallel lines skipped: their overlaps
   are made of vertex–edge's paves), the point welded to a merged vertex within `xsect` or
-  new, then tried against every other edge; vertex–face; edge–face where an edge's ends lie
+  new, then tried against every other edge (a merged vertex already there stands for the
+  point only within its reach, `xsect` and its gap, of both edges, edge–face's of the edge
+  and the face, as vertex–edge and vertex–face decide "on"; beyond it the features that
+  made it come within twice the tolerance of the one it misses: refused,
+  `below_feature_size`, 2026-11-15: a hull's edge by both front edges of a plate 2.5e-5
+  thick, whose top edge ended 2.56e-5 off its line); vertex–face; edge–face where an edge's ends lie
   beyond `xsect` on either side of a face's plane and the crossing is in the face (one on
   its boundary tried against the other's edges, which edge–edge should have split), or a
   pave the edge already has on the face, an edge meeting a plane once (at a shallow angle
