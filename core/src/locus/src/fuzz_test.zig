@@ -1923,6 +1923,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the gaps and taken about the plate's centre 50 units off, measured 0.0084 over
         // the identities (the faces now closed, with ribbons to edges off their planes)
         "solids 1 4 1 2 0 0 0 4 2 2 4 1 3 2 3 0 2 0 1 4 2 7 11 2 0 1 0 0 12 1 1 2 2 3 0 2 1 2 1 3 12 1 1 7 1",
+        // Its third run (locus_solids): a hull through a wall 1.25 tolerances thick into its
+        // cavity, the section along the wall's outer side from a corner merged with a gap
+        // to an end over the cavity's side, both ends taken as on that side by the gapped
+        // one's reach: the union's outer shell touching its void, "pinched"
+        "solids 1 8 1 4 2 3 2 1 1 3 1 4 0 2 4 4 2 0 2 1 3 4 1 1 3 1 2 1 3 1 10 8 3 1 1 7 4 2 2 2 2 3 3 4 4 2 3 0 3 1 1 4 2 3 1 1 3 0 2 3 3 2 6 10 2 1 3 3 2 2 1 2 3 3 3 4 3 2 3 1 3 4 11 13 0 2 3 1 0 0 1 4 0 3 4 3 0 2 3 1 10 8 3 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

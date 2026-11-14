@@ -1124,7 +1124,9 @@ fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-1
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
 `intersect/planar_faces.zig`, within `xsect` of an edge of each, a piece a run of
 crossings in both faces, an edge's end within `xsect` and its gap of the other's plane
-being its crossing there, as the boolean's vertex–face has it; coplanar faces cover no
+being its crossing there, as the boolean's vertex–face has it, and an edge lying in that
+plane by its reach meeting it at those of its ends within their own, not at an end the
+other's gap reached, 2026-11-14; coplanar faces cover no
 region together, by the overlay of the two), so solids touching along a line or at a
 point pass, a point of two shells' faces needing only one's boundary (a corner on a face
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take

@@ -614,6 +614,32 @@ test "degeneracy: a hull through a cavity and its wall 1.5 tolerances thick: pie
     try expectIdentities(&h, &wall);
 }
 
+test "degeneracy: a hull through a wall 1.25 tolerances thick into its cavity: the section along the wall's outer side meets the cavity's side only at its gapped end" {
+    // The 10K fuzz session's third run (2026-11-14, locus_solids), reduced: a hull's face
+    // crosses the wall's two sides, its section along the outer one from a corner merged
+    // onto the wall's edge (a gap of 9.7e-6) to where a hull edge enters, which lies over
+    // the cavity's side 2.5e-5 off. The overlap rules took that section as lying in the
+    // cavity's plane by its reach (the tolerance and its ends' larger gap, 2.97e-5) and
+    // both its ends as on it, so the union's outer shell touched its own void there,
+    // "pinched"; the paves had kept that end apart by its own reach, 2e-5. An edge lying
+    // in a plane meets it at those of its ends within their own reach.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const corners = [_]Vec3{ .{ 1, 4, 2 }, .{ 3, 2, 1 }, .{ 1, 3, 1 }, .{ 4, 0, 2 }, .{ 4, 4, 2 }, .{ 0, 2, 1 }, .{ 3, 4, 1 } };
+    var points: [corners.len]Vec3 = undefined;
+    for (corners, &points) |c, *p| p.* = vec.add(c, .{ 5e-6, 0.5, -2e-5 });
+    var h = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h.deinit();
+    const half = 1.25 * tol.xsect / 2;
+    var outer = try box(.{ -1.25, 2.99998, -2e-5 }, .{ 0.5 + half, 3.99998, 1.99998 });
+    defer outer.deinit();
+    var cavity = try box(.{ -1, 3.24998, 0.24998 }, .{ 0.5 - half, 3.74998, 1.74998 });
+    defer cavity.deinit();
+    var wall = try sound(&outer, &cavity, .difference);
+    defer wall.deinit();
+    try expectIdentities(&h, &wall);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

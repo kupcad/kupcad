@@ -116,8 +116,8 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     return if (pieces.items.len > first) .crossing else .apart;
 }
 
-/// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives its
-/// ends); true when every edge lies in it, the face then lying in the plane. On the plane
+/// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives those
+/// of its ends on it); true when every edge lies in it, the face then lying in the plane. On the plane
 /// is within the intersection tolerance and the edge's ends' gaps, as a boolean takes a
 /// vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
 /// vertex at a shallow angle crosses the plane's exact line far from it, inside the other
@@ -135,8 +135,15 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             const curve = body.geometry.curve(edge.curve);
             const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, edgeReach(body, edge, tol), diag);
             if (found.lies_in) {
-                try marks.append(allocator, body.point(edge.start));
-                try marks.append(allocator, body.point(edge.end));
+                // It meets the plane at those of its ends within their own reach, as the
+                // paves put a vertex on a face: the edge's reach is its larger end gap's,
+                // and a section along a wall 1.25 tolerances thick, its other end merged
+                // with a gap, put its end with none on the wall's far side 2.5e-5 off (the
+                // 10K fuzz session, 2026-11-14: a union's outer shell touching its void)
+                for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
+                    const p = body.point(v);
+                    if (@abs(vec.dot(plane.n, p) - plane.d) <= tol.xsect + body.vertex(v).gap) try marks.append(allocator, p);
+                }
                 continue;
             }
             every_in = false;
