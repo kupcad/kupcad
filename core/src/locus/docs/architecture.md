@@ -456,9 +456,14 @@ cannot be split and is reported (`TooSmallEdge`) rather than cut (OCCT
 **Incidence is decided once** (H p.81–82, 117): every face pair of a boolean is analysed
 one time and the result posted to both bodies; the "mark A on B, then B on A" symmetric
 design is not used because the two passes can disagree. Decisions test against surfaces
-and input data, not against derived curves (S p.751). A minimum feature size `δ > 2·zone`
-is enforced: edges shorter than it are collapsed by `merge_vertices` at the end of an
-operation (H p.117–118). Where two faces of one operand come within the intersection
+and input data, not against derived curves (S p.751). A minimum feature size holds where an
+operation reaches: features that do not meet are more than `2·(xsect + gaps)` apart where a
+boolean comes within its reach of both (Hoffmann's `δ > 2ε` with ε the boolean's reach,
+`xsect` and the vertices' gaps, not the zone; Hoffmann–Hopcroft–Karasick ask 3ε). A body
+may be nearer elsewhere: the overlap rules warn (`features_near`) and a boolean's report
+keeps its result's nearest pair, where the next one reaching both will refuse
+(research/consistent-tolerances.md). Edges shorter than the checker's minimum are
+collapsed by `simplify` at the end of a boolean (H p.117–118). Where two faces of one operand come within the intersection
 tolerance of each other away from where they meet (a merged vertex inside one, clear of
 its boundary, within the tolerance of the other), no decision of the tolerance is
 consistent, and a boolean refuses it (`below_feature_size`, the paves; the solids fuzzer's

@@ -117,6 +117,7 @@ pub const Code = enum(u16) {
     at_tolerance,
     below_feature_size,
     mixed_tolerance,
+    features_near,
     // Triangulation (mesh/triangulate.zig)
     ring_starts,
     ring_too_small,
@@ -176,6 +177,7 @@ pub const Code = enum(u16) {
             .pinched => "would touch itself along a line or at a point inside one solid (a pocket meeting a face it was cut from, a void touching its outer shell or another void), which one solid cannot hold: refused by design",
             .at_tolerance => "lies the intersection tolerance from another entity to within rounding (the measured distance), neither on it nor clear of it: the operands' every decision about it could go either way, so it is refused; move one by more than the rounding",
             .below_feature_size => "are features within the intersection tolerance of each other away from where they meet (the measured value against its limit), closer than twice the tolerance, where being within it is not transitive, so no result holds them consistently; move them apart by the tolerance",
+            .features_near => "comes within twice the intersection tolerance of a feature of the body it does not meet (the measured distance): a boolean reaching both there refuses them, features below its minimum size (`below_feature_size`)",
             .mixed_tolerance => "is valid at its own tolerance but not at the boolean's, the larger of the operands' (the measured value is its zone, the threshold the boolean's): features of it closer than that are one feature to the boolean; build the operands at one tolerance",
             .solids_touch => "is where two solids of the result touch along a line: one edge for each, at one place",
             .unclassified => "has a piece that lies on the other operand's boundary but on none of its faces in this face's plane, so it is neither inside nor outside",

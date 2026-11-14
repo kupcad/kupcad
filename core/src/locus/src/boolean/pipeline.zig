@@ -58,6 +58,7 @@ const primitives = @import("../construct/primitives.zig");
 const sew = @import("../construct/sew.zig");
 const in_face = @import("../query/in_face.zig");
 const overlap = @import("../query/overlap.zig");
+const index_mod = @import("../query/index.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const pave = @import("pave.zig");
 const imprint = @import("imprint.zig");
@@ -183,6 +184,10 @@ pub const Report = struct {
     rays: u32 = 0,
     by_contagion: u32 = 0,
     checks: u32 = 0,
+    /// The nearest two features of the result that do not meet, when nearer than twice the
+    /// intersection tolerance (`overlap.nearest`): where the next boolean of a chain reaching
+    /// both will refuse (the minimum feature size, research/consistent-tolerances.md T3).
+    near: ?overlap.Near = null,
     /// How much volume the result's faces may have moved from where their pieces lie,
     /// at most: each kept fragment's area times its corners' largest distance from the
     /// plane it was given (its own, or its coplanar group's: D28). The volume identities
@@ -213,10 +218,10 @@ pub const Report = struct {
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks, .shift = self.shift };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks, .shift = self.shift, .near = if (self.near) |n| n.distance else null };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32, shift: f64 };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32, shift: f64, near: ?f64 };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -301,6 +306,9 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     };
     r.max_gap = @max(r.max_gap, made.reach);
     try warnTouching(allocator, &result, diag);
+    var index = try index_mod.FaceIndex.build(allocator, &result, diag);
+    defer index.deinit(allocator);
+    r.near = try overlap.nearest(allocator, &result, &index, tol, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
 }
@@ -344,6 +352,7 @@ pub fn chain(allocator: std.mem.Allocator, operands: []const *const Body, op: Op
         r.rays += step.rays;
         r.by_contagion += step.by_contagion;
         r.checks += step.checks;
+        r.near = step.near;
         for (&r.fragments, step.fragments) |*row, step_row| for (row, step_row) |*total, n| {
             total.* += n;
         };

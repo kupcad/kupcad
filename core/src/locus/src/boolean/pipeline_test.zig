@@ -1108,3 +1108,27 @@ test "boolean: an operand valid at its own tolerance but not at the larger one t
     defer u.deinit();
     try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
 }
+
+test "boolean: the report keeps the result's nearest features that do not meet, where a next boolean reaching both refuses" {
+    // research/consistent-tolerances.md, T3: a chain sees the step that will refuse before
+    // it does; a flat tetrahedron joined with a box far from it keeps its edges 1.5e-5 apart
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // Wound outward: the lower edge's faces face down, the upper's up
+    var tetra = try primitives.polyhedron(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 1.5e-5 }, .{ 0, 1, 1.5e-5 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 2, 1, 3 }, .{ 0, 2, 3 } }, &diag);
+    defer tetra.deinit();
+    var far = try box(.{ 5, 5, 5 }, .{ 6, 6, 6 });
+    defer far.deinit();
+    var r = pipeline.Report.init(testing.allocator);
+    defer r.deinit();
+    var u = try pipeline.boolean(testing.allocator, &tetra, &far, .@"union", .{}, &diag, &r);
+    defer u.deinit();
+    try testing.expect(r.near != null);
+    try testing.expectApproxEqAbs(@as(f64, 1.5e-5), r.near.?.distance, 1e-12);
+    // Two boxes apart: nothing near
+    var other = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer other.deinit();
+    var v = try pipeline.boolean(testing.allocator, &other, &far, .@"union", .{}, &diag, &r);
+    defer v.deinit();
+    try testing.expect(r.near == null);
+}

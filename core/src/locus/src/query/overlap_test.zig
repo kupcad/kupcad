@@ -272,3 +272,31 @@ test "overlap: two voids of one solid sharing a corner are a pinch; two solids s
     defer solids.deinit();
     try expectSound(&solids);
 }
+
+test "overlap: features nearer than twice the tolerance that do not meet are warned of; a box has none" {
+    // research/consistent-tolerances.md, T3: the minimum feature size a boolean reaching
+    // both needs is twice its reach; valid bodies may come nearer, and say so. A flat
+    // tetrahedron's opposite edges 1.5e-5 apart, a plate 3e-5 thick
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // Wound outward: the lower edge's faces face down, the upper's up
+    var tetra = try primitives.polyhedron(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 1.5e-5 }, .{ 0, 1, 1.5e-5 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 2, 1, 3 }, .{ 0, 2, 3 } }, &diag);
+    defer tetra.deinit();
+    try overlap.check(testing.allocator, &tetra, .{}, &diag);
+    try testing.expectEqual(@as(usize, 1), diag.warnings());
+    const w = diag.findings.items[0];
+    try testing.expectEqual(diagnostics.Code.features_near, w.code);
+    try testing.expectEqual(diagnostics.EntityKind.edge, w.entity.kind);
+    try testing.expectApproxEqAbs(@as(f64, 1.5e-5), w.measured, 1e-12);
+    diag.clear();
+    var plate = try boxes(testing.allocator, &.{.{ .lo = .{ 0, 0, 0 }, .hi = .{ 10, 10, 3e-5 } }});
+    defer plate.deinit();
+    try overlap.check(testing.allocator, &plate, .{}, &diag);
+    try testing.expectEqual(@as(usize, 1), diag.warnings());
+    try testing.expectApproxEqAbs(@as(f64, 3e-5), diag.findings.items[0].measured, 1e-12);
+    diag.clear();
+    var box = try primitives.box(testing.allocator, tol, 1, 2, 3, false, &diag);
+    defer box.deinit();
+    try overlap.check(testing.allocator, &box, .{}, &diag);
+    try testing.expectEqual(@as(usize, 0), diag.findings.items.len);
+}

@@ -38,6 +38,7 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
 const point_in_body = @import("point_in_body.zig");
+const bvh_mod = @import("../spatial/bvh.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const sketch_overlap = @import("../sketch/overlap.zig");
@@ -70,6 +71,164 @@ pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnosti
     defer solids.deinit(allocator);
     try facePairs(allocator, body, &index, &solids, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
+    if (try nearest(allocator, body, &index, tol, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = 2 * tol.xsect });
+}
+
+/// Two features of a body that do not meet, the distance between them.
+pub const Near = struct { distance: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef };
+
+/// The nearest two features of `body` that do not meet come, when nearer than twice the
+/// intersection tolerance and their vertices' gaps (the minimum feature size a boolean
+/// reaching both needs, Hoffmann p.118 with ε the boolean's reach, architecture §3;
+/// research/consistent-tolerances.md, T3): a vertex and a face or an edge it is not on, or
+/// two edges sharing no vertex (two planar faces apart are nearest at one of those). Null
+/// when none is. Planar faces and straight edges (curved ones M5's).
+pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, tol: Tolerance, diag: *Diagnostics) Error!?Near {
+    if (body.kind != .solid) return null;
+    const reach = 2 * tol.xsect;
+    var best: ?Near = null;
+    // Straight edges in a tree, each box grown by half the reach and its ends' gaps
+    var edges: std.ArrayList(types.EdgeIndex) = .empty;
+    defer edges.deinit(allocator);
+    var boxes: std.ArrayList(geometry.Box3) = .empty;
+    defer boxes.deinit(allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none or e.curve.kind != .line) continue;
+        try edges.append(allocator, types.EdgeIndex.of(i));
+        var box = geometry.Box3.ofPoint(body.point(e.start));
+        box.grow(body.point(e.end));
+        try boxes.append(allocator, box.inflated(reach / 2 + @max(body.vertex(e.start).gap, body.vertex(e.end).gap)));
+    }
+    var tree = try bvh_mod.Bvh.build(allocator, boxes.items);
+    defer tree.deinit(allocator);
+    const Collect = struct {
+        allocator: std.mem.Allocator,
+        out: std.ArrayList(u32) = .empty,
+        failed: bool = false,
+        fn visit(c: *@This(), item: u32) bool {
+            c.out.append(c.allocator, item) catch {
+                c.failed = true;
+                return false;
+            };
+            return true;
+        }
+    };
+    var near: Collect = .{ .allocator = allocator };
+    defer near.out.deinit(allocator);
+    for (body.vertices.items, 0..) |v, vi| {
+        if (v.tombstone) continue;
+        const vertex = types.VertexIndex.of(vi);
+        const p = body.point(vertex);
+        const within = reach + v.gap;
+        // A vertex and an edge it does not end
+        near.out.clearRetainingCapacity();
+        tree.query(geometry.Box3.ofPoint(p).inflated(reach / 2 + v.gap), &near, Collect.visit);
+        if (near.failed) return error.OutOfMemory;
+        for (near.out.items) |item| {
+            const e = body.edge(edges.items[item]);
+            if (e.start == vertex or e.end == vertex) continue;
+            const d = in_face.edgeDistance(body, edges.items[item], p);
+            try closer(&best, d, within + @max(body.vertex(e.start).gap, body.vertex(e.end).gap), .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
+        }
+        // A vertex and a face it is not on
+        near.out.clearRetainingCapacity();
+        index.bvh.query(geometry.Box3.ofPoint(p).inflated(within), &near, Collect.visit);
+        if (near.failed) return error.OutOfMemory;
+        for (near.out.items) |item| {
+            const f = index.faces[item];
+            const frame = planar_faces.frameOf(body, f) orelse continue;
+            if (try onFace(body, f, vertex, diag)) continue;
+            const plane = planar_faces.planeOf(frame);
+            const h = plane.height(p);
+            const foot = vec.addScaled(p, plane.n, -h);
+            const d = if (try in_face.classify(body, f, foot, in_face.uvOf(body, f, foot), 0, diag) == .inside) @abs(h) else try in_face.boundaryDistance(body, f, p, diag);
+            try closer(&best, d, within, .of(.vertex, vi), .of(.face, @backingInt(f)));
+        }
+    }
+    // Two edges sharing no vertex
+    const Pairs = struct {
+        allocator: std.mem.Allocator,
+        out: std.ArrayList([2]u32) = .empty,
+        failed: bool = false,
+        fn visit(c: *@This(), i: u32, j: u32) bool {
+            if (i >= j) return true;
+            c.out.append(c.allocator, .{ i, j }) catch {
+                c.failed = true;
+                return false;
+            };
+            return true;
+        }
+    };
+    var pairs: Pairs = .{ .allocator = allocator };
+    defer pairs.out.deinit(allocator);
+    tree.queryPairs(&tree, &pairs, Pairs.visit);
+    if (pairs.failed) return error.OutOfMemory;
+    std.mem.sort([2]u32, pairs.out.items, {}, lessPair);
+    for (pairs.out.items) |pair| {
+        const x = body.edge(edges.items[pair[0]]);
+        const y = body.edge(edges.items[pair[1]]);
+        if (x.start == y.start or x.start == y.end or x.end == y.start or x.end == y.end) continue;
+        const d = segmentDistance3(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end));
+        const gaps = @max(body.vertex(x.start).gap, body.vertex(x.end).gap) + @max(body.vertex(y.start).gap, body.vertex(y.end).gap);
+        try closer(&best, d, reach + gaps, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
+    }
+    return best;
+}
+
+/// `best` made the pair `a`, `b` when `d` is within `within` and nearer than it was.
+fn closer(best: *?Near, d: f64, within: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef) Error!void {
+    if (!(d < within)) return;
+    if (best.* == null or d < best.*.?.distance) best.* = .{ .distance = d, .a = a, .b = b };
+}
+
+/// Whether vertex `v` is a corner of face `f`.
+fn onFace(body: *const Body, f: types.FaceIndex, v: types.VertexIndex, diag: *Diagnostics) Error!bool {
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        if (body.loop(l).vertex == v) return true;
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| if (body.coedgeStart(c) == v) return true;
+    }
+    return false;
+}
+
+fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
+    return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
+}
+
+/// The distance between the segments from `a` to `b` and from `c` to `d` in space (Ericson,
+/// Real-Time Collision Detection §5.1.9).
+fn segmentDistance3(a: Vec3, b: Vec3, c: Vec3, d: Vec3) f64 {
+    const d1 = vec.sub(b, a);
+    const d2 = vec.sub(d, c);
+    const r = vec.sub(a, c);
+    const aa = vec.dot(d1, d1);
+    const ee = vec.dot(d2, d2);
+    const f = vec.dot(d2, r);
+    var s: f64 = 0;
+    var t: f64 = 0;
+    if (aa == 0 and ee == 0) return vec.distance(a, c);
+    if (aa == 0) {
+        t = std.math.clamp(f / ee, 0, 1);
+    } else {
+        const cc = vec.dot(d1, r);
+        if (ee == 0) {
+            s = std.math.clamp(-cc / aa, 0, 1);
+        } else {
+            const bb = vec.dot(d1, d2);
+            const denom = aa * ee - bb * bb;
+            s = if (denom > 0) std.math.clamp((bb * f - cc * ee) / denom, 0, 1) else 0;
+            t = (bb * s + f) / ee;
+            if (t < 0) {
+                t = 0;
+                s = std.math.clamp(-cc / aa, 0, 1);
+            } else if (t > 1) {
+                t = 1;
+                s = std.math.clamp((bb - cc) / aa, 0, 1);
+            }
+        }
+    }
+    return vec.distance(vec.addScaled(a, d1, s), vec.addScaled(c, d2, t));
 }
 
 /// Which solid each shell of a body belongs to (ISO 10303-42: a solid is an outer shell and
