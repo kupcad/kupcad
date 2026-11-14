@@ -1030,7 +1030,9 @@ query and io imports no operation: KupCAD's driver writes its parts), vertices
 and edges written once (SolveSpace's aliasing), validated by KupCAD's `check:3mf`-style job
 with an external reader (`check:step`: OpenCascade's load check list empty, its checker,
 face and solid counts, the exact volume, the header's counts; boolean results among the
-models since 2026-11-13). Numbers are written
+models since 2026-11-13), and every boolean result Locus's own tests check with its solids
+fuzzer's plain run through the same reader (`check:locus-step`, `-Dstep-corpus`; in CI
+since 2026-11-14, once one solid's shells touching was refused, P1). Numbers are written
 at full `f64` precision (the shortest text that reads back to the same double, Zig's
 `{d}`), never rounded: the present writer prints radii with six decimals, which is a
 0.1 µm error on every circle and makes a "lossless" export lossy. The file's

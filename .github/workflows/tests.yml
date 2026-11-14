@@ -335,6 +335,13 @@ jobs:
         if: matrix.name == 'linux debug'
         run: pnpm check:step
 
+      # The same reader over every boolean result Locus's tests check and its solids fuzzer's
+      # plain run (about 900 files): a message from the reader, a shape its checker finds
+      # invalid, or solids, faces or a volume other than Locus's fails.
+      - name: Validate Locus's boolean results with OpenCascade
+        if: matrix.name == 'linux debug'
+        run: pnpm check:locus-step
+
       # ezdxf's recovering reader and auditor: an error, or anything it had to fix, fails
       # the check; an SVG must be well-formed XML with a path per shape.
       - name: Validate exported SVG and DXF
