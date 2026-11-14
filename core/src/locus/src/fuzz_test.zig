@@ -1936,7 +1936,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
                 .@"union" => "the solids fuzzer's union",
                 .intersection => "the solids fuzzer's intersection",
                 .difference => "the solids fuzzer's difference",
-            }, report.max_gap);
+            }, report.max_gap, report.shift);
         }
         const ma = try mass.mass(&current, .{}, &diag);
         const mb = try mass.mass(&other, .{}, &diag);

@@ -7,8 +7,11 @@
 //! instead), its vertices and edges written once, every curve and surface as its own
 //! STEP entity (a plane as `PLANE`, a circle as `CIRCLE`, …) in Part 42's parameterization,
 //! which is Locus's own, and every number at full `f64` precision (the shortest text that
-//! reads back to the same double, never rounded). The file's uncertainty is the first
-//! body's `zone`. A left-handed frame (a mirrored body's) has no STEP form: its surface is
+//! reads back to the same double, never rounded). The file's uncertainty is the checker's
+//! allowance, what a vertex may lie off its edge's curve by and the body still be valid:
+//! the largest intersection tolerance of the bodies and the exchange error bound (their
+//! largest gap, the frames' skew and the coordinates' rounding); a reader that takes the
+//! zone alone finds valid vertices off their edges. A left-handed frame (a mirrored body's) has no STEP form: its surface is
 //! written right-handed and the face's sense turned, which is the same face. A B-spline
 //! curve or surface is written with its knots run into values and multiplicities, rational
 //! ones as the complex entity with their weights; a swept surface names its generator. A
@@ -167,6 +170,8 @@ pub fn writeReported(allocator: std.mem.Allocator, bodies: []const *const Body) 
     }
     w.report.entities = w.next;
     const r = &w.report;
+    var xsect: f64 = 0;
+    for (bodies) |b| xsect = @max(xsect, b.tol.xsect);
     var file: std.Io.Writer.Allocating = .init(allocator);
     errdefer file.deinit();
     file.writer.print(
@@ -199,7 +204,7 @@ pub fn writeReported(allocator: std.mem.Allocator, bodies: []const *const Body) 
         \\#15=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));
         \\#16=(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT());
         \\
-    , .{real(bodies[0].tol.zone)}) catch return error.OutOfMemory;
+    , .{real(xsect + r.error_bound)}) catch return error.OutOfMemory;
     file.writer.writeAll(w.out.written()) catch return error.OutOfMemory;
     file.writer.writeAll("ENDSEC;\nEND-ISO-10303-21;\n") catch return error.OutOfMemory;
     const text = file.toOwnedSlice() catch return error.OutOfMemory;

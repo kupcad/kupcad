@@ -64,7 +64,7 @@ pub fn sound(a: *const Body, b: *const Body, op: Op) !Body {
         return e;
     };
     var what_buf: [64]u8 = undefined;
-    try step_corpus.add(&result, std.fmt.bufPrint(&what_buf, "{s} of {d} and {d} faces", .{ @tagName(op), a.counts().faces, b.counts().faces }) catch "a boolean", r.max_gap);
+    try step_corpus.add(&result, std.fmt.bufPrint(&what_buf, "{s} of {d} and {d} faces", .{ @tagName(op), a.counts().faces, b.counts().faces }) catch "a boolean", r.max_gap, r.shift);
     return result;
 }
 

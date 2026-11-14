@@ -85,8 +85,9 @@ test "step: a box is one solid of eight vertices, twelve edges, six faces, writt
     try testing.expect(count(text, "2.100000") == 0);
     try testing.expect(count(text, "(0.,0.,0.)") > 0);
     try testing.expect(count(text, ",4.)") > 0);
-    // The uncertainty is the body's zone
-    try testing.expect(count(text, "LENGTH_MEASURE(0.00001)") == 1);
+    // The uncertainty is the checker's allowance: the intersection tolerance and the
+    // exchange error bound (no gap here: the coordinates' rounding)
+    try testing.expectApproxEqRel(tol.xsect, try uncertaintyOf(text), 1e-6);
     // Every entity referenced exists: the ids are 1..n with no gap
     var max_id: u32 = 0;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -328,4 +329,26 @@ test "step: a coordinate too small or too large for decimals is written with an 
     // Every REAL of the entities has a capital exponent (the header's description is text)
     const data = text[std.mem.indexOf(u8, text, "DATA;").?..];
     try testing.expectEqual(@as(usize, 0), count(data, "e-"));
+}
+
+/// The file's uncertainty, as written in its `LENGTH_MEASURE`.
+fn uncertaintyOf(text: []const u8) !f64 {
+    const at = std.mem.indexOf(u8, text, "LENGTH_MEASURE(").? + "LENGTH_MEASURE(".len;
+    const end = std.mem.indexOfScalarPos(u8, text, at, ')').?;
+    return std.fmt.parseFloat(f64, text[at..end]);
+}
+
+test "step: the uncertainty is what the checker allows a vertex off its curve, the gaps with the tolerance" {
+    // The file's uncertainty was the zone, and a vertex the checker allows off its edge's
+    // curve by the intersection tolerance and its gap was off by more than a reader takes
+    // for the same point. A box with a corner's gap of 5e-6: the uncertainty 2.5e-5
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.box(testing.allocator, tol, 2, 3, 4, false, &diag);
+    defer b.deinit();
+    b.vertices.items[0].gap = 5e-6;
+    const written = try step_write.writeReported(testing.allocator, &.{&b});
+    defer testing.allocator.free(written.text);
+    try testing.expectApproxEqRel(tol.xsect + written.report.error_bound, try uncertaintyOf(written.text), 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 2.5e-5), try uncertaintyOf(written.text), 1e-6);
 }

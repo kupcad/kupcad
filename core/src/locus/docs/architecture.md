@@ -1007,7 +1007,7 @@ models since 2026-11-13). Numbers are written
 at full `f64` precision (the shortest text that reads back to the same double, Zig's
 `{d}`), never rounded: the present writer prints radii with six decimals, which is a
 0.1 µm error on every circle and makes a "lossless" export lossy. The file's
-`UNCERTAINTY_MEASURE_WITH_UNIT` is the body's `zone`. The writer returns a **report**
+`UNCERTAINTY_MEASURE_WITH_UNIT` is the checker's allowance, the bodies' largest `xsect` plus the exchange error bound below (2026-11-14; it was the `zone`, less than a valid vertex may lie off its curve). The writer returns a **report**
 beside the text (`writeReported`, 2026-11-09, research/opengeometry.md §2): the counts
 of solids, shells, faces, edges, vertices, degenerate edges left out, B-spline curves and
 surfaces, entities and bytes, and an exchange error bound (the largest recorded gap, plus

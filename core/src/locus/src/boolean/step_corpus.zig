@@ -4,8 +4,9 @@
 //! passes (the corpus's cases, the degeneracy tests', the pipeline's and the coverage
 //! corpus's) and the results of the solids fuzzer's plain run, each as `NNNNN.step` in the
 //! directory `-Dstep-corpus` names, with a line of `manifest.txt`: the file, what Locus says
-//! of it (its solids, faces, exact volume and area, and the largest gap its boolean
-//! reported: a reader's volume may differ by the gap over the area), and what made it.
+//! of it (its solids, faces, exact volume and area, and the largest gap and the shift its
+//! boolean reported: a reader's volume may differ by the gap over the area and by the
+//! volume the faces moved onto their groups' planes), and what made it.
 //! Nothing is written without the option: the tests touch no file system otherwise, and
 //! run under wasmtime.
 
@@ -31,10 +32,10 @@ pub fn enabled() bool {
     return DIR.len > 0 and builtin.os.tag != .wasi;
 }
 
-/// `body`, made by `what`, its boolean's largest gap `gap`, written as the next file; an
-/// empty result, with nothing to read back, is not. A body of several solids with voids is
+/// `body`, made by `what`, its boolean's largest gap `gap` and shift `shift`, written as
+/// the next file; an empty result, with nothing to read back, is not. A body of several solids with voids is
 /// written as its parts, as KupCAD's driver writes it.
-pub fn add(body: *const Body, what: []const u8, gap: f64) !void {
+pub fn add(body: *const Body, what: []const u8, gap: f64, shift: f64) !void {
     if (!enabled() or body.kind != .solid or body.isEmpty()) return;
     const allocator = testing.allocator;
     const io = testing.io;
@@ -68,7 +69,7 @@ pub fn add(body: *const Body, what: []const u8, gap: f64) !void {
     var manifest = try dir.createFile(io, MANIFEST, .{ .truncate = written == 0 });
     defer manifest.close(io);
     var line_buf: [256]u8 = undefined;
-    const line = try std.fmt.bufPrint(&line_buf, "{s} solids={d} faces={d} volume={e} area={e} gap={e} {s}\n", .{ name, solids, body.counts().faces, m.volume, m.area, gap, what });
+    const line = try std.fmt.bufPrint(&line_buf, "{s} solids={d} faces={d} volume={e} area={e} gap={e} shift={e} {s}\n", .{ name, solids, body.counts().faces, m.volume, m.area, gap, shift, what });
     try manifest.writePositionalAll(io, line, try manifest.length(io));
     written += 1;
 }

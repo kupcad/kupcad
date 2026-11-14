@@ -3,9 +3,10 @@ check and the results of its solids fuzzer's plain run, as STEP (the research re
 18; src/locus/src/boolean/step_corpus.zig writes them). Each file must load without a
 message from the reader, transfer to a shape BRepCheck finds valid, and hold the faces,
 solids and volume Locus says it has (its manifest line and the header's report), as
-validate-step.py holds KupCAD's own exports; the volume to a part in a million and the
+validate-step.py holds KupCAD's own exports; the volume to a part in a million, the
 boolean's largest gap over the area (a vertex merged off a face's plane by its gap moves
-the face a reader rebuilds by that much). Run `pnpm check:locus-step` from the
+the face a reader rebuilds by that much) and its shift (the volume its faces moved onto
+their coplanar groups' planes, D28). Run `pnpm check:locus-step` from the
 repository root, with the bindings installed (`pip install -r core/scripts/requirements.txt`);
 with a directory argument, the files already written there are read instead of written
 anew.
@@ -23,7 +24,7 @@ LOCUS = HERE.parent / "src" / "locus"
 # The tests whose results are written: every case `pipeline_test.sound` passes, and the
 # solids fuzzer's plain run
 FILTERS = ["corpus", "degeneracy", "boolean:", "coverage", "Fuzz solids"]
-LINE = re.compile(r"^(\S+) solids=(\d+) faces=(\d+) volume=(\S+) area=(\S+) gap=(\S+) (.*)$")
+LINE = re.compile(r"^(\S+) solids=(\d+) faces=(\d+) volume=(\S+) area=(\S+) gap=(\S+) shift=(\S+) (.*)$")
 
 spec = importlib.util.spec_from_file_location("validate_step", HERE / "validate-step.py")
 validate_step = importlib.util.module_from_spec(spec)
@@ -50,8 +51,8 @@ def check(directory):
         match = LINE.match(line)
         if match is None:
             raise SystemExit(f"{manifest}: not a manifest line: {line}")
-        name, solids, faces, volume, area, gap, what = match.groups()
-        slack = validate_step.VOLUME_TOLERANCE * float(volume) + float(gap) * float(area)
+        name, solids, faces, volume, area, gap, shift, what = match.groups()
+        slack = validate_step.VOLUME_TOLERANCE * float(volume) + float(gap) * float(area) + float(shift)
         found = validate_step.problems(pathlib.Path(directory) / name, int(faces), int(solids), float(volume), slack)
         if found:
             failed += 1
