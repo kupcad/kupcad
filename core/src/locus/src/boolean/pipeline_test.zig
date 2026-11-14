@@ -996,3 +996,21 @@ test "boolean: operands of different tolerances merge to the larger: a 1 m beam 
     defer notched.deinit();
     try testing.expectApproxEqAbs(1000 * 50 * 50 - 50 * 5 * 30, try volume(&notched), CLOSE * 1e6);
 }
+
+test "boolean: the report's largest gap covers a vertex paved onto an edge from inside the tolerance" {
+    // A tetrahedron's apex 1.5e-5 from a box's top edge is that edge's pave: the result's
+    // vertex lies that far from the edge's line, and the report said "exact" (the research
+    // review, 2026-11-14: OCCT measures the distance and grows the tolerance; Locus reports it)
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ 1, 1.5e-5, 2 }, .{ 0.5, 0.5, 3 }, .{ 1.5, 0.5, 3 }, .{ 1, 1, 3 } }, &diag);
+    defer b.deinit();
+    var report = pipeline.Report.init(testing.allocator);
+    defer report.deinit();
+    var u = try reported(&a, &b, .@"union", .{}, &report);
+    defer u.deinit();
+    try testing.expect(report.max_gap >= 1.5e-5 * (1 - 1e-9));
+    try testing.expect(report.quality() != .exact);
+}

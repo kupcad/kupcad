@@ -285,9 +285,12 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     stage = .check;
     try refuseInvalid(allocator, &result, .geometric, diag);
     try faceMap(allocator, &result, &made, &log, options.tag_op, r, diag);
+    // How far a vertex was moved to meet the other operand (its ball), or lies from the
+    // edge, face or section it was put on
     for (result.vertices.items) |v| if (!v.tombstone) {
         r.max_gap = @max(r.max_gap, v.gap);
     };
+    r.max_gap = @max(r.max_gap, made.reach);
     try warnTouching(allocator, &result, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
@@ -517,6 +520,9 @@ const Made = struct {
     keeps: []const select.Keep,
     /// `Report.shift`.
     shift: f64 = 0,
+    /// The largest distance of a vertex the result uses from what the paves put it on
+    /// (`Paves.reach`), for `Report.max_gap`.
+    reach: f64 = 0,
 
     fn deinit(self: *Made, allocator: std.mem.Allocator) void {
         allocator.free(self.face_fragment);
@@ -605,6 +611,9 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         try faces.append(allocator, .{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &.{}, .attribute = body.face(f).attribute, .tag = tag });
         try face_fragment.append(allocator, @intCast(i));
         try face_tag.append(allocator, tag);
+    }
+    for (vertex_of, paves.reach.items) |v, reach| {
+        if (v != .none) made.reach = @max(made.reach, reach);
     }
     try pairTouching(allocator, &b.body, edge_specs.items, uses.items, normals.items, diag);
 

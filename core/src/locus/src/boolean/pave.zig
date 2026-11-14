@@ -137,6 +137,11 @@ pub const Paves = struct {
     /// (bit 0: `a`'s, bit 1: `b`'s; none for a crossing point).
     points: std.ArrayList(Vec3) = .empty,
     gaps: std.ArrayList(f64) = .empty,
+    /// Each merged vertex's largest distance from an operand's edge it is a pave of, a face
+    /// it was found on, or a section line it ends a segment of: how far the result's vertex
+    /// may be from the geometry it is put on (the report's `max_gap` takes it, with the
+    /// balls' gaps).
+    reach: std.ArrayList(f64) = .empty,
     owners: std.ArrayList(u2) = .empty,
     welder: grid.PointWelder,
     /// The rounding a distance between the operands' points may carry: one within it of
@@ -153,12 +158,13 @@ pub const Paves = struct {
     boundary: std.ArrayList(Incidence) = .empty,
     /// Each operand's face's section segments (the smaller vertex first).
     sections: [2][]std.ArrayList([2]u32) = .{ &.{}, &.{} },
-    /// One line per pair of faces that meet in section segments: the section curve every
-    /// segment of the pair lies on (OCCT's one curve per face–face interference), through
-    /// the pair's outermost merged vertices on it, so its segments share one curve record
-    /// in the result and pieces of it join again.
+    /// Each section segment's line: through its two merged vertices, which lie within the
+    /// tolerance of both faces, so the whole segment does, however shallow the angle the
+    /// faces meet at (the band within the tolerance of both is wide there, and the planes'
+    /// own line can lie far from a vertex in it: a vertex 1.9e-5 off a face the other meets
+    /// at 5° is 2.2e-4 from it). Collinear segments join again in `simplify` (D28).
     section_lines: std.ArrayList(curves.Line) = .empty,
-    /// Each section segment's line in `section_lines`, the first pair that made it.
+    /// Each section segment's line in `section_lines`.
     section_line_of: std.AutoHashMapUnmanaged([2]u32, u32) = .empty,
     /// The pairs of faces (of `a`, of `b`) lying in one plane.
     coplanar: std.ArrayList([2]u32) = .empty,
@@ -178,6 +184,7 @@ pub const Paves = struct {
         const a = self.allocator;
         self.points.deinit(a);
         self.gaps.deinit(a);
+        self.reach.deinit(a);
         self.owners.deinit(a);
         self.welder.deinit(a);
         for (0..2) |k| {
@@ -385,6 +392,7 @@ const Filler = struct {
         const index: u32 = @intCast(p.points.items.len);
         try p.points.append(self.allocator, q);
         try p.gaps.append(self.allocator, gap);
+        try p.reach.append(self.allocator, 0);
         try p.owners.append(self.allocator, owners);
         try self.register(index);
         return index;
@@ -537,6 +545,7 @@ const Filler = struct {
     fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
         if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
         try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
+        self.p.reach.items[v] = @max(self.p.reach.items[v], at.distance);
         self.tally();
     }
 
@@ -680,6 +689,7 @@ const Filler = struct {
             if (!try self.within(@abs(planar_faces.planeOf(frame).height(q)), self.p.tol.xsect + self.p.gaps.items[v], .of(.face, @backingInt(f)))) continue;
             const place = try self.placeIn(k, f, q, v);
             if (place == .outside) continue;
+            self.p.reach.items[v] = @max(self.p.reach.items[v], @abs(planar_faces.planeOf(frame).height(q)));
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
             self.tally();
             if (place == .inside) try self.p.touches.append(self.allocator, .{ .operand = @intCast(k), .face = @backingInt(f), .vertex = v });
@@ -902,8 +912,6 @@ const Filler = struct {
                 }
             };
             std.mem.sort(u32, both.items, Order{ .points = p.points.items, .line = line }, Order.lessThan);
-            // The pair's section line, made with its first segment
-            var section_line: ?u32 = null;
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
                 const in_a = try self.placeIn(0, fa, mid, null);
@@ -916,14 +924,12 @@ const Filler = struct {
                 if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
                 if (imprint_a or imprint_b) {
-                    if (section_line == null) {
-                        // Merged vertices more than the welding distance apart: a line
-                        const through = curves.Line.through(p.point(both.items[0]), p.point(both.items[both.items.len - 1])).?;
-                        try p.section_lines.append(self.allocator, through);
-                        section_line = @intCast(p.section_lines.items.len - 1);
-                    }
                     const entry = try p.section_line_of.getOrPut(self.allocator, segment);
-                    if (!entry.found_existing) entry.value_ptr.* = section_line.?;
+                    if (!entry.found_existing) {
+                        // Merged vertices more than the welding distance apart: a line
+                        try p.section_lines.append(self.allocator, curves.Line.through(p.point(segment[0]), p.point(segment[1])).?);
+                        entry.value_ptr.* = @intCast(p.section_lines.items.len - 1);
+                    }
                 }
                 self.tally();
             }
