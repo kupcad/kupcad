@@ -1740,6 +1740,15 @@ const MOVE_SHIFTS = [_]vec.Vec3{ .{ 0.5, -1, 2 }, .{ 1e3, -2e3, 500 }, .{ 1e5, -
 /// How much a plate is stretched across (x and y, about the grid's middle): 4 to 200 wide,
 /// at KupCAD's zone by size 1e-4 where the other solids' is 1e-5 or 1e-6.
 const PLATE_STRETCH: f64 = 50;
+/// The gap a solid with a gap of its own keeps between two of its features, in its own
+/// intersection tolerances (research/consistent-tolerances.md, T2): past the tolerance, so
+/// the solid is valid, and within twice it, so a probe at the gap's middle is within the
+/// boolean's reach of both sides.
+const GAP_XSECTS = [_]f64{ 1.25, 1.5, 1.9 };
+/// How far a thin wall's cavity reaches back from the wall, and how far it keeps in from
+/// the solid's other faces.
+const WALL_DEPTH: f64 = 1.5;
+const WALL_INSET: f64 = 0.25;
 /// How far a chain's solids reach from the origin before the move, at most: a plate
 /// scaled by the largest scale, corner to corner (a placement past the tolerance's reach
 /// is refused before the chain starts).
@@ -1852,6 +1861,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // distance from the side's edge (2.0025e-4) and on it by its foot (1e-5): its edge
         // imprinted on the side, welded onto the side's edge there, the imprints apart
         "solids 0 2 4 3 4 1 4 0 0 8 1 -1 5 -1 1 0 4 3 1 1 6 2 1 2 3 4 1 3 4 2 0 3 1 3 2 4 1 1 0 2 2 0 3 4 1 2 2 3 2 1 2 2 4 1 2 3 0 2 2 2 10 -2 5 13 2",
+        // The gap draws' first plain run (2026-11-14, research/consistent-tolerances.md's
+        // T2): a flat tetrahedron's face 3e-4 rad off a plate's top, its edge within the
+        // tolerance over it, every centroid within the zone of the top (unclassified); and
+        // a plane between a flat tetrahedron's edges, its section 4.2e-5 across, its centroid
+        // the zone from a face it crosses (unclassified)
+        "solids 2 0 3 0 4 0 3 3 3 10 -2 3 13 3 3 2 0 3 1 3 3 4 3 2 13 0 13 9 1 2 3 2 1 0 0 1 2 1 2 3 1 3 2 3 5 4 2 2",
+        "solids 3 2 1 0 1 4 0 1 3 0 3 4 1 8 10 4 7 3 1 3 2 1 1 0 4 4 3 4 0 3 4 1 0 1 12 1 0 6 1 0 1 0 -1 12 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
@@ -2164,20 +2180,62 @@ fn cleanSolid(err: anyerror) anyerror!Outcome {
     };
 }
 
-/// A drawn solid before its placement: a box from `lo` to `hi`, or the hull of points.
+/// A drawn solid before its placement: a box from `lo` to `hi`, the hull of points, or a
+/// solid with a gap of its own.
 const SolidShape = union(enum) {
     box: [2]vec.Vec3,
     hull: struct { points: [MAX_HULL_POINTS]vec.Vec3, n: usize },
+    gap: GapShape,
 
     /// The shape built at the tolerance `t`.
     fn build(self: *const SolidShape, t: tolerance.Tolerance, diag: *Diagnostics) !Body {
         switch (self.*) {
-            .box => |b| {
-                var unit = try primitives.box(testing.allocator, t, b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2], false, diag);
-                defer unit.deinit();
-                return transform.transform(testing.allocator, &unit, &Affine.translate(b[0]), .{}, diag);
-            },
+            .box => |b| return boxFrom(b[0], b[1], t, diag),
             .hull => |h| return solid_hull.hull(testing.allocator, t, h.points[0..h.n], diag),
+            .gap => |g| return g.build(t, diag),
+        }
+    }
+};
+
+/// The box from `lo` to `hi` at the tolerance `t`.
+fn boxFrom(lo: vec.Vec3, hi: vec.Vec3, t: tolerance.Tolerance, diag: *Diagnostics) !Body {
+    var unit = try primitives.box(testing.allocator, t, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], false, diag);
+    defer unit.deinit();
+    return transform.transform(testing.allocator, &unit, &Affine.translate(lo), .{}, diag);
+}
+
+/// A solid two of whose own features are `GAP_XSECTS[xsects]` of its intersection tolerance
+/// apart, the gap's middle at `at` (a grid point, where the other solids' faces, edges and
+/// corners land): a plate that thin, its middle plane `z = at[2]` (across `lo` to `hi` in x
+/// and y); a box less a cavity leaving a wall that thin, its middle plane `x = at[0]` (`lo`
+/// to `hi` in y and z); or a flat tetrahedron, two opposite edges that far apart, one along
+/// x below `at` and one along y above it (research/consistent-tolerances.md's probes: a face
+/// of the other solid at the gap's middle reached the guard `imprint_unmatched`).
+const GapShape = struct {
+    kind: enum { plate, wall, tetrahedron },
+    at: vec.Vec3,
+    lo: vec.Vec3,
+    hi: vec.Vec3,
+    xsects: usize,
+
+    fn build(self: GapShape, t: tolerance.Tolerance, diag: *Diagnostics) !Body {
+        const half = GAP_XSECTS[self.xsects] * t.xsect / 2;
+        const at = self.at;
+        switch (self.kind) {
+            .plate => return boxFrom(.{ self.lo[0], self.lo[1], at[2] - half }, .{ self.hi[0], self.hi[1], at[2] + half }, t, diag),
+            .wall => {
+                var outer = try boxFrom(.{ at[0] - WALL_DEPTH - WALL_INSET, self.lo[1], self.lo[2] }, .{ at[0] + half, self.hi[1], self.hi[2] }, t, diag);
+                defer outer.deinit();
+                var cavity = try boxFrom(.{ at[0] - WALL_DEPTH, self.lo[1] + WALL_INSET, self.lo[2] + WALL_INSET }, .{ at[0] - half, self.hi[1] - WALL_INSET, self.hi[2] - WALL_INSET }, t, diag);
+                defer cavity.deinit();
+                return solid_boolean.pipeline.boolean(testing.allocator, &outer, &cavity, .difference, .{}, diag, null);
+            },
+            .tetrahedron => return solid_hull.hull(testing.allocator, t, &.{
+                .{ at[0] - 1, at[1], at[2] - half },
+                .{ at[0] + 1, at[1], at[2] - half },
+                .{ at[0], at[1] - 1, at[2] + half },
+                .{ at[0], at[1] + 1, at[2] + half },
+            }, diag),
         }
     }
 };
@@ -2193,8 +2251,10 @@ const NearMove = struct {
     }
 };
 
-/// A box or the hull of grid points, placed: sometimes turned about an axis through the
-/// grid's middle, sometimes scaled per axis, moved by half-steps or at the tolerance of it
+/// A box, a plate, the hull of grid points or a solid with a gap of its own (`GapShape`),
+/// placed: sometimes turned about an axis through the grid's middle, sometimes scaled per
+/// axis (not a gap, which is in the solid's own tolerances), moved by half-steps or at the
+/// tolerance of it
 /// merged with `with` (the chain's solid's, when there is one; `NEAR_MOVES`); one time in
 /// `EXTREME_ONE_IN` a placement takes a value a script would never write. Built at the
 /// tolerance of its own size (`Tolerance.fromSize` of its largest extent, placed: a chain
@@ -2202,8 +2262,18 @@ const NearMove = struct {
 /// of points in a plane, an extreme placement refused).
 fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: *Diagnostics) !?Body {
     var drawn: SolidShape = undefined;
-    const kind = source.valueRangeAtMost(u8, 0, 2);
-    if (kind != 1) {
+    const kind = source.valueRangeAtMost(u8, 0, 3);
+    if (kind == 3) {
+        var gap: GapShape = .{ .kind = pick(@FieldType(GapShape, "kind"), source), .at = undefined, .lo = undefined, .hi = undefined, .xsects = source.index(GAP_XSECTS.len) };
+        for (0..3) |k| {
+            gap.at[k] = @floatFromInt(source.valueRangeAtMost(i32, 0, SOLID_GRID));
+            const a = source.valueRangeAtMost(i32, 0, SOLID_GRID - 1);
+            gap.lo[k] = @floatFromInt(a);
+            gap.hi[k] = @floatFromInt(source.valueRangeAtMost(i32, a + 1, SOLID_GRID));
+        }
+        try log.add("{t} with a gap of {d} intersection tolerances about ({d}, {d}, {d}), across ({d}, {d}, {d}) to ({d}, {d}, {d})", .{ gap.kind, GAP_XSECTS[gap.xsects], gap.at[0], gap.at[1], gap.at[2], gap.lo[0], gap.lo[1], gap.lo[2], gap.hi[0], gap.hi[1], gap.hi[2] });
+        drawn = .{ .gap = gap };
+    } else if (kind != 1) {
         var lo: vec.Vec3 = undefined;
         var hi: vec.Vec3 = undefined;
         for (0..3) |k| {
@@ -2244,7 +2314,8 @@ fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: 
         try log.add(", turned {d} about ({d}, {d}, {d})", .{ angle, axis[0], axis[1], axis[2] });
         place = Affine.rotateAbout(middle, axis, angle).compose(&place);
     }
-    if (source.valueRangeAtMost(u8, 0, 3) == 0) {
+    // A gap is in the solid's own tolerances: a scale would take it below them
+    if (drawn != .gap and source.valueRangeAtMost(u8, 0, 3) == 0) {
         var by: vec.Vec3 = undefined;
         for (&by) |*c| c.* = SCALES[source.index(SCALES.len)];
         try log.add(", scaled ({d}, {d}, {d})", .{ by[0], by[1], by[2] });
@@ -2276,7 +2347,11 @@ fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: 
         placed.deinit();
         return err;
     };
-    const own = tolerance.Tolerance.fromSize(largestSide(box));
+    const by_size = tolerance.Tolerance.fromSize(largestSide(box));
+    // A gap in the tolerance the boolean takes, its own merged with the chain's: in its own
+    // alone, a plate's coarser zone took the gap below the boolean's, and the solid was
+    // refused (`mixed_tolerance`) where it was to be probed
+    const own = if (drawn == .gap) (if (with) |w| by_size.merge(w) else by_size) else by_size;
     var nudge = vec.ZERO3;
     if (near[0] != null or near[1] != null or near[2] != null) {
         const merged = if (with) |w| own.merge(w) else own;
