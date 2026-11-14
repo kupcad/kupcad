@@ -1,8 +1,11 @@
 //! The boolean's fourth phase (docs/architecture.md §7.4 step 5, KNOWLEDGE §7; Mäntylä's
 //! selection, Stroud p.137, SolveSpace's `KeepRegion`): which fragments make the result,
 //! by the operation, the operand a fragment is of and its class. Of two coincident
-//! fragments (one plane, `on_same` or `on_opposite`) the first operand's alone is ever
-//! kept, so a face both operands have is made once:
+//! fragments (`on_same` or `on_opposite`) one alone is ever kept, so a face both operands
+//! have is made once: the first operand's when the two faces are in one plane (the table
+//! below), else the pair's representative (`classify.Classified.represents`, the copy whose
+//! face holds the region more closely), the second operand's turned where the table keeps
+//! a first operand's opposite one:
 //!
 //! | class        | union      | difference          | intersection |
 //! |--------------|------------|---------------------|--------------|
@@ -45,6 +48,16 @@ pub fn keep(op: Op, operand: u1, class: Class) Keep {
 /// Each fragment's fate, by index; owned by `allocator`.
 pub fn run(allocator: std.mem.Allocator, op: Op, fragments: *const imprint.Fragments, classes: []const classify.Classified) error{OutOfMemory}![]Keep {
     const out = try allocator.alloc(Keep, classes.len);
-    for (fragments.items.items, classes, out) |fragment, c, *k| k.* = keep(op, fragment.operand, c.class);
+    for (fragments.items.items, classes, out) |fragment, c, *k| k.* = keepClassified(op, fragment.operand, c);
     return out;
+}
+
+/// `keep`, a coincident pair kept by its representative: the representative takes the
+/// first operand's row (the second operand's turned to face as the first's would), the
+/// other is dropped.
+pub fn keepClassified(op: Op, operand: u1, c: classify.Classified) Keep {
+    if (c.class != .on_same and c.class != .on_opposite) return keep(op, operand, c.class);
+    if (!c.represents) return .drop;
+    const kept = keep(op, 0, c.class);
+    return if (kept == .keep and operand == 1 and c.class == .on_opposite) .flip else kept;
 }

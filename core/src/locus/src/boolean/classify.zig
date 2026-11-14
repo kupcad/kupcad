@@ -47,6 +47,11 @@ pub const Classified = struct {
     class: Class,
     /// The other operand's face a coincident fragment lies on, `NONE` for another.
     partner: u32 = NONE,
+    /// Of a coincident fragment and its twin, whether it is the one the result keeps when
+    /// it keeps the region (`select`): the first operand's when their faces are in one
+    /// plane (D28 gives them one record, and either merges alike), else the one whose
+    /// face's plane holds the region more closely (`represents`).
+    represents: bool = true,
 };
 
 pub const NONE: u32 = std.math.maxInt(u32);
@@ -112,7 +117,9 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             const other_body = paves.operands[1 - fragment.operand];
             const n_f = in_face.outwardNormal(body, f, .{ 0, 0 });
             const n_g = in_face.outwardNormal(other_body, types.FaceIndex.of(g), .{ 0, 0 });
-            classes[i] = .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g };
+            try paves.coplanarWith(fragment.operand, fragment.face, &partners);
+            const coplanar = std.mem.indexOfScalar(u32, partners.items, g) != null;
+            classes[i] = .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g, .represents = if (coplanar) fragment.operand == 0 else represents(paves, fragments, i, twin_of[i]) };
             decided[i] = true;
             continue;
         }
@@ -372,6 +379,53 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 /// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
 /// Whether two fragments' sorted pieces are the same pieces (compared by their vertices:
 /// `std.mem.eql` of arrays does not compile in the fuzzer's LLVM build).
+/// Whether fragment `i`, of a face not in one plane with its twin `j`'s, is the pair's copy
+/// the result keeps: the one whose face's plane holds the region (their merged vertices)
+/// more closely, a tie by the planes in a fixed order. Not the first operand's, which made
+/// the result hang on the operands' order where the two faces are two planes: the region
+/// joins its own face's other fragments (one record), so A ∪ B kept a hull's corner the
+/// region reached and B ∪ A a flat tetrahedron's face over it (the 10K fuzz session,
+/// 2026-11-15). Both orders measure alike and choose alike.
+fn represents(paves: *const Paves, fragments: *const Fragments, i: usize, j: usize) bool {
+    const own = farthest(paves, fragments, i, i);
+    const other = farthest(paves, fragments, j, i);
+    if (own != other) return own < other;
+    return planeBefore(planeOfFragment(paves, fragments, i), planeOfFragment(paves, fragments, j));
+}
+
+/// The plane of fragment `i`'s face.
+fn planeOfFragment(paves: *const Paves, fragments: *const Fragments, i: usize) @import("../geometry/types.zig").Frame {
+    const fragment = fragments.items.items[i];
+    return planar_faces.frameOf(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face)).?;
+}
+
+/// The farthest of fragment `region`'s merged vertices from the plane of fragment `of`'s face.
+fn farthest(paves: *const Paves, fragments: *const Fragments, of: usize, region: usize) f64 {
+    const frame = planeOfFragment(paves, fragments, of);
+    var worst: f64 = 0;
+    for (fragments.loopsOf(region)) |loop| for (fragments.loopVertices(loop)) |v| {
+        worst = @max(worst, @abs(vec.dot(vec.sub(paves.point(v), frame.origin), frame.z)));
+    };
+    return worst;
+}
+
+/// A fixed order of planes, whichever way they face: by their normal (turned so its first
+/// non-zero component is positive), then their offset along it.
+fn planeBefore(a: @import("../geometry/types.zig").Frame, b: @import("../geometry/types.zig").Frame) bool {
+    const na = canonicalNormal(a.z);
+    const nb = canonicalNormal(b.z);
+    for (na, nb) |x, y| if (x != y) return x < y;
+    return vec.dot(na, a.origin) < vec.dot(nb, b.origin);
+}
+
+fn canonicalNormal(n: Vec3) Vec3 {
+    for (n) |c| {
+        if (c > 0) return n;
+        if (c < 0) return vec.neg(n);
+    }
+    return n;
+}
+
 /// Each fragment's twin (`NONE` for none): the one fragment of the other operand over the
 /// same pieces (`ranges` into `pieces`, each fragment's sorted), when the pieces are one
 /// fragment's of each operand.

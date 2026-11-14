@@ -732,7 +732,10 @@ importing only those before it, which the layering test holds):**
   section with, or in the wedge of material between the two faces of the other's edge it
   is a piece of; a tetrahedron's tip 2.45e-5 through a face leaves a section 8.7e-6 in
   inradius), `unclassified` only when no piece decides or two disagree.
-- `select.zig`: Mäntylä's table, a coincident face kept once, from `a`.
+- `select.zig`: Mäntylä's table, a coincident face kept once: from `a` where the two faces
+  are in one plane (one record, D28, so either copy merges alike), else the copy whose face's
+  plane holds the region more closely (`Classified.represents`; the first operand's made the
+  result hang on the operands' order where the faces are two planes, 2026-11-15).
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of
