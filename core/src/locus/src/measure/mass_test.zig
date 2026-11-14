@@ -183,6 +183,43 @@ test "mass: a boolean's result with gapped vertices measures the same beside a f
     try testing.expectApproxEqAbs(alone.area + 6, together.area, CLOSE);
 }
 
+test "mass: a boolean's result with a gapped vertex measures the same about any point: the plate it was merged onto, and the part outside" {
+    // The 10K fuzz session (2026-11-14): a hull's corner 1.95e-4 inside a plate's side and
+    // on its top, merged onto their edge. The union's faces through it close to that gap
+    // only, and taken about the union's own centre, the plate's, 50 units off, they
+    // measured 0.0084 over the plate and the hull's part outside it (the difference, whose
+    // centre is beside the corner). Each face now as the cone from its first vertex over
+    // its boundary closed through its vertices: the result's faces are a closed surface
+    // whose volume is the same about any point.
+    const pipeline = @import("../boolean/pipeline.zig");
+    const helpers = @import("../boolean/pipeline_test.zig");
+    const trim = @import("../boolean/trim.zig");
+    const hull = @import("../construct/hull.zig");
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const coarse = Tolerance.fromZone(1e-4);
+    var whole = try hull.hull(testing.allocator, tol, &.{ .{ 1.999995, 2, 2e-5 }, .{ -5e-6, 1, 4.00002 }, .{ 3.999995, 2, 4.00002 }, .{ 1.999995, 2.5, 2.00002 } }, &diag);
+    defer whole.deinit();
+    var part = try trim.trimByPlane(testing.allocator, &whole, .{ 1, 0, 0 }, 0.5, .{}, &diag, null);
+    defer part.deinit();
+    const side = 2 - 2.0000000138555834e-4;
+    var plate = try helpers.boxAt(coarse, .{ side, -97.5, 1.5 }, .{ side + 50, 2.5, 2.5 });
+    defer plate.deinit();
+    var report = pipeline.Report.init(testing.allocator);
+    defer report.deinit();
+    var joined = try pipeline.boolean(testing.allocator, &part, &plate, .@"union", .{}, &diag, &report);
+    defer joined.deinit();
+    try testing.expect(report.max_gap > 1.9e-4);
+    var outside = try pipeline.boolean(testing.allocator, &part, &plate, .difference, .{}, &diag, null);
+    defer outside.deinit();
+    const u = try mass.mass(&joined, .{}, &diag);
+    const p = try mass.mass(&plate, .{}, &diag);
+    const d = try mass.mass(&outside, .{}, &diag);
+    // But for the dent the corner makes in the side: the cones over its pieces about the
+    // corner, at most its gap times the strip of the side the hull crosses (0.75 of it)
+    try testing.expectApproxEqAbs(p.volume + d.volume, u.volume, report.max_gap * 0.75);
+}
+
 test "genus: a sphere 0, a torus 1, a slab with a hole 1, as the mesh engine counts them" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();

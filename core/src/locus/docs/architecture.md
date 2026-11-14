@@ -846,8 +846,14 @@ Bounding box from edge extremes (closed form for circles and ellipses, convex hu
 NURBS) and surface extremes within each face's UV box. Volume and area by the divergence
 theorem integrated over each face's UV domain with Gauss quadrature on the tessellation's
 UV triangles (independent of the viewer's resolution, with an error estimate); closed forms
-for planar-bounded analytic faces later. Genus from `V − E + F − (L − F) = 2(S − G)` per
-shell. `contains?` is the point-in-body classifier; `ray_cast` intersects the ray with
+for planar-bounded analytic faces later. As built (`measure/mass.zig`): a planar face
+exactly, the region of its plane its loops bound, closed where a boolean left consecutive
+curves a gap apart, with the ribbons from its loops down to that region where an edge
+lies off the plane within the tolerance (D28: each face on its source's plane, each edge
+on its source's line), so a shell's faces close but for the gaps squared and its volume
+is the same about any point (2026-11-14: open, about a centre 50 units from a gapped
+corner, a union measured 0.0084 over itself; the 10K fuzz session). Genus from
+`V − E + F − (L − F) = 2(S − G)` per shell. `contains?` is the point-in-body classifier; `ray_cast` intersects the ray with
 each face's surface (closed form for quadrics) and keeps hits inside the face's loops;
 `min_gap` is a BVH-guided closest-point search over face pairs; `faces(direction, tol)`
 returns faces by normal and centroid with their tags.

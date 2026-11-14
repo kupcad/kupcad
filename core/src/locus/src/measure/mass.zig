@@ -4,14 +4,16 @@
 //! quadrature along a free-form edge), and `p · n` is one number on a plane. A curved face
 //! is integrated over its UV region, the polygon of its loops' pcurves (or projections),
 //! as signed fans of triangles from a corner, each triangle by Gauss quadrature refined
-//! until two rules agree; what they still differ by is the error estimate. Every `p` of a
-//! shell is taken from the centre of the shell's box: a closed surface's `∮ n dA` is zero,
-//! so the volume is the same about any point, and about one inside the shell its terms are
-//! the shell's size, not its distance from the origin (a 2-unit box 3.7e5 out measured
-//! 4.5e-7 off about the origin) nor from another part of the body (a boolean's result
-//! closes only to its vertices' gaps, so its `∮ n dA` is that small, not zero, and taken
-//! about a centre 70 units off beside a far part a union measured 1.4e-4 over itself
-//! alone; the nightly solids fuzzer, run 43585380964). Independent of any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
+//! until two rules agree; what they still differ by is the error estimate. A planar face
+//! is its plane's region with ribbons down to it from its loops, closed where a boolean
+//! left consecutive curves a gap apart (`planarFace`), so a shell's faces close but for
+//! the gaps squared and `∮ n dA` is that small: the volume is the same about any point to
+//! that. Every `p` of a shell is taken
+//! from the centre of the shell's box, where its terms are the shell's size, not its
+//! distance from the origin (a 2-unit box 3.7e5 out measured 4.5e-7 off about the origin)
+//! nor from another part of the body (a union measured 1.4e-4 over itself about a centre
+//! 70 units off beside a far part, its loops then open; the nightly solids fuzzer, run
+//! 43585380964). Independent of any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
 //! it: `1 − χ/2`.
 
 const std = @import("std");
@@ -151,26 +153,93 @@ fn placeOf(body: *const Body) Place {
     return .{ .centre = vec.scale(vec.add(box.min, box.max), 0.5), .extent = if (extent > 0) extent else 1 };
 }
 
-/// A planar face: its vector area from its loops' boundary integrals, its `(p − centre) · n`
-/// the plane's.
+/// A planar face: the region of its plane its loops bound (their projection), with the
+/// ribbons from each piece of a loop down to that projection. A boolean's result is
+/// geometry by provenance (D28): each face on its source's plane, each edge on its
+/// source's line, its ends at a merged vertex's foot on that line. So a loop's consecutive
+/// curves may end a little apart at a vertex with a gap (the step from one's end to the
+/// next one's start is part of the loop), and an edge of one operand lying on a face of the
+/// other within the tolerance is that edge's line, off the face's plane by its distance.
+/// The region and the ribbons together meet the next face's along every edge, so a shell's
+/// faces close but for the steps' little cycles about each vertex, the gaps squared, and
+/// its volume is the same about any point to that. The region alone left them open, and
+/// taken about the centre of a union, a plate's 50 units from a hull's corner and edge
+/// 1.95e-4 off the plate's side, it measured the union 0.0084 over the plate and the hull's
+/// part outside it (the 10K fuzz session, 2026-11-14). Where every edge lies in the plane
+/// (any face built, not merged), the ribbons are nothing and the face is its region.
 fn planarFace(body: *const Body, f: types.FaceIndex, total: *Totals, diag: *Diagnostics) Error!void {
     const face = body.face(f);
-    const plane = body.geometry.planes.items[face.surface.index];
-    const outward = vec.scale(plane.frame.z, plane.frame.sign() * sense(face.same_sense));
+    const frame = body.geometry.planes.items[face.surface.index].frame;
+    const outward = vec.scale(frame.z, frame.sign() * sense(face.same_sense));
     var twice_area = vec.ZERO3;
+    var ribbons: f64 = 0;
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
+        // Where the loop's first curve starts and the last one so far ended, the coedges' way
+        var first: ?Vec3 = null;
+        var last: Vec3 = undefined;
         var it = traverse.Coedges.init(body, l);
         while (it.next() catch return corrupt(diag)) |c| {
             const coedge = body.coedge(c);
             const e = body.edge(coedge.edge);
-            const integral = crossIntegral(body.geometry.curve(e.curve), e.t0, e.t1, total.centre);
-            twice_area = vec.addScaled(twice_area, integral, sense(coedge.same_sense));
+            const curve = body.geometry.curve(e.curve);
+            const from = curve.eval(if (coedge.same_sense) e.t0 else e.t1);
+            if (first == null) {
+                first = from;
+            } else {
+                twice_area = vec.add(twice_area, stepIntegral(last, from, total.centre));
+                ribbons += stepRibbon(last, from, frame, total.centre);
+            }
+            twice_area = vec.addScaled(twice_area, crossIntegral(curve, e.t0, e.t1, total.centre), sense(coedge.same_sense));
+            ribbons += sense(coedge.same_sense) * curveRibbon(curve, e.t0, e.t1, frame, total.centre);
+            last = curve.eval(if (coedge.same_sense) e.t1 else e.t0);
+        }
+        if (first) |p| {
+            twice_area = vec.add(twice_area, stepIntegral(last, p, total.centre));
+            ribbons += stepRibbon(last, p, frame, total.centre);
         }
     }
     const area = vec.dot(twice_area, outward) / 2.0;
     total.area += area;
-    total.volume += vec.dot(vec.sub(plane.frame.origin, total.centre), outward) * area;
+    total.volume += vec.dot(vec.sub(frame.origin, total.centre), outward) * area + ribbons;
+}
+
+/// `∫ (p − centre) × dp` along the segment from `a` to `b`.
+fn stepIntegral(a: Vec3, b: Vec3, centre: Vec3) Vec3 {
+    return vec.cross(vec.sub(a, centre), vec.sub(b, a));
+}
+
+/// The flux of `p − centre` through the ribbon from the segment `a b` down to its foot on
+/// `frame`'s plane, `∫ h (p − centre) · (n × dp)` for `h` the height over the plane along
+/// its axis `n` (either way up gives the same): along a segment `h` is linear and
+/// `(p − m) · (n × dp)` nothing, so it is the mean height times `(m − centre) · (n × (b − a))`.
+fn stepRibbon(a: Vec3, b: Vec3, frame: geometry.Frame, centre: Vec3) f64 {
+    const height = (vec.dot(vec.sub(a, frame.origin), frame.z) + vec.dot(vec.sub(b, frame.origin), frame.z)) / 2.0;
+    if (height == 0) return 0;
+    const middle = vec.scale(vec.add(a, b), 0.5);
+    return height * vec.dot(vec.sub(middle, centre), vec.cross(frame.z, vec.sub(b, a)));
+}
+
+/// `stepRibbon` along a curve over `[t0, t1]`: closed for a line, by composite Gauss
+/// quadrature for any other.
+fn curveRibbon(curve: curves.Curve, t0: f64, t1: f64, frame: geometry.Frame, centre: Vec3) f64 {
+    switch (curve) {
+        .line => |l| return stepRibbon(l.eval(t0), l.eval(t1), frame, centre),
+        else => {
+            var sum: f64 = 0;
+            const step = (t1 - t0) / @as(f64, @floatFromInt(EDGE_SPANS));
+            for (0..EDGE_SPANS) |k| {
+                const a = t0 + step * @as(f64, @floatFromInt(k));
+                for (GAUSS_10.nodes, GAUSS_10.weights) |x, w| {
+                    const t = a + step * (x + 1.0) / 2.0;
+                    const p = curve.eval(t);
+                    const height = vec.dot(vec.sub(p, frame.origin), frame.z);
+                    sum += w * step / 2.0 * height * vec.dot(vec.sub(p, centre), vec.cross(frame.z, curve.d1(t)));
+                }
+            }
+            return sum;
+        },
+    }
 }
 
 /// `∫ (p − centre) × p' dt` over `[t0, t1]` of a curve: closed for a line, a circle and an

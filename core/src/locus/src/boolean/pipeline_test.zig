@@ -43,16 +43,21 @@ pub fn boxAt(t: Tolerance, lo: Vec3, hi: Vec3) !Body {
 /// `a op b`, checked: every rule of the checker and the overlap rules pass it, and its
 /// report fits it.
 pub fn sound(a: *const Body, b: *const Body, op: Op) !Body {
-    var diag = Diagnostics.init(testing.allocator);
-    defer diag.deinit();
     var r = pipeline.Report.init(testing.allocator);
     defer r.deinit();
-    var result = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, &r) catch |e| {
+    return soundReported(a, b, op, &r);
+}
+
+/// `sound`, its report in `r`.
+pub fn soundReported(a: *const Body, b: *const Body, op: Op, r: *pipeline.Report) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var result = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, r) catch |e| {
         std.debug.print("boolean {s}: {f}\n", .{ @tagName(op), diag });
         return e;
     };
     errdefer result.deinit();
-    try expectReportFits(&r, a, b, &result, op);
+    try expectReportFits(r, a, b, &result, op);
     var report = try check.run(testing.allocator, &result, .global);
     defer report.deinit(testing.allocator);
     if (report.first()) |f| {

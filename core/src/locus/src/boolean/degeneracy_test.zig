@@ -526,27 +526,31 @@ test "degeneracy: a sliver one intersection tolerance thick, crossed by a face, 
     // paves decide (the piece is imprinted); a sample of the sliver's strip on the other's
     // face gives way to the next one. Just within it the faces lie in one plane and the
     // operands touch. Either way the identities hold to the slab the tolerance may count
-    // either way: its thickness times the face it lies on.
+    // either way (its thickness times the face it lies on) and what the results' faces
+    // moved onto their coplanar groups' planes (the reports' shift, D28): just within, the
+    // union's face above the top is the top's plane, the sliver's height under it.
     const xsect = tol.xsect;
     var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
     defer a.deinit();
     for ([_]f64{ 1 + 1e-6, 1 - 1e-6 }) |by| {
         var b = try box(.{ 0.5, -1, 1 }, .{ 1.5, xsect * by, 3 });
         defer b.deinit();
-        var u = try sound(&a, &b, .@"union");
+        var reports: [3]pipeline.Report = .{ .init(testing.allocator), .init(testing.allocator), .init(testing.allocator) };
+        defer for (&reports) |*r| r.deinit();
+        var u = try helpers.soundReported(&a, &b, .@"union", &reports[0]);
         defer u.deinit();
         try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&u));
-        var i = try sound(&a, &b, .intersection);
+        var i = try helpers.soundReported(&a, &b, .intersection, &reports[1]);
         defer i.deinit();
-        var d = try sound(&a, &b, .difference);
+        var d = try helpers.soundReported(&a, &b, .difference, &reports[2]);
         defer d.deinit();
         const slab = xsect * 1 * 1;
         const vi = try volume(&i);
         if (by > 1) try testing.expectApproxEqAbs(slab * by, vi, 1e-12) else try testing.expect(i.isEmpty());
         const va = try volume(&a);
         const vb = try volume(&b);
-        try testing.expectApproxEqAbs(va + vb, try volume(&u) + vi, slab);
-        try testing.expectApproxEqAbs(va - vi, try volume(&d), slab);
+        try testing.expectApproxEqAbs(va + vb, try volume(&u) + vi, slab + reports[0].shift + reports[1].shift);
+        try testing.expectApproxEqAbs(va - vi, try volume(&d), slab + reports[1].shift + reports[2].shift);
     }
 }
 
