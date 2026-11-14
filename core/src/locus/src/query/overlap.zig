@@ -489,6 +489,8 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
         try shells.append(allocator, s);
     }
     if (shells.items.len < 2) return;
+    var triangles = try FaceTriangles.build(allocator, body, shells.items, diag);
+    defer triangles.deinit(allocator);
     for (shells.items) |s| {
         try options.checkCancel();
         const expected: f64 = if (body.shell(s).kind == .void) 1 else 0;
@@ -500,7 +502,7 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
             var clean = true;
             for (shells.items) |t| {
                 if (t == s) continue;
-                const w = try winding(body, t, p, diag);
+                const w = try winding(body, &triangles, t, p, diag);
                 const whole = @round(w);
                 if (@abs(w - whole) > WHOLE) clean = false;
                 sum += if (clean) whole else w;
@@ -513,7 +515,7 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
 }
 
 /// Whether every face of shell `s` is planar with straight edges (the faces the winding
-/// number sums exactly by fans).
+/// number sums by their triangulations, `FaceTriangles`).
 fn straightPlanar(body: *const Body, s: types.ShellIndex, diag: *Diagnostics) Error!bool {
     var faces = traverse.Faces.init(body, s);
     while (faces.next() catch return corrupt(diag)) |f| {
@@ -531,28 +533,113 @@ fn straightPlanar(body: *const Body, s: types.ShellIndex, diag: *Diagnostics) Er
 
 /// Shell `s`'s winding number about `p`: the solid angle its faces subtend, signed by
 /// their outward sense, over 4π (+1 inside an outer shell, −1 inside a void, 0 outside,
-/// a fraction on or near it). Each face as a fan of its loops from one of its vertices:
-/// the signed fans of a planar polygon with holes add up to the polygon whatever its
-/// shape. Straight planar faces only (`straightPlanar`).
-pub fn winding(body: *const Body, s: types.ShellIndex, p: Vec3, diag: *Diagnostics) Error!f64 {
+/// a fraction on or near it), each face's by its triangulation (`triangles`, built for
+/// `s`'s faces). Straight planar faces only (`straightPlanar`).
+pub fn winding(body: *const Body, triangles: *const FaceTriangles, s: types.ShellIndex, p: Vec3, diag: *Diagnostics) Error!f64 {
     var total: f64 = 0;
     var faces = traverse.Faces.init(body, s);
     while (faces.next() catch return corrupt(diag)) |f| {
-        const first = body.loop(body.face(f).first_loop).first;
-        if (first == .none) continue;
-        const apex = vec.sub(body.point(body.coedgeStart(first)), p);
-        var loops = traverse.Loops.init(body, f);
-        while (loops.next() catch return corrupt(diag)) |l| {
-            var it = traverse.Coedges.init(body, l);
-            while (it.next() catch return corrupt(diag)) |c| {
-                const a = vec.sub(body.point(body.coedgeStart(c)), p);
-                const b = vec.sub(body.point(body.coedgeEnd(c)), p);
-                total += solidAngle(apex, a, b);
-            }
+        for (triangles.of[@backingInt(f)]) |corners| {
+            total += solidAngle(vec.sub(body.point(corners[0]), p), vec.sub(body.point(corners[1]), p), vec.sub(body.point(corners[2]), p));
         }
     }
     return total / FOUR_PI;
 }
+
+/// Each face's own triangulation, as its vertices in its loops' sense: what the winding
+/// number sums solid angles over. Not a fan from one corner, which for a face that is not
+/// convex overlaps itself outside the face: the overlapping triangles' solid angles cancel
+/// only by their signs, and for a point in the face's plane those are the rounding's of
+/// each one's height (the 10K fuzz session, 2026-11-14: a sample in the notch of a
+/// coplanar face of another shell wound 1, a whole number, and the shells were said to
+/// overlap). A point in the plane outside the face lies in none of these triangles, each
+/// of which subtends nothing there; on the face, the shell winds a half.
+pub const FaceTriangles = struct {
+    /// By face index: empty for a face of no shell built for.
+    of: [][]const [3]types.VertexIndex,
+
+    /// The triangulations of the faces of `shells` (each planar with straight edges); a
+    /// face the triangulator refuses fails `NotValid` with its finding, the face named.
+    pub fn build(allocator: std.mem.Allocator, body: *const Body, shells: []const types.ShellIndex, diag: *Diagnostics) Error!FaceTriangles {
+        const of = try allocator.alloc([]const [3]types.VertexIndex, body.faces.items.len);
+        @memset(of, &.{});
+        var self: FaceTriangles = .{ .of = of };
+        errdefer self.deinit(allocator);
+        var rings: Rings = .{};
+        defer rings.deinit(allocator);
+        for (shells) |s| {
+            var faces = traverse.Faces.init(body, s);
+            while (faces.next() catch return corrupt(diag)) |f| of[@backingInt(f)] = try rings.triangles(allocator, body, f, diag);
+        }
+        return self;
+    }
+
+    pub fn deinit(self: *FaceTriangles, allocator: std.mem.Allocator) void {
+        for (self.of) |corners| allocator.free(corners);
+        allocator.free(self.of);
+        self.* = undefined;
+    }
+
+    /// One face's rings in its plane, kept between faces.
+    const Rings = struct {
+        ring: std.ArrayList(u32) = .empty,
+        points: std.ArrayList(Vec2) = .empty,
+        vertices: std.ArrayList(types.VertexIndex) = .empty,
+        starts: std.ArrayList(u32) = .empty,
+
+        fn deinit(self: *Rings, allocator: std.mem.Allocator) void {
+            self.ring.deinit(allocator);
+            self.points.deinit(allocator);
+            self.vertices.deinit(allocator);
+            self.starts.deinit(allocator);
+        }
+
+        fn triangles(self: *Rings, allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error![]const [3]types.VertexIndex {
+            const frame = planar_faces.frameOf(body, f) orelse return corrupt(diag);
+            self.points.clearRetainingCapacity();
+            self.vertices.clearRetainingCapacity();
+            self.starts.clearRetainingCapacity();
+            var loops = traverse.Loops.init(body, f);
+            while (loops.next() catch return corrupt(diag)) |l| {
+                self.ring.clearRetainingCapacity();
+                var it = traverse.Coedges.init(body, l);
+                while (it.next() catch return corrupt(diag)) |c| try self.ring.append(allocator, @backingInt(body.coedgeStart(c)));
+                // A spur (the loop out to a vertex and back, where another solid touches the
+                // face along a line) bounds nothing, nor does a loop of one vertex
+                withoutSpurs(&self.ring);
+                if (self.ring.items.len == 0) continue;
+                try self.starts.append(allocator, @intCast(self.points.items.len));
+                for (self.ring.items) |i| {
+                    const v = types.VertexIndex.of(i);
+                    try self.points.append(allocator, planar_faces.flat(frame, body.point(v)));
+                    try self.vertices.append(allocator, v);
+                }
+            }
+            if (self.starts.items.len == 0) return &.{};
+            try self.starts.append(allocator, @intCast(self.points.items.len));
+            // The triangulator takes the outer ring counter-clockwise: mirrored when it runs
+            // the other way, so the triangles run in the loops' sense either way
+            const points = self.points.items;
+            if (ringArea(points[self.starts.items[0]..self.starts.items[1]]) < 0) for (points) |*q| {
+                q[1] = -q[1];
+            };
+            var scratch = Diagnostics.init(allocator);
+            defer scratch.deinit();
+            const made = triangulate.triangulate(allocator, .{ .points = points, .starts = self.starts.items }, &scratch) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    var finding = scratch.first().?;
+                    finding.entity = .of(.face, @backingInt(f));
+                    return diag.fail(error.NotValid, finding);
+                },
+            };
+            defer allocator.free(made);
+            const out = try allocator.alloc([3]types.VertexIndex, made.len);
+            for (out, made) |*corners, t| corners.* = .{ self.vertices.items[t[0]], self.vertices.items[t[1]], self.vertices.items[t[2]] };
+            return out;
+        }
+    };
+};
 
 /// The signed solid angle of the triangle `a b c` (corners relative to the point) seen
 /// from the point: positive when it runs counter-clockwise seen from beyond it (van
@@ -704,6 +791,31 @@ fn segmentDistance(p: Vec2, a: Vec2, b: Vec2) f64 {
     const len_sq = vec.lengthSq2(d);
     const s = if (len_sq == 0) 0 else std.math.clamp(vec.dot2(vec.sub2(p, a), d) / len_sq, 0, 1);
     return vec.distance2(p, vec.addScaled2(a, d, s));
+}
+
+/// The cycle `ring` (vertices) with every spur taken out: wherever it runs `a b a` (out to
+/// `b` and back), `b` and one `a` go, until none is left; empty when fewer than three are.
+/// A spur bounds no area, and the triangulator, rightly, takes it for a ring touching
+/// itself (the classifier's samples and the winding number's triangles take them out).
+pub fn withoutSpurs(ring: *std.ArrayList(u32)) void {
+    var changed = true;
+    while (changed and ring.items.len >= 3) {
+        changed = false;
+        const n = ring.items.len;
+        for (0..n) |k| {
+            const before = ring.items[(k + n - 1) % n];
+            const after = ring.items[(k + 1) % n];
+            if (before != after) continue;
+            // Drop the tip and the vertex after it (one of the two visits of `a`)
+            const first = @min(k, (k + 1) % n);
+            const second = @max(k, (k + 1) % n);
+            _ = ring.orderedRemove(second);
+            _ = ring.orderedRemove(first);
+            changed = true;
+            break;
+        }
+    }
+    if (ring.items.len < 3) ring.clearRetainingCapacity();
 }
 
 fn ringArea(ring: []const Vec2) f64 {

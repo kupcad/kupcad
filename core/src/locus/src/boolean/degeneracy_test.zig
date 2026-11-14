@@ -585,6 +585,31 @@ test "degeneracy: a cut parallel to an edge just past the intersection tolerance
     try testing.expectEqual(@as(usize, 5), kept.counts().faces);
 }
 
+test "degeneracy: a hull through a cavity and its wall 1.5 tolerances thick: pieces of one face in different shells, apart" {
+    // The 10K fuzz session's second find (2026-11-14), the chain's last step: the box cuts
+    // a face of the hull into a piece inside the cavity and one outside the box with a
+    // notch where the box is, both in the face's plane, in different shells. The overlap
+    // rules' sample of the inner piece lies in the notch, in the outer piece's plane but
+    // off it; the outer piece's solid angle summed by a fan from one corner, whose
+    // triangles overlap outside a face that is not convex, cancelled only by the signs of
+    // the rounding of each one's height, and the shell wound 1 there: "shell 0 lies in
+    // material". The booleans were right; their results are sound, the identities hold.
+    const coarse = Tolerance.fromZone(1e-4);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const corners = [_]Vec3{ .{ 1.999995, 2.5, 2e-5 }, .{ -5e-6, 1, 4.00002 }, .{ 3.999995, 1.5, 4.00002 }, .{ 1.999995, 2.5, 2.00002 } };
+    var h = try @import("../construct/hull.zig").hull(testing.allocator, coarse, &corners, &diag);
+    defer h.deinit();
+    const half = 1.5 * coarse.xsect / 2;
+    var outer = try helpers.boxAt(coarse, .{ 0.23, 1, 1 }, .{ 1.98 + half, 4, 3 });
+    defer outer.deinit();
+    var cavity = try helpers.boxAt(coarse, .{ 0.48, 1.25, 1.25 }, .{ 1.98 - half, 3.75, 2.75 });
+    defer cavity.deinit();
+    var wall = try sound(&outer, &cavity, .difference);
+    defer wall.deinit();
+    try expectIdentities(&h, &wall);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

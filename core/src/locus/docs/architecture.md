@@ -1124,7 +1124,11 @@ point pass, a point of two shells' faces needing only one's boundary (a corner o
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take
 one), and a face passing through or lying on another does not (`faces_intersect`);
 and each shell lies where the other shells' winding numbers sum to 0 for an outer shell
-and 1 for a void, at a point inside one of its faces (`shell_overlaps`): voids inside an
+and 1 for a void, at a point inside one of its faces (`shell_overlaps`; each face's solid
+angle summed over its own triangulation, spurs taken out, never a fan from one corner,
+whose triangles overlap outside a face that is not convex and cancel there only by the
+signs of their rounding: a sample in the plane of another shell's notched face wound 1,
+the 10K fuzz session, 2026-11-14): voids inside an
 outer shell and not inside each other, shells apart, any nesting right; run on every
 boolean result in the tests and on the fuzzer's extruded solids; curved face pairs M5);
 hole loops inside their outer loop and not inside each other; the point at infinity is

@@ -1912,6 +1912,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // triangles the zone in inradius: slivers the checker refuses, so the boolean
         // refuses them by design (`sliver_face`) where it named a fault
         "solids 0 0 1 1 3 0 2 3 1 0 -2 2 1 0 10 3 3 0 1 4 1 2 1 3 0 0 3 3 1 -1 0 7 1 1 1 5 3 4 3 4 2 4 2 1 0 3 4 0 2 2 3 2 0 0 1 0 1 1 0 2 0 0 -1 0 1 1 9",
+        // Its rerun (locus; locus_solids moved whole): a hull through a box's cavity and
+        // the wall 1.5 tolerances thick beside it, one face of the hull in pieces in two
+        // shells, a sample of one in the other's notch, in its plane: the winding number
+        // by a fan from one corner, whose triangles overlap outside the face, came out 1
+        "solids 1 4 1 3 0 0 0 4 2 1 4 1 3 2 3 0 2 0 1 4 2 7 11 2 3 2 1 4 0 1 2 3 1 2 0 2 1 2 1 3 3 1 1 2 1 2 1 0 3 0 1 3 1 14 2 0 16 0",
+        "solids 1 4 1 3 0 0 0 4 2 2 4 1 3 2 3 0 2 0 1 4 2 7 11 2 3 2 1 4 0 1 2 3 1 2 0 2 1 2 1 3 3 1 1 2 1 2 1 0 3 0 1 3 1 14 2 0 16 0 1 2 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

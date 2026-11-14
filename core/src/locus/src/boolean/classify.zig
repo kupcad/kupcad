@@ -365,7 +365,7 @@ fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const F
     for (fragments.loopsOf(i)) |loop| {
         ring.clearRetainingCapacity();
         try ring.appendSlice(allocator, fragments.loopVertices(loop));
-        withoutSpurs(&ring);
+        overlap.withoutSpurs(&ring);
         if (ring.items.len < 3) continue;
         try starts.append(allocator, @intCast(points.items.len));
         for (ring.items) |v| try points.append(allocator, planar_faces.flat(frame, paves.point(v)));
@@ -373,27 +373,4 @@ fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const F
     if (starts.items.len == 0) return;
     try starts.append(allocator, @intCast(points.items.len));
     try overlap.interiorPoints(allocator, frame, points.items, starts.items, edges.items, out);
-}
-
-/// The cycle `ring` with every spur taken out: wherever it runs `a b a` (out to `b` and
-/// back), `b` and one `a` go, until none is left.
-pub fn withoutSpurs(ring: *std.ArrayList(u32)) void {
-    var changed = true;
-    while (changed and ring.items.len >= 3) {
-        changed = false;
-        const n = ring.items.len;
-        for (0..n) |k| {
-            const before = ring.items[(k + n - 1) % n];
-            const after = ring.items[(k + 1) % n];
-            if (before != after) continue;
-            // Drop the tip and the vertex after it (one of the two visits of `a`)
-            const first = @min(k, (k + 1) % n);
-            const second = @max(k, (k + 1) % n);
-            _ = ring.orderedRemove(second);
-            _ = ring.orderedRemove(first);
-            changed = true;
-            break;
-        }
-    }
-    if (ring.items.len < 3) ring.clearRetainingCapacity();
 }

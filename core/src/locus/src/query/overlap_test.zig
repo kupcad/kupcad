@@ -230,11 +230,34 @@ test "overlap: a shell's winding number is 1 inside a solid, −1 in a void's ca
     while (try it.next()) |s| : (n += 1) shells[n] = s;
     const outer = if (hollow.shell(shells[0]).kind == .outer) shells[0] else shells[1];
     const cavity = if (outer == shells[0]) shells[1] else shells[0];
-    try testing.expectApproxEqAbs(@as(f64, 1), try overlap.winding(&hollow, outer, .{ 2, 2, 2 }, &diag), 1e-12);
-    try testing.expectApproxEqAbs(@as(f64, -1), try overlap.winding(&hollow, cavity, .{ 2, 2, 2 }, &diag), 1e-12);
-    try testing.expectApproxEqAbs(@as(f64, 0), try overlap.winding(&hollow, cavity, .{ 0.5, 0.5, 0.5 }, &diag), 1e-12);
-    try testing.expectApproxEqAbs(@as(f64, 0), try overlap.winding(&hollow, outer, .{ 5, 2, 2 }, &diag), 1e-12);
-    try testing.expectApproxEqAbs(@as(f64, 0.5), try overlap.winding(&hollow, outer, .{ 4, 2, 2 }, &diag), 1e-12);
+    var triangles = try overlap.FaceTriangles.build(testing.allocator, &hollow, &shells, &diag);
+    defer triangles.deinit(testing.allocator);
+    try testing.expectApproxEqAbs(@as(f64, 1), try overlap.winding(&hollow, &triangles, outer, .{ 2, 2, 2 }, &diag), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, -1), try overlap.winding(&hollow, &triangles, cavity, .{ 2, 2, 2 }, &diag), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0), try overlap.winding(&hollow, &triangles, cavity, .{ 0.5, 0.5, 0.5 }, &diag), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0), try overlap.winding(&hollow, &triangles, outer, .{ 5, 2, 2 }, &diag), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), try overlap.winding(&hollow, &triangles, outer, .{ 4, 2, 2 }, &diag), 1e-12);
+}
+
+test "overlap: a face whose loop crosses itself has no triangles for the winding number, named" {
+    // A bow tie: the unit square's corners taken across, its sides crossing at the middle
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.Builder.init(testing.allocator, tol, .sheet, &diag);
+    defer b.deinit();
+    defer b.body.deinit();
+    const corners = [4]Vec3{ .{ 0, 0, 0 }, .{ 1, 1, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } };
+    var v: [4]types.VertexIndex = undefined;
+    for (corners, 0..) |p, i| v[i] = try b.vertexAt(try b.point(p));
+    var edges: [4]sew.EdgeSpec = undefined;
+    for (0..4) |i| edges[i] = try b.straight(v[i], v[(i + 1) % 4]);
+    const loops = [1]sew.LoopSpec{.{ .edges = &edges }};
+    const facing = try b.facingPlane(geometry.Frame.init(corners[0], vec.X3, vec.Z3), &corners);
+    const faces = [1]sew.FaceSpec{.{ .surface = facing.surface, .same_sense = facing.same_sense, .loops = &loops, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 1, 1 } } }};
+    const sheet = try sew.sew(&b.body, &faces, .sheet);
+    try testing.expectError(error.NotValid, overlap.FaceTriangles.build(testing.allocator, &b.body, &.{sheet}, &diag));
+    try testing.expectEqual(diagnostics.Code.not_simple, diag.first().?.code);
+    try testing.expectEqual(diagnostics.EntityKind.face, diag.first().?.entity.kind);
 }
 
 test "overlap: faces meeting at a merged vertex touch within its gap, its edges reaching as far as their ends' gaps" {
