@@ -601,3 +601,40 @@ test "overlay: a ray a rounding above a vertex an arc and a line leave orders th
     }
     try testing.expectEqual(@as(usize, 1), inside);
 }
+
+test "overlay: two arcs between the same vertices within the zone of each other are one edge, the lens between them no region" {
+    // Over a chord 0.02 long, circles of radius 2.5 and 2.2 bow 2e-5 and 2.27e-5: each
+    // past the zone of the chord, the two 2.7e-6 apart
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    const a = Vec2{ 0, 0 };
+    const b = Vec2{ 0.02, 0 };
+    const r1 = 2.5;
+    const r2 = 2.2;
+    try o.addEdge(.{ .a = a, .b = b, .arc = .{ .c = .{ 0.01, @sqrt(r1 * r1 - 1e-4) }, .r = r1, .ccw = true } });
+    try o.addEdge(.{ .a = b, .b = a, .arc = .{ .c = .{ 0.01, @sqrt(r2 * r2 - 1e-4) }, .r = r2, .ccw = false } });
+    try o.run();
+    try testing.expectEqual(@as(usize, 1), o.edges.items.len);
+    try testing.expectEqual(@as(u32, 2), o.edges.items[0].contributions);
+    try testing.expectEqual(@as(usize, 0), o.faces.items.len);
+    try expectPlanar(&o);
+}
+
+test "overlay: a ring doubling back along a tangent circle, a line crossing both arcs where they are within the zone, is planar" {
+    // The nightly's find (run 43525003122, locus): the arcs of two internally tangent
+    // circles meet at (4.5, 4.25), the ring turning back there; the line's crossings with
+    // both, 0.0165 from it, weld to one vertex, and both arcs cut there made two edges
+    // between the same vertices, a lens of area 1.9e-8 the map counted as a cycle
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 0, 4.25 }, .b = .{ 4.5, 4.25 }, .arc = .{ .c = .{ 2.25, 5.375 }, .r = 2.5155764746872635, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 4.5, 4.25 }, .b = .{ 0.5, 4.25 }, .arc = .{ .c = .{ 2.5, 5.25 }, .r = 2.23606797749979, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 0.5, 4.25 }, .b = .{ 1, 3.5 }, .arc = .{ .c = .{ 1.125, 4.125 }, .r = 0.6373774391990981, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 1, 3.5 }, .b = .{ 5.750000000000001, 4.5 } });
+    try o.addEdge(.{ .a = .{ 5.750000000000001, 4.5 }, .b = .{ 5.75, 6 } });
+    try o.addEdge(.{ .a = .{ 5.75, 6 }, .b = .{ 0, 4.25 }, .arc = .{ .c = .{ 3.75, 2.25 }, .r = 4.25, .ccw = true } });
+    try o.run();
+    try expectPlanar(&o);
+}

@@ -370,6 +370,7 @@ pub const Overlay = struct {
             }
             if (from != g.b) try self.piece(&merged, g, from, g.b);
         }
+        try self.mergeLenses();
         // The contributions grouped by edge
         std.mem.sort(Contribution, self.contributions.items, {}, Contribution.lessThan);
         for (self.edges.items) |*e| e.contributions = 0;
@@ -577,6 +578,100 @@ pub const Overlay = struct {
             try self.edges.append(self.allocator, .{ .a = a, .b = b, .arc = arc });
         }
         try self.contributions.append(self.allocator, .{ .edge = entry.value_ptr.*, .input = g.input, .along = forward });
+    }
+
+    /// Arcs between the same two vertices that lie within the zone of each other are one
+    /// edge: the lens between them is thinner than the zone, its area at the rounding level
+    /// and of either sign, and no region (as an arc within the zone of its chord is its
+    /// chord, `piece`). Two minor arcs over one chord are furthest apart at its middle, by
+    /// the difference of their bulges across it; arcs a major arc's length within the zone
+    /// of each other are on one circle, welded in `addEdge`. The first edge keeps its arc and
+    /// takes the other's contributions (the fuzzer, 2026-11-13: two internally tangent
+    /// circles, a line crossing both where they are within the zone, both cut at the one
+    /// vertex its crossings welded to, and the lens between them made V − E + F wrong).
+    fn mergeLenses(self: *Overlay) Error!void {
+        const allocator = self.allocator;
+        const n = self.edges.items.len;
+        // The arc edges by their ends
+        const by_ends = try allocator.alloc(u32, n);
+        defer allocator.free(by_ends);
+        var m: usize = 0;
+        for (self.edges.items, 0..) |e, i| {
+            if (e.arc == null) continue;
+            by_ends[m] = @intCast(i);
+            m += 1;
+        }
+        const ByEnds = struct {
+            edges: []const Edge,
+            fn lessThan(edges: []const Edge, x: u32, y: u32) bool {
+                const ex = edges[x];
+                const ey = edges[y];
+                if (ex.a != ey.a) return ex.a < ey.a;
+                if (ex.b != ey.b) return ex.b < ey.b;
+                return x < y;
+            }
+        };
+        std.mem.sort(u32, by_ends[0..m], self.edges.items, ByEnds.lessThan);
+        // Each edge the one it merges into, itself when it stays
+        const into = try allocator.alloc(u32, n);
+        defer allocator.free(into);
+        for (into, 0..) |*x, i| x.* = @intCast(i);
+        var merges: usize = 0;
+        var start: usize = 0;
+        while (start < m) {
+            var end = start + 1;
+            const first = self.edges.items[by_ends[start]];
+            while (end < m and self.edges.items[by_ends[end]].a == first.a and self.edges.items[by_ends[end]].b == first.b) end += 1;
+            defer start = end;
+            for (by_ends[start..end], 0..) |x, k| {
+                if (into[x] != x) continue;
+                for (by_ends[start..end][k + 1 ..]) |y| {
+                    if (into[y] != y) continue;
+                    if (self.withinZone(self.edges.items[x], self.edges.items[y])) {
+                        into[y] = x;
+                        merges += 1;
+                    }
+                }
+            }
+        }
+        if (merges == 0) return;
+        // The edges kept, renumbered, and every contribution moved onto its edge's
+        const index = try allocator.alloc(u32, n);
+        defer allocator.free(index);
+        var kept: u32 = 0;
+        for (self.edges.items, 0..) |e, i| {
+            if (into[i] != i) continue;
+            index[i] = kept;
+            self.edges.items[kept] = e;
+            kept += 1;
+        }
+        for (self.contributions.items) |*c| c.edge = index[into[c.edge]];
+        self.edges.shrinkRetainingCapacity(kept);
+    }
+
+    /// Whether two arc edges between the same vertices lie within the zone of each other:
+    /// both minor arcs, their bulges across the chord (signed by the side they bow to) the
+    /// zone apart at most.
+    fn withinZone(self: *const Overlay, x: Edge, y: Edge) bool {
+        const pa = self.point(x.a);
+        const pb = self.point(x.b);
+        const bx = bulge(pa, pb, x.arc.?) orelse return false;
+        const by = bulge(pa, pb, y.arc.?) orelse return false;
+        return @abs(bx - by) <= self.tol.zone;
+    }
+
+    /// How far a minor arc from `a` to `b` bows from its chord, positive to the chord's
+    /// left; null for a major arc (its centre on the side it bows to).
+    fn bulge(a: Vec2, b: Vec2, arc: Arc) ?f64 {
+        const side = predicates.orient2d(a, b, arc.c);
+        // A minor arc bows away from its centre: to the left when the centre is right of
+        // the chord and the arc runs counter-clockwise about it from `a`, or left of it and
+        // clockwise
+        const minor = (side > 0) == arc.ccw;
+        if (!minor) return null;
+        const half = vec.distance2(a, b) / 2;
+        const sagitta = arc.r - @sqrt(@max(arc.r * arc.r - half * half, 0));
+        return if (side < 0) sagitta else -sagitta;
     }
 
     /// An arc's identity for merging: its circle as bits (welded in `addEdge`, so arcs
