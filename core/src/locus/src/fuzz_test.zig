@@ -1898,6 +1898,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the zone from a face it crosses (unclassified)
         "solids 2 0 3 0 4 0 3 3 3 10 -2 3 13 3 3 2 0 3 1 3 3 4 3 2 13 0 13 9 1 2 3 2 1 0 0 1 2 1 2 3 1 3 2 3 5 4 2 2",
         "solids 3 2 1 0 1 4 0 1 3 0 3 4 1 8 10 4 7 3 1 3 2 1 1 0 4 4 3 4 0 3 4 1 0 1 12 1 0 6 1 0 1 0 -1 12 0",
+        // The nightly's (run 43585380964, locus_solids): a hull beside a plate 50 units off,
+        // the union's volume measured about the body's centre where its loops close only to
+        // their vertices' gaps, 4e-4 under OpenCascade's reading of the same faces
+        "solids 1 7 3 2 2 4 3 3 0 3 2 2 4 3 4 2 2 2 0 4 2 1 4 3 1 0 3 2 2 3 2 2 3 4 2 4 0 2 0 0 2 1 3 4 1 13 0 1 0 3 4 2 4 3 4 0 0 3 3 2 9 4 2 0 2 0 1 2 2 4 2 4 0 0 3 2 4 2 0 7 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

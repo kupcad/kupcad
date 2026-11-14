@@ -4,11 +4,14 @@
 //! quadrature along a free-form edge), and `p · n` is one number on a plane. A curved face
 //! is integrated over its UV region, the polygon of its loops' pcurves (or projections),
 //! as signed fans of triangles from a corner, each triangle by Gauss quadrature refined
-//! until two rules agree; what they still differ by is the error estimate. Every `p` is
-//! taken from the centre of the body's box: a closed surface's `∮ n dA` is zero, so the
-//! volume is the same about any point, and about one inside the body its terms are the
-//! body's size, not its distance from the origin (a 2-unit box 3.7e5 out measured 4.5e-7
-//! off about the origin). Independent of any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
+//! until two rules agree; what they still differ by is the error estimate. Every `p` of a
+//! shell is taken from the centre of the shell's box: a closed surface's `∮ n dA` is zero,
+//! so the volume is the same about any point, and about one inside the shell its terms are
+//! the shell's size, not its distance from the origin (a 2-unit box 3.7e5 out measured
+//! 4.5e-7 off about the origin) nor from another part of the body (a boolean's result
+//! closes only to its vertices' gaps, so its `∮ n dA` is that small, not zero, and taken
+//! about a centre 70 units off beside a far part a union measured 1.4e-4 over itself
+//! alone; the nightly solids fuzzer, run 43585380964). Independent of any tessellation. Genus by Euler–Poincaré over every shell, as the mesh engine counts
 //! it: `1 − χ/2`.
 
 const std = @import("std");
@@ -55,6 +58,7 @@ pub fn mass(body: *const Body, options: diagnostics.Options, diag: *Diagnostics)
     var total = Totals{ .centre = place.centre, .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
     var shells = traverse.Shells.init(body);
     while (shells.next() catch return corrupt(diag)) |s| {
+        total.centre = try shellCentre(body, s, diag) orelse place.centre;
         var faces = traverse.Faces.init(body, s);
         while (faces.next() catch return corrupt(diag)) |f| {
             try options.checkCancel();
@@ -130,6 +134,15 @@ const Totals = struct {
 /// Where the body is: the centre of its box, which the integrals are taken from, and its
 /// size, what the quadrature's agreement is measured against.
 const Place = struct { centre: Vec3, extent: f64 };
+
+/// The centre of shell `s`'s box, its faces'; null for a shell of no extent.
+fn shellCentre(body: *const Body, s: types.ShellIndex, diag: *Diagnostics) Error!?Vec3 {
+    var box = geometry.Box3.empty;
+    var faces = traverse.Faces.init(body, s);
+    while (faces.next() catch return corrupt(diag)) |f| box = geometry.Box3.merge(box, bbox.faceBounds(body, f) catch return corrupt(diag));
+    if (box.isEmpty()) return null;
+    return vec.scale(vec.add(box.min, box.max), 0.5);
+}
 
 fn placeOf(body: *const Body) Place {
     const box = bbox.bodyBounds(body) catch return .{ .centre = vec.ZERO3, .extent = 1 };

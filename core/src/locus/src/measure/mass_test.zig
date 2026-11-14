@@ -154,6 +154,35 @@ test "mass: a body far from the origin measures what it does at the origin" {
     try expectMeasures(&far_drum, PI * 4 * 5, 2 * PI * 2 * 5 + 2 * PI * 4);
 }
 
+test "mass: a boolean's result with gapped vertices measures the same beside a far part as alone" {
+    // The nightly solids fuzzer (run 43585380964): a result's loops close only to their
+    // vertices' gaps (each edge on its source's line, its ends at a merged vertex), and
+    // their areas were taken about the body's centre, which a plate far from the part moved
+    // 50 units off it: the union measured 4e-4 under OpenCascade's reading of its faces.
+    // Two boxes 9e-6 apart at an edge, united, leave corners with a gap of 6.4e-6
+    const pipeline = @import("../boolean/pipeline.zig");
+    const helpers = @import("../boolean/pipeline_test.zig");
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var p = try helpers.box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer p.deinit();
+    var q = try helpers.box(.{ 1.000009, 1.000009, 0 }, .{ 2, 2, 1 });
+    defer q.deinit();
+    var gapped = try pipeline.boolean(testing.allocator, &p, &q, .@"union", .{}, &diag, null);
+    defer gapped.deinit();
+    var max_gap: f64 = 0;
+    for (gapped.vertices.items) |v| max_gap = @max(max_gap, v.gap);
+    try testing.expect(max_gap > 6e-6);
+    const alone = try mass.mass(&gapped, .{}, &diag);
+    var far = try helpers.box(.{ 100, 100, 0 }, .{ 101, 101, 1 });
+    defer far.deinit();
+    var both = try pipeline.boolean(testing.allocator, &gapped, &far, .@"union", .{}, &diag, null);
+    defer both.deinit();
+    const together = try mass.mass(&both, .{}, &diag);
+    try testing.expectApproxEqAbs(alone.volume + 1, together.volume, CLOSE);
+    try testing.expectApproxEqAbs(alone.area + 6, together.area, CLOSE);
+}
+
 test "genus: a sphere 0, a torus 1, a slab with a hole 1, as the mesh engine counts them" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
