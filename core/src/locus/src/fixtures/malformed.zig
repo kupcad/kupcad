@@ -13,6 +13,7 @@ pub const NAMES = [_][]const u8{
     "point_index_past_table",
     "version_unknown",
     "curve_kind_unknown",
+    "point_not_finite",
     "next_prev_not_reciprocal",
     "partner_not_reciprocal",
     "partner_same_sense",

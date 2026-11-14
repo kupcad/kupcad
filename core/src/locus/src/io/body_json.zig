@@ -288,21 +288,48 @@ pub fn load(allocator: std.mem.Allocator, text: []const u8) Error!Body {
 
     // Geometry first: the entities refer to it
     const g = &body.geometry;
-    for (s.geometry.points) |p| _ = try g.addPoint(allocator, p);
-    for (s.geometry.lines) |l| _ = try g.addLine(allocator, .{ .o = l.o, .d = l.d });
-    for (s.geometry.circles) |c| _ = try g.addCircle(allocator, .{ .c = c.c, .x = c.x, .y = c.y, .r = c.r });
-    for (s.geometry.ellipses) |e| _ = try g.addEllipse(allocator, .{ .c = e.c, .x = e.x, .y = e.y, .a = e.a, .b = e.b });
+    for (s.geometry.points) |p| {
+        try finite(.{p});
+        _ = try g.addPoint(allocator, p);
+    }
+    for (s.geometry.lines) |l| {
+        try finite(.{ l.o, l.d });
+        _ = try g.addLine(allocator, .{ .o = l.o, .d = l.d });
+    }
+    for (s.geometry.circles) |c| {
+        try finite(.{ c.c, c.x, c.y, c.r });
+        _ = try g.addCircle(allocator, .{ .c = c.c, .x = c.x, .y = c.y, .r = c.r });
+    }
+    for (s.geometry.ellipses) |e| {
+        try finite(.{ e.c, e.x, e.y, e.a, e.b });
+        _ = try g.addEllipse(allocator, .{ .c = e.c, .x = e.x, .y = e.y, .a = e.a, .b = e.b });
+    }
     for (s.geometry.nurbs_curves) |n| {
         const view = @import("../geometry/nurbs.zig").Curve{ .degree = n.degree, .knots = n.knots, .points = n.points };
         if (!view.isValid()) return error.Malformed;
         _ = try g.addNurbsCurve(allocator, view);
     }
     for (s.geometry.planes) |p| _ = try g.addPlane(allocator, .{ .frame = try frameFrom(p.frame) });
-    for (s.geometry.cylinders) |c| _ = try g.addCylinder(allocator, .{ .frame = try frameFrom(c.frame), .r = c.r });
-    for (s.geometry.cones) |c| _ = try g.addCone(allocator, .{ .frame = try frameFrom(c.frame), .r = c.r, .half_angle = c.half_angle });
-    for (s.geometry.spheres) |sp| _ = try g.addSphere(allocator, .{ .frame = try frameFrom(sp.frame), .r = sp.r });
-    for (s.geometry.tori) |t| _ = try g.addTorus(allocator, .{ .frame = try frameFrom(t.frame), .major = t.major, .minor = t.minor });
-    for (s.geometry.extrusions) |e| _ = try g.addExtrusion(allocator, try curveRef(g, e.curve), e.d);
+    for (s.geometry.cylinders) |c| {
+        try finite(.{c.r});
+        _ = try g.addCylinder(allocator, .{ .frame = try frameFrom(c.frame), .r = c.r });
+    }
+    for (s.geometry.cones) |c| {
+        try finite(.{ c.r, c.half_angle });
+        _ = try g.addCone(allocator, .{ .frame = try frameFrom(c.frame), .r = c.r, .half_angle = c.half_angle });
+    }
+    for (s.geometry.spheres) |sp| {
+        try finite(.{sp.r});
+        _ = try g.addSphere(allocator, .{ .frame = try frameFrom(sp.frame), .r = sp.r });
+    }
+    for (s.geometry.tori) |t| {
+        try finite(.{ t.major, t.minor });
+        _ = try g.addTorus(allocator, .{ .frame = try frameFrom(t.frame), .major = t.major, .minor = t.minor });
+    }
+    for (s.geometry.extrusions) |e| {
+        try finite(.{e.d});
+        _ = try g.addExtrusion(allocator, try curveRef(g, e.curve), e.d);
+    }
     for (s.geometry.revolutions) |r| {
         const f = try frameFrom(r.frame);
         const ref = try g.addRevolution(allocator, try curveRef(g, r.curve), f.origin, f.z);
@@ -313,8 +340,14 @@ pub fn load(allocator: std.mem.Allocator, text: []const u8) Error!Body {
         if (!view.isValid()) return error.Malformed;
         _ = try g.addNurbsSurface(allocator, view);
     }
-    for (s.geometry.lines2) |l| _ = try g.addLine2(allocator, .{ .o = l.o, .d = l.d });
-    for (s.geometry.circles2) |c| _ = try g.addCircle2(allocator, .{ .c = c.c, .r = c.r });
+    for (s.geometry.lines2) |l| {
+        try finite(.{ l.o, l.d });
+        _ = try g.addLine2(allocator, .{ .o = l.o, .d = l.d });
+    }
+    for (s.geometry.circles2) |c| {
+        try finite(.{ c.c, c.r });
+        _ = try g.addCircle2(allocator, .{ .c = c.c, .r = c.r });
+    }
     for (s.geometry.nurbs_pcurves) |n| {
         const view = @import("../geometry/nurbs.zig").Curve2{ .degree = n.degree, .knots = n.knots, .points = n.points };
         if (!view.isValid()) return error.Malformed;
@@ -346,10 +379,12 @@ pub fn load(allocator: std.mem.Allocator, text: []const u8) Error!Body {
     const ns = s.shells.len;
     for (s.vertices) |v| {
         if (v.point >= g.points.items.len or v.tag > tag_count) return error.Malformed;
+        try finite(.{v.gap});
         _ = try body.addVertex(.{ .point = @fromBackingInt(@intCast(v.point)), .gap = v.gap, .coedge = try opt(topo.CoedgeIndex, v.coedge, nc), .tag = @fromBackingInt(@intCast(v.tag)) });
     }
     for (s.edges) |e| {
         if (e.tag > tag_count) return error.Malformed;
+        try finite(.{ e.t0, e.t1, e.gap });
         _ = try body.addEdge(.{
             .curve = try curveRef(g, e.curve),
             .t0 = e.t0,
@@ -379,6 +414,7 @@ pub fn load(allocator: std.mem.Allocator, text: []const u8) Error!Body {
     }
     for (s.faces) |f| {
         if (f.tag > tag_count) return error.Malformed;
+        if (f.uv_box) |b| try finite(.{b});
         _ = try body.addFace(.{
             .surface = try surfaceRef(g, f.surface),
             .same_sense = f.same_sense,
@@ -405,6 +441,19 @@ fn idx(comptime Index: type, i: u32, len: usize) Error!Index {
 
 fn opt(comptime Index: type, i: ?u32, len: usize) Error!Index {
     return if (i) |v| idx(Index, v, len) else .none;
+}
+
+/// Every number of `values` (numbers and arrays of them) finite: a record read from outside
+/// is checked at the boundary (research/solidcraft.md's record rules), since a NaN fails
+/// no comparison downstream and a body of them would pass every rule written `x > limit`.
+fn finite(values: anytype) Error!void {
+    inline for (values) |v| {
+        switch (@typeInfo(@TypeOf(v))) {
+            .float, .comptime_float => if (!(v - v == 0)) return error.Malformed,
+            .array => for (v) |x| if (!(x - x == 0)) return error.Malformed,
+            else => @compileError("a number or an array of numbers"),
+        }
+    }
 }
 
 fn frameFrom(f: Schema.Frame) Error!geometry.Frame {

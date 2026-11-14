@@ -358,6 +358,7 @@ const Checker = struct {
     fn geometric(self: *Checker) Error!void {
         const b = self.body;
         const tol = b.tol;
+        try self.finite();
         // The scale guard (architecture §12): the zone must stay above the spacing of the
         // coordinates, measured by the largest one of the vertices (the surfaces pass
         // through them)
@@ -377,19 +378,19 @@ const Checker = struct {
             const d1 = vec.distance(p1, b.point(e.end));
             const allowed0 = tol.xsect + e.gap + b.vertex(e.start).gap;
             const allowed1 = tol.xsect + e.gap + b.vertex(e.end).gap;
-            if (d0 > allowed0) try self.add(.vertex_off_curve, .of(.edge, i), d0, allowed0);
-            if (d1 > allowed1) try self.add(.vertex_off_curve, .of(.edge, i), d1, allowed1);
+            if (!(d0 <= allowed0)) try self.add(.vertex_off_curve, .of(.edge, i), d0, allowed0);
+            if (!(d1 <= allowed1)) try self.add(.vertex_off_curve, .of(.edge, i), d1, allowed1);
             // A degenerate edge is a point; any other is longer than the minimum feature
             if (e.flags.degenerate) {
                 const d = vec.distance(p0, p1);
-                if (d > tol.xsect) try self.add(.degenerate_edge_not_point, .of(.edge, i), d, tol.xsect);
+                if (!(d <= tol.xsect)) try self.add(.degenerate_edge_not_point, .of(.edge, i), d, tol.xsect);
             } else {
                 const len = chordLength(curve, e.t0, e.t1);
                 if (len <= 2.0 * tol.zone) try self.add(.edge_too_short, .of(.edge, i), len, 2.0 * tol.zone);
             }
             // The gaps are ordered: vertex ≥ edge
             if (b.vertex(e.start).gap + tol.zone * 0 < e.gap and b.vertex(e.start).gap < e.gap) try self.add(.gap_order, .of(.edge, i), e.gap, b.vertex(e.start).gap);
-            if (e.gap > tol.zone) try self.add(.gap_too_large, .of(.edge, i), e.gap, tol.zone);
+            if (!(e.gap <= tol.zone)) try self.add(.gap_too_large, .of(.edge, i), e.gap, tol.zone);
             // The curve lies on both faces' surfaces, at samples
             const pair = traverse.coedgesOfEdge(b, EdgeIndex.of(i));
             for (pair) |c| {
@@ -402,7 +403,7 @@ const Checker = struct {
                     const p = curve.eval(t);
                     const uv = surface.project(p, tol.approx, 50);
                     const d = vec.distance(surface.eval(uv[0], uv[1]), p);
-                    if (d > tol.xsect + e.gap) {
+                    if (!(d <= tol.xsect + e.gap)) {
                         try self.add(.edge_off_surface, .of(.edge, i), d, tol.xsect + e.gap);
                         break;
                     }
@@ -411,7 +412,7 @@ const Checker = struct {
                     if (!pc.isNone()) {
                         const lifted = surface.eval(b.geometry.pcurve(pc).eval(t)[0], b.geometry.pcurve(pc).eval(t)[1]);
                         const dl = vec.distance(lifted, p);
-                        if (dl > tol.approx + e.gap) {
+                        if (!(dl <= tol.approx + e.gap)) {
                             try self.add(.pcurve_off_edge, .of(.coedge, @backingInt(c)), dl, tol.approx + e.gap);
                             break;
                         }
@@ -421,7 +422,7 @@ const Checker = struct {
         }
         for (b.vertices.items, 0..) |v, i| {
             if (v.tombstone) continue;
-            if (v.gap > tol.zone) try self.add(.gap_too_large, .of(.vertex, i), v.gap, tol.zone);
+            if (!(v.gap <= tol.zone)) try self.add(.gap_too_large, .of(.vertex, i), v.gap, tol.zone);
         }
         // UV boxes inside the surface's domain, without wrap
         for (b.faces.items, 0..) |f, i| {
@@ -565,19 +566,19 @@ const Checker = struct {
                         if (k == PCURVE_SAMPLES - 1) end_uv = uv;
                         const p = curve.eval(t);
                         const dl = vec.distance(surface.eval(uv[0], uv[1]), p);
-                        if (dl > tol.approx + e.gap) {
+                        if (!(dl <= tol.approx + e.gap)) {
                             try self.add(.pcurve_off_edge, .of(.coedge, @backingInt(c)), dl, tol.approx + e.gap);
                             break;
                         }
                         const out = outsideBox(face.uv_box, uv, uvSlack(surface, uv, tol.zone));
-                        if (out > 1) {
+                        if (!(out <= 1)) {
                             try self.add(.pcurve_outside_box, .of(.coedge, @backingInt(c)), out * tol.zone, tol.zone);
                             break;
                         }
                     }
                     if (previous_end) |prev| {
                         const gap = uvGap(prev, start_uv, uvSlack(surface, start_uv, tol.zone), periods);
-                        if (gap > 1) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(c)), gap * tol.zone, tol.zone);
+                        if (!(gap <= 1)) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(c)), gap * tol.zone, tol.zone);
                     }
                     if (first == null) first = .{ .coedge = c, .uv = start_uv };
                     previous_end = end_uv;
@@ -585,7 +586,7 @@ const Checker = struct {
                 // Round the loop: the last pcurve's end to the first's start
                 if (previous_end) |prev| if (first) |f| {
                     const gap = uvGap(prev, f.uv, uvSlack(surface, f.uv, tol.zone), periods);
-                    if (gap > 1) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(f.coedge)), gap * tol.zone, tol.zone);
+                    if (!(gap <= 1)) try self.add(.pcurves_disjoint, .of(.coedge, @backingInt(f.coedge)), gap * tol.zone, tol.zone);
                 };
             }
         }
@@ -593,6 +594,25 @@ const Checker = struct {
 
     /// No two vertices within the zone of each other: sorted along x, each against the
     /// ones that follow within the zone.
+    /// Every number a live entity uses finite (`not_finite`): its point and gap, its range
+    /// and curve, its surface. The rules after it compare with limits, and a NaN fails no
+    /// comparison: a body of them would pass every rule (the research review, 2026-11-14).
+    fn finite(self: *Checker) Error!void {
+        const b = self.body;
+        for (b.vertices.items, 0..) |v, i| {
+            if (v.tombstone) continue;
+            if (!allFinite(.{ b.geometry.point(v.point), v.gap })) try self.add(.not_finite, .of(.vertex, i), 0, 0);
+        }
+        for (b.edges.items, 0..) |e, i| {
+            if (e.flags.tombstone) continue;
+            if (!allFinite(.{ e.t0, e.t1, e.gap, b.geometry.curve(e.curve) })) try self.add(.not_finite, .of(.edge, i), 0, 0);
+        }
+        for (b.faces.items, 0..) |f, i| {
+            if (f.flags.tombstone) continue;
+            if (!allFinite(b.geometry.surface(f.surface))) try self.add(.not_finite, .of(.face, i), 0, 0);
+        }
+    }
+
     fn verticesApart(self: *Checker) Error!void {
         const b = self.body;
         var order = std.ArrayList(u32).empty;
@@ -772,4 +792,30 @@ fn chordLength(curve: anytype, t0: f64, t1: f64) f64 {
         prev = p;
     }
     return len;
+}
+
+/// Whether every number in `value` (a number, or an array, slice, struct, tuple or union
+/// of them, as deep as they go) is finite.
+fn allFinite(value: anytype) bool {
+    const T = @TypeOf(value);
+    switch (@typeInfo(T)) {
+        .float, .comptime_float => return value - value == 0,
+        .array => {
+            for (value) |x| if (!allFinite(x)) return false;
+            return true;
+        },
+        .pointer => |info| {
+            if (info.size != .slice) return true;
+            for (value) |x| if (!allFinite(x)) return false;
+            return true;
+        },
+        .@"struct" => {
+            inline for (comptime std.meta.fieldNames(T)) |name| if (!allFinite(@field(value, name))) return false;
+            return true;
+        },
+        .@"union" => switch (value) {
+            inline else => |payload| return allFinite(payload),
+        },
+        else => return true,
+    }
 }

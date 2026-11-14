@@ -152,6 +152,7 @@ const MALFORMED = [_]Malformed{
     .{ .name = "point_index_past_table", .what = "a vertex naming point 99 of a table of four", .breaks = pointPastTable, .rule = .index_out_of_range, .refused = true },
     .{ .name = "version_unknown", .what = "a body in a format version the reader does not know", .edit = .{ "\"version\": 1", "\"version\": 99" }, .refused = true },
     .{ .name = "curve_kind_unknown", .what = "an edge on a curve of a kind no table holds", .edit = .{ "\"kind\": \"line\"", "\"kind\": \"helix\"" }, .refused = true },
+    .{ .name = "point_not_finite", .what = "a vertex's point not a number", .breaks = pointNotFinite, .level = .geometric, .rule = .not_finite, .refused = true },
     // Structural
     .{ .name = "next_prev_not_reciprocal", .what = "a coedge whose next's prev is another", .breaks = nextPrevNotReciprocal, .rule = .next_prev_not_reciprocal },
     .{ .name = "partner_not_reciprocal", .what = "a coedge whose partner is not its own", .breaks = partnerNotReciprocal, .rule = .partner_not_reciprocal },
@@ -186,6 +187,12 @@ const MALFORMED = [_]Malformed{
 
 fn pointPastTable(b: *Body) !void {
     b.vertex(types.VertexIndex.of(0)).point = geometry.PointIndex.of(99);
+}
+
+fn pointNotFinite(b: *Body) !void {
+    // A NaN passed every rule written `measured > limit` and the reader took it (the
+    // research review, 2026-11-14): the reader refuses it, the checker names it
+    b.geometry.points.items[@backingInt(b.vertex(types.VertexIndex.of(0)).point)][0] = std.math.nan(f64);
 }
 
 fn nextPrevNotReciprocal(b: *Body) !void {
