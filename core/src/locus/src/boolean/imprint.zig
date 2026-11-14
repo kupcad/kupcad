@@ -11,7 +11,11 @@
 //! merged vertices: each one is read back by its coordinates. A vertex the overlay made
 //! itself (a crossing the interferences did not find) would split this face where its
 //! neighbour across an edge is not split, so it is refused (`imprint_unmatched`), never
-//! sewn into a result with a gap.
+//! sewn into a result with a gap. So is a cut of a piece at a merged vertex the paves did
+//! not put on it (its weld at the zone is an accommodation of what the paves decided, D9,
+//! never a decision of its own: Milenkovic's condition, research/consistent-tolerances.md
+//! T6): every step of a fragment's cycle is one of the face's pieces, a pave block of one
+//! of its edges or one of its section segments.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -123,6 +127,9 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
     defer o.deinit();
     var lookup: std.AutoHashMapUnmanaged(Key, u32) = .empty;
     defer lookup.deinit(allocator);
+    // The pieces the paves made of this face, either way: what a cycle may step along
+    var pieces: std.AutoHashMapUnmanaged([2]u32, void) = .empty;
+    defer pieces.deinit(allocator);
     const Add = struct {
         o: *Overlay,
         lookup: *std.AutoHashMapUnmanaged(Key, u32),
@@ -149,6 +156,7 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
             const coedge = body.coedge(c);
             const list = paves.edge_paves[k][@backingInt(coedge.edge)].items;
             for (0..list.len - 1) |i| {
+                try pieces.put(allocator, pieceKey(list[i].vertex, list[i + 1].vertex), {});
                 if (coedge.same_sense) {
                     try add.edge(list[i].vertex, list[i + 1].vertex);
                 } else {
@@ -160,6 +168,7 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
     // Its section segments, there and back
     _ = o.addInput() catch |e| return planar_faces.overlayError(diag, e);
     for (paves.sections[k][@backingInt(f)].items) |segment| {
+        try pieces.put(allocator, pieceKey(segment[0], segment[1]), {});
         try add.edge(segment[0], segment[1]);
         try add.edge(segment[1], segment[0]);
     }
@@ -177,23 +186,34 @@ fn face(allocator: std.mem.Allocator, paves: *const Paves, k: u1, f: types.FaceI
         if (winding == 0) continue;
         const first_loop: u32 = @intCast(out.loops.items.len);
         const region = o.faces.items[r];
-        try cycle(&o, &lookup, region.outer, winding < 0, out, k, f, diag);
-        for (o.holesOf(@intCast(r))) |hole| try cycle(&o, &lookup, hole, winding < 0, out, k, f, diag);
+        try cycle(&o, &lookup, &pieces, region.outer, winding < 0, out, k, f, diag);
+        for (o.holesOf(@intCast(r))) |hole| try cycle(&o, &lookup, &pieces, hole, winding < 0, out, k, f, diag);
         try out.items.append(out.allocator, .{ .operand = k, .face = @backingInt(f), .first_loop = first_loop, .loop_count = @intCast(out.loops.items.len - first_loop) });
     }
 }
 
 /// Overlay cycle `c` as a loop of merged vertices, reversed when the face's loops run
-/// clockwise in its plane's coordinates (its outward normal against the plane's).
-fn cycle(o: *const Overlay, lookup: *const std.AutoHashMapUnmanaged(Key, u32), c: u32, reverse: bool, out: *Fragments, k: u1, f: types.FaceIndex, diag: *Diagnostics) Error!void {
+/// clockwise in its plane's coordinates (its outward normal against the plane's); each of
+/// its steps one of the face's `pieces`.
+fn cycle(o: *const Overlay, lookup: *const std.AutoHashMapUnmanaged(Key, u32), pieces: *const std.AutoHashMapUnmanaged([2]u32, void), c: u32, reverse: bool, out: *Fragments, k: u1, f: types.FaceIndex, diag: *Diagnostics) Error!void {
     const start: u32 = @intCast(out.vertices.items.len);
     for (o.halvesOf(c)) |half| {
         const v = lookup.get(keyOf(o.point(o.origin(half)))) orelse return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand, imprinted with what the second leaves on it (face–face)" else "a face of the second operand, imprinted with what the first leaves on it (face–face)" });
         try out.vertices.append(out.allocator, v);
     }
     const count: u32 = @intCast(out.vertices.items.len - start);
+    const ring = out.vertices.items[start..];
+    for (ring, 0..) |u, i| {
+        if (pieces.contains(pieceKey(u, ring[(i + 1) % ring.len]))) continue;
+        return diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand, its overlay cutting a piece at a merged vertex the paves did not put on it" else "a face of the second operand, its overlay cutting a piece at a merged vertex the paves did not put on it" });
+    }
     if (reverse) std.mem.reverse(u32, out.vertices.items[start..]);
     try out.loops.append(out.allocator, .{ start, count });
+}
+
+/// A piece by its two merged vertices, either way.
+fn pieceKey(u: u32, w: u32) [2]u32 {
+    return .{ @min(u, w), @max(u, w) };
 }
 
 fn corrupt(diag: *Diagnostics) Error {

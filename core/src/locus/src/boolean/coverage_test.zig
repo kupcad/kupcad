@@ -374,6 +374,34 @@ fn crossingMissed(cov: *Coverage) !void {
     try cov.refused(imprint.run(testing.allocator, &paves, .{}, &diag), &diag, .imprint_unmatched);
 }
 
+fn paveDropped(cov: *Coverage) !void {
+    // The first cube's edge x = y = 2 crosses the second's face z = 1 at (2, 2, 1), a pave
+    // of the edge where the sections on its faces x = 2 and y = 2 end; dropped from the
+    // edge's list, the overlay's weld cut the edge there itself, at a merged vertex the paves
+    // did not put on it (research/consistent-tolerances.md T6): refused at the imprint
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var b = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer b.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var paves = try cornerPaves(&a, &b, &diag);
+    defer paves.deinit();
+    const m = mergedAt(&paves, .{ 2, 2, 1 });
+    var dropped = false;
+    for (paves.edge_paves[0]) |*list| {
+        for (list.items, 0..) |x, i| if (x.vertex == m) {
+            _ = list.orderedRemove(i);
+            dropped = true;
+            break;
+        };
+    }
+    try testing.expect(dropped);
+    try cov.refused(imprint.run(testing.allocator, &paves, .{}, &diag), &diag, .imprint_unmatched);
+    // This guard's reason, not a crossing the overlay made
+    try testing.expect(std.mem.indexOf(u8, diag.first().?.label, "the paves did not put on it") != null);
+}
+
 fn coplanarForgotten(cov: *Coverage) !void {
     // Boxes sharing their top and bottom planes, the paves' record of it dropped: the
     // shared faces' pieces lie on the other operand's boundary and on none of its faces
@@ -436,6 +464,7 @@ const CASES = [_]struct { name: []const u8, run: *const fn (*Coverage) anyerror!
     .{ .name = "an operand's loop that does not close", .run = corruptLoop },
     .{ .name = "an operand's face covering its plane twice", .run = overlappingFace },
     .{ .name = "a crossing the paves missed", .run = crossingMissed },
+    .{ .name = "a pave the paves dropped", .run = paveDropped },
     .{ .name = "a coplanar pair the paves forgot", .run = coplanarForgotten },
     .{ .name = "an edge three fragments use", .run = edgeUsedThrice },
 };
