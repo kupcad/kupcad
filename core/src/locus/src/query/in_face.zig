@@ -100,6 +100,18 @@ pub fn nearEdge(body: *const Body, f: types.FaceIndex, p: Vec3, within: f64, dia
     return false;
 }
 
+/// The distance from `p` to face `f`'s boundary: its nearest edge's, or a loop's vertex.
+pub fn boundaryDistance(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!f64 {
+    var nearest = std.math.inf(f64);
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        if (body.loop(l).vertex != .none) nearest = @min(nearest, vec.distance(body.point(body.loop(l).vertex), p));
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| nearest = @min(nearest, edgeDistance(body, body.coedge(c).edge, p));
+    }
+    return nearest;
+}
+
 /// The distance from `p` to edge `e`: to the nearest point of its curve within its range,
 /// a periodic curve's parameter taken over a period when that brings it into the range,
 /// else to the nearer end.

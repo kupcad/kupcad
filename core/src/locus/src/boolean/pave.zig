@@ -475,6 +475,34 @@ const Filler = struct {
         return .{ self.p.vertex_of[k][@backingInt(edge.start)], self.p.vertex_of[k][@backingInt(edge.end)] };
     }
 
+    /// Where `q` lies against face `f` of operand `k`, decided as the paves decide: a merged
+    /// vertex `v` that is a pave of one of the face's edges is on its boundary (vertex–edge
+    /// decided it); else on the boundary within the intersection tolerance (and `v`'s gap)
+    /// of it, at it to rounding refused (D27), and otherwise inside or outside by the
+    /// face's winding. `planar_faces.place` decided this again at the zone, so a vertex
+    /// between the zone and the tolerance of an edge was the edge's pave and "inside" the
+    /// face, a touch (the research review, 2026-11-14: one decision, one place).
+    fn placeIn(self: *Filler, k: usize, f: types.FaceIndex, q: Vec3, v: ?u32) Error!in_face.Place {
+        const operand = self.body(k);
+        if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
+        const allowance = self.p.tol.xsect + if (v) |m| self.p.gaps.items[m] else 0;
+        const distance = try in_face.boundaryDistance(operand, f, q, self.diag);
+        if (try self.within(distance, allowance, .of(.face, @backingInt(f)))) return .boundary;
+        return in_face.classify(operand, f, q, in_face.uvOf(operand, f, q), 0, self.diag);
+    }
+
+    /// Whether merged vertex `v` is a pave of an edge of face `f` of operand `k`.
+    fn paveOfFace(self: *const Filler, k: usize, f: types.FaceIndex, v: u32) bool {
+        const operand = self.body(k);
+        var loops = traverse.Loops.init(operand, f);
+        while (loops.next() catch null) |l| {
+            if (operand.loop(l).vertex != .none and self.p.vertex_of[k][@backingInt(operand.loop(l).vertex)] == v) return true;
+            var it = traverse.Coedges.init(operand, l);
+            while (it.next() catch null) |c| if (self.hasPave(k, operand.coedge(c).edge, v)) return true;
+        }
+        return false;
+    }
+
     fn hasPave(self: *const Filler, k: usize, e: types.EdgeIndex, v: u32) bool {
         for (self.p.edge_paves[k][@backingInt(e)].items) |pave| if (pave.vertex == v) return true;
         return false;
@@ -650,7 +678,7 @@ const Filler = struct {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
             if (!try self.within(@abs(planar_faces.planeOf(frame).height(q)), self.p.tol.xsect + self.p.gaps.items[v], .of(.face, @backingInt(f)))) continue;
-            const place = try planar_faces.place(self.body(k), f, q, self.p.tol, self.diag);
+            const place = try self.placeIn(k, f, q, v);
             if (place == .outside) continue;
             try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
             self.tally();
@@ -692,7 +720,7 @@ const Filler = struct {
                     self.tally();
                     continue;
                 }
-                const place = try planar_faces.place(self.body(other), f, q, self.p.tol, self.diag);
+                const place = try self.placeIn(other, f, q, null);
                 if (place == .outside) continue;
                 const before = self.p.points.items.len;
                 const w = try self.weld(q, 0);
@@ -717,7 +745,7 @@ const Filler = struct {
             if (!try self.within(@abs(plane.height(point)), self.p.tol.xsect + self.p.gaps.items[pave.vertex], .of(.face, @backingInt(f)))) continue;
             const distance = vec.distance(point, q);
             if (distance >= best_distance) continue;
-            if (try planar_faces.place(self.body(other), f, point, self.p.tol, self.diag) == .outside) continue;
+            if (try self.placeIn(other, f, point, pave.vertex) == .outside) continue;
             best = pave.vertex;
             best_distance = distance;
         }
@@ -878,9 +906,9 @@ const Filler = struct {
             var section_line: ?u32 = null;
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
-                const in_a = try planar_faces.place(self.body(0), fa, mid, p.tol, self.diag);
+                const in_a = try self.placeIn(0, fa, mid, null);
                 if (in_a == .outside) continue;
-                const in_b = try planar_faces.place(self.body(1), fb, mid, p.tol, self.diag);
+                const in_b = try self.placeIn(1, fb, mid, null);
                 if (in_b == .outside) continue;
                 const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
                 const imprint_a = self.imprinted(0, fa, u, w, in_a);
@@ -975,7 +1003,7 @@ const Filler = struct {
                 const list = p.edge_paves[k][@backingInt(body_k.coedge(c).edge)].items;
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
-                    const place = try planar_faces.place(self.body(other), g, mid, p.tol, self.diag);
+                    const place = try self.placeIn(other, g, mid, null);
                     if (!self.imprinted(other, g, x.vertex, y.vertex, place)) continue;
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                     self.tally();

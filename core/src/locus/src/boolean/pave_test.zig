@@ -179,3 +179,33 @@ test "paves: an edge whose shrunk range is under twice the tolerance is not spli
     try testing.expectEqual(pave.Stage.edge_face, stage);
     try testing.expect(std.mem.indexOf(u8, f.label, "(edge–face)") != null);
 }
+
+test "paves: a vertex between the zone and the tolerance of a face's edge is that edge's pave and on the face's boundary, not touching inside it" {
+    // Vertex–edge made the apex a pave of the box's top edge (within the intersection
+    // tolerance); vertex–face then decided the same incidence again at the zone and found
+    // the apex inside the top face, a touch (the research review, 2026-11-14)
+    var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const apex = Vec3{ 1, 1.5e-5, 2 };
+    var b = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ apex, .{ 0.5, 0.5, 3 }, .{ 1.5, 0.5, 3 }, .{ 1, 1, 3 } }, &diag);
+    defer b.deinit();
+    var phase: pave.Stage = .operands;
+    var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &phase);
+    defer p.deinit();
+    // The apex's merged vertex
+    var m: ?u32 = null;
+    for (b.vertices.items, 0..) |v, i| {
+        if (!v.tombstone and vec.distance(b.geometry.point(v.point), apex) == 0) m = p.vertex_of[1][i];
+    }
+    try testing.expect(m != null);
+    // A pave of an edge of the box
+    var paved = false;
+    for (p.edge_paves[0]) |list| for (list.items) |x| {
+        paved = paved or x.vertex == m.?;
+    };
+    try testing.expect(paved);
+    // And no touch inside a face of the box
+    for (p.touches.items) |t| try testing.expect(!(t.operand == 0 and t.vertex == m.?));
+}
