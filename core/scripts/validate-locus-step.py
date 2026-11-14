@@ -26,6 +26,8 @@ LOCUS = HERE.parent / "src" / "locus"
 FILTERS = ["corpus", "degeneracy", "boolean:", "coverage", "Fuzz solids"]
 LINE = re.compile(r"^(\S+) solids=(\d+) faces=(\d+) volume=(\S+) area=(\S+) gap=(\S+) shift=(\S+) (.*)$")
 
+# Loaded from its file (its name has a hyphen), its bytecode not written beside it
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("validate_step", HERE / "validate-step.py")
 validate_step = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validate_step)
