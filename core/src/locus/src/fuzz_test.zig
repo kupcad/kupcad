@@ -60,6 +60,7 @@ const edges = @import("mesh/edges.zig");
 const canonical = @import("geometry/canonical.zig");
 const solid_distance = @import("query/distance.zig");
 const geometry = @import("geometry/types.zig");
+const types = @import("topology/types.zig");
 const chords = @import("mesh/chords.zig");
 const curves = @import("geometry/curves.zig");
 const Vec2 = vec.Vec2;
@@ -1450,10 +1451,11 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
     }
     for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
     // Graded in the checker's words (mesh/validate.zig) against the solid's shells: every
-    // shell closed; a body that does not touch itself (no singular vertex) has a closed
-    // mesh with no singular vertex; one that does (regions of the sheet touching at a
-    // corner make solids touching along an edge: two edges of the body, one pair of mesh
-    // vertices used four times) shows it in its mesh, as a singular vertex or an
+    // shell closed; where solids touch (regions of the sheet touching at a corner make
+    // solids touching along an edge) the mesh closed with no singular vertex, a vertex
+    // there a mesh vertex for each solid (3MF judges by indices); where one solid touches
+    // itself (a sheet's slit, or a ring through a point twice, extruded: sweeps keep it,
+    // the boolean refuses it, `pinched`) the mesh shows it, as a singular vertex or an
     // irregular edge; and every mesh is watertight, each directed side matched by as many
     // reverses, with nothing degenerate
     const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
@@ -1468,9 +1470,10 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
     // pruned spike) encloses nothing in the mesh: its sides may coincide there
     var sliver = false;
     for (mesh.faces) |range| sliver = sliver or range.spikes_pruned;
+    const touches_itself = try touchesItself(&solid, diag);
     if (sliver) {
         // Watertight still, checked below
-    } else if (body_singular) {
+    } else if (touches_itself) {
         try testing.expect(verdict.grade.singular_vertices > 0 or verdict.grade.condition == .irregular);
     } else {
         try testing.expect(verdict.grade.isManifoldClosed());
@@ -1509,6 +1512,33 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
 /// and the solid turned a right angle about x (its sides lying, its arcs' cylinders cut in
 /// lines) at a height off the grid, whose section holds a point exactly when the solid
 /// holds the point at that height (off the boundary). A refusal of a section is clean.
+/// Whether `body` touches itself inside one solid (`solid_overlap.Solids`): a vertex whose
+/// faces are two fans of one solid, or two edges between one pair of vertices, along one
+/// line, of one solid.
+fn touchesItself(body: *const Body, diag: *Diagnostics) !bool {
+    var solids = try solid_overlap.Solids.init(testing.allocator, body, .{}, diag);
+    defer solids.deinit(testing.allocator);
+    var fans: std.ArrayList(condition.Fan) = .empty;
+    defer fans.deinit(testing.allocator);
+    try condition.fans(testing.allocator, body, &fans);
+    for (fans.items, 0..) |x, i| for (fans.items[i + 1 ..]) |y| {
+        if (x.vertex == y.vertex and solids.same(x.shell, y.shell)) return true;
+    };
+    var first: std.AutoHashMapUnmanaged([2]u32, u32) = .empty;
+    defer first.deinit(testing.allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.coedge == .none or body.geometry.curve(e.curve) != .line) continue;
+        const entry = try first.getOrPut(testing.allocator, .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) });
+        if (!entry.found_existing) {
+            entry.value_ptr.* = @intCast(i);
+            continue;
+        }
+        const other = body.edge(types.EdgeIndex.of(entry.value_ptr.*));
+        if (solids.same(body.face(body.loop(body.coedge(other.coedge).loop).face).shell, body.face(body.loop(body.coedge(e.coedge).loop).face).shell)) return true;
+    }
+    return false;
+}
+
 fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: *Diagnostics) !void {
     const a_sheet = (try mass.mass(sheet_body, .{}, diag)).area;
     for ([_]f64{ 0, height * SLICE_AT, height }) |z| {
