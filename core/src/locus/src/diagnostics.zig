@@ -187,9 +187,30 @@ pub const Code = enum(u16) {
     }
 };
 
+/// The longest label a finding carries: each is a literal in the source, at most this long
+/// (source_test.zig holds every literal but the descriptions here to it).
+pub const MAX_LABEL_BYTES = 256;
+/// The longest a number of a finding formats to (`{d}` of any f64: the smallest subnormal's,
+/// its digits after the point, is the longest; diagnostics_test.zig formats it).
+const NUMBER_BYTES = 340;
+/// The words and the entity `Finding.format` puts about the label, the description and the
+/// numbers, at most ("warning: ", the spaces, " (surface 4294967295)", ": ", " against ").
+const FORMAT_WORDS = 64;
+/// The longest a finding formats to, so a host's buffer for one never cuts it (KupCAD's
+/// driver keeps the last failure's message whole: one cut at 256 bytes ended "…refused by
+/// de", research/manifold-parity.md).
+pub const MAX_FINDING_BYTES = MAX_LABEL_BYTES + longestDescription() + 2 * NUMBER_BYTES + FORMAT_WORDS;
+
+fn longestDescription() usize {
+    @setEvalBranchQuota(10_000);
+    var longest: usize = 0;
+    for (std.enums.values(Code)) |c| longest = @max(longest, c.describe().len);
+    return longest;
+}
+
 /// One thing an operation found: a rule or condition, the entity it concerns, and the
 /// measured value against the threshold it failed. `label` names an argument (a static
-/// string, never allocated).
+/// string, never allocated, at most `MAX_LABEL_BYTES`).
 pub const Finding = struct {
     code: Code,
     severity: Severity = .failure,

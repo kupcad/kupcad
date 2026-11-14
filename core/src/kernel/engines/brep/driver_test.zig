@@ -548,6 +548,24 @@ test "Driver: a boolean Locus refuses answers null with its reason (a curved ope
     try std.testing.expect(std.mem.indexOf(u8, reason, "curved") != null);
 }
 
+test "Driver: a refusal's reason is kept whole, the point pinch's longest of the boolean's" {
+    // research/manifold-parity.md: the failure buffer cut at 256 bytes, so the point pinch's
+    // reason ended "…refused by de"; it is Locus's longest finding now (`MAX_FINDING_BYTES`)
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 4, 4, 4, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    // A pyramid pocket from the top, its apex on the floor: one shell touching itself there
+    const pts = [_][3]f64{ .{ 1, 1, 4 }, .{ 3, 1, 4 }, .{ 3, 3, 4 }, .{ 1, 3, 4 }, .{ 2, 2, 0 } };
+    const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 2, 3 }, .{ 1, 0, 4 }, .{ 2, 1, 4 }, .{ 3, 2, 4 }, .{ 0, 3, 4 } };
+    const pyramid = driver.driver.polyhedronFn(&TEST_CONFIG, std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
+    defer driver.driver.destructFn(pyramid);
+    try std.testing.expect(driver.driver.booleanFn(cube, pyramid, .difference_op) == null);
+    const reason = driver.driver.takeFailureFn() orelse return error.TestUnexpectedResult;
+    errdefer std.debug.print("{s}\n", .{reason});
+    try std.testing.expect(reason.len > 256);
+    try std.testing.expect(std.mem.indexOf(u8, reason, "corner of one operand") != null);
+    try std.testing.expect(std.mem.indexOf(u8, reason, "refused by design (shell ") != null);
+}
+
 test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh engine's circle grid, closed; a swept face refused" {
     const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);

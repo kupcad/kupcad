@@ -232,6 +232,44 @@ test "Trigonometry: no file but math/trig.zig calls the standard library's atan 
     try testing.expectEqual(@as(usize, 0), violations);
 }
 
+/// Where the long string literals a finding is told by are: the codes' descriptions.
+const DESCRIPTIONS = "diagnostics.zig";
+
+/// Every string literal of a file but diagnostics.zig (whose descriptions
+/// `MAX_FINDING_BYTES` takes the longest of) at most `MAX_LABEL_BYTES`: a finding's label is
+/// one of them, and a host's buffer for a finding is that long and no longer.
+fn checkLiterals(path: []const u8, source: []const u8) !void {
+    if (isTest(path) or std.mem.eql(u8, path, SELF) or std.mem.eql(u8, path, DESCRIPTIONS)) return;
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    var number: usize = 0;
+    while (lines.next()) |line| {
+        number += 1;
+        var i: usize = 0;
+        while (i < line.len) : (i += 1) {
+            if (line[i] == '/' and i + 1 < line.len and line[i + 1] == '/') break;
+            if (line[i] != '"') continue;
+            // The literal's bytes, an escape counted as one
+            var bytes: usize = 0;
+            i += 1;
+            while (i < line.len and line[i] != '"') : (i += 1) {
+                if (line[i] == '\\') i += 1;
+                bytes += 1;
+            }
+            if (bytes > @import("diagnostics.zig").MAX_LABEL_BYTES) {
+                std.debug.print("src/{s}:{d}: a string literal of {d} bytes, past MAX_LABEL_BYTES: a finding's label is cut where a host keeps it\n", .{ path, number, bytes });
+                violations += 1;
+            }
+        }
+    }
+}
+
+test "Labels: no string literal but a code's description is longer than a finding's label may be" {
+    if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    violations = 0;
+    try walkSources(checkLiterals);
+    try testing.expectEqual(@as(usize, 0), violations);
+}
+
 fn checkHostServices(path: []const u8, source: []const u8) !void {
     if (isTest(path) or std.mem.eql(u8, path, SELF)) return;
     for (HOST_SERVICES) |service| {

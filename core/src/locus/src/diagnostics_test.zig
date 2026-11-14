@@ -129,3 +129,17 @@ test "everyFunctionTakesDiagnostics tells a namespace that does from one that do
     try testing.expect(comptime everyFunctionTakesDiagnostics(input));
     _ = Parallel.serial;
 }
+
+test "Findings: every code's longest message fits MAX_FINDING_BYTES, so no host's buffer cuts one" {
+    // The longest label, every description, the longest entity, and the numbers {d} formats
+    // longest (the smallest subnormal, the largest float, both negative)
+    const label: [diagnostics.MAX_LABEL_BYTES]u8 = @splat('x');
+    var buf: [diagnostics.MAX_FINDING_BYTES]u8 = undefined;
+    for (std.enums.values(diagnostics.Code)) |code| {
+        for ([_][2]f64{ .{ -std.math.floatTrueMin(f64), -std.math.floatMax(f64) }, .{ -std.math.floatMax(f64), -std.math.floatTrueMin(f64) } }) |numbers| {
+            const finding: diagnostics.Finding = .{ .code = code, .severity = .warning, .entity = .{ .kind = .surface, .index = std.math.maxInt(u32) }, .label = &label, .measured = numbers[0], .threshold = numbers[1] };
+            var w: std.Io.Writer = .fixed(&buf);
+            try finding.format(&w);
+        }
+    }
+}

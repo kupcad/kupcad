@@ -33,18 +33,17 @@ pub fn setTrace(sink: ?locus.diagnostics.Trace) void {
 
 /// Why the last operation on this thread returned null, as Locus's first finding, until
 /// `takeFailureImpl` reads it: the driver interface answers a failure with null, and this
-/// carries the reason into the script's error (dag_evaluator's kernelFailed). Empty after a
-/// failure with no finding (memory).
-threadlocal var last_failure: [FAILURE_BYTES]u8 = undefined;
+/// carries the reason into the script's error (`VM.kernelFailed`). Empty after a failure
+/// with no finding (memory). As long as Locus's longest finding: never cut.
+threadlocal var last_failure: [locus.diagnostics.MAX_FINDING_BYTES]u8 = undefined;
 threadlocal var last_failure_len: usize = 0;
-const FAILURE_BYTES = 256;
 
 fn remember(diag: *const locus.Diagnostics) void {
     last_failure_len = 0;
     const finding = diag.first() orelse return;
     var w: std.Io.Writer = .fixed(&last_failure);
-    // Cut at the buffer's end: what fits is the message
-    finding.format(&w) catch {};
+    // `MAX_FINDING_BYTES` holds any finding (Locus's diagnostics_test.zig)
+    finding.format(&w) catch unreachable;
     last_failure_len = w.buffered().len;
 }
 
