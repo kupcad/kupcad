@@ -107,7 +107,7 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             const other = fragments.items.items[j];
             if (other.operand == fragment.operand) continue;
             if (std.mem.indexOfScalar(u32, partners.items, other.face) == null) continue;
-            if (std.mem.eql([2]u32, own, pieces.items[other_range[0]..other_range[1]])) break j;
+            if (samePieces(own, pieces.items[other_range[0]..other_range[1]])) break j;
         } else null;
         const body = paves.operands[fragment.operand];
         const f = types.FaceIndex.of(fragment.face);
@@ -284,6 +284,14 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 /// first sample on no partner's boundary decides (one on a boundary gives way to the
 /// next), never a scan of every sample against every partner (a thousand-sided cap's
 /// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
+/// Whether two fragments' sorted pieces are the same pieces (compared by their vertices:
+/// `std.mem.eql` of arrays does not compile in the fuzzer's LLVM build).
+fn samePieces(a: []const [2]u32, b: []const [2]u32) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x[0] != y[0] or x[1] != y[1]) return false;
+    return true;
+}
+
 /// Fragment `i`'s pieces between merged vertices, each as its two vertices (the lesser
 /// first), sorted, appended to `out`: its region by its edges, whichever way it runs.
 fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: usize, out: *std.ArrayList([2]u32)) Error!void {
