@@ -12,8 +12,12 @@
 //!   vertex with it; a hole that was a lone slit, then a loop of one vertex nothing else
 //!   uses, with `kvh`) or a bridge between an outer boundary and a hole (`kemr`, the loop
 //!   with the larger area about the outward normal kept first, as the outer).
-//! - A vertex with two edges, both pieces of one line meeting end to end, goes (`kevJoin`,
-//!   the edges one).
+//! - A vertex with two edges on one line meeting end to end goes (`kevJoin`, the edges
+//!   one): pieces of one curve record, or of two lines the same within the tolerance (the
+//!   angle, and the far end of the one on the other within the intersection tolerance,
+//!   decided with D27's band), the second then given the first's line (OCCT's
+//!   `UnifySameDomain` joining edges through two-valent vertices). The boolean gives each
+//!   edge its source's line (D28), so pieces of two operands' edges meet so.
 //! - An edge no longer than the minimum feature size (twice the zone, the checker's
 //!   `edge_too_short`) collapses into its start (`kevMerge`), the edges at its end moved
 //!   there and their ranges taken to it, when neither of its faces is left with fewer than
@@ -31,6 +35,7 @@ const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const euler = @import("../topology/euler.zig");
 const in_face = @import("../query/in_face.zig");
+const canonical = @import("../geometry/canonical.zig");
 const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -206,9 +211,18 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
             count += 1;
         }
         if (count != 2) continue;
-        const e0 = body.edge(body.coedge(leaving[0]).edge);
-        const e1 = body.edge(body.coedge(leaving[1]).edge);
-        if (!e0.curve.eql(e1.curve) or e0.curve.kind != .line) continue;
+        const first = body.coedge(leaving[0]).edge;
+        const second = body.coedge(leaving[1]).edge;
+        const e0 = body.edge(first);
+        const e1 = body.edge(second);
+        if (e0.curve.kind != .line or e1.curve.kind != .line) continue;
+        if (!e0.curve.eql(e1.curve)) {
+            // Two lines: one when the same within the tolerance, the later edge given the
+            // earlier's line
+            const keep, const move = if (@backingInt(first) < @backingInt(second)) .{ first, second } else .{ second, first };
+            if (!try sameLine(body, keep, move, diag)) continue;
+            rebase(body, move, body.edge(keep).curve);
+        }
         // A coedge arriving at the vertex, from the edge that runs into it along the line
         for (leaving[0..2]) |out| {
             euler.kevJoin(body, body.coedge(out).prev) catch |err| switch (err) {
@@ -220,6 +234,51 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
         }
     }
     return changed;
+}
+
+/// Whether edge `move` lies on edge `keep`'s line within the tolerance: parallel within the
+/// angle, and its far end (the one it does not share with `keep`) within the intersection
+/// tolerance and its gap of the line. Within rounding of either is refused (`at_tolerance`).
+fn sameLine(body: *const Body, keep: types.EdgeIndex, move: types.EdgeIndex, diag: *Diagnostics) Error!bool {
+    const tol = body.tol;
+    const k = body.edge(keep);
+    const m = body.edge(move);
+    const line = body.geometry.curve(k.curve).line;
+    const other = body.geometry.curve(m.curve).line;
+    const far = if (m.start == k.start or m.start == k.end) m.end else m.start;
+    const p = body.point(far);
+    const comparisons = [_]canonical.Comparison{
+        canonical.Comparison.angle(1.0 - @abs(vec.dot(line.d, other.d)), tol.angle),
+        canonical.Comparison.distance(canonical.lineOffset(line, p), tol.xsect + body.vertex(far).gap, canonical.magnitude(&.{ p, line.o })),
+    };
+    return switch (canonical.verdict(&comparisons)) {
+        .same => true,
+        .apart => false,
+        .at_tolerance => |at| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(move)), .label = "two edges meeting end to end, on one line or not, to within rounding", .measured = at.measured, .threshold = at.limit }),
+    };
+}
+
+/// Edge `e` on `curve` (a line) instead of its own: its range the projections of its ends,
+/// and run the line's way (its ends and its coedges' senses turned when the line runs from
+/// its end to its start).
+fn rebase(body: *Body, e: types.EdgeIndex, curve: @import("../geometry/types.zig").CurveRef) void {
+    const line = body.geometry.curve(curve).line;
+    const edge = body.edge(e);
+    const ts = line.project(body.point(edge.start));
+    const te = line.project(body.point(edge.end));
+    edge.curve = curve;
+    if (ts <= te) {
+        edge.t0 = ts;
+        edge.t1 = te;
+        return;
+    }
+    std.mem.swap(types.VertexIndex, &edge.start, &edge.end);
+    edge.t0 = te;
+    edge.t1 = ts;
+    const first = edge.coedge;
+    body.coedge(first).same_sense = !body.coedge(first).same_sense;
+    const partner = body.coedge(first).partner;
+    if (partner != .none) body.coedge(partner).same_sense = !body.coedge(partner).same_sense;
 }
 
 fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {

@@ -829,18 +829,25 @@ test "chain: an empty step goes on; a refusal names its step and stage" {
     try testing.expectEqual(@as(?pipeline.Stage, .edge_face), failed.failed_in);
 }
 
-/// The volume identities of `a` and `b` to the slab of the merged tolerance: faces closer
-/// than its `xsect` are one plane, so up to `xsect` times the smaller operand's area may
-/// count either way. Every result passes `sound` and carries the merged tolerance.
+/// The volume identities of `a` and `b` to what the results' faces moved: each result's
+/// reported shift (a face given its coplanar group's plane moves by the gap over its
+/// area, D28), and the merged tolerance's slab over the smaller operand for the merged
+/// vertices. Every result passes `sound` and carries the merged tolerance.
 fn expectIdentitiesMerged(a: *const Body, b: *const Body) !void {
     const merged = Tolerance.merge(a.tol, b.tol);
     var results: [3]Body = undefined;
+    var shifts: [3]f64 = undefined;
     var made: usize = 0;
     defer for (results[0..made]) |*r| r.deinit();
-    for ([_]Op{ .@"union", .intersection, .difference }) |op| {
+    for ([_]Op{ .@"union", .intersection, .difference }, 0..) |op, k| {
         results[made] = try sound(a, b, op);
         made += 1;
         try testing.expectEqual(merged.zone, results[made - 1].tol.zone);
+        var report = pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        var again = try reported(a, b, op, .{}, &report);
+        again.deinit();
+        shifts[k] = report.shift;
     }
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
@@ -848,8 +855,8 @@ fn expectIdentitiesMerged(a: *const Body, b: *const Body) !void {
     const mb = try mass.mass(b, .{}, &diag);
     const slab = merged.xsect * @min(ma.area, mb.area) + CLOSE * (ma.volume + mb.volume);
     const vi = try volume(&results[1]);
-    try testing.expectApproxEqAbs(ma.volume + mb.volume, try volume(&results[0]) + vi, slab);
-    try testing.expectApproxEqAbs(ma.volume - vi, try volume(&results[2]), slab);
+    try testing.expectApproxEqAbs(ma.volume + mb.volume, try volume(&results[0]) + vi, slab + shifts[0] + shifts[1]);
+    try testing.expectApproxEqAbs(ma.volume - vi, try volume(&results[2]), slab + shifts[1] + shifts[2]);
 }
 
 test "boolean: operands of different tolerances merge to the larger: a 200 mm plate with 5 mm pegs, valid, the identities to the merged slab" {
@@ -888,25 +895,79 @@ test "boolean: operands of different tolerances merge to the larger: a 200 mm pl
     try testing.expectApproxEqAbs(200 * 200 * 10 + above, try volume(&all), plate_tol.xsect * 25);
 }
 
-test "boolean: coplanar faces take the larger one's plane: a peg's face 1e-5 out of a plate's leaves the plate's where it was" {
-    // The nightly's find (run 43515591144): the peg's fragments came first and the plate's
-    // face, its corners within the merged zone of the peg's plane, was given that plane: the
-    // plate's 600 square face moved 1e-5, its volume by 0.002, past the slab over the peg
+test "boolean: a small cavity near the tolerance's reach stays a void" {
+    // The result's shells are told outer from void by their signed volumes; summed from the
+    // world's origin, terms of 1e20 for a volume under 0.1, the sign was the rounding's
+    const far = mat.Affine.translate(.{ 6e6, -7e6, 8e6 }).compose(&mat.Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, 0.3));
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outer_near = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer outer_near.deinit();
+    var cavity_near = try box(.{ 0.3, 0.3, 0.3 }, .{ 0.7, 0.7, 0.7 });
+    defer cavity_near.deinit();
+    var outer = try transform.transform(testing.allocator, &outer_near, &far, .{}, &diag);
+    defer outer.deinit();
+    var cavity = try transform.transform(testing.allocator, &cavity_near, &far, .{}, &diag);
+    defer cavity.deinit();
+    var hollow = try sound(&outer, &cavity, .difference);
+    defer hollow.deinit();
+    try testing.expectEqual([2]usize{ 1, 1 }, shellKinds(&hollow));
+}
+
+test "boolean: the result's planes are its operands' own records, its lines theirs or its sections' (D28)" {
+    // Provenance, as OCCT's images: nothing in the result is made again by geometry. Turned
+    // off every axis, so a plane rebuilt from a face's frame would not be the record bit for
+    // bit
+    var a0 = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    defer a0.deinit();
+    var b0 = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
+    defer b0.deinit();
+    var a = try turned(&a0, .{ 1, 1, 1 }, .{ 1, 2, 3 }, 0.3);
+    defer a.deinit();
+    var b = try turned(&b0, .{ 1, 1, 1 }, .{ 1, 2, 3 }, 0.3);
+    defer b.deinit();
+    var u = try sound(&a, &b, .@"union");
+    defer u.deinit();
+    for (u.geometry.planes.items) |plane| {
+        var found = false;
+        for ([_]*const Body{ &a, &b }) |operand| for (operand.geometry.planes.items) |own| {
+            found = found or std.meta.eql(own, plane);
+        };
+        try testing.expect(found);
+    }
+    // Every operand edge the result keeps whole keeps its line, bit for bit
+    var from_operands: usize = 0;
+    for (u.geometry.lines.items) |line| for ([_]*const Body{ &a, &b }) |operand| for (operand.geometry.lines.items) |own| {
+        from_operands += @intFromBool(std.meta.eql(own, line));
+    };
+    try testing.expect(from_operands >= 12);
+}
+
+test "boolean: faces the paves found in one plane take the first operand's face's plane, the shift reported" {
+    // D28 (OCCT's same-domain faces): a peg's face 1e-5 out of a plate's, a group of two;
+    // its plane is the first operand's face's, the other face moved onto it by the gap over
+    // its area, which the report bounds (the nightly's find, run 43515591144, moved the
+    // plate's face by the interner's first record and nothing said so)
     const plate_tol = Tolerance.fromSize(200);
     var plate = try boxAt(plate_tol, .{ 2.00001, -98.5, 0.5 }, .{ 102.00001, 101.5, 3.5 });
     defer plate.deinit();
     var peg = try boxAt(tol, .{ 2, -0.5, 1 }, .{ 3, 0.5, 2 });
     defer peg.deinit();
     const plate_volume = try volume(&plate);
-    const slab = plate_tol.xsect * 6;
-    for ([2][2]*const Body{ .{ &peg, &plate }, .{ &plate, &peg } }) |pair| {
+    for ([2][2]*const Body{ .{ &peg, &plate }, .{ &plate, &peg } }, [2]f64{ 2, 2.00001 }) |pair, plane_at| {
         var u = try sound(pair[0], pair[1], .@"union");
         defer u.deinit();
-        try testing.expectApproxEqAbs(plate_volume, try volume(&u), slab);
-        // The face toward -x on the plate's plane
+        // The face toward -x on the first operand's plane, the record copied
         const face = types.FaceIndex.of(facing(&u, .{ -1, 0, 0 }));
         const plane = u.geometry.planes.items[u.face(face).surface.index];
-        try testing.expectApproxEqAbs(2.00001, @abs(vec.dot(plane.frame.origin, plane.frame.z)), 1e-12);
+        try testing.expectEqual(plane_at, @abs(vec.dot(plane.frame.origin, plane.frame.z)));
+        var report = pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        var again = try reported(pair[0], pair[1], .@"union", .{}, &report);
+        defer again.deinit();
+        // The volume within what the report says the faces moved
+        try testing.expect(report.shift <= 1e-5 * 600 * (1 + 1e-6) + CLOSE);
+        try testing.expectApproxEqAbs(plate_volume, try volume(&u), report.shift + CLOSE * plate_volume);
     }
 }
 

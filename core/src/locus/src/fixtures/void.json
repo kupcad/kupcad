@@ -319,8 +319,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 8,
-      "end": 9,
+      "start": 9,
+      "end": 8,
       "gap": 0,
       "coedge": 24,
       "degenerate": false,
@@ -336,8 +336,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 9,
-      "end": 10,
+      "start": 10,
+      "end": 9,
       "gap": 0,
       "coedge": 25,
       "degenerate": false,
@@ -353,8 +353,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 10,
-      "end": 11,
+      "start": 11,
+      "end": 10,
       "gap": 0,
       "coedge": 26,
       "degenerate": false,
@@ -370,8 +370,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 11,
-      "end": 8,
+      "start": 8,
+      "end": 11,
       "gap": 0,
       "coedge": 27,
       "degenerate": false,
@@ -387,8 +387,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 12,
-      "end": 13,
+      "start": 13,
+      "end": 12,
       "gap": 0,
       "coedge": 28,
       "degenerate": false,
@@ -404,8 +404,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 13,
-      "end": 14,
+      "start": 14,
+      "end": 13,
       "gap": 0,
       "coedge": 29,
       "degenerate": false,
@@ -421,8 +421,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 14,
-      "end": 15,
+      "start": 15,
+      "end": 14,
       "gap": 0,
       "coedge": 30,
       "degenerate": false,
@@ -438,8 +438,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 15,
-      "end": 12,
+      "start": 12,
+      "end": 15,
       "gap": 0,
       "coedge": 31,
       "degenerate": false,
@@ -455,8 +455,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 14,
-      "end": 8,
+      "start": 8,
+      "end": 14,
       "gap": 0,
       "coedge": 33,
       "degenerate": false,
@@ -472,8 +472,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 11,
-      "end": 15,
+      "start": 15,
+      "end": 11,
       "gap": 0,
       "coedge": 35,
       "degenerate": false,
@@ -489,8 +489,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 13,
-      "end": 9,
+      "start": 9,
+      "end": 13,
       "gap": 0,
       "coedge": 37,
       "degenerate": false,
@@ -506,8 +506,8 @@
       },
       "t0": 0,
       "t1": 2,
-      "start": 12,
-      "end": 10,
+      "start": 10,
+      "end": 12,
       "gap": 0,
       "coedge": 41,
       "degenerate": false,
@@ -736,7 +736,7 @@
     },
     {
       "edge": 12,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 38,
       "next": 25,
       "prev": 27,
@@ -745,7 +745,7 @@
     },
     {
       "edge": 13,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 42,
       "next": 26,
       "prev": 24,
@@ -754,7 +754,7 @@
     },
     {
       "edge": 14,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 46,
       "next": 27,
       "prev": 25,
@@ -763,7 +763,7 @@
     },
     {
       "edge": 15,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 34,
       "next": 24,
       "prev": 26,
@@ -772,7 +772,7 @@
     },
     {
       "edge": 16,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 40,
       "next": 29,
       "prev": 31,
@@ -781,7 +781,7 @@
     },
     {
       "edge": 17,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 36,
       "next": 30,
       "prev": 28,
@@ -790,7 +790,7 @@
     },
     {
       "edge": 18,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 32,
       "next": 31,
       "prev": 29,
@@ -799,7 +799,7 @@
     },
     {
       "edge": 19,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 44,
       "next": 28,
       "prev": 30,
@@ -808,7 +808,7 @@
     },
     {
       "edge": 18,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 30,
       "next": 33,
       "prev": 35,
@@ -817,7 +817,7 @@
     },
     {
       "edge": 20,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 39,
       "next": 34,
       "prev": 32,
@@ -826,7 +826,7 @@
     },
     {
       "edge": 15,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 27,
       "next": 35,
       "prev": 33,
@@ -835,7 +835,7 @@
     },
     {
       "edge": 21,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 45,
       "next": 32,
       "prev": 34,
@@ -844,7 +844,7 @@
     },
     {
       "edge": 17,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 29,
       "next": 37,
       "prev": 39,
@@ -853,7 +853,7 @@
     },
     {
       "edge": 22,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 43,
       "next": 38,
       "prev": 36,
@@ -862,7 +862,7 @@
     },
     {
       "edge": 12,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 24,
       "next": 39,
       "prev": 37,
@@ -871,7 +871,7 @@
     },
     {
       "edge": 20,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 33,
       "next": 36,
       "prev": 38,
@@ -880,7 +880,7 @@
     },
     {
       "edge": 16,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 28,
       "next": 41,
       "prev": 43,
@@ -889,7 +889,7 @@
     },
     {
       "edge": 23,
-      "same_sense": true,
+      "same_sense": false,
       "partner": 47,
       "next": 42,
       "prev": 40,
@@ -898,7 +898,7 @@
     },
     {
       "edge": 13,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 25,
       "next": 43,
       "prev": 41,
@@ -907,7 +907,7 @@
     },
     {
       "edge": 22,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 37,
       "next": 40,
       "prev": 42,
@@ -916,7 +916,7 @@
     },
     {
       "edge": 19,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 31,
       "next": 45,
       "prev": 47,
@@ -925,7 +925,7 @@
     },
     {
       "edge": 21,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 35,
       "next": 46,
       "prev": 44,
@@ -934,7 +934,7 @@
     },
     {
       "edge": 14,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 26,
       "next": 47,
       "prev": 45,
@@ -943,7 +943,7 @@
     },
     {
       "edge": 23,
-      "same_sense": false,
+      "same_sense": true,
       "partner": 41,
       "next": 44,
       "prev": 46,
@@ -1145,15 +1145,15 @@
         "kind": "plane",
         "index": 6
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 6,
       "shell": 0,
       "next_in_shell": 7,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1164,15 +1164,15 @@
         "kind": "plane",
         "index": 7
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 7,
       "shell": 0,
       "next_in_shell": 8,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1183,15 +1183,15 @@
         "kind": "plane",
         "index": 8
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 8,
       "shell": 0,
       "next_in_shell": 9,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1202,15 +1202,15 @@
         "kind": "plane",
         "index": 9
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 9,
       "shell": 0,
       "next_in_shell": 10,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1221,15 +1221,15 @@
         "kind": "plane",
         "index": 10
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 10,
       "shell": 0,
       "next_in_shell": 11,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1240,15 +1240,15 @@
         "kind": "plane",
         "index": 11
       },
-      "same_sense": true,
+      "same_sense": false,
       "first_loop": 11,
       "shell": 0,
       "next_in_shell": null,
       "uv_box": [
         0,
-        -2,
+        0,
         2,
-        0
+        2
       ],
       "approx": false,
       "tag": 0,
@@ -1498,30 +1498,6 @@
       {
         "o": [
           3,
-          1,
-          1
-        ],
-        "d": [
-          0,
-          1,
-          0
-        ]
-      },
-      {
-        "o": [
-          3,
-          3,
-          1
-        ],
-        "d": [
-          -1,
-          0,
-          0
-        ]
-      },
-      {
-        "o": [
-          1,
           3,
           1
         ],
@@ -1534,8 +1510,68 @@
       {
         "o": [
           1,
+          3,
+          1
+        ],
+        "d": [
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "o": [
+          1,
           1,
           1
+        ],
+        "d": [
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "o": [
+          3,
+          1,
+          1
+        ],
+        "d": [
+          -1,
+          0,
+          0
+        ]
+      },
+      {
+        "o": [
+          3,
+          3,
+          3
+        ],
+        "d": [
+          -1,
+          0,
+          0
+        ]
+      },
+      {
+        "o": [
+          3,
+          1,
+          3
+        ],
+        "d": [
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "o": [
+          1,
+          1,
+          3
         ],
         "d": [
           1,
@@ -1550,18 +1586,6 @@
           3
         ],
         "d": [
-          1,
-          0,
-          0
-        ]
-      },
-      {
-        "o": [
-          3,
-          3,
-          3
-        ],
-        "d": [
           0,
           -1,
           0
@@ -1571,29 +1595,17 @@
         "o": [
           3,
           1,
-          3
+          1
         ],
         "d": [
-          -1,
           0,
-          0
+          0,
+          1
         ]
       },
       {
         "o": [
           1,
-          1,
-          3
-        ],
-        "d": [
-          0,
-          1,
-          0
-        ]
-      },
-      {
-        "o": [
-          3,
           1,
           3
         ],
@@ -1605,8 +1617,8 @@
       },
       {
         "o": [
-          1,
-          1,
+          3,
+          3,
           1
         ],
         "d": [
@@ -1617,26 +1629,14 @@
       },
       {
         "o": [
-          3,
-          3,
-          3
-        ],
-        "d": [
-          0,
-          0,
-          -1
-        ]
-      },
-      {
-        "o": [
           1,
           3,
-          3
+          1
         ],
         "d": [
           0,
           0,
-          -1
+          1
         ]
       }
     ],
@@ -1801,14 +1801,14 @@
             0
           ],
           "y": [
-            -1,
+            1,
             0,
             0
           ],
           "z": [
             0,
             0,
-            1
+            -1
           ]
         }
       },
@@ -1826,13 +1826,13 @@
           ],
           "y": [
             0,
-            -1,
+            1,
             0
           ],
           "z": [
             0,
             0,
-            -1
+            1
           ]
         }
       },
@@ -1851,11 +1851,11 @@
           "y": [
             0,
             0,
-            -1
+            1
           ],
           "z": [
             0,
-            1,
+            -1,
             0
           ]
         }
@@ -1875,10 +1875,10 @@
           "y": [
             0,
             0,
-            -1
+            1
           ],
           "z": [
-            -1,
+            1,
             0,
             0
           ]
@@ -1899,11 +1899,11 @@
           "y": [
             0,
             0,
-            -1
+            1
           ],
           "z": [
             0,
-            -1,
+            1,
             0
           ]
         }
@@ -1923,10 +1923,10 @@
           "y": [
             0,
             0,
-            -1
+            1
           ],
           "z": [
-            1,
+            -1,
             0,
             0
           ]

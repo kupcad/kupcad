@@ -32,6 +32,7 @@ const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const canonical = @import("../geometry/canonical.zig");
+const curves = @import("../geometry/curves.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
@@ -152,6 +153,13 @@ pub const Paves = struct {
     boundary: std.ArrayList(Incidence) = .empty,
     /// Each operand's face's section segments (the smaller vertex first).
     sections: [2][]std.ArrayList([2]u32) = .{ &.{}, &.{} },
+    /// One line per pair of faces that meet in section segments: the section curve every
+    /// segment of the pair lies on (OCCT's one curve per face–face interference), through
+    /// the pair's outermost merged vertices on it, so its segments share one curve record
+    /// in the result and pieces of it join again.
+    section_lines: std.ArrayList(curves.Line) = .empty,
+    /// Each section segment's line in `section_lines`, the first pair that made it.
+    section_line_of: std.AutoHashMapUnmanaged([2]u32, u32) = .empty,
     /// The pairs of faces (of `a`, of `b`) lying in one plane.
     coplanar: std.ArrayList([2]u32) = .empty,
     /// The vertices of one operand strictly inside a face of the other (vertex–face): where
@@ -179,6 +187,8 @@ pub const Paves = struct {
             for (self.sections[k]) |*list| list.deinit(a);
             a.free(self.sections[k]);
         }
+        self.section_lines.deinit(a);
+        self.section_line_of.deinit(a);
         self.incidences.deinit(a);
         self.boundary.deinit(a);
         self.coplanar.deinit(a);
@@ -864,15 +874,29 @@ const Filler = struct {
                 }
             };
             std.mem.sort(u32, both.items, Order{ .points = p.points.items, .line = line }, Order.lessThan);
+            // The pair's section line, made with its first segment
+            var section_line: ?u32 = null;
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
                 const in_a = try planar_faces.place(self.body(0), fa, mid, p.tol, self.diag);
                 if (in_a == .outside) continue;
                 const in_b = try planar_faces.place(self.body(1), fb, mid, p.tol, self.diag);
                 if (in_b == .outside) continue;
-                const segment = .{ @min(u, w), @max(u, w) };
-                if (self.imprinted(0, fa, u, w, in_a)) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
-                if (self.imprinted(1, fb, u, w, in_b)) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
+                const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
+                const imprint_a = self.imprinted(0, fa, u, w, in_a);
+                const imprint_b = self.imprinted(1, fb, u, w, in_b);
+                if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
+                if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
+                if (imprint_a or imprint_b) {
+                    if (section_line == null) {
+                        // Merged vertices more than the welding distance apart: a line
+                        const through = curves.Line.through(p.point(both.items[0]), p.point(both.items[both.items.len - 1])).?;
+                        try p.section_lines.append(self.allocator, through);
+                        section_line = @intCast(p.section_lines.items.len - 1);
+                    }
+                    const entry = try p.section_line_of.getOrPut(self.allocator, segment);
+                    if (!entry.found_existing) entry.value_ptr.* = section_line.?;
+                }
                 self.tally();
             }
         }

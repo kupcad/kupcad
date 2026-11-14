@@ -11,7 +11,9 @@
 //! 4. `select.zig`: Mäntylä's table, the fragments kept, `b`'s turned inward in a
 //!    difference;
 //! 5. here, the assembly: the kept fragments sewn into shells (`construct/sew.zig`), one
-//!    vertex per merged vertex, the coplanar ones on one plane record; an edge more than two
+//!    vertex per merged vertex, each plane and line by provenance (D28, `Provenance`: the
+//!    source face's or its coplanar group's plane, the source edge's or the section's
+//!    line, copied, never interned again); an edge more than two
 //!    fragments use (two solids touching along it) is one edge per solid, its uses paired
 //!    by the wedges of material about it; a shell enclosing negative volume a void;
 //! 6. `simplify.zig`: faces on one plane merged across edges, edges joined across vertices
@@ -35,6 +37,10 @@ const vec = @import("../math/vec.zig");
 const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
+const curves = @import("../geometry/curves.zig");
+const surfaces = @import("../geometry/surfaces.zig");
+const canonical = @import("../geometry/canonical.zig");
+const bbox = @import("../measure/bbox.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
@@ -169,6 +175,11 @@ pub const Report = struct {
     rays: u32 = 0,
     by_contagion: u32 = 0,
     checks: u32 = 0,
+    /// How much volume the result's faces may have moved from where their pieces lie,
+    /// at most: each kept fragment's area times its corners' largest distance from the
+    /// plane it was given (its own, or its coplanar group's: D28). The volume identities
+    /// hold to it.
+    shift: f64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) Report {
         return .{ .allocator = allocator };
@@ -194,10 +205,10 @@ pub const Report = struct {
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks, .shift = self.shift };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32 };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32, shift: f64 };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -222,6 +233,9 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     }
     const tol = common.tolerance orelse Tolerance.merge(a.tol, b.tol);
     try diagnostics.input.tolerance(diag, tol);
+    // Coordinates past what the tolerance can decide at (the scale guard), refused before
+    // any of them is compared
+    try diagnostics.input.scale(diag, @max(try magnitudeOf(a, diag), try magnitudeOf(b, diag)), tol);
     if (a.isEmpty() or b.isEmpty()) {
         const result = try emptyOperand(allocator, a, b, op, tol, diag, r);
         try trace.data(allocator, &common, "boolean", "report", r.view());
@@ -255,6 +269,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     stage = .assemble;
     var made = try assemble(allocator, &paves, &fragments, classes, keeps, tol, options.tag_op, diag);
     defer made.deinit(allocator);
+    r.shift = made.shift;
     var result = made.body;
     errdefer result.deinit();
     try trace.phase(allocator, &common, &result, "boolean", "assembled");
@@ -500,6 +515,8 @@ const Made = struct {
     fragments: *const imprint.Fragments,
     classes: []const classify.Classified,
     keeps: []const select.Keep,
+    /// `Report.shift`.
+    shift: f64 = 0,
 
     fn deinit(self: *Made, allocator: std.mem.Allocator) void {
         allocator.free(self.face_fragment);
@@ -551,35 +568,9 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     defer face_loops.deinit(allocator);
     var normals: std.ArrayList(Vec3) = .empty;
     defer normals.deinit(allocator);
-    // A fragment's corners, which the plane it is given must hold
-    var corners: std.ArrayList(Vec3) = .empty;
-    defer corners.deinit(allocator);
-
-    // The kept fragments' planes, the largest first: coplanar fragments share the first
-    // record interned, so a face moves onto a larger one's plane, never the reverse (a
-    // plate's face moved onto a peg's moved the plate's volume by the gap times its area:
-    // the nightly's find, run 43515591144); ties in the fragments' order
-    {
-        const order = try allocator.alloc(u32, fragments.items.items.len);
-        defer allocator.free(order);
-        const area = try allocator.alloc(f64, fragments.items.items.len);
-        defer allocator.free(area);
-        var n: usize = 0;
-        for (keeps, 0..) |keep, i| {
-            if (keep == .drop) continue;
-            order[n] = @intCast(i);
-            n += 1;
-            area[i] = fragmentArea(paves, fragments, i);
-        }
-        const Larger = struct {
-            area: []const f64,
-            fn lessThan(ctx: @This(), x: u32, y: u32) bool {
-                return ctx.area[x] > ctx.area[y] or (ctx.area[x] == ctx.area[y] and x < y);
-            }
-        };
-        std.mem.sort(u32, order[0..n], Larger{ .area = area }, Larger.lessThan);
-        for (order[0..n]) |i| _ = try fragmentPlane(allocator, &b, paves, fragments, i, keeps[i] == .flip, &corners);
-    }
+    // Every plane and line the result is given, by where it comes from (D28)
+    var from = try Provenance.init(allocator, paves, diag);
+    defer from.deinit();
 
     for (fragments.items.items, keeps, 0..) |fragment, keep, i| {
         if (keep == .drop) continue;
@@ -588,7 +579,8 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
         const f = types.FaceIndex.of(fragment.face);
         var normal = in_face.outwardNormal(body, f, .{ 0, 0 });
         if (flip) normal = vec.neg(normal);
-        const facing = try fragmentPlane(allocator, &b, paves, fragments, i, flip, &corners);
+        const facing = try from.plane(&b, fragment.operand, fragment.face, normal);
+        made.shift += fragmentArea(paves, fragments, i) * from.farthest(fragments, i, b.body.geometry.planes.items[facing.surface.index]);
         const face_index: u32 = @intCast(faces.items.len);
         const first_loop: u32 = @intCast(loop_ranges.items.len);
         for (fragments.loopsOf(i)) |loop| {
@@ -596,12 +588,12 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
             const start: u32 = @intCast(edge_specs.items.len);
             for (0..vertices.len) |j| {
                 // A flipped fragment's loops run the other way
-                const from = if (flip) vertices[vertices.len - 1 - j] else vertices[j];
-                const to = if (flip) vertices[(2 * vertices.len - 2 - j) % vertices.len] else vertices[(j + 1) % vertices.len];
-                const u = try builderVertex(&b, paves, vertex_of, from);
-                const w = try builderVertex(&b, paves, vertex_of, to);
+                const from_vertex = if (flip) vertices[vertices.len - 1 - j] else vertices[j];
+                const to_vertex = if (flip) vertices[(2 * vertices.len - 2 - j) % vertices.len] else vertices[(j + 1) % vertices.len];
+                const u = try builderVertex(&b, paves, vertex_of, from_vertex);
+                const w = try builderVertex(&b, paves, vertex_of, to_vertex);
                 if (u == w) return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .entity = .of(.face, fragment.face), .label = "a piece of a face" });
-                try edge_specs.append(allocator, try b.straight(u, w));
+                try edge_specs.append(allocator, try from.piece(&b, from_vertex, to_vertex, u, w));
                 try uses.append(allocator, .{ .spec = @intCast(edge_specs.items.len - 1), .face = face_index });
             }
             try loop_ranges.append(allocator, .{ start, @intCast(edge_specs.items.len - start) });
@@ -645,24 +637,6 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     return made;
 }
 
-/// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
-/// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
-/// face's pieces, whose face piece and whose faces about the vertex are in one shell (a
-/// pocket meeting the face it was cut from at a corner). Two solids touching so are two
-/// shells, and pass.
-/// Fragment `i`'s plane, its source face's turned when `flip`, interned for its corners.
-fn fragmentPlane(allocator: std.mem.Allocator, b: *primitives.Builder, paves: *const pave.Paves, fragments: *const imprint.Fragments, i: usize, flip: bool, corners: *std.ArrayList(Vec3)) Error!primitives.Builder.Facing {
-    const fragment = fragments.items.items[i];
-    const body = paves.operands[fragment.operand];
-    const f = types.FaceIndex.of(fragment.face);
-    const frame = planar_faces.frameOf(body, f).?;
-    var normal = in_face.outwardNormal(body, f, .{ 0, 0 });
-    if (flip) normal = vec.neg(normal);
-    corners.clearRetainingCapacity();
-    for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| try corners.append(allocator, paves.point(m));
-    return b.facingPlane(Frame.init(frame.origin, frame.x, normal), corners.items);
-}
-
 /// Fragment `i`'s area: its loops' vector areas (a hole's runs the other way and takes its
 /// share away), each from its first corner, so far from the origin it is the fragment's
 /// size that rounds, not its distance.
@@ -677,6 +651,11 @@ fn fragmentArea(paves: *const pave.Paves, fragments: *const imprint.Fragments, i
     return vec.length(twice) / 2;
 }
 
+/// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
+/// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
+/// face's pieces, whose face piece and whose faces about the vertex are in one shell (a
+/// pocket meeting the face it was cut from at a corner). Two solids touching so are two
+/// shells, and pass.
 fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments, face_fragment: []const u32, vertex_of: []const types.VertexIndex, body: *const Body, diag: *Diagnostics) Error!void {
     for (paves.touches.items) |touch| {
         const v = vertex_of[touch.vertex];
@@ -812,12 +791,225 @@ fn faceMap(allocator: std.mem.Allocator, result: *Body, made: *const Made, log: 
 
 /// The builder's vertex for merged vertex `m`, made on its first use with the merged
 /// vertex's gap.
+/// Merged vertex `m` as a vertex of the result, its point its own record (the paves keep
+/// merged vertices further apart than the intersection tolerance: none is welded again).
 fn builderVertex(b: *primitives.Builder, paves: *const pave.Paves, vertex_of: []types.VertexIndex, m: u32) Error!types.VertexIndex {
     if (vertex_of[m] == .none) {
-        vertex_of[m] = try b.vertex(paves.point(m));
+        const at = b.body.geometry.addPoint(b.allocator, paves.point(m)) catch |e| return b.fail(e);
+        vertex_of[m] = try b.vertexAt(at);
         b.body.vertex(vertex_of[m]).gap = paves.gaps.items[m];
     }
     return vertex_of[m];
+}
+
+/// Where the result's geometry comes from (D28; OCCT's images and same-domain faces): a
+/// fragment's plane is its face's own record, copied, unless the paves found the face in
+/// one plane with faces of the other operand, when the whole group takes one face's plane
+/// (`samePlanes`); an edge's line is the operand edge it is a piece of (the first
+/// operand's for a common block), else its section's line (`Paves.section_lines`). Nothing
+/// is decided again by geometry: what the paves found coincident shares a record, and
+/// nothing else does.
+const Provenance = struct {
+    allocator: std.mem.Allocator,
+    paves: *const pave.Paves,
+    /// Each operand's face's plane: the face whose record it takes.
+    plane_of: [2][]Face = .{ &.{}, &.{} },
+    /// Each piece between two merged vertices (the smaller first): its source.
+    line_of: std.AutoHashMapUnmanaged([2]u32, Source) = .empty,
+    /// The records copied into the result, by source.
+    planes: std.AutoHashMapUnmanaged(Copy, geometry.SurfaceRef) = .empty,
+    lines: std.AutoHashMapUnmanaged(Copy, geometry.CurveRef) = .empty,
+    /// Scratch: a face's points.
+    points: std.ArrayList(Vec3) = .empty,
+    merged: std.ArrayList(u32) = .empty,
+
+    const Face = struct { operand: u1, face: u32 };
+    const Source = union(enum) { edge: struct { operand: u1, edge: u32 }, section: u32 };
+    /// A record by where it comes from: an operand's (0, 1) or a section line (2), and its
+    /// index there.
+    const Copy = struct { from: u2, index: u32 };
+
+    fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, diag: *Diagnostics) Error!Provenance {
+        var self: Provenance = .{ .allocator = allocator, .paves = paves };
+        errdefer self.deinit();
+        for (0..2) |k| {
+            self.plane_of[k] = try allocator.alloc(Face, paves.operands[k].faces.items.len);
+            for (self.plane_of[k], 0..) |*face, i| face.* = .{ .operand = @intCast(k), .face = @intCast(i) };
+        }
+        try self.samePlanes(diag);
+        // Pieces of operand edges, the first operand's first (a common block is one edge of
+        // it), then the section segments
+        for (0..2) |k| for (paves.edge_paves[k], 0..) |list, e| {
+            if (list.items.len < 2) continue;
+            for (list.items[0 .. list.items.len - 1], list.items[1..]) |x, y| {
+                const entry = try self.line_of.getOrPut(allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
+                if (!entry.found_existing) entry.value_ptr.* = .{ .edge = .{ .operand = @intCast(k), .edge = @intCast(e) } };
+            }
+        };
+        var sections = paves.section_line_of.iterator();
+        while (sections.next()) |section| {
+            const entry = try self.line_of.getOrPut(allocator, section.key_ptr.*);
+            if (!entry.found_existing) entry.value_ptr.* = .{ .section = section.value_ptr.* };
+        }
+        return self;
+    }
+
+    fn deinit(self: *Provenance) void {
+        for (self.plane_of) |list| self.allocator.free(list);
+        self.line_of.deinit(self.allocator);
+        self.planes.deinit(self.allocator);
+        self.lines.deinit(self.allocator);
+        self.points.deinit(self.allocator);
+        self.merged.deinit(self.allocator);
+    }
+
+    /// The groups of faces the paves found in one plane (`Paves.coplanar`, joined through
+    /// shared faces), each given one face's plane: the first, the first operand's before
+    /// the second's and by index (OCCT's same-domain representative), whose plane holds
+    /// every face of the group within the intersection tolerance, its own corners and the
+    /// merged vertices on it (the pairs were found by one face lying in the other's plane,
+    /// which a face a hair off parallel and larger need not). A face the zone from it to
+    /// within rounding is refused (`at_tolerance`), and a group no plane of its own holds
+    /// too (`gap_too_large`: one plane for it would move a face past the tolerance).
+    fn samePlanes(self: *Provenance, diag: *Diagnostics) Error!void {
+        const p = self.paves;
+        const n_a: u32 = @intCast(p.operands[0].faces.items.len);
+        const n: u32 = n_a + @as(u32, @intCast(p.operands[1].faces.items.len));
+        if (p.coplanar.items.len == 0) return;
+        const parent = try self.allocator.alloc(u32, n);
+        defer self.allocator.free(parent);
+        for (parent, 0..) |*x, i| x.* = @intCast(i);
+        for (p.coplanar.items) |pair| {
+            const x = findRoot(parent, pair[0]);
+            const y = findRoot(parent, n_a + pair[1]);
+            if (x != y) parent[@max(x, y)] = @min(x, y);
+        }
+        // The groups as runs of nodes sorted by root, each run in index order
+        const order = try self.allocator.alloc(u32, n);
+        defer self.allocator.free(order);
+        for (order, 0..) |*x, i| x.* = @intCast(i);
+        for (parent, 0..) |_, i| parent[i] = findRoot(parent, @intCast(i));
+        const ByRoot = struct {
+            root: []const u32,
+            fn lessThan(ctx: @This(), x: u32, y: u32) bool {
+                return ctx.root[x] < ctx.root[y] or (ctx.root[x] == ctx.root[y] and x < y);
+            }
+        };
+        std.mem.sort(u32, order, ByRoot{ .root = parent }, ByRoot.lessThan);
+        var start: usize = 0;
+        while (start < n) {
+            var end = start + 1;
+            while (end < n and parent[order[end]] == parent[order[start]]) end += 1;
+            defer start = end;
+            const group = order[start..end];
+            if (group.len < 2) continue;
+            const chosen = try self.representative(group, n_a, diag);
+            for (group) |node| {
+                const face = nodeFace(node, n_a);
+                self.plane_of[face.operand][face.face] = chosen;
+            }
+        }
+    }
+
+    fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Face {
+        const p = self.paves;
+        for (group) |candidate| {
+            const c = nodeFace(candidate, n_a);
+            const candidate_plane = planeOf(p.operands[c.operand], c.face);
+            var tally: canonical.Tally = .{};
+            for (group) |member| {
+                const g = nodeFace(member, n_a);
+                try self.facePoints(g, diag);
+                for (self.points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt)), p.tol.xsect, canonical.magnitude(&.{ pt, candidate_plane.frame.origin })));
+            }
+            switch (tally.verdict()) {
+                .same => return c,
+                .at_tolerance => |at| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, c.face), .label = "a face's plane, which the faces the paves found in one plane with it lie in or not, to within rounding", .measured = at.measured, .threshold = at.limit }),
+                .apart => {},
+            }
+        }
+        const first = nodeFace(group[0], n_a);
+        return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.face, first.face), .label = "faces the paves found in one plane, which no plane of theirs holds within the intersection tolerance", .threshold = p.tol.xsect });
+    }
+
+    /// Face `g`'s corners and the merged vertices on it, into `points`.
+    fn facePoints(self: *Provenance, g: Face, diag: *Diagnostics) Error!void {
+        const p = self.paves;
+        const body = p.operands[g.operand];
+        self.points.clearRetainingCapacity();
+        var loops = traverse.Loops.init(body, types.FaceIndex.of(g.face));
+        while (loops.next() catch return corrupt(diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(diag)) |c| try self.points.append(self.allocator, body.point(body.coedgeStart(c)));
+        }
+        try p.verticesOn(g.operand, g.face, &self.merged);
+        for (self.merged.items) |m| try self.points.append(self.allocator, p.point(m));
+    }
+
+    /// The plane face `face` of `operand` takes, facing `outward`.
+    fn plane(self: *Provenance, b: *primitives.Builder, operand: u1, face: u32, outward: Vec3) Error!primitives.Builder.Facing {
+        const chosen = self.plane_of[operand][face];
+        const source = self.paves.operands[chosen.operand].face(types.FaceIndex.of(chosen.face)).surface;
+        const entry = try self.planes.getOrPut(self.allocator, .{ .from = chosen.operand, .index = source.index });
+        if (!entry.found_existing) {
+            const record = self.paves.operands[chosen.operand].geometry.planes.items[source.index];
+            entry.value_ptr.* = b.body.geometry.addPlane(b.allocator, record) catch |e| return b.fail(e);
+        }
+        const record = b.body.geometry.planes.items[entry.value_ptr.index];
+        const normal = vec.scale(record.frame.z, record.frame.sign());
+        return .{ .surface = entry.value_ptr.*, .same_sense = vec.dot(normal, outward) > 0 };
+    }
+
+    /// The largest distance of fragment `i`'s corners from `plane`.
+    fn farthest(self: *const Provenance, fragments: *const imprint.Fragments, i: usize, on: surfaces.Plane) f64 {
+        var worst: f64 = 0;
+        for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
+            worst = @max(worst, @abs(on.height(self.paves.point(m))));
+        };
+        return worst;
+    }
+
+    /// The edge from merged vertex `x` to `y` (result vertices `u`, `w`) on its source line.
+    fn piece(self: *Provenance, b: *primitives.Builder, x: u32, y: u32, u: types.VertexIndex, w: types.VertexIndex) Error!sew.EdgeSpec {
+        const source = self.line_of.get(.{ @min(x, y), @max(x, y) }) orelse
+            return b.diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.vertex, x), .label = "a piece of a fragment's loop that is neither a piece of an operand's edge nor a section segment" });
+        const key: Copy, const line: curves.Line = switch (source) {
+            .edge => |e| blk: {
+                const body = self.paves.operands[e.operand];
+                const ref = body.edge(types.EdgeIndex.of(e.edge)).curve;
+                break :blk .{ .{ .from = e.operand, .index = ref.index }, body.geometry.curve(ref).line };
+            },
+            .section => |index| .{ .{ .from = 2, .index = index }, self.paves.section_lines.items[index] },
+        };
+        const entry = try self.lines.getOrPut(self.allocator, key);
+        if (!entry.found_existing) entry.value_ptr.* = b.body.geometry.addLine(b.allocator, line) catch |e| return b.fail(e);
+        const ta = line.project(b.body.point(u));
+        const tb = line.project(b.body.point(w));
+        return .{ .start = u, .end = w, .curve = entry.value_ptr.*, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb };
+    }
+
+    fn nodeFace(node: u32, n_a: u32) Face {
+        return if (node < n_a) .{ .operand = 0, .face = node } else .{ .operand = 1, .face = node - n_a };
+    }
+
+    fn planeOf(body: *const Body, face: u32) surfaces.Plane {
+        return body.geometry.planes.items[body.face(types.FaceIndex.of(face)).surface.index];
+    }
+};
+
+fn findRoot(parent: []u32, i: u32) u32 {
+    var r = i;
+    while (parent[r] != r) r = parent[r];
+    return r;
+}
+
+/// The largest absolute coordinate of `body`'s points: what the scale guard measures.
+fn magnitudeOf(body: *const Body, diag: *Diagnostics) Error!f64 {
+    const box = bbox.bodyBounds(body) catch return corrupt(diag);
+    if (box.isEmpty()) return 0;
+    var m: f64 = 0;
+    for (0..3) |k| m = @max(m, @max(@abs(box.min[k]), @abs(box.max[k])));
+    return m;
 }
 
 /// Each edge more than two fragments use, where two solids of the result touch along it,

@@ -1601,14 +1601,18 @@ fn runSolids(source: anytype) !Outcome {
             const extreme = source.valueRangeAtMost(u8, 1, EXTREME_ONE_IN) == 1;
             const at = if (extreme) EXTREMES[source.index(EXTREMES.len)] else @as(f64, @floatFromInt(source.valueRangeAtMost(i32, -2, 2 * SOLID_GRID))) * 0.5;
             try log.add("  trim by {d} {d} {d} at {d}\n", .{ normal[0], normal[1], normal[2], at });
-            var front = solid_boolean.trim.trimByPlane(testing.allocator, &current, normal, at, .{}, &diag, null) catch |err| return cleanSolid(err);
+            var front_report = solid_boolean.pipeline.Report.init(testing.allocator);
+            defer front_report.deinit();
+            var back_report = solid_boolean.pipeline.Report.init(testing.allocator);
+            defer back_report.deinit();
+            var front = solid_boolean.trim.trimByPlane(testing.allocator, &current, normal, at, .{}, &diag, &front_report) catch |err| return cleanSolid(err);
             defer front.deinit();
-            var back = solid_boolean.trim.trimByPlane(testing.allocator, &current, vec.neg(normal), -at, .{}, &diag, null) catch |err| return cleanSolid(err);
+            var back = solid_boolean.trim.trimByPlane(testing.allocator, &current, vec.neg(normal), -at, .{}, &diag, &back_report) catch |err| return cleanSolid(err);
             defer back.deinit();
             try expectSolid(&front, &diag);
             try expectSolid(&back, &diag);
             const whole = try mass.mass(&current, .{}, &diag);
-            try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area);
+            try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area + front_report.shift + back_report.shift);
             continue;
         }
         var other = (try generatedSolid(source, &log, &diag)) orelse continue;
@@ -1617,12 +1621,14 @@ fn runSolids(source: anytype) !Outcome {
         const op = pick(solid_boolean.pipeline.Op, source);
         try log.add("  {s}\n", .{@tagName(op)});
         var results: [3]Body = undefined;
+        var shifts: [3]f64 = undefined;
         var made: usize = 0;
         defer for (results[0..made]) |*r| r.deinit();
         for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |each| {
             var report = solid_boolean.pipeline.Report.init(testing.allocator);
             defer report.deinit();
             results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return cleanSolid(err);
+            shifts[made] = report.shift;
             made += 1;
             try expectSolid(&results[made - 1], &diag);
             try solid_boolean.tests.expectReportFits(&report, &current, &other, &results[made - 1], each);
@@ -1638,8 +1644,10 @@ fn runSolids(source: anytype) !Outcome {
         // at most the tolerance times the smaller operand's area, may count either way
         const close = IDENTITY_CLOSE * @max(va + vb, 1) + tolerance.Tolerance.merge(current.tol, other.tol).xsect * @min(ma.area, mb.area);
         errdefer std.debug.print("volumes: a {d}, b {d}, union {d}, intersection {d}, difference {d}\n", .{ va, vb, vu, vi, vd });
-        try testing.expectApproxEqAbs(va + vb, vu + vi, close);
-        try testing.expectApproxEqAbs(va - vi, vd, close);
+        // and each result's faces given their coplanar group's plane moved by what its
+        // report says (D28)
+        try testing.expectApproxEqAbs(va + vb, vu + vi, close + shifts[0] + shifts[1]);
+        try testing.expectApproxEqAbs(va - vi, vd, close + shifts[1] + shifts[2]);
         const keep: usize = switch (op) {
             .@"union" => 0,
             .intersection => 1,

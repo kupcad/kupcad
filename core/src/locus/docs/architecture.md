@@ -339,8 +339,11 @@ The geometry arena interns points, lines and planes through a hashed grid with c
 ≥ 2·zone, welding to the first kept entry (RTCD pp. 466–474), replacing the linear scans.
 Surfaces are interned too, by canonical form where one is cheap (a plane by its normal
 and offset, a cylinder by axis line and radius) and by tolerance comparison otherwise, so
-that "these two faces lie on the same surface" is an index compare in the boolean and in
-`simplify` (OCCT's `UnifySameDomain` has to recover this by comparing geometry).
+that "these two faces lie on the same surface" is an index compare in `simplify` (OCCT's
+`UnifySameDomain` has to recover this by comparing geometry). The interner serves the
+constructions (primitives, sweeps, sketches), which make geometry; the boolean does not
+intern its result's geometry, it copies it by provenance (D28): what the paves found
+coincident shares one record, and nothing is decided again by geometry.
 
 ### 5.2 Topology
 
@@ -626,7 +629,9 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    p.126–127).
 7. **Simplify**: merge faces on the same surface across edges that are now interior
    (coplanar annihilation and its curved analogue), subject to D7; remove vertices of
-   valence two on a single curve; collapse edges below `δ`; `compact()`.
+   valence two on a single curve, or on two lines the same within the tolerance (the
+   later edge given the earlier's line: OCCT's `UnifySameDomain` joining edges, D28);
+   collapse edges below `δ`; `compact()`.
 8. **Check** (§9): the result must pass every rule or the operation fails with the finding.
 
 Batch unions and differences (KupCAD's chains) run as a sequence; a disjoint union is a
@@ -1336,6 +1341,7 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 | D24 | A hull of a sketch with arcs is refused by the driver (`curved_hull`, as a curved solid's hull is) until the hull keeps arcs; Locus's `sketch/hull.zig` hulls the vertices and the arcs' extreme points, documented | Answering the polygon through the extreme points | A disc's hull of area 2r² is a stand-in for πr², the kind of answer the parity rules forbid; the arc hull (tangent lines between arcs) is a later item (2026-11-06) |
 | D25 | A sketch offset is the sheet plus or minus the band its boundary sweeps (sweeps and joins as simple regions, one overlay input, positive winding) | The displaced outline filled by its winding (Chen–McMains) | A feature thinner than the offset turns its displaced outline inside out with positive winding: a sliver shrunk past its width kept a region of area 0.94, and each further offset of that garbage grew it fivefold until the overlay's nesting never ended (the fuzzer, 2026-11-08); the band is the definition of the offset itself (points within the distance of the boundary) and needs no rule about self-intersections |
 | D26 | In the 2D overlay the circle is the primary object and an arc piece is the interval between two cut points ordered around it by exact predicates (quadrant signs, then `orient2d` about the centre); the welded ends are the vertices; the remaining radical comparisons (discriminant, crossing in segment, which crossing a ray meets first) are exact by squaring and expansions | Arcs as `{c, r, ccw}` beside welded ends with `atan2` span tests (today); ends plus bulge | An arc's ends are off its circle by rounding; angles are transcendental and decided topology in `lineArc`/`arcArc`; bounded-depth radicals over `f64` need no big numbers (research/li-chen-egc.md §2; Leo, 2026-11-09) |
+| D28 | The boolean's result takes its geometry by provenance (OCCT's images and same-domain faces): a fragment's plane is its face's own record, copied, or for a face the paves found in one plane with faces of the other operand (`Paves.coplanar`, joined into groups) the plane of the group's first face (the first operand's before the second's, by index) whose plane holds every face of the group within the intersection tolerance; an edge's line is the operand edge it is a piece of (the first operand's for a common block), else its face pair's section line (`Paves.section_lines`, one per pair, through its outermost merged vertices); a merged vertex is its own point. The report's `shift` bounds the volume the faces moved onto their planes. `simplify` joins edges of two lines the same within the tolerance (Leo, 2026-11-14) | Interning the result's geometry (the interner re-decided sameness within the zone where the paves had decided within the intersection tolerance, and patches followed: keys from the model's first point, planes held over their faces, the largest fragment's plane first); choosing the largest face's plane (it made the kernel fit a fuzz check's assumption, not a principle) | The finds of 2026-11-13/14 lived in the gap between the two decisions: pieces of one line split far out, planes 1e-5 apart one record moved and two in place, near-coplanar hull faces merged, a plate's face moved onto a peg's; and a mixed-zone union 0.0095 too large, 0.002 with provenance. The paves' decisions are guarded (D27); a second, geometric decision of the same thing is a second chance to disagree |
 | D27 | A distance the paves compare with the intersection tolerance (vertex–vertex, vertex–edge, edge–edge, vertex–face, edge–face, a face in another's plane) that lies within rounding of it (64 ulps of the operands' largest coordinate) is refused, `Degenerate`, `at_tolerance`, the stage and entity named (Leo, 2026-11-13) | Deciding it either way; classifying a fragment by its neighbours; keeping exact-tolerance moves out of the fuzzer | One configuration at the tolerance to rounding is measured several ways (a plane's gap, each vertex's height, two points' distance), and the ways disagreed: faces apart while their vertices lay on, a sliver no sample could classify, an open shell (the nightly solids fuzzer, run 43417538617). Refusing names the configuration as a merged vertex past the zone is named; a hair either side is decided. Extended to the interner the same day (`spatial/intern.zig`, `canonical.verdict`): a point, curve or surface the zone from a kept record to within rounding (64 ulps of the coordinates or lengths compared) is refused, `at_tolerance`, since two planes 1e-5 apart were one record moved and two in place (the solids fuzzer's chain moved whole) |
 
 ---
