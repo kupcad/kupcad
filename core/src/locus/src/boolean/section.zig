@@ -36,6 +36,7 @@ const curve_surface = @import("../intersect/curve_surface.zig");
 const surface_surface = @import("../intersect/surface_surface.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const sketch_boolean = @import("../sketch/boolean.zig");
+const canonical = @import("../geometry/canonical.zig");
 const Body = body_mod.Body;
 const Overlay = overlay_mod.Overlay;
 const InputEdge = overlay_mod.InputEdge;
@@ -50,6 +51,9 @@ const TWO_PI = geometry.TWO_PI;
 /// The milestone of sketches whose edges are other curves than lines and arcs: none is
 /// planned yet, so a refusal names no milestone.
 const NO_MILESTONE = 0;
+/// How far beyond the zone a face's box may reach and the face still be passed by
+/// without a look, in zones: a pruning, which decides nothing near the zone itself.
+const PRUNE_ZONES = 2;
 
 /// The section of `body` (a solid) by the plane `z = height`, as a sheet on `z = 0`: the
 /// solid just above the plane (see the file's comment). A plane that misses the solid gives
@@ -67,6 +71,10 @@ pub fn slice(allocator: std.mem.Allocator, body: *const Body, height: f64, optio
     defer section.deinit();
     section.cuts = try allocator.alloc(?Cut, body.edges.items.len);
     @memset(section.cuts, null);
+    section.sides = try allocator.alloc(?Side, body.vertices.items.len);
+    @memset(section.sides, null);
+    const box = bbox.bodyBounds(body) catch return corrupt(diag);
+    section.scale = if (box.isEmpty()) 0 else canonical.magnitude(&.{ box.min, box.max, .{ 0, 0, height } });
     var shells = traverse.Shells.init(body);
     while (shells.next() catch return corrupt(diag)) |s| {
         var faces = traverse.Faces.init(body, s);
@@ -104,6 +112,9 @@ const Mark = struct {
     }
 };
 
+/// Where a vertex lies against the plane, decided once (`Section.sideOf`).
+const Side = enum { below, on, above };
+
 const Section = struct {
     allocator: std.mem.Allocator,
     body: *const Body,
@@ -113,32 +124,45 @@ const Section = struct {
     diag: *Diagnostics,
     /// Each edge's cut, once computed.
     cuts: []?Cut = &.{},
+    /// Each vertex's side of the plane, once decided.
+    sides: []?Side = &.{},
+    /// The size of the coordinates the heights are taken among, for D27's band.
+    scale: f64 = 0,
     /// The current face's boundary points on the plane, and those of one trace curve.
     points: std.ArrayList(Vec3) = .empty,
     marks: std.ArrayList(Mark) = .empty,
 
     fn deinit(self: *Section) void {
         self.allocator.free(self.cuts);
+        self.allocator.free(self.sides);
         self.points.deinit(self.allocator);
         self.marks.deinit(self.allocator);
     }
 
     /// Face `f`'s share of the section: its trace's pieces inside it, and its edges lying
-    /// in the plane when it rises from them.
+    /// in the plane when it rises from them. On the plane is decided once per vertex
+    /// (`sideOf`): a straight edge lies in it when its ends do and crosses it between ends
+    /// on either side, and a planar face lies in it when its edges do. Its box only prunes,
+    /// `PRUNE_ZONES` from the plane: a face's box under a zone tall had it lying in the
+    /// plane while edges of it with their ends either side of the zone crossed it (a box's
+    /// bottom tilted 0.9e-5 each way across, sliced at its bottom, gave nothing).
     fn face(self: *Section, f: types.FaceIndex) Error!void {
         const body = self.body;
         const box = bbox.faceBounds(body, f) catch return corrupt(self.diag);
         if (box.isEmpty()) return;
         const h = self.plane.d;
-        if (box.max[2] < h - self.tol.zone or box.min[2] > h + self.tol.zone) return;
-        // A face lying in a level plane: its edges are the section's from the faces rising
-        // from them, when it is on the plane
-        if (box.max[2] - box.min[2] <= self.tol.zone) return;
+        const prune = PRUNE_ZONES * self.tol.zone;
+        if (box.max[2] < h - prune or box.min[2] > h + prune) return;
+        // A plane face lying in the plane: its edges are the section's from the faces
+        // rising from them. A curved face no taller than the zone, the same
+        if (body.face(f).surface.kind == .plane) {
+            if (try self.liesIn(f)) return;
+        } else if (box.max[2] - box.min[2] <= self.tol.zone) return;
         self.points.clearRetainingCapacity();
         var loops = traverse.Loops.init(body, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             const lone = body.loop(l).vertex;
-            if (lone != .none and @abs(self.plane.height(body.point(lone))) <= self.tol.zone) try self.addPoint(body.point(lone));
+            if (lone != .none and try self.sideOf(lone) == .on) try self.addPoint(body.point(lone));
             var it = traverse.Coedges.init(body, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const e = body.coedge(c).edge;
@@ -169,14 +193,62 @@ const Section = struct {
         try self.points.append(self.allocator, p);
     }
 
-    /// Edge `e`'s cut, computed on the first ask.
+    /// Whether every edge of planar face `f` lies in the plane (a face of no edges does not).
+    fn liesIn(self: *Section, f: types.FaceIndex) Error!bool {
+        const body = self.body;
+        var any = false;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const e = body.coedge(c).edge;
+                if (body.edge(e).flags.degenerate) continue;
+                if (!(try self.cutOf(e)).lies_in) return false;
+                any = true;
+            }
+        }
+        return any;
+    }
+
+    /// Vertex `v`'s side of the plane, decided once: on it within the zone, D27's band
+    /// about the zone refused (`at_tolerance`), else below or above.
+    fn sideOf(self: *Section, v: types.VertexIndex) Error!Side {
+        const i = @backingInt(v);
+        if (self.sides[i]) |side| return side;
+        const height = self.plane.height(self.body.point(v));
+        const side: Side = switch (canonical.verdict(&.{canonical.Comparison.distance(@abs(height), self.tol.zone, self.scale)})) {
+            .same => .on,
+            .apart => if (height < 0) .below else .above,
+            .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.vertex, i), .label = "a vertex the zone from the slicing plane to within rounding: on it or not, either could be computed", .measured = c.measured, .threshold = c.limit }),
+        };
+        self.sides[i] = side;
+        return side;
+    }
+
+    /// Edge `e`'s cut, computed on the first ask: a straight edge's by its ends' sides, a
+    /// curved one's by its own crossings.
     fn cutOf(self: *Section, e: types.EdgeIndex) Error!Cut {
         const i = @backingInt(e);
         if (self.cuts[i]) |cut| return cut;
         const body = self.body;
         const edge = body.edge(e);
         var cut: Cut = .{};
-        if (!edge.flags.degenerate) {
+        if (!edge.flags.degenerate and body.geometry.curve(edge.curve) == .line) {
+            const ends = [2]types.VertexIndex{ edge.start, edge.end };
+            const sides = [2]Side{ try self.sideOf(edge.start), try self.sideOf(edge.end) };
+            if (sides[0] == .on and sides[1] == .on) {
+                cut.lies_in = true;
+            } else if (sides[0] == .on or sides[1] == .on) {
+                cut.points[0] = body.point(ends[if (sides[0] == .on) 0 else 1]);
+                cut.count = 1;
+            } else if (sides[0] != sides[1]) {
+                const p0 = body.point(edge.start);
+                const p1 = body.point(edge.end);
+                const h0 = self.plane.height(p0);
+                cut.points[0] = vec.lerp(p0, p1, h0 / (h0 - self.plane.height(p1)));
+                cut.count = 1;
+            }
+        } else if (!edge.flags.degenerate) {
             const curve = body.geometry.curve(edge.curve);
             const crossings = try curve_surface.curvePlane(curve, edge.t0, edge.t1, self.plane, self.tol.zone, self.diag);
             cut.lies_in = crossings.lies_in;

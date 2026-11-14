@@ -281,3 +281,23 @@ test "slice: an empty solid's section is empty" {
     defer empty.deinit();
     try expectSection(&empty, 0, 0, 0);
 }
+
+test "slice: a box tilted the zone each way across its bottom and top, at them: its bottom square, and nothing" {
+    // On the plane is decided once per vertex: the bottom's corners all lie within the
+    // zone of z = 0, so the bottom lies in the plane though its box is 1.8e-5 tall. By that
+    // box the bottom was not in the plane while its edges, their ends within the zone,
+    // were, and the section at the bottom was empty
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box = try primitives.box(testing.allocator, tol, 10, 4, 6, false, &diag);
+    defer box.deinit();
+    // Tilted about x through the middle of the box: its faces' long sides 0.9e-5 under
+    // and over their planes' middle heights
+    var tilted = try turned(&box, Affine.rotateAbout(.{ 5, 2, 3 }, vec.X3, 4.5e-6));
+    defer tilted.deinit();
+    var bottom = try sliced(&tilted, 0);
+    defer bottom.deinit();
+    try testing.expectEqual(@as(usize, 1), bottom.counts().faces);
+    try testing.expectApproxEqRel(@as(f64, 40), try areaOf(&bottom), 1e-9);
+    try expectSection(&tilted, 6, 0, 0);
+}
