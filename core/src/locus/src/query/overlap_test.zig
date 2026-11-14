@@ -229,31 +229,19 @@ test "overlap: a shell's winding number is 1 inside a solid, −1 in a void's ca
     try testing.expectApproxEqAbs(@as(f64, 0.5), try overlap.winding(&hollow, outer, .{ 4, 2, 2 }, &diag), 1e-12);
 }
 
-test "overlap: a boolean's faces meeting at a merged vertex touch within its gap" {
-    // The solids fuzzer's find (2026-11-14): a box's top and a plate's bottom 1.95e-4 apart
-    // at an intersection tolerance of 2e-4 (the plate's zone 1e-4), their left faces
-    // 2.05e-4 apart. The union merges the plate's bottom edge's crossing of the box's front
-    // with the box's top edge, a vertex with a gap of 9.75e-5 midway; the box's top edge
-    // from it lies in the plate's left plane within the tolerance and that gap, and the
-    // rule found its far end 2.27e-4 from the plate's left face's boundary, measured with
-    // the tolerance alone
-    const pipeline = @import("../boolean/pipeline.zig");
-    const transform = @import("../construct/transform.zig");
-    const Affine = @import("../math/mat.zig").Affine;
-    var diag = Diagnostics.init(testing.allocator);
-    defer diag.deinit();
-    var unit = try primitives.box(testing.allocator, tol, 2, 1, 2, false, &diag);
-    defer unit.deinit();
-    var box = try transform.transform(testing.allocator, &unit, &Affine.translate(.{ 2 - 5e-6, 2, -5e-6 }), .{}, &diag);
-    defer box.deinit();
-    var slab = try primitives.box(testing.allocator, Tolerance.fromZone(1e-4), 50, 150, 2, false, &diag);
-    defer slab.deinit();
-    var plate = try transform.transform(testing.allocator, &slab, &Affine.translate(.{ 2 + 1.9999999855049283e-4, -48 + 1e-4, 2 - 2.000000014495072e-4 }), .{}, &diag);
-    defer plate.deinit();
-    var report = pipeline.Report.init(testing.allocator);
-    defer report.deinit();
-    var both = try pipeline.boolean(testing.allocator, &box, &plate, .@"union", .{}, &diag, &report);
-    defer both.deinit();
-    try testing.expectApproxEqAbs(@as(f64, 1.95e-4), report.max_gap, 1e-11);
-    try expectSound(&both);
+test "overlap: faces meeting at a merged vertex touch within its gap, its edges reaching as far as their ends' gaps" {
+    // A box and a plate 1.95e-4 apart at an intersection tolerance of 2e-4 (the plate's
+    // zone 1e-4), their left faces 2.05e-4 apart, united as the boolean did until it
+    // refused them (2026-11-14, the merged crossing in an edge's end strip), as placed and
+    // moved whole far out. A vertex merged between them has a gap of 9.75e-5: the box's
+    // top edge from it lies in the plate's left plane within the tolerance and that gap,
+    // and the rule measured its far end against the plate's left face's boundary with the
+    // tolerance alone (2.27e-4, not near); moved, a face's edge from the vertex lies in
+    // its neighbour's plane by the vertex's gap, and the rule did not give the vertex's
+    // own end that gap
+    for ([_][]const u8{ @embedFile("../fixtures/strip_union.json"), @embedFile("../fixtures/strip_union_moved.json") }) |text| {
+        var body = try @import("../io/body_json.zig").load(testing.allocator, text);
+        defer body.deinit();
+        try expectSound(&body);
+    }
 }

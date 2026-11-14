@@ -566,6 +566,30 @@ const Filler = struct {
 
     const Along = struct { s: f64, distance: f64, splittable: bool };
 
+    /// Merged vertex `v`, not an end of edge `e` of operand `k`, within the tolerance and
+    /// its gap of the edge with its foot in an end's strip (`along`'s, where the end's ball
+    /// keeps the edge from being split): too near the end to split the edge at, too far
+    /// from it to be it. Refused (`TooSmallEdge`, as an edge too short to split; OCCT
+    /// validates its pave blocks after splitting), never skipped: the faces about the edge
+    /// would meet it where the edge has no vertex (a tetrahedron's apex 1.5e-5 up a box's
+    /// edge from its end and 1.5e-5 off it, at a tolerance of 2e-5: a fragment's loop split
+    /// where the interferences found no point).
+    fn endStrip(self: *Filler, k: usize, e: types.EdgeIndex, v: u32) Error!void {
+        const at_ends = self.ends(k, e);
+        if (v == at_ends[0] or v == at_ends[1]) return;
+        const p0 = self.p.point(at_ends[0]);
+        const d = vec.sub(self.p.point(at_ends[1]), p0);
+        const len_sq = vec.lengthSq(d);
+        if (len_sq == 0) return;
+        const q = self.p.point(v);
+        const s = vec.dot(vec.sub(q, p0), d) / len_sq;
+        if (s < 0 or s > 1) return;
+        const off = vec.distance(q, vec.addScaled(p0, d, s));
+        if (!try self.within(off, self.p.tol.xsect + self.p.gaps.items[v], .of(.edge, @backingInt(e)))) return;
+        const len = @sqrt(len_sq);
+        return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = @min(s, 1 - s) * len, .threshold = self.p.tol.xsect });
+    }
+
     /// Merged vertex `v` as a pave of edge `e` of operand `k` at `at`; `TooSmallEdge`,
     /// naming the edge, when the edge cannot be split.
     fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
@@ -609,14 +633,18 @@ const Filler = struct {
             }
         };
         var collect: Collect = .{};
-        self.edge_tree[k].query(Box3.ofPoint(q), &collect, Collect.visit);
+        // The trees' boxes are grown by the tolerance; the vertex reaches by its gap too
+        self.edge_tree[k].query(Box3.ofPoint(q).inflated(self.p.gaps.items[v]), &collect, Collect.visit);
         if (collect.count == collect.out.len) return self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "edges near one vertex", .measured = @floatFromInt(collect.count) });
         std.mem.sort(u32, collect.out[0..collect.count], {}, std.sort.asc(u32));
         for (collect.out[0..collect.count]) |item| {
             const e = self.edges[k][item];
             if (skip != null and skip.? == e) continue;
             if (self.hasPave(k, e, v)) continue;
-            const at = self.along(k, e, q) orelse continue;
+            const at = self.along(k, e, q) orelse {
+                try self.endStrip(k, e, v);
+                continue;
+            };
             if (!try self.within(at.distance, self.p.tol.xsect + self.p.gaps.items[v], .of(.edge, @backingInt(e)))) continue;
             try self.addPave(k, e, v, at);
         }
@@ -696,7 +724,7 @@ const Filler = struct {
 
     fn onFaces(self: *Filler, k: usize, v: u32) Error!void {
         const q = self.p.point(v);
-        const near = try self.facesNear(k, q);
+        const near = try self.facesNear(k, q, self.p.gaps.items[v]);
         for (near.items[0..near.count]) |item| {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
@@ -710,10 +738,12 @@ const Filler = struct {
         }
     }
 
-    /// The faces of operand `k` whose grown boxes hold `q`.
-    fn facesNear(self: *Filler, k: usize, q: Vec3) Error!NearFaces {
+    /// The faces of operand `k` whose boxes, grown by the tolerance, are within `gap` of
+    /// `q` (a vertex reaches by its gap beyond the tolerance: a box grown by the tolerance
+    /// alone held a vertex or not by the face's turn, and a rigid move changed a decision).
+    fn facesNear(self: *Filler, k: usize, q: Vec3, gap: f64) Error!NearFaces {
         var near: NearFaces = .{};
-        self.face_tree[k].query(Box3.ofPoint(q), &near, NearFaces.visit);
+        self.face_tree[k].query(Box3.ofPoint(q).inflated(gap), &near, NearFaces.visit);
         if (near.count == near.items.len) return self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "faces near one vertex", .measured = @floatFromInt(near.count) });
         return near;
     }
@@ -743,7 +773,7 @@ const Filler = struct {
             const q = p.point(v);
             const reach = p.tol.xsect + p.gaps.items[v];
             for (0..2) |k| {
-                const near = try self.facesNear(k, q);
+                const near = try self.facesNear(k, q, p.gaps.items[v]);
                 var on: [near.items.len]types.FaceIndex = undefined;
                 var count: usize = 0;
                 for (near.items[0..near.count]) |item| {
@@ -841,7 +871,7 @@ const Filler = struct {
                 const before = self.p.points.items.len;
                 const w = try self.weld(q, 0);
                 if (!self.hasPave(k, e, w)) {
-                    if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at);
+                    if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at) else try self.endStrip(k, e, w);
                 }
                 try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = w });
                 self.tally();

@@ -1035,40 +1035,29 @@ fn fuzzPlaced(t: Tolerance, size: Vec3, lo: Vec3, axis: Vec3, turn: f64, move: V
     return transform.transform(testing.allocator, &shape, &place, .{}, &diag);
 }
 
-test "boolean: faces touching where a vertex reaches by its gap; the strip they leave, too thin to cut again, refused" {
+test "boolean: a box and a plate the tolerance apart, a merged crossing in an edge's end strip, refused" {
     // The solids fuzzer's draws at the tolerance (2026-11-14): a box and a plate 1.95e-4
-    // apart at an intersection tolerance of 2e-4 leave, united, a strip 2.05e-4 wide on the
-    // box's top, and a merged vertex with a gap of 9.75e-5 at its end. Moved whole (a
-    // quarter turn's half about (1, 2, 3), then far out), a face's edge from that vertex
-    // lies in its neighbour's plane by the vertex's gap, and the overlap rule did not give
-    // the vertex's own end that gap. A box turned at the angular tolerance across the strip
-    // is refused: the vertex reaches the box's left face and the plate's bottom, which meet
-    // nowhere near it, features closer than twice the tolerance
+    // apart at an intersection tolerance of 2e-4, their left faces 2.05e-4 apart. The
+    // crossing of the plate's edge with the box's, merged with a gap of 9.75e-5, lies 2.27e-4
+    // from the end of the box's edge, in its end strip: too near the end to split the
+    // edge, too far to be it. Refused as placed and moved whole (a quarter turn's half
+    // about (1, 2, 3), then far out); before, it was refused moved and not as placed, the
+    // edges' trees reaching the vertex's gap only when the turn grew their boxes
     const zone_4 = Tolerance.fromZone(1e-4);
     var a = try fuzzPlaced(tol, .{ 2, 1, 2 }, .{ 2, 3, 0 }, vec.Z3, 0, .{ 0, -1, 0 }, .{ -5e-6, 0, -5e-6 });
     defer a.deinit();
     var plate = try fuzzPlaced(zone_4, .{ 50, 150, 2 }, .{ 2, -48, 2 }, vec.Z3, 0, .{ 0, 0, 0 }, .{ 1.9999999855049283e-4, 1e-4, -2.000000014495072e-4 });
     defer plate.deinit();
-    var tilted = try fuzzPlaced(tol, .{ 3, 1, 3 }, .{ 1, 3, 0 }, .{ 1, 2, 3 }, 0.014142253477512098, .{ 0, 0, -1 }, .{ -2e-2, 2.0000000005727028e-4, 0 });
-    defer tilted.deinit();
     const whole = mat.Affine.translate(.{ 1e5, -2e5, 3e5 }).compose(&mat.Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, std.math.pi / 4.0));
     for ([_]mat.Affine{ mat.Affine.translate(.{ 0, 0, 0 }), whole }) |move| {
         var diag = Diagnostics.init(testing.allocator);
         defer diag.deinit();
-        var operands: [3]Body = undefined;
-        var made: usize = 0;
-        defer for (operands[0..made]) |*o| o.deinit();
-        for ([_]*const Body{ &a, &plate, &tilted }) |solid| {
-            operands[made] = try transform.transform(testing.allocator, solid, &move, .{}, &diag);
-            made += 1;
-        }
-        var both = try sound(&operands[0], &operands[1], .@"union");
-        defer both.deinit();
-        for ([_]Op{ .@"union", .intersection, .difference }) |op| {
-            diag.clear();
-            try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &both, &operands[2], op, .{}, &diag, null));
-            try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
-        }
+        var ma = try transform.transform(testing.allocator, &a, &move, .{}, &diag);
+        defer ma.deinit();
+        var mp = try transform.transform(testing.allocator, &plate, &move, .{}, &diag);
+        defer mp.deinit();
+        try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, &ma, &mp, .@"union", .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
     }
 }
 

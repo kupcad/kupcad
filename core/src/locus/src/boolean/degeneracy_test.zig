@@ -837,3 +837,23 @@ test "degeneracy: operands the intersection tolerance apart to rounding are refu
     defer c.deinit();
     for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&h, &c, op);
 }
+
+test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its end, is refused" {
+    // A tetrahedron's apex 1.5e-5 up a box's edge from its end and 1.5e-5 off it (the
+    // intersection tolerance 2e-5): within the tolerance of the edge, where its end's ball
+    // keeps it from being split, and 2.1e-5 from the end, too far to be it. The paves
+    // skipped it; the faces about the edge met it where the edge had no vertex, a
+    // fragment's loop split where the interferences found no point (IntersectionFailed).
+    // Too near the end to split at, too far to merge: refused (OCCT validates its pave
+    // blocks after splitting)
+    var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer a.deinit();
+    var b = try tetrahedron(.{ -1.5e-5, 0, 1.5e-5 }, .{ -1, -1, 0.5 }, .{ -1, 0.5, -1 }, .{ 0.5, -1, -1 });
+    defer b.deinit();
+    for ([_]pipeline.Op{ .@"union", .difference }) |op| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
+    }
+}
