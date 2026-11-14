@@ -888,9 +888,13 @@ const Filler = struct {
     }
 
     /// Whether faces `a` and `b` of operand `k` meet at merged vertex `m`, as the paves
-    /// decided it: `m` a pave of an edge both use (its ends among them), or the merged vertex
-    /// of a vertex both use. Measured again (`m` within reach of the edge or the vertex), a
-    /// second decision of the same could disagree with the first (D28).
+    /// decided it: `m` a pave of an edge both use (its ends among them), or of an edge of each
+    /// that are copies (two solids of the operand touching along a line, each with its own
+    /// edge there between the same two vertices: a vertex in the line's middle was taken for
+    /// two faces 0 apart that do not meet, and a boolean refused its own result as the next
+    /// operand; OCCT's buc60801 as a chain, 2026-11-14), or the merged vertex of a vertex both
+    /// use. Measured again (`m` within reach of the edge or the vertex), a second decision of
+    /// the same could disagree with the first (D28).
     fn meetAt(self: *Filler, k: usize, a: types.FaceIndex, b: types.FaceIndex, m: u32) Error!bool {
         const body_k = self.body(k);
         var loops = traverse.Loops.init(body_k, a);
@@ -899,11 +903,33 @@ const Filler = struct {
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const coedge = body_k.coedge(c);
-                // An edge of both: its other coedge in `b`
-                if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == b and self.hasPave(k, coedge.edge, m)) return true;
+                // An edge of both: its other coedge in `b`; or an edge of `b` its copy
+                if (self.hasPave(k, coedge.edge, m)) {
+                    if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == b) return true;
+                    if (try self.copyIn(k, b, coedge.edge, m)) return true;
+                }
                 // A vertex of both
                 const corner = body_k.coedgeStart(c);
                 if (self.p.vertex_of[k][@backingInt(corner)] == m and try self.faceHasVertex(k, b, corner)) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Whether face `f` of operand `k` has an edge, not `e`, between the same two vertices as
+    /// `e` (its copy: another solid of the operand touching along it) with `m` a pave of it.
+    fn copyIn(self: *Filler, k: usize, f: types.FaceIndex, e: types.EdgeIndex, m: u32) Error!bool {
+        const body_k = self.body(k);
+        const edge = body_k.edge(e);
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const other = body_k.coedge(c).edge;
+                if (other == e) continue;
+                const o = body_k.edge(other);
+                const same_ends = (o.start == edge.start and o.end == edge.end) or (o.start == edge.end and o.end == edge.start);
+                if (same_ends and self.hasPave(k, other, m)) return true;
             }
         }
         return false;

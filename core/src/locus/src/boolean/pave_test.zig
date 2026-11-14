@@ -209,3 +209,34 @@ test "paves: a vertex between the zone and the tolerance of a face's edge is tha
     // And no touch inside a face of the box
     for (p.touches.items) |t| try testing.expect(!(t.operand == 0 and t.vertex == m.?));
 }
+
+test "paves: two solids of an operand touching along a line meet there by their edges' copies, a face across the line's middle not refused" {
+    // OCCT's buc60801 as a chain (the corpus port, 2026-11-14): a difference leaves two
+    // solids touching along a line, each with its own edge there; the next cut, its face
+    // across the line's middle, was refused (`below_feature_size`): the faces of the two
+    // solids on either side of the vertex there meet at it only through the edges' copies
+    const pipeline = @import("pipeline.zig");
+    const helpers = @import("pipeline_test.zig");
+    var p = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer p.deinit();
+    var q = try box(.{ 1, 1, 0 }, .{ 2, 2, 1 });
+    defer q.deinit();
+    var touching = try helpers.sound(&p, &q, .@"union");
+    defer touching.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, helpers.shellKinds(&touching));
+    var cut = try box(.{ -1, -1, 0.5 }, .{ 3, 3, 2 });
+    defer cut.deinit();
+    // The tops and the bottoms: two solids touching along the line, as they were
+    for ([_]pipeline.Op{ .intersection, .difference }) |op| {
+        var r = try helpers.sound(&touching, &cut, op);
+        defer r.deinit();
+        try testing.expectEqual([2]usize{ 2, 0 }, helpers.shellKinds(&r));
+        try testing.expectApproxEqAbs(@as(f64, 1), try helpers.volume(&r), 1e-12);
+    }
+    // The union is one solid whose bottoms still touch along the line: a pinch, refused by
+    // design, not a feature too small
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &touching, &cut, .@"union", .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+}
