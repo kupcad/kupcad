@@ -22,7 +22,8 @@
 //!
 //! Typed findings name the entity: failures `TooSmallEdge` (an operand's edge, `pave`),
 //! `below_feature_size` (a face of an operand another of its faces comes within the
-//! tolerance of, away from where they meet, at a merged vertex, `pave`),
+//! tolerance of, away from where they meet, at a merged vertex, `pave`), `mixed_tolerance`
+//! (an operand not valid at the larger tolerance the boolean takes),
 //! `imprint_unmatched` and `unclassified` (an operand's face), `pinched` (a result's shell
 //! touching itself along a line or at a point inside one solid, refused by design), the
 //! checker's on the result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
@@ -32,7 +33,8 @@
 //! An empty operand answers without geometry (the union is the other, a difference
 //! without `b` is `a`, the rest are empty). Operands with a curved face are M5's: refused,
 //! naming the face. The result's tolerance is the larger of the operands' (§6) unless the
-//! options give one.
+//! options give one; an operand built at another must be valid at it, the checker's and the
+//! overlap rules' (`mixed_tolerance`), since the result holds all of it there.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -54,6 +56,7 @@ const trace = @import("../io/trace.zig");
 const primitives = @import("../construct/primitives.zig");
 const sew = @import("../construct/sew.zig");
 const in_face = @import("../query/in_face.zig");
+const overlap = @import("../query/overlap.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const pave = @import("pave.zig");
 const imprint = @import("imprint.zig");
@@ -87,6 +90,7 @@ pub const REFUSALS = [_]diagnostics.Code{
     .limit_exceeded, // more edges or faces near one vertex than the paves keep apart
     .at_tolerance, // a distance the intersection tolerance to rounding (D27)
     .below_feature_size, // features closer than twice the tolerance (intransitive)
+    .mixed_tolerance, // an operand not valid at the larger tolerance the boolean takes
     .gap_too_large, // vertices merged into a ball past the zone
     .edge_too_short, // an edge too short to split where it is met
     .pinched, // a result one shell cannot hold, by design
@@ -244,6 +248,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
         try trace.data(allocator, &common, "boolean", "report", r.view());
         return result;
     }
+    for ([2]*const Body{ a, b }, 0..) |operand, k| try validAt(allocator, operand, tol, k, common, diag);
 
     var paves = try pave.run(allocator, a, b, tol, common, diag, &stage);
     defer paves.deinit();
@@ -396,18 +401,42 @@ fn stronger(x: Role, y: Role) Role {
 /// Whether the operands had coincident faces, and where they touch when no part of
 /// either lies inside the other: the merged vertices on faces of both.
 fn contacts(paves: *const pave.Paves, classes: []const classify.Classified, r: *Report) Error!void {
-    var overlap = false;
+    var inside = false;
     for (classes) |c| {
-        overlap = overlap or c.class == .inside;
+        inside = inside or c.class == .inside;
         r.coincident = r.coincident or c.class == .on_same or c.class == .on_opposite;
     }
-    if (overlap) return;
+    if (inside) return;
     // Each merged vertex's operands, from the faces it lies on
     const on = try r.allocator.alloc(u2, paves.points.items.len);
     defer r.allocator.free(on);
     @memset(on, 0);
     for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
     for (on, 0..) |operands, v| if (operands == 3) try r.contacts.append(r.allocator, paves.point(@intCast(v)));
+}
+
+/// Operand `k` as the boolean holds it, at the boolean's tolerance `tol`: one built at
+/// another (a finer zone, the other operand's the larger, which the boolean takes; §6) must
+/// pass the checker and the overlap rules there, or the result, held at `tol` throughout,
+/// does not. Refused `mixed_tolerance`, naming what fails (research/consistent-tolerances.md's
+/// gap draws, 2026-11-14: a flat tetrahedron 3e-5 thick at a zone of 1e-5, its own opposite
+/// faces within the intersection tolerance of a plate's 1e-4, joined with it whole, the
+/// union's faces meeting away from their boundaries).
+fn validAt(allocator: std.mem.Allocator, operand: *const Body, tol: Tolerance, k: usize, common: diagnostics.Options, diag: *Diagnostics) Error!void {
+    if (std.meta.eql(operand.tol, tol)) return;
+    var held = operand.clone(allocator) catch |e| return tooMany(diag, e);
+    defer held.deinit();
+    held.tol = tol;
+    const label = if (k == 0) "the first operand" else "the second operand";
+    var report = try check.run(allocator, &held, .global);
+    defer report.deinit(allocator);
+    if (report.first()) |f| return diag.fail(error.InvalidInput, .{ .code = .mixed_tolerance, .entity = f.entity, .label = label, .measured = operand.tol.zone, .threshold = tol.zone });
+    var scratch = Diagnostics.init(allocator);
+    defer scratch.deinit();
+    overlap.check(allocator, &held, common, &scratch) catch |e| switch (e) {
+        error.NotValid => return diag.fail(error.InvalidInput, .{ .code = .mixed_tolerance, .entity = scratch.first().?.entity, .label = label, .measured = operand.tol.zone, .threshold = tol.zone }),
+        else => return e,
+    };
 }
 
 /// The checker's first failure on `body` up to `level` as the operation's, a pinch as

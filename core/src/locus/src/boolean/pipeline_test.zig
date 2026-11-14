@@ -1082,3 +1082,29 @@ test "boolean: a section across a strip a little over the tolerance wide is impr
     }
     try expectIdentities(&step, &b);
 }
+
+test "boolean: an operand valid at its own tolerance but not at the larger one the boolean takes is refused, mixed_tolerance" {
+    // The gap draws (2026-11-14): a flat tetrahedron at a zone of 1e-5, its opposite edges
+    // 3e-5 apart, joined whole with a plate at 1e-4: at the larger tolerance its own faces
+    // met away from their boundaries, and the union came out failing the overlap rules
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var tetra = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 3e-5 }, .{ 0, 1, 3e-5 } }, &diag);
+    defer tetra.deinit();
+    var plate = try boxAt(Tolerance.fromZone(1e-4), .{ -50, 5, 0 }, .{ 50, 60, 3 });
+    defer plate.deinit();
+    for ([_]Op{ .@"union", .intersection, .difference }) |op| {
+        diag.findings.clearRetainingCapacity();
+        try testing.expectError(error.InvalidInput, pipeline.boolean(testing.allocator, &tetra, &plate, op, .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.mixed_tolerance, diag.first().?.code);
+        diag.findings.clearRetainingCapacity();
+        try testing.expectError(error.InvalidInput, pipeline.boolean(testing.allocator, &plate, &tetra, op, .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.mixed_tolerance, diag.first().?.code);
+    }
+    // At one tolerance, the same tetrahedron is valid and joined
+    var near = try box(.{ -50, 5, 0 }, .{ 50, 60, 3 });
+    defer near.deinit();
+    var u = try sound(&tetra, &near, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+}

@@ -218,6 +218,17 @@ fn belowFeatureSize(cov: *Coverage) !void {
     try cov.boolean(&wedge, &b, .@"union", .{}, .below_feature_size);
 }
 
+fn mixedTolerance(cov: *Coverage) !void {
+    // A flat tetrahedron at a zone of 1e-5, its opposite edges 3e-5 apart, and a box at a
+    // zone of 1e-4 far from it: at the larger tolerance, which the boolean takes, its own
+    // faces come within the intersection tolerance of each other
+    var tetra = try tetrahedron(.{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 3e-5 }, .{ 0, 1, 3e-5 });
+    defer tetra.deinit();
+    var far = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ 5, 5, 5 }, .{ 6, 6, 6 });
+    defer far.deinit();
+    try cov.boolean(&tetra, &far, .@"union", .{}, .mixed_tolerance);
+}
+
 fn gapPastTheZone(cov: *Coverage) !void {
     // A corner with the gap an earlier boolean recorded, merged with another the zone away
     var a = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
@@ -417,6 +428,7 @@ const CASES = [_]struct { name: []const u8, run: *const fn (*Coverage) anyerror!
     .{ .name = "edges crowding one vertex", .run = edgesCrowdingOneVertex },
     .{ .name = "faces the tolerance apart to rounding", .run = atTheTolerance },
     .{ .name = "features closer than twice the tolerance", .run = belowFeatureSize },
+    .{ .name = "an operand not valid at the larger tolerance", .run = mixedTolerance },
     .{ .name = "vertices merged past the zone", .run = gapPastTheZone },
     .{ .name = "an edge too short to split", .run = edgeTooShort },
     .{ .name = "a pinch at a point", .run = pinched },
