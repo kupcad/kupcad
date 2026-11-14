@@ -304,6 +304,13 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     defer filler.deinit();
     stage.* = .vertex_vertex;
     try filler.vertexVertex();
+    // Every reach is fixed from here on: a later class adds merged vertices, never grows
+    // one's gap, so a decision taken holds whatever comes after it, and D27's band need be
+    // only the rounding (Segal's 1986 band was as wide as the largest vertex tolerance,
+    // which grew after decisions were taken; research/consistent-tolerances.md)
+    const fixed = if (std.debug.runtime_safety) try allocator.dupe(f64, p.gaps.items) else &[_]f64{};
+    defer if (std.debug.runtime_safety) allocator.free(fixed);
+    defer if (std.debug.runtime_safety) std.debug.assert(std.mem.eql(f64, fixed, p.gaps.items[0..fixed.len]));
     try filler.buildTrees();
     try options.checkCancel();
     stage.* = .vertex_edge;
