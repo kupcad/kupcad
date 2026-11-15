@@ -478,12 +478,12 @@ R3): two faces of one operand both in a face's plane must be in one plane or sha
 (a wall 1.5 tolerances thick with a face inside it), and the pieces one operand leaves on a
 face must keep the tolerance apart in its plane where they share no merged vertex (a flat
 tetrahedron's opposite edges both in the face's plane, crossing there); both refused
-`below_feature_size`. So too a face within the tolerance of two faces of the other
-operand at one point, the three parallel within the angular tolerance and the two sharing
-no vertex (Leo, 2026-11-15; `pave.sandwiched`, over the faces' triangles in its plane):
-a flat tetrahedron's face 3.8e-5 rad off a plate 2.5e-5 thick reached its top and its
-bottom over a band 0.4 wide, the sections through merged vertices lay at the band's edge,
-and the operands' order chose what the result was. A face crossing a thin feature steeply
+`below_feature_size`. A face within the tolerance of two faces of the other operand at
+one point, the two parallel and sharing no vertex (a flat tetrahedron's face 3.8e-5 rad
+off a plate 2.5e-5 thick: the operands' order chose the result), was refused by the
+paves (`pave.sandwiched`, d1743fcd) until the operand precondition, which refuses such a
+pair (within twice the tolerance of each other) first: the detector was deleted, the
+first the precondition subsumes. A face crossing a thin feature steeply
 reaches both sides too, along sections the paves keep apart: made. An operand built at a finer tolerance than the boolean takes (the
 larger of the two, §6) must be valid at the boolean's, or the result is not
 (`mixed_tolerance`).

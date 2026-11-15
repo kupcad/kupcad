@@ -609,14 +609,6 @@ pub const FaceTriangles = struct {
         self.* = undefined;
     }
 
-    /// One face's triangulation (planar with straight edges), owned by `allocator`, as
-    /// `build` makes each: the corners in the loops' sense, spurs left out.
-    pub fn ofFace(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error![]const [3]types.VertexIndex {
-        var rings: Rings = .{};
-        defer rings.deinit(allocator);
-        return rings.triangles(allocator, body, f, diag);
-    }
-
     /// One face's rings in its plane, kept between faces.
     const Rings = struct {
         ring: std.ArrayList(u32) = .empty,
