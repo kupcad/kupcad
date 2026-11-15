@@ -1291,6 +1291,53 @@ test "degeneracy: two edges at a shallow angle, one's end on the other, meet onc
     try expectIdentities(&plate, &b);
 }
 
+test "degeneracy: a chain of edges on two lines 8.7e-5 apart is joined whole, either way round" {
+    // The nightly solids fuzzer's find (2026-11-16, run 43773180777), as it came: a box
+    // united with a turned hull, the hull's face crossing the box's top, then cut by a
+    // plate (zone 1e-4) whose bottom lies 3e-5 under that top. The hull's face crosses the
+    // two planes along two lines 8.7e-5 apart, within the intersection tolerance (2e-4),
+    // and the result's edge along it is a chain of four vertices, two on each line.
+    // Simplification joined vertex by vertex in their numbering: one way round each join
+    // measured the next against the line the last left, and the second vertex stayed (8
+    // vertices against 7). The chain is decided whole, by the lines its edges have
+    const coarse = Tolerance.fromZone(1e-4);
+    const Affine = mat.Affine;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b0 = try helpers.boxAt(tol, .{ 2, 3, 2 }, .{ 4, 4, 3 });
+    defer b0.deinit();
+    var b = try helpers.moved(&b0, .{ 5e-6, 2e-5, -2e-5 });
+    defer b.deinit();
+    const points = [_]Vec3{ .{ 4, 3, 2 }, .{ 4, 1, 3 }, .{ 0, 2, 2 }, .{ 0, 0, 2 }, .{ 4, 1, 1 }, .{ 1, 2, 3 }, .{ 1, 3, 0 }, .{ 4, 4, 0 } };
+    var h0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h0.deinit();
+    // The generator's placement, composed as it composes it
+    var place = Affine.translate(vec.ZERO3);
+    place = Affine.rotateAbout(@splat(2), vec.normalized(.{ 1, 2, 3 }).?, std.math.pi).compose(&place);
+    place = Affine.scaleBy(.{ 2, 2, 1 }).compose(&place);
+    place = Affine.translate(vec.ZERO3).compose(&place);
+    place = Affine.translate(.{ 0, 1.999999989037341e-5, -1.999999989037341e-5 }).compose(&place);
+    var h = try @import("../construct/transform.zig").transform(testing.allocator, &h0, &place, .{}, &diag);
+    defer h.deinit();
+    var joined = try sound(&b, &h, .@"union");
+    defer joined.deinit();
+    var p0 = try helpers.boxAt(coarse, .{ -48, -48, 3 }, .{ 52, 102, 4 });
+    defer p0.deinit();
+    var plate = try helpers.moved(&p0, .{ 2e-2, 2e-4, -5e-5 });
+    defer plate.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var forward = try sound(&joined, &plate, op);
+        defer forward.deinit();
+        var swapped = try sound(&plate, &joined, op);
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+    }
+    // The plate's bottom moves onto the box's top, 3e-5 over the plate: the identities to
+    // the report's shift (the plate less the rest is refused, `pinched`, as it was before
+    // chains were joined whole: the result would touch itself inside one solid)
+    try helpers.expectIdentitiesAtTolerance(&joined, &plate);
+}
+
 test "degeneracy: an edge passing another within the tolerance in its end's strip, the end not on it, is refused either way round" {
     // The locus fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
     // tetrahedron's corner in a plate's top, 2.2e-5 from its edge (beyond the tolerance,

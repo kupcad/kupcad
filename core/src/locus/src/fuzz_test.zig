@@ -1983,6 +1983,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the tolerance in its corner's strip, the corner not on it, made one way round and
         // refused the other (edge–edge refuses it, as `endStrip` does)
         "solids 1 6 0 0 0 2 0 1 3 3 0 0 3 0 0 4 2 0 2 4 1 1 11 8 1 4 2 1 2 2 4 1 3 0 2 3 1 12 9 -1 7 2",
+        // The nightly of 2026-11-16 (run 43773180777, on 51beb0a5): a chain of four
+        // vertices on two lines 8.7e-5 apart, joined whole one way round and to two edges
+        // the other (simplify: a chain is decided whole)
+        "solids 0 2 4 3 4 2 3 1 1 3 7 8 4 3 1 1 8 4 3 2 4 1 3 0 2 2 0 0 2 4 1 1 1 2 3 1 3 0 4 4 0 0 3 1 0 2 2 1 0 9 10 3 0 2 2 1 3 1 4 3 4 3 3 13 7 4 4 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
