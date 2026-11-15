@@ -183,6 +183,8 @@ pub const Report = struct {
     /// one of their own (contagion), and the components a second ray checked (each agreed:
     /// a disagreement is refused).
     rays: u32 = 0,
+    /// Fragments classified by their own seams (`classify.bySeam`), no ray.
+    by_seam: u32 = 0,
     by_contagion: u32 = 0,
     checks: u32 = 0,
     /// The nearest two features of the result that do not meet, when nearer than twice the
@@ -219,10 +221,10 @@ pub const Report = struct {
 
     /// The report as the trace takes it (plain data for std.json).
     fn view(self: *const Report) View {
-        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_contagion = self.by_contagion, .checks = self.checks, .shift = self.shift, .near = if (self.near) |n| n.distance else null };
+        return .{ .op = self.op, .quality = if (self.max_gap == 0) "exact" else "approximate", .max_gap = self.max_gap, .coincident = self.coincident, .contacts = self.contacts.items, .faces = self.faces.items, .failed_in = self.failed_in, .failed_step = self.failed_step, .by_containment = self.by_containment, .interferences = &self.interferences, .fragments = self.fragments, .rays = self.rays, .by_seam = self.by_seam, .by_contagion = self.by_contagion, .checks = self.checks, .shift = self.shift, .near = if (self.near) |n| n.distance else null };
     }
 
-    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_contagion: u32, checks: u32, shift: f64, near: ?f64 };
+    const View = struct { op: Op, quality: []const u8, max_gap: f64, coincident: bool, contacts: []const Vec3, faces: []const FaceMap, failed_in: ?Stage, failed_step: ?u32, by_containment: bool, interferences: []const u32, fragments: [2][CLASSES]u32, rays: u32, by_seam: u32, by_contagion: u32, checks: u32, shift: f64, near: ?f64 };
 };
 
 /// `a op b`, a new solid; the operands untouched. What it did goes into `report` when
@@ -274,6 +276,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var stats: classify.Stats = .{};
     const classes = if (table) try classify.byShell(allocator, &paves, &fragments, common, diag, &stats) else try classify.run(allocator, &paves, &fragments, common, options.contagion, diag, &stats);
     r.rays = stats.rays;
+    r.by_seam = stats.by_seam;
     r.by_contagion = stats.by_contagion;
     r.checks = stats.checks;
     defer allocator.free(classes);
@@ -353,6 +356,7 @@ pub fn chain(allocator: std.mem.Allocator, operands: []const *const Body, op: Op
         r.coincident = r.coincident or step.coincident;
         for (&r.interferences, step.interferences) |*total, n| total.* += n;
         r.rays += step.rays;
+        r.by_seam += step.by_seam;
         r.by_contagion += step.by_contagion;
         r.checks += step.checks;
         r.near = step.near;

@@ -9,11 +9,19 @@
 //! domain, `on_same` when their outward normals agree and `on_opposite` when they are
 //! opposed, never by a ray; one with no twin that its samples put inside a partner face is
 //! the two imprints disagreeing, refused. The others are inside or outside the other
-//! operand by `query/point_in_body.zig`'s rays, one for each connected component of them
-//! (contagion, research/truck.md §3) and a second that must agree. A fragment with no
-//! candidate off the other operand's boundary takes its side from the faces about a piece
-//! of its boundary lying on the other's (`byDihedral`, OCCT's IsInternalFace); one with
-//! none is a contradiction of the paves (`unclassified`), refused.
+//! operand by their seams first (Hoffmann pp. 86–93: in and out are taken from the faces
+//! that made a section and spread by adjacency; OCCT's builder takes a split face's state
+//! by `IsInternalFace`, the solid classifier only for a face with no section): a fragment
+//! with pieces of its boundary lying clearly on the other operand (along its edges, or
+//! sections whose middles lie in their faces beyond reach of the faces' boundaries) is on
+//! the side those pieces leave it toward (`bySeam`, the faces about each piece as the paves
+//! made it), clear pieces disagreeing a contradiction (`unclassified`); a connected
+//! component of fragments across pieces the other touches nowhere (contagion,
+//! research/truck.md §3) is one side, its seams agreeing, and only a component with no
+//! clear seam casts `query/point_in_body.zig`'s rays, one and a second that must agree. A
+//! fragment no sample of which is clear of the other's boundary takes its side from all
+//! its pieces (within reach of a face's boundary, where they may disagree); one with none
+//! is a contradiction of the paves (`unclassified`), refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -24,8 +32,12 @@ const index_mod = @import("../query/index.zig");
 const point_in_body = @import("../query/point_in_body.zig");
 const overlap = @import("../query/overlap.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const traverse = @import("../topology/traverse.zig");
+const incidence = @import("../geometry/incidence.zig");
+const face_edges = @import("../query/face_edges.zig");
 const pave = @import("pave.zig");
 const imprint = @import("imprint.zig");
+const Body = @import("../topology/body.zig").Body;
 const Paves = pave.Paves;
 const Fragments = imprint.Fragments;
 const Vec2 = vec.Vec2;
@@ -61,6 +73,8 @@ pub const NONE: u32 = std.math.maxInt(u32);
 /// was cast to check the first's (each agreeing, or the boolean refused).
 pub const Stats = struct {
     rays: u32 = 0,
+    /// Fragments decided by their own seams, no ray.
+    by_seam: u32 = 0,
     by_contagion: u32 = 0,
     checks: u32 = 0,
 };
@@ -139,8 +153,14 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     for (parent, 0..) |*p, i| p.* = @intCast(i);
     if (contagion) try joinComponents(allocator, paves, fragments, decided, parent);
 
-    // One ray a component, a second to check it, the rest by contagion
+    // Each fragment's seams first: the side its pieces on the other operand leave it
+    // toward, a component's agreeing (one side of the other, as contagion takes it)
+    var seams = try Seams.build(allocator, paves);
+    defer seams.deinit(allocator);
     const NO_CLASS: u8 = std.math.maxInt(u8);
+    const seam_of = try allocator.alloc(u8, n);
+    defer allocator.free(seam_of);
+    @memset(seam_of, NO_CLASS);
     const class_of = try allocator.alloc(u8, n);
     defer allocator.free(class_of);
     @memset(class_of, NO_CLASS);
@@ -150,8 +170,29 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     for (fragments.items.items, 0..) |fragment, i| {
         if (decided[i]) continue;
         try options.checkCancel();
+        const class = (try bySeam(allocator, paves, &seams, fragments, i, true, diag)) orelse continue;
+        seam_of[i] = @backingInt(class);
+        const root = find(parent, @intCast(i));
+        if (class_of[root] == NO_CLASS) {
+            class_of[root] = @backingInt(class);
+            checked[root] = true;
+        } else if (class_of[root] != @backingInt(class)) {
+            return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a fragment whose seams put it on the other side of the other operand from a fragment it shares a piece with that the other touches nowhere" });
+        }
+    }
+
+    // The rest: by their component's seams, else one ray a component and a second to check
+    // it, the rest by contagion
+    for (fragments.items.items, 0..) |fragment, i| {
+        if (decided[i]) continue;
+        try options.checkCancel();
         const root = find(parent, @intCast(i));
         classes[i].partner = NONE;
+        if (seam_of[i] != NO_CLASS) {
+            classes[i].class = @fromBackingInt(@intCast(seam_of[i]));
+            stats.by_seam += 1;
+            continue;
+        }
         if (class_of[root] != NO_CLASS and checked[root]) {
             classes[i].class = @fromBackingInt(@intCast(class_of[root]));
             stats.by_contagion += 1;
@@ -159,7 +200,7 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         }
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
         const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag)) orelse
-            (try byDihedral(paves, fragments, i, diag)) orelse
+            (try bySeam(allocator, paves, &seams, fragments, i, false, diag)) orelse
             return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
         stats.rays += 1;
         classes[i].class = class;
@@ -198,77 +239,161 @@ fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]i
     return null;
 }
 
-/// Fragment `i`'s side of the other operand when no sample of it is clear of the other's
-/// boundary, by the faces about a piece of its boundary lying on the other's, as OCCT's
-/// `BOPTools_AlgoTools::IsInternalFace` takes a split face's state from the dihedral at a
-/// section edge (Leo, 2026-11-14): the direction from the piece into the fragment (square
+/// The pieces of each operand the paves made (consecutive paves of an edge, and section
+/// segments), by their merged vertices: where a fragment's boundary lies on the other
+/// operand, found without a scan of its edges. A section along an edge is the edge's piece.
+const Seams = struct {
+    const Piece = union(enum) { edge: types.EdgeIndex, section: types.FaceIndex };
+    const Key = struct { operand: u1, lo: u32, hi: u32 };
+    const FaceKey = struct { operand: u1, face: u32 };
+    pieces: std.AutoHashMapUnmanaged(Key, Piece) = .empty,
+    /// Each face's edges in trees, built the first time a section on a face with many
+    /// (`face_edges.INDEXED_AT_LEAST`) is placed, as the paves keep them; null for a face
+    /// scanned edge by edge.
+    edges: std.AutoHashMapUnmanaged(FaceKey, ?face_edges.FaceEdges) = .empty,
+
+    fn build(allocator: std.mem.Allocator, paves: *const Paves) Error!Seams {
+        var self: Seams = .{};
+        errdefer self.deinit(allocator);
+        for (0..2) |k| {
+            const operand: u1 = @intCast(k);
+            for (paves.edge_paves[k], 0..) |list, e| {
+                if (list.items.len < 2) continue;
+                for (list.items[0 .. list.items.len - 1], list.items[1..]) |u, w| {
+                    const entry = try self.pieces.getOrPut(allocator, .{ .operand = operand, .lo = @min(u.vertex, w.vertex), .hi = @max(u.vertex, w.vertex) });
+                    if (!entry.found_existing) entry.value_ptr.* = .{ .edge = types.EdgeIndex.of(e) };
+                }
+            }
+            for (paves.sections[k], 0..) |list, g| for (list.items) |segment| {
+                const entry = try self.pieces.getOrPut(allocator, .{ .operand = operand, .lo = segment[0], .hi = segment[1] });
+                if (!entry.found_existing) entry.value_ptr.* = .{ .section = types.FaceIndex.of(g) };
+            };
+        }
+        return self;
+    }
+
+    fn deinit(self: *Seams, allocator: std.mem.Allocator) void {
+        self.pieces.deinit(allocator);
+        var it = self.edges.valueIterator();
+        while (it.next()) |entry| if (entry.*) |*index| index.deinit(allocator);
+        self.edges.deinit(allocator);
+    }
+
+    /// Face `g` of operand `k`'s edges in trees when it has many, reaching as far as a
+    /// placement asks (the tolerance, a gap of the zone at most, D27's band).
+    fn edgesOf(self: *Seams, allocator: std.mem.Allocator, paves: *const Paves, k: u1, g: types.FaceIndex, diag: *Diagnostics) Error!?*const face_edges.FaceEdges {
+        const entry = try self.edges.getOrPut(allocator, .{ .operand = k, .face = @backingInt(g) });
+        if (!entry.found_existing) {
+            entry.value_ptr.* = null;
+            const body = paves.operands[k];
+            var count: usize = 0;
+            var loops = traverse.Loops.init(body, g);
+            while (loops.next() catch return corrupt(diag)) |l| {
+                var it = traverse.Coedges.init(body, l);
+                while (it.next() catch return corrupt(diag)) |_| count += 1;
+            }
+            if (count >= face_edges.INDEXED_AT_LEAST) entry.value_ptr.* = try face_edges.FaceEdges.build(allocator, body, g, paves.tol.xsect + paves.tol.zone + paves.decide.band(), diag);
+        }
+        return if (entry.value_ptr.*) |*index| index else null;
+    }
+
+    fn of(self: *const Seams, operand: u1, x: u32, y: u32) ?Piece {
+        return self.pieces.get(.{ .operand = operand, .lo = @min(x, y), .hi = @max(x, y) });
+    }
+};
+
+/// Fragment `i`'s side of the other operand by its seams: the pieces of its boundary lying
+/// on the other (a piece of one of its edges or a section segment, as the paves made them),
+/// each read by the faces about it, as OCCT's `BOPTools_AlgoTools::IsInternalFace` takes a
+/// split face's state from the dihedral at a section edge (Leo, 2026-11-14; seams first,
+/// the M0–M4 review, 2026-11-15): the direction from the piece into the fragment (square
 /// to it in the fragment's plane, the loop having the fragment on its left) against the
 /// other's face the piece is a section with, behind which is inside, or against the wedge
-/// of material between the other's two faces along the edge the piece is a piece of.
-/// Width plays no part: a strip 2.5e-5 wide under a face rising from its section at 26.6°
-/// has no point farther than 1.1e-5 from it, within the zone that `point_in_body` takes
-/// for on the boundary (the 10K fuzz session). Null when no piece decides (none lies on
-/// the other, or the faces there are in one plane within the angular tolerance) or two
-/// pieces disagree.
-fn byDihedral(paves: *const Paves, fragments: *const Fragments, i: usize, diag: *Diagnostics) Error!?Class {
+/// of material between the other's two faces along the edge the piece is a piece of. Width
+/// plays no part, as it does for a ray from a sample: a strip 2.5e-5 wide under a face
+/// rising from its section at 26.6° has no point farther than 1.1e-5 from it (the 10K fuzz
+/// session, 2026-11-14). `clear_only`: by the pieces that show their side clearly (`Side`),
+/// two of them disagreeing a contradiction of the paves, refused (`unclassified`); else by
+/// every piece, as the last resort for a fragment no ray decides, null when two disagree.
+/// Null when no piece decides (none lies on the other, or the faces there are in one plane
+/// with the fragment's within the angular tolerance).
+fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, fragments: *const Fragments, i: usize, clear_only: bool, diag: *Diagnostics) Error!?Class {
     const fragment = fragments.items.items[i];
     const normal = in_face.outwardNormal(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face), .{ 0, 0 });
+    const other: u1 = 1 - fragment.operand;
     var found: ?Class = null;
     for (fragments.loopsOf(i)) |loop| {
         const vertices = fragments.loopVertices(loop);
         for (vertices, 0..) |x, k| {
             const y = vertices[(k + 1) % vertices.len];
+            const piece = seams.of(other, x, y) orelse continue;
             const into = vec.normalized(vec.cross(normal, vec.sub(paves.point(y), paves.point(x)))) orelse continue;
-            const class = (try pieceSide(paves, 1 - fragment.operand, x, y, normal, into, diag)) orelse continue;
+            const side = (try pieceSide(allocator, paves, seams, other, piece, x, y, normal, into, diag)) orelse continue;
+            if (clear_only and !side.clear) continue;
             if (found) |c| {
-                if (c != class) return null;
-            } else found = class;
+                if (c == side.class) continue;
+                // Clear seams disagreeing contradict the paves; the rest only fail to decide
+                if (!clear_only) return null;
+                return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = "a fragment whose seams on the other operand put it on both sides of it" });
+            } else found = side.class;
         }
     }
     return found;
 }
 
-/// The side of operand `other` that direction `into` leaves the piece from merged vertex
-/// `x` to `y` towards, in a face of normal `normal`: by the material between the two faces
-/// of `other`'s edge the piece is a piece of (behind both at a convex edge, behind either
-/// at a concave one), else by the face of `other` it is a section with; null for a piece
-/// on neither, or a face there in one plane with the fragment's.
-fn pieceSide(paves: *const Paves, other: u1, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+/// A piece's side of the other operand, and whether the piece shows it clearly: along an
+/// edge of the other, or a section whose middle lies in its face beyond reach of the face's
+/// boundary. Within reach of that boundary the face's neighbour bounds the material too: a
+/// piece 6e-5 long at a corner of a prism's bottom, read by the bottom alone, was inside
+/// where the fragment's pieces along the prism's edges had it outside (OCCT's H7 thinned to
+/// 3 tolerances), while the pieces of a section triangle 3e-5 a side, all within reach of
+/// a tetrahedron's tip edges, are rightly inside (the tip through a box's top).
+const Side = struct { class: Class, clear: bool };
+
+/// The side of operand `other` that direction `into` leaves `piece` (from merged vertex
+/// `x` to `y`) towards, in a face of normal `normal`: by the material between the two faces
+/// of `other`'s edge the piece is a piece of (`wedgeSide`, clear), else behind the face `g`
+/// of `other` it is a section with (clear when its middle lies in `g` beyond reach of
+/// `g`'s boundary, `in_face.placeWithin`, the paves' decision). Null for a face there in
+/// one plane with the fragment's.
+fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, other: u1, piece: Seams.Piece, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
     const body = paves.operands[other];
-    for (paves.edge_paves[other], 0..) |list, e| {
-        if (list.items.len < 2) continue;
-        for (list.items[0 .. list.items.len - 1], list.items[1..]) |u, w| {
-            if (!((u.vertex == x and w.vertex == y) or (u.vertex == y and w.vertex == x))) continue;
-            const edge = body.edge(types.EdgeIndex.of(e));
-            const line = switch (body.geometry.curve(edge.curve)) {
-                .line => |l| l,
-                else => return null,
-            };
-            const first = edge.coedge;
-            const second = body.coedge(first).partner;
-            if (first == .none or second == .none) return corrupt(diag);
-            const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
-            const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
-            if (paves.tol.parallel(normal, n1) or paves.tol.parallel(normal, n2)) return null;
-            // Convex when the second face turns behind the first along the first's loop
-            const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
-            const convex = vec.dot(vec.cross(n1, n2), along) > 0;
-            const behind_first = vec.dot(into, n1) < 0;
-            const behind_second = vec.dot(into, n2) < 0;
-            const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
-            return if (inside) .inside else .outside;
-        }
-    }
-    const segment: [2]u32 = .{ @min(x, y), @max(x, y) };
-    for (paves.sections[other], 0..) |list, g| {
-        for (list.items) |s| {
-            if (s[0] != segment[0] or s[1] != segment[1]) continue;
-            const n_g = in_face.outwardNormal(body, types.FaceIndex.of(g), .{ 0, 0 });
+    switch (piece) {
+        .edge => |e| return .{ .class = (try wedgeSide(paves, body, e, normal, into, diag)) orelse return null, .clear = true },
+        .section => |g| {
+            const n_g = in_face.outwardNormal(body, g, .{ 0, 0 });
             if (paves.tol.parallel(normal, n_g)) return null;
-            return if (vec.dot(into, n_g) < 0) .inside else .outside;
-        }
+            const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
+            const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
+            const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, try seams.edgesOf(allocator, paves, other, g, diag), diag) == .inside;
+            return .{ .class = if (vec.dot(into, n_g) < 0) .inside else .outside, .clear = clear };
+        },
     }
-    return null;
+}
+
+/// The side of `body` that direction `into` leaves its edge `e` towards, in a face of
+/// normal `normal`: in the material between the edge's two faces, behind both at a convex
+/// edge and behind either at a concave one; null for a curved edge, or a face there in one
+/// plane with the fragment's.
+fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+    const edge = body.edge(e);
+    const line = switch (body.geometry.curve(edge.curve)) {
+        .line => |l| l,
+        else => return null,
+    };
+    const first = edge.coedge;
+    const second = body.coedge(first).partner;
+    if (first == .none or second == .none) return corrupt(diag);
+    const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
+    const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
+    if (paves.tol.parallel(normal, n1) or paves.tol.parallel(normal, n2)) return null;
+    // Convex when the second face turns behind the first along the first's loop
+    const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
+    const convex = vec.dot(vec.cross(n1, n2), along) > 0;
+    const behind_first = vec.dot(into, n1) < 0;
+    const behind_second = vec.dot(into, n2) < 0;
+    const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
+    return if (inside) .inside else .outside;
 }
 
 fn corrupt(diag: *Diagnostics) Error {
@@ -491,7 +616,7 @@ fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: usize,
 
 /// Whether some sample of a fragment lies inside one of `partners` (the old decision by
 /// sampling, kept as the check that a fragment with no twin is no region of a partner).
-fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
+fn sameDomain(paves: *const Paves, body: *const Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
     for (samples) |p| {
         var on_a_boundary = false;
         for (partners) |g| {

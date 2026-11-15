@@ -692,10 +692,10 @@ test "containment: operands that meet nowhere are answered by the table as the g
     try testing.expect(none.isEmpty());
 }
 
-test "boolean: classification by contagion agrees with a ray from every fragment, and casts fewer" {
+test "boolean: classification by seams, then contagion, agrees with each fragment decided alone, and casts fewer rays" {
     // research/truck.md §3: a component of fragments the other operand touches nowhere
-    // takes one ray's class, a second ray checking it; the general path alone (no table),
-    // with contagion and without, must give one result
+    // takes its seams' class, or one ray's, a second ray checking it; the general path
+    // alone (no table), with contagion and without, must give one result
     var a = try box(.{ 0, 0, 0 }, .{ 2, 2, 2 });
     defer a.deinit();
     var b = try box(.{ 1, 1, 1 }, .{ 3, 3, 3 });
@@ -712,7 +712,19 @@ test "boolean: classification by contagion agrees with a ray from every fragment
     defer posts.deinit();
     var coplanar = try box(.{ 1, 1, 0 }, .{ 3, 3, 2 });
     defer coplanar.deinit();
-    const pairs = [_][2]*const Body{ .{ &a, &b }, .{ &slab, &posts }, .{ &a, &coplanar } };
+    // Two solids, one through a face of a box and one wholly inside it: the second's
+    // fragments touch the box nowhere, no seam decides them, and its component casts a ray
+    // and a second to check it
+    var through = try box(.{ -1, 4, 4 }, .{ 1, 6, 6 });
+    defer through.deinit();
+    var inner = try box(.{ 4, 4, 4 }, .{ 6, 6, 6 });
+    defer inner.deinit();
+    var two = try sound(&through, &inner, .@"union");
+    defer two.deinit();
+    var big = try box(.{ 0, 0, 0 }, .{ 10, 10, 10 });
+    defer big.deinit();
+    const pairs = [_][2]*const Body{ .{ &a, &b }, .{ &slab, &posts }, .{ &a, &coplanar }, .{ &two, &big } };
+    var seams_used = false;
     var contagion_used = false;
     var checked = false;
     for (pairs) |pair| for ([_]Op{ .@"union", .difference, .intersection }) |op| {
@@ -724,18 +736,22 @@ test "boolean: classification by contagion agrees with a ray from every fragment
         defer by_fragment.deinit();
         var without = try reported(pair[0], pair[1], op, .{ .fast_paths = false, .contagion = false }, &by_fragment);
         defer without.deinit();
-        errdefer std.debug.print("{s}: rays {d} + by contagion {d} against {d}\n", .{ @tagName(op), by_component.rays, by_component.by_contagion, by_fragment.rays });
+        errdefer std.debug.print("{s}: rays {d} + by seam {d} + by contagion {d} against rays {d} + by seam {d}\n", .{ @tagName(op), by_component.rays, by_component.by_seam, by_component.by_contagion, by_fragment.rays, by_fragment.by_seam });
         try testing.expectEqual(without.counts(), with.counts());
         try testing.expectEqual(shellKinds(&without), shellKinds(&with));
         try testing.expectApproxEqAbs(try volume(&without), try volume(&with), CLOSE);
         try testing.expectEqualSlices(pipeline.FaceMap, by_fragment.faces.items, by_component.faces.items);
-        // Every fragment the plain run cast a ray from is a ray or contagion's here
+        // Seams first, alike either way (they depend on no component); every fragment the
+        // plain run cast a ray from is a ray or contagion's here
+        try testing.expectEqual(by_fragment.by_seam, by_component.by_seam);
         try testing.expectEqual(by_fragment.rays, by_component.rays + by_component.by_contagion);
         try testing.expectEqual(@as(u32, 0), by_fragment.by_contagion);
         try testing.expectEqual(@as(u32, 0), by_fragment.checks);
+        seams_used = seams_used or by_component.by_seam > 0;
         contagion_used = contagion_used or by_component.by_contagion > 0;
         checked = checked or by_component.checks > 0;
     };
+    try testing.expect(seams_used);
     try testing.expect(contagion_used);
     try testing.expect(checked);
 }
