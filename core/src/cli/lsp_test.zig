@@ -923,7 +923,6 @@ test "LSP: an edited document that didn't run has its last run's warnings put ba
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
     const arena = server.arena.allocator();
     const warns = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n";
@@ -1076,7 +1075,6 @@ test "LSP: what a run warned of is a diagnostic on the line of its call, beside 
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     const arena = server.arena.allocator();
     // An unused variable (a lint finding) and a warning the run gives
     try server.open(URI, "unused = 1\nCAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\nnil\n");
@@ -1102,7 +1100,6 @@ test "LSP: a library's warning is a diagnostic in the library, at its own line, 
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
     const arena = server.arena.allocator();
     try server.open(LIB_URI, "def tinted(s)\n  warn(\"tinted \", s.volume)\n  s\nend\nexport tinted\n");

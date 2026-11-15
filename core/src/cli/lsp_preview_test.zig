@@ -321,7 +321,6 @@ test "LSP preview: each run's warnings are its own, the same on every run" {
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     const source = "CAD.config(engine: :brep)\npart = cube(1)\nwarn(\"thin wall: \", part.volume)\npart\n";
     // The second run, edited, finds the Solid built by the first in the result cache
     for ([_][]const u8{ source, source ++ "\n" }) |edited| {
@@ -351,7 +350,6 @@ test "LSP preview: the warnings taken are those of the modules that ran since, a
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     try preview.update("lib.kup", "CAD.config(engine: :brep)\nwarn(\"shade\")\nshade = cube(1)\nexport shade\n");
     try preview.update("main.kup", "import { shade } from \"./lib.kup\"\nshade\n");
     try preview.update("other.kup", "cube(1)\n");

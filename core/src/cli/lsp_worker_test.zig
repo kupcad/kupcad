@@ -209,7 +209,6 @@ test "lsp worker: what each module's run warned of reaches the server, placed" {
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    preview.session.vm.mute_errors = true; // the run's warning would print to the test log
     var in: std.Io.Reader = .fixed(requests.written());
     var replies: std.Io.Writer.Allocating = .init(testing.allocator);
     defer replies.deinit();
