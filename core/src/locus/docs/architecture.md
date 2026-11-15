@@ -1154,7 +1154,10 @@ fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-1
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
 `intersect/planar_faces.zig`, within `xsect` of an edge of each, a piece a run of
 crossings in both faces, an edge's end within `xsect` and its gap of the other's plane
-being its crossing there, as the boolean's vertex–face has it, and an edge lying in that
+being its crossing there, as the boolean's vertex–face has it, measured at the vertex, not
+at its curve's end (which lies off the vertex by the gap: a hull's edge ending 3.1e-5 over
+a slot's bottom, its line 2.4e-5, touched it by the gap twice, 2026-11-15), else its
+curve's crossings in its range, and an edge lying in that
 plane by its reach meeting it at those of its ends within their own, not at an end the
 other's gap reached, 2026-11-14; coplanar faces cover no
 region together, by the overlay of the two), so solids touching along a line or at a

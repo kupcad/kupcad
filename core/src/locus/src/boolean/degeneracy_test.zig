@@ -836,6 +836,38 @@ test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 toleranc
     try expectIdentities(&plate, &post);
 }
 
+test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4e-5, is on it by its vertex's reach, not its line's: made and sound" {
+    // The nightly solids fuzzer (2026-11-15, locus_solids and locus), reduced: a hull's
+    // edge crosses a plate 1.9 tolerances thick at its front, 1.4e-5 under its top front
+    // edge, where the paves merged their crossing with a gap of 6.8e-6. The overlap rules
+    // took the edge's end as on the slot's bottom by its curve's end, 2.4e-5 off, and the
+    // reach of the vertex (the tolerance and its gap): the vertex itself is 3.1e-5 off, and
+    // the hull's top "touched" the slot's bottom, pinched. An end is on a plane by its
+    // vertex's own reach, as the paves put a vertex on a face; so too two hulls' (an
+    // intersection's leftover touching its own face).
+    const Hull = struct {
+        fn of(corners: []const Vec3, shift: Vec3) !Body {
+            var points: [8]Vec3 = undefined;
+            for (corners, 0..) |c, i| points[i] = vec.add(c, shift);
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            return @import("../construct/hull.zig").hull(testing.allocator, tol, points[0..corners.len], &diag);
+        }
+    };
+    var wedge = try Hull.of(&.{ .{ 2, 4, 2.5 }, .{ 2, 2, 0.5 }, .{ 4, 2, 2.5 }, .{ 2, 0, 1.5 } }, .{ -2e-5, -2e-5, 0 });
+    defer wedge.deinit();
+    var plate = try box(.{ 0.999995, 2.00002, 2 - 1.4e-5 }, .{ 3.999995, 3.00002, 2 + 2.4e-5 });
+    defer plate.deinit();
+    try expectIdentities(&wedge, &plate);
+    try expectIdentities(&plate, &wedge);
+    var first = try Hull.of(&.{ .{ 3, 0, 2 }, .{ 1, 2, 0 }, .{ 3, 4, 4 }, .{ 4, 4, 3 } }, .{ 2e-5, -2e-5, 2e-5 });
+    defer first.deinit();
+    var second = try Hull.of(&.{ .{ 4, 3, 1 }, .{ 4, 4, 0 }, .{ 0, 4, 4 }, .{ 1, 2, 3 }, .{ 2, 2, 2 }, .{ 4, 3, 0 }, .{ 3, 3, 2 }, .{ 2, 2, 0 } }, .{ -2e-5, -5e-6, 1e-5 });
+    defer second.deinit();
+    try expectIdentities(&first, &second);
+    try expectIdentities(&second, &first);
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

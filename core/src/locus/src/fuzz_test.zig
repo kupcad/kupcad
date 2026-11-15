@@ -1934,6 +1934,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // within the tolerance of its top and bottom at once: an edge with three faces, and
         // the operands swapped, pinched or a sliver
         "solids 3 0 2 4 1 3 4 1 3 4 3 4 2 3 2 2 3 3 2 3 2 2 3 1 3 4 1 4 0 3 4 3 0 6 5 11 0 2 0 0 3 0 4 2 4 3 1 5 2 4 2 0 3 3 0 0 1 0 2 4 2 3 0 1 2 2 2 2 0 3 0",
+        // The nightlies of 2026-11-15: (locus_solids) a hull's edge ending 3.1e-5 over a
+        // slot's bottom, its line 2.4e-5, taken as on it by the line and the vertex's gap:
+        // the hull's top "touching" the slot, pinched; (locus) the same in two hulls'
+        // difference
+        "solids 1 4 1 2 4 1 1 0 2 1 4 1 0 2 3 0 2 2 0 12 12 1 6 1 1 3 0 2 2 1 4 3 2 3 2 2 3 2 4 7 3 12 1",
+        "solids 1 4 3 0 2 1 2 0 3 4 4 4 4 3 1 1 11 8 7 8 3 3 1 8 4 3 1 4 4 0 0 4 4 1 2 3 2 2 2 4 3 0 3 3 2 2 2 0 2 2 10 4 5 16 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

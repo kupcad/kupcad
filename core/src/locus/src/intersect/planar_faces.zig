@@ -134,20 +134,28 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             any = true;
             const curve = body.geometry.curve(edge.curve);
             const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, edgeReach(body, edge, tol), diag);
-            if (found.lies_in) {
-                // It meets the plane at those of its ends within their own reach, as the
-                // paves put a vertex on a face: the edge's reach is its larger end gap's,
-                // and a section along a wall 1.25 tolerances thick, its other end merged
-                // with a gap, put its end with none on the wall's far side 2.5e-5 off (the
-                // 10K fuzz session, 2026-11-14: a union's outer shell touching its void)
-                for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
-                    const p = body.point(v);
-                    if (@abs(vec.dot(plane.n, p) - plane.d) <= tol.xsect + body.vertex(v).gap) try marks.append(allocator, p);
-                }
-                continue;
+            // Its ends on the plane by their own reach, as the paves put a vertex on a face:
+            // the edge's reach is its larger end gap's, measured at its curve's ends, which
+            // lie off the vertices by their gaps. A section along a wall 1.25 tolerances
+            // thick, its other end merged with a gap, put its end with none on the wall's
+            // far side 2.5e-5 off (the 10K fuzz session, 2026-11-14: a union's outer shell
+            // touching its void); a hull's edge ending 3.1e-5 over a slot's bottom, its
+            // curve 2.4e-5, at a vertex with a gap of 6.8e-6, touched it (the nightly,
+            // 2026-11-15: the slot's bottom and the hull's top "touching", pinched)
+            var on_plane = false;
+            for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
+                const p = body.point(v);
+                if (!(@abs(plane.height(p)) <= tol.xsect + body.vertex(v).gap)) continue;
+                try marks.append(allocator, p);
+                on_plane = true;
             }
+            if (found.lies_in) continue;
             every_in = false;
-            for (found.params()) |t| {
+            // An end on the plane is where the edge meets it (once); else its curve's
+            // crossings inside its range
+            if (on_plane) continue;
+            const crossed = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, 0, diag);
+            for (crossed.params()) |t| {
                 // A crossing within the zone of an end is that vertex, exactly
                 var p = curve.eval(t);
                 for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
