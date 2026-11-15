@@ -117,9 +117,9 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
 }
 
 /// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives those
-/// of its ends on it); true when every edge lies in it, the face then lying in the plane. On the plane
-/// is within the intersection tolerance and the edge's ends' gaps, as a boolean takes a
-/// vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
+/// of its ends on it); true when every edge lies in it, the face then lying in the plane. An
+/// end on the plane is within the intersection tolerance and its vertex's gap, as a boolean
+/// takes a vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
 /// vertex at a shallow angle crosses the plane's exact line far from it, inside the other
 /// face, where the boolean, rightly, made no edge (the solids fuzzer, 2026-11-13).
 fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
@@ -133,7 +133,6 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             if (edge.flags.degenerate) continue;
             any = true;
             const curve = body.geometry.curve(edge.curve);
-            const found = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, edgeReach(body, edge, tol), diag);
             // Its ends on the plane by their own reach, as the paves put a vertex on a face:
             // the edge's reach is its larger end gap's, measured at its curve's ends, which
             // lie off the vertices by their gaps. A section along a wall 1.25 tolerances
@@ -142,18 +141,23 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             // touching its void); a hull's edge ending 3.1e-5 over a slot's bottom, its
             // curve 2.4e-5, at a vertex with a gap of 6.8e-6, touched it (the nightly,
             // 2026-11-15: the slot's bottom and the hull's top "touching", pinched)
-            var on_plane = false;
-            for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
+            var on: [2]bool = undefined;
+            for ([_]types.VertexIndex{ edge.start, edge.end }, &on) |v, *end_on| {
                 const p = body.point(v);
-                if (!(@abs(plane.height(p)) <= tol.xsect + body.vertex(v).gap)) continue;
-                try marks.append(allocator, p);
-                on_plane = true;
+                end_on.* = @abs(plane.height(p)) <= tol.xsect + body.vertex(v).gap;
+                if (end_on.*) try marks.append(allocator, p);
             }
-            if (found.lies_in) continue;
+            // The edge lies in the plane when both its ends do, as a section takes a line
+            // to (`boolean/section.zig`), a curved one's curve between them within its
+            // reach too. By the edge's reach at both ends, a needle's end with no gap
+            // 2.6e-5 off its other face's plane lay in it by its far end's gap of 7.4e-6,
+            // and its two faces lay in one plane (the nightly, 2026-11-15: a hull's
+            // ridge and a flat tetrahedron's intersection "lying on" its own face)
+            if (on[0] and on[1] and (curve == .line or (try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, edgeReach(body, edge, tol), diag)).lies_in)) continue;
             every_in = false;
             // An end on the plane is where the edge meets it (once); else its curve's
             // crossings inside its range
-            if (on_plane) continue;
+            if (on[0] or on[1]) continue;
             const crossed = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, 0, diag);
             for (crossed.params()) |t| {
                 // A crossing within the zone of an end is that vertex, exactly
@@ -170,8 +174,9 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
 
 /// How near an edge a plane or a point must come to be on it: the intersection tolerance
 /// and the larger of its ends' gaps, as a boolean takes a vertex to lie on a face
-/// (`boolean/pave.zig`'s vertex–face). One reach for an edge lying in a plane
-/// (`crossings`) and a point on a face's boundary (`query/overlap.zig`).
+/// (`boolean/pave.zig`'s vertex–face). One reach for a curved edge between its ends lying
+/// in a plane (`crossings`, its ends by their own) and a point on a face's boundary
+/// (`query/overlap.zig`).
 pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64 {
     return tol.xsect + @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap);
 }

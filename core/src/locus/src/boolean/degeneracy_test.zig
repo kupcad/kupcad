@@ -868,6 +868,32 @@ test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4
     try expectIdentities(&second, &first);
 }
 
+test "degeneracy: a hull's ridge through a flat tetrahedron, their intersection a needle whose end with no gap is 2.6e-5 off its other face: made and sound" {
+    // The nightly solids fuzzer (2026-11-15, locus_solids), reduced: a hull's top edge,
+    // turned 0.014 rad, runs through a tetrahedron 1.5 tolerances thick, merged with its
+    // upper faces with a gap of 7.4e-6; the hull's two faces there cut its lower edge
+    // 4.4e-5 apart. The intersection is a needle 1.5 long and 2.8e-5 thick, each vertex
+    // beyond the tolerance of every face it is not on. The overlap rules took an edge of
+    // one face to lie in the other's plane by the edge's reach at both ends, the larger
+    // end gap's: its end with none, 2.6e-5 off, lay in it, the two faces in one plane
+    // (`faces_intersect`). An end is on a plane by its vertex's own reach.
+    const Hull = struct {
+        fn of(corners: []const Vec3, angle: f64, shift: Vec3) !Body {
+            var points: [6]Vec3 = undefined;
+            for (corners, 0..) |c, i| points[i] = vec.add(.{ @cos(angle) * c[0] - @sin(angle) * c[1], @sin(angle) * c[0] + @cos(angle) * c[1], c[2] }, shift);
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            return @import("../construct/hull.zig").hull(testing.allocator, tol, points[0..corners.len], &diag);
+        }
+    };
+    var ridge = try Hull.of(&.{ .{ 3, 4, 4 }, .{ 1, 0, 4 }, .{ 3, 4, 2 }, .{ 0, 3, 1 }, .{ 0, 3, 2 }, .{ 3, 4, 1 } }, 0.014, .{ 1, 2e-5, 2e-5 });
+    defer ridge.deinit();
+    var flat = try Hull.of(&.{ .{ 2, 2, 4 - 1.5e-5 }, .{ 4, 2, 4 - 1.5e-5 }, .{ 3, 1, 4 + 1.5e-5 }, .{ 3, 3, 4 + 1.5e-5 } }, 0, .{ 0, -2e-5, 0 });
+    defer flat.deinit();
+    try expectIdentities(&ridge, &flat);
+    try expectIdentities(&flat, &ridge);
+}
+
 test "degeneracy: a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from its edges: refused" {
     // The nightly (2026-11-15, locus), reduced: a box's top 7e-5 over a plate's, at the
     // plate's tolerance of 2e-4, one plane: the union's top takes the box's (D28), its

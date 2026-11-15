@@ -1161,9 +1161,12 @@ crossings in both faces, an edge's end within `xsect` and its gap of the other's
 being its crossing there, as the boolean's vertex–face has it, measured at the vertex, not
 at its curve's end (which lies off the vertex by the gap: a hull's edge ending 3.1e-5 over
 a slot's bottom, its line 2.4e-5, touched it by the gap twice, 2026-11-15), else its
-curve's crossings in its range, and an edge lying in that
-plane by its reach meeting it at those of its ends within their own, not at an end the
-other's gap reached, 2026-11-14; coplanar faces cover no
+curve's crossings in its range, and an edge lying in that plane when both its ends are
+on it so, a curved one's curve between them within its reach too, as a section takes a
+line (not by the edge's reach, the larger end gap's, at both ends: a section's end with
+no gap was on a wall's far side by its other end's gap, 2026-11-14, and a needle's end
+with none, 2.6e-5 off its other face's plane, lay in it, the two faces in one plane,
+2026-11-15); coplanar faces cover no
 region together, by the overlay of the two), so solids touching along a line or at a
 point pass, a point of two shells' faces needing only one's boundary (a corner on a face
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take

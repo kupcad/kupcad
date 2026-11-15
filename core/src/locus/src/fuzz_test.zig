@@ -1944,6 +1944,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // that plane and 2.5e-4 from the top's edges, taken as one plane with it: the hull's
         // top split where the paves found no point
         "solids 0 1 2 1 3 1 2 1 0 0 2 2 12 8 7 8 2 3 2 0 2 1 4 1 4 2 3 11 5 4 4 0 1 1 6 3 0 4 1 4 2 4 2 4 4 1 3 4 0 2 1 2 4 2 2 1 3 9 3 1",
+        // And (locus_solids): a hull's ridge through a flat tetrahedron, their intersection
+        // a needle 2.8e-5 thick, its end with no gap 2.6e-5 off its other face taken as in
+        // its plane by its far end's gap: its two faces "lying on" each other
+        "solids 1 6 3 4 4 1 0 4 3 4 2 0 3 1 0 3 2 3 4 1 0 2 4 3 2 7 9 12 2 0 -1 -1 -1 10 5 2 3 2 1 4 3 4 2 2 3 4 1 4 2 -2 8 0 15 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
