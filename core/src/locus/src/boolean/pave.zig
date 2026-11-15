@@ -52,6 +52,7 @@ const in_face = @import("../query/in_face.zig");
 const face_edges = @import("../query/face_edges.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const overlap = @import("../query/overlap.zig");
+const incidence = @import("../geometry/incidence.zig");
 const curve_surface = @import("../intersect/curve_surface.zig");
 const predicates = @import("../math/predicates.zig");
 const Body = body_mod.Body;
@@ -70,11 +71,6 @@ const MAX_CLIPPED = 64;
 /// How many intersection tolerances apart two parallel faces of the operands may lie for
 /// the warning that the result will have faces that thin.
 const NEARLY_COPLANAR: f64 = 100;
-/// How near the intersection tolerance a distance may come, in rounding of the operands'
-/// largest coordinate, and still be decided: a distance within this of the tolerance is
-/// the tolerance to rounding, which one computation finds within it and another beyond
-/// (the solids fuzzer's finds of 2026-11-13, an operand moved by the tolerance exactly).
-const AT_TOLERANCE_ULPS: f64 = 64;
 
 /// The squared sine of the angle under which two edges count as parallel for edge–edge:
 /// their crossing, if any, lies along an overlap that vertex–edge already split.
@@ -277,8 +273,13 @@ pub const Paves = struct {
     reach: std.ArrayList(f64) = .empty,
     owners: std.ArrayList(u2) = .empty,
     welder: grid.PointWelder,
-    /// The rounding a distance between the operands' points may carry: one within it of
-    /// the intersection tolerance is refused (`Filler.within`, `at_tolerance`).
+    /// The decisions of "on" at the tolerance, for coordinates the operands' size
+    /// (`geometry/incidence.zig`): a distance within rounding of its limit is the limit to
+    /// rounding, which one computation finds within it and another beyond (the solids
+    /// fuzzer's finds of 2026-11-13, an operand moved by the tolerance exactly), refused
+    /// (`Filler.within`, `at_tolerance`).
+    decide: incidence.Decider,
+    /// The widest band of those decisions: what a search reaches beyond a limit.
     rounding: f64,
     /// Each operand's vertex as a merged vertex (`NONE` for a tombstone).
     vertex_of: [2][]u32 = .{ &.{}, &.{} },
@@ -386,8 +387,9 @@ pub const Paves = struct {
 /// The paves of `a` and `b` (solids with planar faces and straight edges) at `tol`;
 /// `stage` follows the interference classes as they are found, so a refusal's is there.
 pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics, stage: *Stage) Error!Paves {
-    const rounding = try roundingOf(a, b, tol, diag);
-    var p: Paves = .{ .allocator = allocator, .tol = tol, .operands = .{ a, b }, .rounding = rounding, .welder = grid.PointWelder.initWithMargin(tol.xsect, rounding) };
+    const decide: incidence.Decider = .{ .tol = tol, .scale = try scaleOf(a, b, diag) };
+    const rounding = decide.band();
+    var p: Paves = .{ .allocator = allocator, .tol = tol, .operands = .{ a, b }, .decide = decide, .rounding = rounding, .welder = grid.PointWelder.initWithMargin(tol.xsect, rounding) };
     errdefer p.deinit();
     for (0..2) |k| {
         const body = p.operands[k];
@@ -559,12 +561,10 @@ const Filler = struct {
             best: u32 = NONE,
             at: u32 = NONE,
             fn visit(s: *@This(), i: u32) bool {
-                const d = vec.distance(s.p.points.items[i], s.q);
-                const reach = s.p.tol.xsect + s.p.gaps.items[i] + s.gap;
-                if (@abs(d - reach) <= s.p.rounding) {
-                    s.at = @min(s.at, i);
-                } else if (d <= reach) {
-                    s.best = @min(s.best, i);
+                switch (s.p.decide.merged(vec.distance(s.p.points.items[i], s.q), s.p.gaps.items[i], s.gap)) {
+                    .same => s.best = @min(s.best, i),
+                    .at_tolerance => s.at = @min(s.at, i),
+                    .apart => {},
                 }
                 return true;
             }
@@ -601,8 +601,22 @@ const Filler = struct {
     /// operands' topology would disagree with itself: refused (`at_tolerance`), naming
     /// `entity`, as a merged vertex past the zone is.
     fn within(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error!bool {
-        if (@abs(d - limit) <= self.p.rounding) return self.atTolerance(d, limit, entity);
-        return d <= limit;
+        return switch (self.p.decide.within(d, limit)) {
+            .same => true,
+            .apart => false,
+            .at_tolerance => self.atTolerance(d, limit, entity),
+        };
+    }
+
+    /// Whether merged vertex `v` is on `plane`, within its reach of it (`entity` named
+    /// when at it to rounding).
+    fn onPlane(self: *Filler, plane: Plane, v: u32, entity: diagnostics.EntityRef) Error!bool {
+        return self.within(@abs(plane.height(self.p.point(v))), self.reachOf(v), entity);
+    }
+
+    /// Merged vertex `v`'s reach: the intersection tolerance and its gap.
+    fn reachOf(self: *const Filler, v: u32) f64 {
+        return incidence.reach(self.p.tol, self.p.gaps.items[v]);
     }
 
     fn atTolerance(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error {
@@ -626,7 +640,7 @@ const Filler = struct {
     /// bottom one's vertex, the top edge's piece ending 2.56e-5 off its line.
     fn weld(self: *Filler, q: Vec3, gap: f64, made_on: [2]Feature) Error!u32 {
         const found = try self.find(q) orelse return self.addPoint(q, gap, 0);
-        const reach = self.p.tol.xsect + self.p.gaps.items[found];
+        const reach = self.reachOf(found);
         for (made_on) |feature| {
             const beyond = try self.beyondReach(found, reach, feature) orelse continue;
             const first = feature.operand() == 0;
@@ -737,7 +751,7 @@ const Filler = struct {
     fn placeIn(self: *Filler, k: usize, f: types.FaceIndex, q: Vec3, v: ?u32) Error!in_face.Place {
         const operand = self.body(k);
         if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
-        const allowance = self.p.tol.xsect + if (v) |m| self.p.gaps.items[m] else 0;
+        const allowance = incidence.reach(self.p.tol, if (v) |m| self.p.gaps.items[m] else 0);
         const index = try self.edgesOf(k, f);
         // Within the allowance and D27's band, the trees' distance is the scan's
         const distance = if (index) |i| i.boundaryDistance(operand, q, allowance + self.p.rounding) else try in_face.boundaryDistance(operand, f, q, self.diag);
@@ -827,7 +841,7 @@ const Filler = struct {
         const s = vec.dot(vec.sub(q, p0), d) / len_sq;
         if (s < 0 or s > 1) return;
         const off = vec.distance(q, vec.addScaled(p0, d, s));
-        if (!try self.within(off, self.p.tol.xsect + self.p.gaps.items[v], .of(.edge, @backingInt(e)))) return;
+        if (!try self.within(off, self.reachOf(v), .of(.edge, @backingInt(e)))) return;
         const len = @sqrt(len_sq);
         return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = @min(s, 1 - s) * len, .threshold = self.p.tol.xsect });
     }
@@ -887,7 +901,7 @@ const Filler = struct {
                 try self.endStrip(k, e, v);
                 continue;
             };
-            if (!try self.within(at.distance, self.p.tol.xsect + self.p.gaps.items[v], .of(.edge, @backingInt(e)))) continue;
+            if (!try self.within(at.distance, self.reachOf(v), .of(.edge, @backingInt(e)))) continue;
             try self.addPave(k, e, v, at);
         }
     }
@@ -970,7 +984,7 @@ const Filler = struct {
         for (near.items[0..near.count]) |item| {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
-            if (!try self.within(@abs(planar_faces.planeOf(frame).height(q)), self.p.tol.xsect + self.p.gaps.items[v], .of(.face, @backingInt(f)))) continue;
+            if (!try self.onPlane(planar_faces.planeOf(frame), v, .of(.face, @backingInt(f)))) continue;
             const place = try self.placeIn(k, f, q, v);
             if (place == .outside) continue;
             self.p.reach.items[v] = @max(self.p.reach.items[v], @abs(planar_faces.planeOf(frame).height(q)));
@@ -1013,7 +1027,7 @@ const Filler = struct {
         for (0..p.points.items.len) |i| {
             const v: u32 = @intCast(i);
             const q = p.point(v);
-            const reach = p.tol.xsect + p.gaps.items[v];
+            const reach = self.reachOf(v);
             for (0..2) |k| {
                 const near = try self.facesNear(k, q, p.gaps.items[v]);
                 var on: [near.items.len]types.FaceIndex = undefined;
@@ -1127,8 +1141,10 @@ const Filler = struct {
                 const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other), f).?);
                 const h0 = plane.height(p0);
                 const h1 = plane.height(p1);
-                const xsect = self.p.tol.xsect;
-                if (try self.within(@abs(h0), xsect, .of(.edge, @backingInt(e))) or try self.within(@abs(h1), xsect, .of(.edge, @backingInt(e))) or (h0 < 0) == (h1 < 0)) continue;
+                // An end on the plane is vertex–face's, by the reach vertex–face decided it
+                // with: the tolerance alone took an end with a gap, on the plane there, as
+                // across it here (the M0–M4 review, 2026-11-15: one predicate, one measure)
+                if (try self.onPlane(plane, v[0], .of(.edge, @backingInt(e))) or try self.onPlane(plane, v[1], .of(.edge, @backingInt(e))) or (h0 < 0) == (h1 < 0)) continue;
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
                 if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
                     try self.found.append(self.allocator, .{ .face = .{ .operand = @intCast(other), .face = @backingInt(f) }, .vertex = at });
@@ -1157,7 +1173,7 @@ const Filler = struct {
         var best_distance = std.math.inf(f64);
         for (self.p.edge_paves[k][@backingInt(e)].items) |pave| {
             const point = self.p.point(pave.vertex);
-            if (!try self.within(@abs(plane.height(point)), self.p.tol.xsect + self.p.gaps.items[pave.vertex], .of(.face, @backingInt(f)))) continue;
+            if (!try self.onPlane(plane, pave.vertex, .of(.face, @backingInt(f)))) continue;
             const distance = vec.distance(point, q);
             if (distance >= best_distance) continue;
             if (try self.placeIn(other, f, point, pave.vertex) == .outside) continue;
@@ -1232,7 +1248,7 @@ const Filler = struct {
         const operand = self.body(k);
         const a = p.point(u);
         const b = p.point(w);
-        const reach = p.tol.xsect + @max(p.gaps.items[u], p.gaps.items[w]);
+        const reach = @max(self.reachOf(u), self.reachOf(w));
         var ring: std.ArrayList(u32) = .empty;
         defer ring.deinit(self.allocator);
         var loops = traverse.Loops.init(operand, f);
@@ -1440,7 +1456,7 @@ const Filler = struct {
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const v = p.vertex_of[k][@backingInt(body_k.coedgeStart(c))];
-                if (!try self.within(@abs(plane.height(p.point(v))), p.tol.xsect + p.gaps.items[v], .of(.face, @backingInt(f)))) return false;
+                if (!try self.onPlane(plane, v, .of(.face, @backingInt(f)))) return false;
             }
         }
         return true;
@@ -1699,7 +1715,7 @@ const Filler = struct {
                     const place = try self.placeIn(other, g, mid, null);
                     if (!try self.imprinted(other, g, x.vertex, y.vertex, place, .{ .operand = @intCast(k), .face = @backingInt(f) })) continue;
                     for ([2]u32{ x.vertex, y.vertex }) |v| {
-                        if (try self.within(@abs(plane.height(p.point(v))), p.tol.xsect + p.gaps.items[v], .of(.face, @backingInt(g)))) continue;
+                        if (try self.onPlane(plane, v, .of(.face, @backingInt(g)))) continue;
                         return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary inside that face beyond reach of its plane," else "a face of the second operand in one plane with a face of the first, its boundary inside that face beyond reach of its plane,", .measured = @abs(plane.height(p.point(v))), .threshold = p.tol.xsect + p.gaps.items[v] });
                     }
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
@@ -1789,16 +1805,16 @@ fn stageLabel(stage: Stage) []const u8 {
     };
 }
 
-/// The rounding a distance between points of `a` and `b` may carry: `AT_TOLERANCE_ULPS`
-/// of the largest coordinate of either (at least the tolerance's own).
-fn roundingOf(a: *const Body, b: *const Body, tol: Tolerance, diag: *Diagnostics) Error!f64 {
-    var scale = tol.xsect;
+/// The largest coordinate of `a` and `b`: what a distance between their points is rounded
+/// at.
+fn scaleOf(a: *const Body, b: *const Body, diag: *Diagnostics) Error!f64 {
+    var scale: f64 = 0;
     for ([_]*const Body{ a, b }) |body| {
         const box = bbox.bodyBounds(body) catch return corrupt(diag);
         if (box.isEmpty()) continue;
         for (0..3) |k| scale = @max(scale, @max(@abs(box.min[k]), @abs(box.max[k])));
     }
-    return AT_TOLERANCE_ULPS * std.math.floatEps(f64) * scale;
+    return scale;
 }
 
 fn tooSmallLabel(k: usize, stage: Stage) []const u8 {

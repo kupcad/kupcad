@@ -41,6 +41,7 @@ const distance = @import("distance.zig");
 const point_in_body = @import("point_in_body.zig");
 const bvh_mod = @import("../spatial/bvh.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const incidence = @import("../geometry/incidence.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const sketch_overlap = @import("../sketch/overlap.zig");
 const triangulate = @import("../mesh/triangulate.zig");
@@ -507,7 +508,7 @@ fn nearBoundary(body: *const Body, f: types.FaceIndex, p: Vec3, own: f64, tol: T
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
         const lone = body.loop(l).vertex;
-        if (lone != .none and vec.distance(body.point(lone), p) <= tol.xsect + body.vertex(lone).gap + own) return true;
+        if (lone != .none and vec.distance(body.point(lone), p) <= incidence.reach(tol, body.vertex(lone).gap) + own) return true;
         var it = traverse.Coedges.init(body, l);
         while (it.next() catch return corrupt(diag)) |c| {
             const e = body.coedge(c).edge;

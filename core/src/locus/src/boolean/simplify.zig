@@ -38,6 +38,7 @@ const surfaces = @import("../geometry/surfaces.zig");
 const euler = @import("../topology/euler.zig");
 const in_face = @import("../query/in_face.zig");
 const canonical = @import("../geometry/canonical.zig");
+const incidence = @import("../geometry/incidence.zig");
 const check = @import("../topology/check.zig");
 const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
@@ -108,7 +109,7 @@ fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, diag: *
             while (it.next() catch return corrupt(diag)) |c| {
                 const v = body.coedgeStart(c);
                 const p = body.point(v);
-                tally.add(canonical.Comparison.distance(@abs(other.height(p)), body.tol.xsect + body.vertex(v).gap, canonical.magnitude(&.{ p, other.frame.origin })));
+                tally.add(canonical.Comparison.distance(@abs(other.height(p)), incidence.reach(body.tol, body.vertex(v).gap), canonical.magnitude(&.{ p, other.frame.origin })));
             }
         }
     }
@@ -302,7 +303,7 @@ fn sameLine(body: *const Body, keep: types.EdgeIndex, move: types.EdgeIndex, dia
     const p = body.point(far);
     const comparisons = [_]canonical.Comparison{
         canonical.Comparison.angle(1.0 - @abs(vec.dot(line.d, other.d)), tol.angle),
-        canonical.Comparison.distance(canonical.lineOffset(line, p), tol.xsect + body.vertex(far).gap, canonical.magnitude(&.{ p, line.o })),
+        canonical.Comparison.distance(canonical.lineOffset(line, p), incidence.reach(tol, body.vertex(far).gap), canonical.magnitude(&.{ p, line.o })),
     };
     return switch (canonical.verdict(&comparisons)) {
         .same => true,

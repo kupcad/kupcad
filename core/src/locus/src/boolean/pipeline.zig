@@ -45,6 +45,7 @@ const geometry = @import("../geometry/types.zig");
 const curves = @import("../geometry/curves.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const canonical = @import("../geometry/canonical.zig");
+const incidence = @import("../geometry/incidence.zig");
 const bbox = @import("../measure/bbox.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
@@ -1019,7 +1020,7 @@ const Provenance = struct {
             const meets = self.merged.items;
             for (body.vertices.items, 0..) |v, vi| {
                 if (v.tombstone or std.mem.indexOfScalar(u32, meets, @intCast(vi)) != null) continue;
-                if (try self.brought(body, f, own, target, body.point(types.VertexIndex.of(vi)), p.tol.xsect + v.gap, diag)) return g;
+                if (try self.brought(body, f, own, target, body.point(types.VertexIndex.of(vi)), incidence.reach(p.tol, v.gap), diag)) return g;
             }
             for (body.edges.items) |e| {
                 if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none or e.curve.kind != .line) continue;

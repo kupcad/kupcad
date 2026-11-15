@@ -24,6 +24,7 @@ const traverse = @import("../topology/traverse.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const in_face = @import("../query/in_face.zig");
 const curve_surface = @import("curve_surface.zig");
+const incidence = @import("../geometry/incidence.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const Body = body_mod.Body;
 const Frame = geometry.Frame;
@@ -145,7 +146,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             var on: [2]bool = undefined;
             for ([_]types.VertexIndex{ edge.start, edge.end }, &on) |v, *end_on| {
                 const p = body.point(v);
-                end_on.* = @abs(plane.height(p)) <= tol.xsect + body.vertex(v).gap;
+                end_on.* = @abs(plane.height(p)) <= incidence.reach(tol, body.vertex(v).gap);
                 if (end_on.*) try marks.append(allocator, p);
             }
             // The edge lies in the plane when both its ends do, as a section takes a line
@@ -179,7 +180,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
 /// in a plane (`crossings`, its ends by their own) and a point on a face's boundary
 /// (`query/overlap.zig`).
 pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64 {
-    return tol.xsect + @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap);
+    return incidence.reach(tol, @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap));
 }
 
 /// Whether `p` lies in both faces, their boundaries included.

@@ -624,6 +624,12 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
 1. **Interfere in dimension order** (OCCT `BOPAlgo_PaveFiller`): vertex–vertex, then
    vertex–edge, edge–edge, vertex–face, edge–face, each within the candidate pairs. Two
    things interfere when their distance is at most the sum of their gaps plus `xsect`.
+   That "on" is written once, in `geometry/incidence.zig` (a vertex's reach, the
+   tolerance and its gap; D27's band about every limit), which the paves, the
+   simplification, the provenance and the overlap rules ask (OCCT's `IntTools_Context`;
+   2026-11-15, the M0–M4 review: a predicate written per stage was decided with two
+   measures, about 30 of 54 fuzz fixes); an edge's end is on a face's plane for
+   edge–face by the reach vertex–face decided it with.
    Coincident vertices merge into one with the enclosing ball; a vertex on an edge or an
    edge crossing an edge splits the edge there (`mev` split form) on its shrunk range;
    collinear overlaps become *common blocks* (one edge record shared by both bodies).
