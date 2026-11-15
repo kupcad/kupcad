@@ -496,7 +496,7 @@ fn sameDomain(paves: *const Paves, body: *const @import("../topology/body.zig").
         var on_a_boundary = false;
         for (partners) |g| {
             const face_g = types.FaceIndex.of(g);
-            switch (try planar_faces.place(paves.operands[other], face_g, p, paves.tol, diag)) {
+            switch (try planar_faces.place(paves.operands[other], face_g, p, 0, paves.tol, diag)) {
                 .outside => continue,
                 .boundary => {
                     on_a_boundary = true;

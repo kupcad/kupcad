@@ -749,15 +749,13 @@ const Filler = struct {
     /// between the zone and the tolerance of an edge was the edge's pave and "inside" the
     /// face, a touch (the research review, 2026-11-14: one decision, one place).
     fn placeIn(self: *Filler, k: usize, f: types.FaceIndex, q: Vec3, v: ?u32) Error!in_face.Place {
-        const operand = self.body(k);
         if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
-        const allowance = incidence.reach(self.p.tol, if (v) |m| self.p.gaps.items[m] else 0);
-        const index = try self.edgesOf(k, f);
-        // Within the allowance and D27's band, the trees' distance is the scan's
-        const distance = if (index) |i| i.boundaryDistance(operand, q, allowance + self.p.rounding) else try in_face.boundaryDistance(operand, f, q, self.diag);
-        if (try self.within(distance, allowance, .of(.face, @backingInt(f)))) return .boundary;
-        const uv = in_face.uvOf(operand, f, q);
-        return if (index) |i| i.classify(operand, q, uv, self.diag) else in_face.classify(operand, f, q, uv, 0, self.diag);
+        return switch (try in_face.placeWithin(self.p.decide, self.body(k), f, q, if (v) |m| self.p.gaps.items[m] else 0, try self.edgesOf(k, f), self.diag)) {
+            .inside => .inside,
+            .outside => .outside,
+            .boundary => .boundary,
+            .at_tolerance => |c| self.atTolerance(c.measured, c.limit, .of(.face, @backingInt(f))),
+        };
     }
 
     /// Face `f` of operand `k`'s edges in trees, when it has many; built on first asking.

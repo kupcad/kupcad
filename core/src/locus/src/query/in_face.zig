@@ -13,6 +13,9 @@ const vec = @import("../math/vec.zig");
 const predicates = @import("../math/predicates.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
+const canonical = @import("../geometry/canonical.zig");
+const incidence = @import("../geometry/incidence.zig");
+const face_edges = @import("face_edges.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
@@ -42,6 +45,30 @@ pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within
     if (try nearEdge(body, f, p, within, diag)) return .boundary;
     const inside = try windsPlanar(body, f, uv, diag) orelse try winds(body, f, uv, diag);
     return if (inside) .inside else .outside;
+}
+
+/// Where a point lies against a face as the tolerance decides it (`placeWithin`): `Place`,
+/// or at the tolerance (D27) when its distance from the boundary is its reach to rounding.
+pub const Placed = union(enum) { inside, outside, boundary, at_tolerance: canonical.Comparison };
+
+/// Where `p` (on face `f`'s surface), a point reaching `gap` beyond the intersection
+/// tolerance (a vertex's gap; 0 for a point that is none), lies against the face: on its
+/// boundary within that reach of it (`incidence.Decider.onCurve`), else inside or outside
+/// by its loops' winding. The one decision of a point in a face for the boolean's paves
+/// and the rules that check a body (the M0–M4 review, 2026-11-15: the paves decided it
+/// by the reach, the overlap rules and the classification again by the zone). `index`:
+/// the face's edges in trees, when the caller keeps them (reaching the decider's band
+/// beyond the reach).
+pub fn placeWithin(decide: incidence.Decider, body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, index: ?*const face_edges.FaceEdges, diag: *Diagnostics) Error!Placed {
+    const distance = if (index) |i| i.boundaryDistance(body, p, incidence.reach(decide.tol, gap) + decide.band()) else try boundaryDistance(body, f, p, diag);
+    switch (decide.onCurve(distance, gap)) {
+        .same => return .boundary,
+        .at_tolerance => |c| return .{ .at_tolerance = c },
+        .apart => {},
+    }
+    const uv = uvOf(body, f, p);
+    const place = if (index) |i| try i.classify(body, p, uv, diag) else try classify(body, f, p, uv, 0, diag);
+    return if (place == .inside) .inside else .outside;
 }
 
 /// The parameters of `p` on face `f`'s surface, a periodic direction's value taken a

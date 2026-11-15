@@ -439,15 +439,10 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
 /// edge or vertex of the face records it (a vertex loop could, once the mesher and the STEP
 /// writer take one); within one shell it would be a pinch.
 fn onBoundaries(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, apart: bool, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    if (piece.isPoint() and apart) {
-        const own = try gapAt(body, f, g, piece.a, diag);
-        return try nearBoundary(body, f, piece.a, own, tol, diag) or try nearBoundary(body, g, piece.a, own, tol, diag);
-    }
-    const points = [3]Vec3{ piece.a, vec.lerp(piece.a, piece.b, 0.5), piece.b };
-    const count: usize = if (piece.isPoint()) 1 else 3;
-    for (points[0..count]) |p| {
-        const own = try gapAt(body, f, g, p, diag);
-        if (!try nearBoundary(body, f, p, own, tol, diag) or !try nearBoundary(body, g, p, own, tol, diag)) return false;
+    if (piece.isPoint() and apart) return try onBoundary(body, f, piece.a, piece.gap_a, tol, diag) or try onBoundary(body, g, piece.a, piece.gap_a, tol, diag);
+    const points = pointsOf(piece);
+    for (points.items[0..points.count]) |at| {
+        if (!try onBoundary(body, f, at.p, at.gap, tol, diag) or !try onBoundary(body, g, at.p, at.gap, tol, diag)) return false;
     }
     return true;
 }
@@ -460,62 +455,36 @@ fn pinch(diag: *Diagnostics, s: types.ShellIndex, g: types.FaceIndex) Error {
 /// Whether every point of `piece` (its ends and middle) lies on face `f`'s boundary or on
 /// `g`'s: the two faces touch there, neither passing through the other.
 fn touching(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    const points = [3]Vec3{ piece.a, vec.lerp(piece.a, piece.b, 0.5), piece.b };
-    const count: usize = if (piece.isPoint()) 1 else 3;
-    for (points[0..count]) |p| {
-        const own = try gapAt(body, f, g, p, diag);
-        if (!try nearBoundary(body, f, p, own, tol, diag) and !try nearBoundary(body, g, p, own, tol, diag)) return false;
+    const points = pointsOf(piece);
+    for (points.items[0..points.count]) |at| {
+        if (!try onBoundary(body, f, at.p, at.gap, tol, diag) and !try onBoundary(body, g, at.p, at.gap, tol, diag)) return false;
     }
     return true;
 }
 
-/// The largest gap of a vertex of face `f` or `g` at `p` exactly (a piece's end found at an
-/// edge's end is that vertex's own point), 0 where no vertex is: the point's own reach, as
-/// two tolerant things touch within the sum of their tolerances (OCCT's vertex and edge
-/// tolerances). The solids fuzzer (2026-11-14): a merged vertex with a gap of 9.75e-5 on a
-/// box's front, its edge to the box's corner lying in the box's left face's plane by that
-/// gap, was 2.05e-4 from that face's edges at a tolerance of 2e-4.
-fn gapAt(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!f64 {
-    var gap: f64 = 0;
-    for ([_]types.FaceIndex{ f, g }) |face| {
-        var loops = traverse.Loops.init(body, face);
-        while (loops.next() catch return corrupt(diag)) |l| {
-            const lone = body.loop(l).vertex;
-            if (lone != .none and samePlace(body.point(lone), p)) gap = @max(gap, body.vertex(lone).gap);
-            var it = traverse.Coedges.init(body, l);
-            while (it.next() catch return corrupt(diag)) |c| {
-                const v = body.coedgeStart(c);
-                if (samePlace(body.point(v), p)) gap = @max(gap, body.vertex(v).gap);
-            }
-        }
-    }
-    return gap;
+/// A point of a piece and its reach beyond the tolerance.
+const At = struct { p: Vec3, gap: f64 };
+
+/// The points a piece is judged at: its ends and its middle, or its one point.
+const Points = struct { items: [3]At, count: usize };
+
+fn pointsOf(piece: Piece) Points {
+    const a: At = .{ .p = piece.a, .gap = piece.gap_a };
+    if (piece.isPoint()) return .{ .items = .{ a, a, a }, .count = 1 };
+    return .{ .items = .{ a, .{ .p = vec.lerp(piece.a, piece.b, 0.5), .gap = piece.gapBetween() }, .{ .p = piece.b, .gap = piece.gap_b } }, .count = 3 };
 }
 
-fn samePlace(a: Vec3, b: Vec3) bool {
-    return a[0] == b[0] and a[1] == b[1] and a[2] == b[2];
-}
-
-/// Whether `p`, reaching `own` beyond the tolerance itself (its gap, when it is a vertex),
-/// lies on face `f`'s boundary: within an edge's reach of it, the intersection tolerance
-/// and its ends' gaps (`planar_faces.edgeReach`, the reach by which the piece's ends were
-/// found where an edge lies in the other face's plane), or within the tolerance and its gap
-/// of a lone vertex. With the tolerance alone, an end found by an edge lying in the plane
-/// through a merged vertex's gap was "off" the other face's boundary (the solids fuzzer,
-/// 2026-11-14: a box and a plate 1.95e-4 apart at an intersection tolerance of 2e-4, a
-/// vertex merged between them with a gap of 9.75e-5).
-fn nearBoundary(body: *const Body, f: types.FaceIndex, p: Vec3, own: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    var loops = traverse.Loops.init(body, f);
-    while (loops.next() catch return corrupt(diag)) |l| {
-        const lone = body.loop(l).vertex;
-        if (lone != .none and vec.distance(body.point(lone), p) <= incidence.reach(tol, body.vertex(lone).gap) + own) return true;
-        var it = traverse.Coedges.init(body, l);
-        while (it.next() catch return corrupt(diag)) |c| {
-            const e = body.coedge(c).edge;
-            if (in_face.edgeDistance(body, e, p) <= planar_faces.edgeReach(body, body.edge(e), tol) + own) return true;
-        }
-    }
-    return false;
+/// Whether `p`, reaching `gap` beyond the tolerance (its gap, when it is a vertex), lies
+/// on face `f`'s boundary, as the paves decide a point on a face's boundary
+/// (`planar_faces.place`): one decision for the boolean and the rule that checks its
+/// result (OCCT's self-interference check is its pave filler; the M0–M4 review,
+/// 2026-11-15). This rule had its own measure, an edge's reach by its ends' gaps and the
+/// point's gap found again by its position, brought to the paves' find by find (the
+/// solids fuzzer, 2026-11-14: a merged vertex with a gap of 9.75e-5 on a box's front, its
+/// edge to the box's corner in the box's left face's plane by that gap, 2.05e-4 from that
+/// face's edges at a tolerance of 2e-4).
+fn onBoundary(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    return try planar_faces.place(body, f, p, gap, tol, diag) == .boundary;
 }
 
 /// Whether faces `f` and `g`, in one plane, cover a region together: the overlay of the

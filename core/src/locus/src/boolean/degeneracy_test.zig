@@ -1141,9 +1141,9 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     defer pieces.deinit(testing.allocator);
     try testing.expectEqual(planar_faces.Relation.crossing, try planar_faces.meet(testing.allocator, &floor, top, &b, side, tol, &pieces, &diag));
     try testing.expectEqual(@as(usize, 1), pieces.items.len);
-    for ([_]Vec3{ pieces.items[0].a, pieces.items[0].b }) |end| {
-        try testing.expect(try planar_faces.place(&floor, top, end, tol, &diag) != .outside);
-        try testing.expect(try planar_faces.place(&b, side, end, tol, &diag) != .outside);
+    for ([_]Vec3{ pieces.items[0].a, pieces.items[0].b }, [_]f64{ pieces.items[0].gap_a, pieces.items[0].gap_b }) |end, gap| {
+        try testing.expect(try planar_faces.place(&floor, top, end, gap, tol, &diag) != .outside);
+        try testing.expect(try planar_faces.place(&b, side, end, gap, tol, &diag) != .outside);
     }
 }
 

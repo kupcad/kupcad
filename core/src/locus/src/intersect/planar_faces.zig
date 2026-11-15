@@ -25,6 +25,7 @@ const Tolerance = @import("../tolerance.zig").Tolerance;
 const in_face = @import("../query/in_face.zig");
 const curve_surface = @import("curve_surface.zig");
 const incidence = @import("../geometry/incidence.zig");
+const canonical = @import("../geometry/canonical.zig");
 const overlay_mod = @import("../sketch/overlay.zig");
 const Body = body_mod.Body;
 const Frame = geometry.Frame;
@@ -33,6 +34,10 @@ const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
+
+/// A point where a face's boundary meets the other's plane, and its reach beyond the
+/// tolerance: the gap of the vertex it is, 0 for an edge's crossing.
+const Mark = struct { p: Vec3, gap: f64 };
 
 pub const Relation = enum {
     /// The faces share no point.
@@ -45,10 +50,19 @@ pub const Relation = enum {
 };
 
 /// A piece of what two faces share: the segment from `a` to `b` along their planes'
-/// line, or the point `a` when `b` is `a`.
+/// line, or the point `a` when `b` is `a`; each end with the gap of the vertex it is (0
+/// for a crossing, which is none), by which it reaches (`incidence.reach`).
 pub const Piece = struct {
     a: Vec3,
     b: Vec3,
+    gap_a: f64 = 0,
+    gap_b: f64 = 0,
+
+    /// The reach beyond the tolerance of a point between the ends: the larger end's, the
+    /// segment between two vertices lying within it of whatever both lie on.
+    pub fn gapBetween(self: Piece) f64 {
+        return @max(self.gap_a, self.gap_b);
+    }
 
     pub fn isPoint(self: Piece) bool {
         return self.a[0] == self.b[0] and self.a[1] == self.b[1] and self.a[2] == self.b[2];
@@ -72,7 +86,7 @@ pub fn planeOf(frame: Frame) Plane {
 pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, tol: Tolerance, pieces: *std.ArrayList(Piece), diag: *Diagnostics) Error!Relation {
     const frame_a = frameOf(a, fa) orelse return notPlanar(diag, fa);
     const frame_b = frameOf(b, fb) orelse return notPlanar(diag, fb);
-    var marks: std.ArrayList(Vec3) = .empty;
+    var marks: std.ArrayList(Mark) = .empty;
     defer marks.deinit(allocator);
     // Each face's boundary on the other's plane
     const in_b = try crossings(allocator, a, fa, planeOf(frame_b), tol, &marks, diag);
@@ -84,15 +98,18 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     // Along the line, a mark within the zone of the one before it being that one
     const Order = struct {
         along: Vec3,
-        fn lessThan(self: @This(), p: Vec3, q: Vec3) bool {
-            return vec.dot(p, self.along) < vec.dot(q, self.along);
+        fn lessThan(self: @This(), p: Mark, q: Mark) bool {
+            return vec.dot(p.p, self.along) < vec.dot(q.p, self.along);
         }
     };
-    std.mem.sort(Vec3, marks.items, Order{ .along = along }, Order.lessThan);
+    std.mem.sort(Mark, marks.items, Order{ .along = along }, Order.lessThan);
     var kept: usize = 0;
-    for (marks.items) |p| {
-        if (kept > 0 and tol.samePoint(p, marks.items[kept - 1])) continue;
-        marks.items[kept] = p;
+    for (marks.items) |m| {
+        if (kept > 0 and tol.samePoint(m.p, marks.items[kept - 1].p)) {
+            marks.items[kept - 1].gap = @max(marks.items[kept - 1].gap, m.gap);
+            continue;
+        }
+        marks.items[kept] = m;
         kept += 1;
     }
     const points = marks.items[0..kept];
@@ -103,16 +120,16 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     // the other face (the overlap rules' find in the solids fuzzer, 2026-11-13: a box's
     // corner the intersection tolerance and a rounding from a triangle's corner)
     const first = pieces.items.len;
-    var open: ?Vec3 = null;
-    for (points, 0..) |p, i| {
-        if (!try inBoth(a, fa, b, fb, p, tol, diag)) {
-            if (open) |start| try pieces.append(allocator, .{ .a = start, .b = points[i - 1] });
+    var open: ?Mark = null;
+    for (points, 0..) |m, i| {
+        if (!try inBoth(a, fa, b, fb, m.p, m.gap, tol, diag)) {
+            if (open) |start| try pieces.append(allocator, .{ .a = start.p, .b = points[i - 1].p, .gap_a = start.gap, .gap_b = points[i - 1].gap });
             open = null;
             continue;
         }
-        if (open == null) open = p;
-        if (i + 1 < points.len and try inBoth(a, fa, b, fb, vec.lerp(p, points[i + 1], 0.5), tol, diag)) continue;
-        try pieces.append(allocator, .{ .a = open.?, .b = p });
+        if (open == null) open = m;
+        if (i + 1 < points.len and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), @max(m.gap, points[i + 1].gap), tol, diag)) continue;
+        try pieces.append(allocator, .{ .a = open.?.p, .b = m.p, .gap_a = open.?.gap, .gap_b = m.gap });
         open = null;
     }
     return if (pieces.items.len > first) .crossing else .apart;
@@ -124,7 +141,7 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
 /// takes a vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
 /// vertex at a shallow angle crosses the plane's exact line far from it, inside the other
 /// face, where the boolean, rightly, made no edge (the solids fuzzer, 2026-11-13).
-fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
+fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Mark), diag: *Diagnostics) Error!bool {
     var every_in = true;
     var any = false;
     var loops = traverse.Loops.init(body, f);
@@ -147,7 +164,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             for ([_]types.VertexIndex{ edge.start, edge.end }, &on) |v, *end_on| {
                 const p = body.point(v);
                 end_on.* = @abs(plane.height(p)) <= incidence.reach(tol, body.vertex(v).gap);
-                if (end_on.*) try marks.append(allocator, p);
+                if (end_on.*) try marks.append(allocator, .{ .p = p, .gap = body.vertex(v).gap });
             }
             // The edge lies in the plane when both its ends do, as a section takes a line
             // to (`boolean/section.zig`), a curved one's curve between them within its
@@ -163,11 +180,11 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             const crossed = try curve_surface.curvePlane(curve, edge.t0, edge.t1, plane, 0, diag);
             for (crossed.params()) |t| {
                 // A crossing within the zone of an end is that vertex, exactly
-                var p = curve.eval(t);
+                var mark: Mark = .{ .p = curve.eval(t), .gap = 0 };
                 for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
-                    if (tol.samePoint(p, body.point(v))) p = body.point(v);
+                    if (tol.samePoint(mark.p, body.point(v))) mark = .{ .p = body.point(v), .gap = body.vertex(v).gap };
                 }
-                try marks.append(allocator, p);
+                try marks.append(allocator, mark);
             }
         }
     }
@@ -183,15 +200,24 @@ pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64
     return incidence.reach(tol, @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap));
 }
 
-/// Whether `p` lies in both faces, their boundaries included.
-fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, p: Vec3, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    if (try place(a, fa, p, tol, diag) == .outside) return false;
-    return try place(b, fb, p, tol, diag) != .outside;
+/// Whether `p`, reaching `gap` beyond the tolerance, lies in both faces, their boundaries
+/// included.
+fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    if (try place(a, fa, p, gap, tol, diag) == .outside) return false;
+    return try place(b, fb, p, gap, tol, diag) != .outside;
 }
 
-/// Where `p` (near face `f`'s plane) lies against the face, its boundary within the zone.
-pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
-    return in_face.classify(body, f, p, in_face.uvOf(body, f, p), tol.zone, diag);
+/// Where `p` (near face `f`'s plane), reaching `gap` beyond the tolerance (a vertex's gap,
+/// 0 for a point that is none), lies against the face: the paves' decision
+/// (`in_face.placeWithin`), on the boundary when at the reach to rounding, since this
+/// reads a body that exists and refuses nothing (`incidence.holds`).
+pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
+    const decide: incidence.Decider = .{ .tol = tol, .scale = canonical.magnitude(&.{p}) };
+    return switch (try in_face.placeWithin(decide, body, f, p, gap, null, diag)) {
+        .inside => .inside,
+        .outside => .outside,
+        .boundary, .at_tolerance => .boundary,
+    };
 }
 
 /// Face `f`'s loops (planar, lines and arcs) as edges of the overlay's current input, in
