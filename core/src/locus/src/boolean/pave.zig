@@ -1662,10 +1662,21 @@ const Filler = struct {
     }
 
     /// Each pave block of face `f` of operand `k` whose middle is inside face `g` of
-    /// operand `other` (one plane): a section segment of `g`.
+    /// operand `other` (one plane): a section segment of `g`. Its ends must lie in `g`'s
+    /// plane within the tolerance and their gaps, as `liesIn` takes a face's vertices to
+    /// (where in that plane is the imprint's: a piece from `g`'s boundary to an end just
+    /// outside it is one): the two faces are in one plane by one's vertices against the
+    /// other's plane, and a face whose plane a chain's group moved off its own boundary
+    /// (D28) takes the other face within the tolerance of its plane while its boundary
+    /// inside that face lies beyond it (the nightly, 2026-11-15: a union's top moved 7e-5
+    /// onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from the top's
+    /// edges, at a tolerance of 2e-4: the hull's top split where the paves found no point,
+    /// `imprint_unmatched`). Within the tolerance is not transitive there, and no decision
+    /// of it is consistent: refused (`below_feature_size`), naming `f`.
     fn blocksInside(self: *Filler, k: usize, f: types.FaceIndex, other: usize, g: types.FaceIndex) Error!void {
         const p = self.p;
         const body_k = self.body(k);
+        const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other), g).?);
         var loops = traverse.Loops.init(body_k, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             var it = traverse.Coedges.init(body_k, l);
@@ -1675,6 +1686,10 @@ const Filler = struct {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
                     if (!try self.imprinted(other, g, x.vertex, y.vertex, place, .{ .operand = @intCast(k), .face = @backingInt(f) })) continue;
+                    for ([2]u32{ x.vertex, y.vertex }) |v| {
+                        if (try self.within(@abs(plane.height(p.point(v))), p.tol.xsect + p.gaps.items[v], .of(.face, @backingInt(g)))) continue;
+                        return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary inside that face beyond reach of its plane," else "a face of the second operand in one plane with a face of the first, its boundary inside that face beyond reach of its plane,", .measured = @abs(plane.height(p.point(v))), .threshold = p.tol.xsect + p.gaps.items[v] });
+                    }
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                     self.tally();
                 }

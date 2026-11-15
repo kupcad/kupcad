@@ -868,6 +868,45 @@ test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4
     try expectIdentities(&second, &first);
 }
 
+test "degeneracy: a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from its edges: refused" {
+    // The nightly (2026-11-15, locus), reduced: a box's top 7e-5 over a plate's, at the
+    // plate's tolerance of 2e-4, one plane: the union's top takes the box's (D28), its
+    // edges on the plate's lines below. A hull's top over it is within the tolerance of the
+    // plane and beyond it of the top's edge inside the hull's top: the faces were taken as
+    // one plane, the edge imprinted on the hull's top, which the paves had kept off it
+    // (`imprint_unmatched`). No decision of the tolerance is consistent: refused, every
+    // operation either way round.
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var small = try helpers.boxAt(Tolerance.fromZone(1e-5), .{ 0.49998, 1.99998, 2.00002 }, .{ 0.99998, 5.99998, 4.00002 });
+    defer small.deinit();
+    var plate = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -97.9998, -47.9999, 0.99995 }, .{ 2.0002, 102.0001, 3.99995 });
+    defer plate.deinit();
+    var joined = try pipeline.boolean(testing.allocator, &small, &plate, .@"union", .{}, &diag, null);
+    defer joined.deinit();
+    const corners = [_]Vec3{ .{ 3, 0, 4 }, .{ 1, 4, 2 }, .{ 4, 2, 4 }, .{ 4, 1, 3 }, .{ 4, 0, 2 }, .{ 1, 2, 4 } };
+    var points: [corners.len]Vec3 = undefined;
+    for (corners, &points) |c, *q| q.* = vec.add(c, .{ 0.5, 5e-5, 2e-4 });
+    var hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer hull.deinit();
+    for ([2][2]*const Body{ .{ &joined, &hull }, .{ &hull, &joined } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var refusal = Diagnostics.init(testing.allocator);
+            defer refusal.deinit();
+            if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &refusal, null)) |made| {
+                var result = made;
+                result.deinit();
+                return error.TestExpectedError;
+            } else |e| {
+                errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), refusal });
+                try testing.expectEqual(error.Degenerate, e);
+                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
+                try testing.expect(std.mem.indexOf(u8, refusal.first().?.label, "its boundary inside that face beyond reach of its plane") != null);
+            }
+        }
+    }
+}
+
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {
     // The solids fuzzer's third find (2026-11-13): a box's edge lies in the plane of two
     // triangles of a hull (x + y = 3.5), across their shared diagonal, from one triangle's

@@ -1940,6 +1940,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // difference
         "solids 1 4 1 2 4 1 1 0 2 1 4 1 0 2 3 0 2 2 0 12 12 1 6 1 1 3 0 2 2 1 4 3 2 3 2 2 3 2 4 7 3 12 1",
         "solids 1 4 3 0 2 1 2 0 3 4 4 4 4 3 1 1 11 8 7 8 3 3 1 8 4 3 1 4 4 0 0 4 4 1 2 3 2 2 2 4 3 0 3 3 2 2 2 0 2 2 10 4 5 16 2",
+        // And (locus): a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from
+        // that plane and 2.5e-4 from the top's edges, taken as one plane with it: the hull's
+        // top split where the paves found no point
+        "solids 0 1 2 1 3 1 2 1 0 0 2 2 12 8 7 8 2 3 2 0 2 1 4 1 4 2 3 11 5 4 4 0 1 1 6 3 0 4 1 4 2 4 2 4 4 1 3 4 0 2 1 2 4 2 2 1 3 9 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

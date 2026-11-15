@@ -701,7 +701,11 @@ importing only those before it, which the layering test holds):**
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
   line, each gap whose middle is in both a section segment of each face it is inside of.
   Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
-  one's pave blocks inside the other its section segments; two parallel a hair apart (within
+  one's pave blocks inside the other its section segments, whose ends must lie in that
+  face's plane within the tolerance and their gaps (where in it is the imprint's), else
+  refused `below_feature_size` (a chain's union top moved 7e-5
+  onto a box's plane, D28, took a hull's top 1.8e-4 off within the tolerance of its plane
+  while its edges inside the hull's top were 2.5e-4 off, 2026-11-15); two parallel a hair apart (within
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
   the result has faces that thin). A section piece lies on a face's boundary only when
   the paves put both its ends there (never by its middle's distance alone), and is then
