@@ -11,11 +11,9 @@
 //! the two imprints disagreeing, refused. The others are inside or outside the other
 //! operand by `query/point_in_body.zig`'s rays, one for each connected component of them
 //! (contagion, research/truck.md §3) and a second that must agree. A fragment with no
-//! candidate beyond the intersection tolerance of the other operand's boundary (the reach
-//! the paves decide contact by) takes its side from the faces about a piece of its
-//! boundary lying on the other's (`byDihedral`, OCCT's IsInternalFace); where no piece
-//! decides, from a candidate beyond the other's zone; one with none is a contradiction of
-//! the paves (`unclassified`), refused.
+//! candidate off the other operand's boundary takes its side from the faces about a piece
+//! of its boundary lying on the other's (`byDihedral`, OCCT's IsInternalFace); one with
+//! none is a contradiction of the paves (`unclassified`), refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -160,10 +158,8 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             continue;
         }
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
-        const other_zone = paves.operands[1 - fragment.operand].tol.zone;
-        const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, paves.tol.xsect, options, diag)) orelse
+        const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag)) orelse
             (try byDihedral(paves, fragments, i, diag)) orelse
-            (try byRay(allocator, paves, &indexes, fragment, samples.items, other_zone, options, diag)) orelse
             return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
         stats.rays += 1;
         classes[i].class = class;
@@ -186,23 +182,14 @@ fn samplesOf(allocator: std.mem.Allocator, paves: *const Paves, fragments: *cons
     if (out.items.len == 0) return diag.fail(error.Degenerate, .{ .code = .unclassified, .entity = .of(.face, fragments.items.items[i].face), .label = "a piece of a face with no area" });
 }
 
-/// Inside or outside the other operand, by rays from the first of `samples` farther than
-/// `width` from its boundary (in a sliver one tolerance wide the clearest sample is within
-/// the zone of the other's face that bounds it, and the next is not; 2026-11-13); null
-/// when no sample is. Classification asks first beyond the intersection tolerance, the
-/// reach the paves decide contact by: within it a face of the other may cross the
-/// fragment where the paves, by that reach, found no section, the side there the
-/// tolerance's, which the fragment's pieces on the other decided (`byDihedral`, asked
-/// next). Only where no piece decides does a sample beyond the other's zone alone (the
-/// last ask) give the side. The solids fuzzer (2026-11-14): a flat tetrahedron's face
-/// 3.8e-5 rad off a plate's top, within the tolerance of it over a band 0.5 wide, their
-/// section the face's own edge on the plate's top edge; the fragment's ray from 1.2e-5
-/// above the top called it outside, its piece on the plate's back inside, and the
-/// plate's top was kept under it.
-fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, width: f64, options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
+/// Inside or outside the other operand, by rays from the first of `samples` off its
+/// boundary (in a sliver one tolerance wide the clearest sample is within the zone of the
+/// other's face that bounds it, and the next is not; 2026-11-13); null when every sample
+/// lies on it.
+fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
     const other = 1 - fragment.operand;
     for (samples) |p| {
-        switch (try point_in_body.classifyWithin(allocator, paves.operands[other], &indexes[other], p, width, options, diag)) {
+        switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
             .inside => return .inside,
             .outside => return .outside,
             .boundary => continue,
@@ -219,8 +206,8 @@ fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]i
 /// other's face the piece is a section with, behind which is inside, or against the wedge
 /// of material between the other's two faces along the edge the piece is a piece of.
 /// Width plays no part: a strip 2.5e-5 wide under a face rising from its section at 26.6°
-/// has no point farther than 1.1e-5 from it, within the tolerance that `byRay` takes for
-/// on the boundary (the 10K fuzz session). Null when no piece decides (none lies on
+/// has no point farther than 1.1e-5 from it, within the zone that `point_in_body` takes
+/// for on the boundary (the 10K fuzz session). Null when no piece decides (none lies on
 /// the other, or the faces there are in one plane within the angular tolerance) or two
 /// pieces disagree.
 fn byDihedral(paves: *const Paves, fragments: *const Fragments, i: usize, diag: *Diagnostics) Error!?Class {

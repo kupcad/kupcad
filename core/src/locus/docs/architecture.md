@@ -742,14 +742,7 @@ importing only those before it, which the layering test holds):**
   boundary lying on the other's (OCCT's IsInternalFace: behind the other's face it is a
   section with, or in the wedge of material between the two faces of the other's edge it
   is a piece of; a tetrahedron's tip 2.45e-5 through a face leaves a section 8.7e-6 in
-  inradius), `unclassified` only when no piece decides or two disagree. Since 2026-11-15
-  the ray asks first for a sample beyond `xsect` of the other's boundary (the reach the
-  paves decide contact by, `point_in_body.classifyWithin`), then the pieces, and a sample
-  beyond the other's zone only where no piece decides: within `xsect` a face of the other
-  can cross a fragment where the paves found no section (a flat tetrahedron's face 3.8e-5
-  rad off a plate's top, within the tolerance of it over a band 0.5 wide; the ray from
-  1.2e-5 above the top said outside, its piece on the plate's back inside, and an edge of
-  the union had three faces).
+  inradius), `unclassified` only when no piece decides or two disagree.
 - `select.zig`: Mäntylä's table, a coincident face kept once: from `a` where the two faces
   are in one plane (one record, D28, so either copy merges alike), else the copy whose face's
   plane holds the region more closely (`Classified.represents`; the first operand's made the
@@ -925,8 +918,7 @@ reports a grazed corner), the entry first, but where both sides are strictly ins
 line two solids of the body touch along, crossed from one into the other) the exit first,
 so the running count of entries less exits stays 0 or 1 (the fuzzer, 2026-11-12).
 `point_in_body.zig`: outside the body's box is outside; within the
-zone of a face (its foot in the face) or of an edge is the boundary (`classifyWithin` takes
-a wider width: a boolean's classification asks at `xsect` first); else a ray from the
+zone of a face (its foot in the face) or of an edge is the boundary; else a ray from the
 point to its foot on one of the six nearest faces (along that face's normal, met squarely),
 then along a table of twelve skewed directions, the nearest meeting deciding when it is
 clean, a ray meeting nothing being outside, and a refusal with a finding when every ray met
