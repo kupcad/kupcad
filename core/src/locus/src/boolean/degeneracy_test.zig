@@ -1104,7 +1104,7 @@ test "degeneracy: a corner touching a triangular face at its centroid" {
     try expectIdentities(&a, &b);
 }
 
-test "degeneracy: a hull's edge across a box's floor, ending the intersection tolerance from its corner" {
+test "degeneracy: a hull's edge across a box's floor, passing its corner within the tolerance: the corner is where it meets the corner's edge" {
     // The nightly solids fuzzer's find (2026-11-13, run 43411851511), reduced: a hull moved
     // by the zone touches the box from below along its edge (2.00001, 5, 2)–(4.00001, 1, 2),
     // which crosses the floor from its y = 5 edge to its x = 3 edge at (3, 3.00002, 2),
@@ -1112,8 +1112,11 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     // took the floor's piece by that crossing and the side x = 3 to meet from (3, 5, 2) to
     // the corner: the gap's middle is within the zone of the piece, its end is not, and the
     // end was taken all the same. A piece of two faces' meet ends at crossings in both
-    // (`planar_faces.meet`, on those two faces as they came); the boolean itself now
-    // refuses the input, the crossing lying the tolerance from the corner to rounding
+    // (`planar_faces.meet`, on those two faces as they came). The boolean refused the input
+    // for a while, the crossing lying the tolerance from the corner to rounding; but the
+    // corner is 8.9e-6 from the hull's edge, on it (vertex–edge), and two straight edges
+    // meet once (2026-11-16): the corner is where the hull's edge meets the side's, and the
+    // crossing is never asked again. Made and sound either way round
     var b = try box(.{ 1, 3, 2 }, .{ 3, 5, 4 });
     defer b.deinit();
     var diag = Diagnostics.init(testing.allocator);
@@ -1123,7 +1126,8 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     defer c0.deinit();
     var c = try helpers.moved(&c0, .{ 1e-5, 1, 0 });
     defer c.deinit();
-    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&b, &c, op);
+    try expectIdentities(&b, &c);
+    try expectIdentities(&c, &b);
     // The floor's piece, a triangle (with an apex below it), against the box's side x = 3
     var floor = try tetrahedron(.{ 2.6, 4.3, 1 }, .{ 2.00001, 5, 2 }, .{ 3, 5, 2 }, .{ 3, 3.0000200000000006, 2 });
     defer floor.deinit();
@@ -1140,15 +1144,17 @@ test "degeneracy: a hull's edge across a box's floor, ending the intersection to
     }
 }
 
-test "degeneracy: a hull's vertex the zone from a box's edge, near where a hull's edge crosses it, is refused" {
+test "degeneracy: a hull's vertex the zone from a box's edge, a hull's edge from it crossing that edge again 4.1e-5 on: they meet once, at the vertex" {
     // The nightly solids fuzzer's find (2026-11-14, run 43515591144): a hull moved by the
     // zone in y has its vertex (2.5, 4.00001, 1) the zone from the box's edge x = 2.5,
     // y = 4, and a hull edge from it crosses that edge 4.1e-5 along: both points within the
     // intersection tolerance of both edges, the edges shared the piece between them, 14
     // degrees off each, and the faces about it were ordered by noise (an edge of four
-    // coedges that did not pair). Two edges at an angle share no piece: refused, now
-    // before the edges' pieces are paired, by the minimum feature size: the intersection's
-    // vertex lies within the tolerance of two of its faces that meet nowhere near it
+    // coedges that did not pair). The second crossing then left the intersection a vertex
+    // within the tolerance of two of its faces that meet nowhere near it, and the next
+    // union was refused by the minimum feature size. Two straight edges meet once
+    // (2026-11-16): the vertex, on the box's edge, is where the hull's edge meets it, no
+    // second vertex is made, and both booleans are made and sound either way round
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const points = [_]Vec3{ .{ 2, 2, 3 }, .{ 4, 3, 4 }, .{ 2, 3, 3 }, .{ 1, 0, 3 }, .{ 1, 1, 2 }, .{ 4, 4, 0 }, .{ 3, 2, 3 }, .{ 4, 1, 4 } };
@@ -1163,8 +1169,8 @@ test "degeneracy: a hull's vertex the zone from a box's edge, near where a hull'
     defer piece.deinit();
     var post = try box(.{ 2.5, 0, -1 }, .{ 3.5, 4, 3 });
     defer post.deinit();
-    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &piece, &post, .@"union", .{}, &diag, null));
-    try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+    try expectIdentities(&piece, &post);
+    try expectIdentities(&post, &piece);
 }
 
 test "degeneracy: a vertex the intersection tolerance off a face, its edge leaving it at a shallow angle" {
@@ -1261,6 +1267,51 @@ test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its
         defer diag.deinit();
         try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null));
         try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
+    }
+}
+
+test "degeneracy: two edges at a shallow angle, one's end on the other, meet once: no second crossing where they run within the tolerance" {
+    // The solids fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
+    // box turned 0.007 rad about its front-right corner, that corner 3e-6 inside a plate's
+    // front face and its bottom on the plate's bottom. The corner is on the plate's
+    // front-bottom edge (vertex–edge), and the box's front-bottom edge, leaving it at 0.007
+    // rad, stays within the tolerance of the plate's for 3e-3; edge–edge crossed the two
+    // again 4.3e-4 on. At the bottom the front faces met there, at the top at the corner's
+    // edge: the difference's two front faces passed through each other (faces_intersect)
+    const angle = 0.007;
+    var plate = try box(.{ -1, 1, 0 }, .{ 3, 3, 1 });
+    defer plate.deinit();
+    var b0 = try box(.{ 0, 1, 0 }, .{ 2, 2, 0.5 });
+    defer b0.deinit();
+    var b1 = try turned(&b0, .{ 2, 1, 0 }, .{ 0, 0, 1 }, angle);
+    defer b1.deinit();
+    var b = try helpers.moved(&b1, .{ 0, 3e-6, 0 });
+    defer b.deinit();
+    try expectIdentities(&b, &plate);
+    try expectIdentities(&plate, &b);
+}
+
+test "degeneracy: an edge passing another within the tolerance in its end's strip, the end not on it, is refused either way round" {
+    // The locus fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
+    // tetrahedron's corner in a plate's top, 2.2e-5 from its edge (beyond the tolerance,
+    // 2e-5: not on it), its edge leaving down past the plate's edge 9.8e-6 away, 1.97e-5
+    // from the corner, in the corner's strip. Edge–edge skipped the crossing as the
+    // corner's; edge–face then crossed the plate's edge with the tetrahedron's face from
+    // whichever operand came first, outside the strip one way round (made) and inside it
+    // the other (refused). Too near the corner to split at, too far to be it: refused
+    // either way round, as `endStrip` refuses a vertex there
+    const h: Vec3 = .{ 2.2e-5, 0, 1 };
+    var plate = try box(.{ 0, -5, -1 }, .{ 10, 5, 1 });
+    defer plate.deinit();
+    var t = try tetrahedron(h, vec.add(h, .{ -2, 0, -1 }), vec.add(h, .{ 1, 3, -1 }), vec.add(h, .{ -2, 2, 3 }));
+    defer t.deinit();
+    for ([2][2]*const Body{ .{ &t, &plate }, .{ &plate, &t } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            try testing.expectError(error.TooSmallEdge, pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &diag, null));
+            try testing.expectEqual(diagnostics.Code.edge_too_short, diag.first().?.code);
+        }
     }
 }
 

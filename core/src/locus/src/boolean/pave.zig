@@ -729,6 +729,13 @@ const Filler = struct {
         return false;
     }
 
+    /// Whether edge `ea` of the first operand and edge `eb` of the second have a merged
+    /// vertex among both their paves (their ends among them).
+    fn sharePave(self: *const Filler, ea: types.EdgeIndex, eb: types.EdgeIndex) bool {
+        for (self.p.edge_paves[0][@backingInt(ea)].items) |pave| if (self.hasPave(1, eb, pave.vertex)) return true;
+        return false;
+    }
+
     fn hasPave(self: *const Filler, k: usize, e: types.EdgeIndex, v: u32) bool {
         for (self.p.edge_paves[k][@backingInt(e)].items) |pave| if (pave.vertex == v) return true;
         return false;
@@ -769,15 +776,21 @@ const Filler = struct {
     fn endStrip(self: *Filler, k: usize, e: types.EdgeIndex, v: u32) Error!void {
         const at_ends = self.ends(k, e);
         if (v == at_ends[0] or v == at_ends[1]) return;
+        return self.stripAt(k, e, self.p.point(v), self.reachOf(v));
+    }
+
+    /// `endStrip` for a point `q` reaching `reach`, not yet a merged vertex: refused when
+    /// within its reach of edge `e` of operand `k` with its foot in an end's strip.
+    fn stripAt(self: *Filler, k: usize, e: types.EdgeIndex, q: Vec3, reach: f64) Error!void {
+        const at_ends = self.ends(k, e);
         const p0 = self.p.point(at_ends[0]);
         const d = vec.sub(self.p.point(at_ends[1]), p0);
         const len_sq = vec.lengthSq(d);
         if (len_sq == 0) return;
-        const q = self.p.point(v);
         const s = vec.dot(vec.sub(q, p0), d) / len_sq;
         if (s < 0 or s > 1) return;
         const off = vec.distance(q, vec.addScaled(p0, d, s));
-        if (!try self.within(off, self.reachOf(v), .of(.edge, @backingInt(e)))) return;
+        if (!try self.within(off, reach, .of(.edge, @backingInt(e)))) return;
         const len = @sqrt(len_sq);
         return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = @min(s, 1 - s) * len, .threshold = self.p.tol.xsect });
     }
@@ -845,14 +858,27 @@ const Filler = struct {
     // --- edge–edge ---
 
     /// Every pair of edges of `a` and `b` crossing within the tolerance, away from their
-    /// ends (an end on the other edge is vertex–edge's; collinear overlaps are made of
-    /// those), gives a merged vertex on both, tried against every other edge too.
+    /// ends, gives a merged vertex on both, tried against every other edge too. Two
+    /// straight edges meet once: a pave both already have (an end on the other edge,
+    /// vertex–edge's; ends merged, vertex–vertex's; an earlier crossing) is where they
+    /// meet, however far the computed crossing is from it, as edge–face takes a pave the
+    /// edge has on the face. At a shallow angle two edges stay within the tolerance of
+    /// each other along a stretch many times it (`xsect / sin θ`), and a second vertex
+    /// there made the faces about them meet twice (the solids fuzzer, 2026-11-16: a box's
+    /// corner on a plate's edge, the box's edge along it at 0.007 rad, crossing it again
+    /// 0.0044 on; the result's faces passed through each other). A crossing in an end's
+    /// strip is then one the end does not stand for (the two would share it): refused as
+    /// `endStrip` refuses it, never skipped, which left the place to whichever of
+    /// edge–face's crossings came first (the locus fuzzer, the same day: a hull's corner
+    /// 2.2e-4 from a plate's edge, its edge passing the plate's 9.8e-5 away 2e-4 from the
+    /// corner, made one way round and refused the other).
     fn edgeEdge(self: *Filler) Error!void {
         var pairs = try self.overlapping(&self.edge_tree[0], &self.edge_tree[1]);
         defer pairs.deinit(self.allocator);
         for (pairs.items) |pair| {
             const ea = self.edges[0][pair[0]];
             const eb = self.edges[1][pair[1]];
+            if (self.sharePave(ea, eb)) continue;
             const va = self.ends(0, ea);
             const vb = self.ends(1, eb);
             const p0 = self.p.point(va[0]);
@@ -865,8 +891,17 @@ const Filler = struct {
             const gap = vec.distance(c0, c1);
             if (!try self.within(gap, self.p.tol.xsect, .of(.edge, @backingInt(ea)))) continue;
             const mid = vec.lerp(c0, c1, 0.5);
-            // Away from both edges' ends: an end there is vertex–edge's or vertex–vertex's
-            if (self.along(0, ea, mid) == null or self.along(1, eb, mid) == null) continue;
+            const along_a = self.along(0, ea, mid);
+            const along_b = self.along(1, eb, mid);
+            if (along_a == null or along_b == null) {
+                // Off either segment the lines' crossing is no meeting (where an end is
+                // near the other edge, vertex–edge decided it); on both, in an end's strip
+                if (closest[0] < 0 or closest[0] > 1 or closest[1] < 0 or closest[1] > 1) continue;
+                const reach = incidence.reach(self.p.tol, gap / 2);
+                if (along_a == null) try self.stripAt(0, ea, mid, reach);
+                if (along_b == null) try self.stripAt(1, eb, mid, reach);
+                continue;
+            }
             const v = try self.weld(mid, gap / 2, .{ .{ .edge = .{ .k = 0, .e = ea } }, .{ .edge = .{ .k = 1, .e = eb } } });
             for ([2]usize{ 0, 1 }, [2]types.EdgeIndex{ ea, eb }) |k, e| {
                 if (self.hasPave(k, e, v)) continue;

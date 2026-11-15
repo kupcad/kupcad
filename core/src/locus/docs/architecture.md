@@ -107,7 +107,8 @@ Each principle is a rule the code is held to, not a slogan.
 Where they conflict with a feature, a speed-up or a milestone's date, these win.
 - *Deterministic boundaries*: every configuration at a tolerance's boundary is decided
   once, by one computation, and every later step defers to it: the paves decide what lies
-  on a face's boundary, an edge meets a plane once (at the pave it already has there), the
+  on a face's boundary, an edge meets a plane once (at the pave it already has there) and
+  another edge once (at a pave both have), the
   checker takes "on a plane" as the boolean took it. A distance at the tolerance to
   rounding, which two computations would decide two ways, is refused, naming the entities
   (D27), never guessed. The same input gives the same output, the same refusal and the
@@ -702,7 +703,11 @@ importing only those before it, which the layering test holds):**
   beyond `xsect` and the end's gap from either end; an edge whose shrunk range is under
   `2·xsect` is not split but refused, `TooSmallEdge` naming it);
   edge–edge by the closest points of the two lines (parallel lines skipped: their overlaps
-  are made of vertex–edge's paves), the point welded to a merged vertex within `xsect` or
+  are made of vertex–edge's paves; two edges with a pave in common skipped, two straight
+  edges meeting once, there, however far the computed point is: at a shallow angle they
+  run within `xsect` of each other for `xsect / sin θ`; a crossing on both segments in an
+  end's strip refused, `TooSmallEdge`, as vertex–edge refuses a vertex there, the end not
+  being on the other edge, 2026-11-16), the point welded to a merged vertex within `xsect` or
   new, then tried against every other edge (a merged vertex already there stands for the
   point only within its reach, `xsect` and its gap, of both edges, edge–face's of the edge
   and the face, as vertex–edge and vertex–face decide "on"; beyond it the features that
