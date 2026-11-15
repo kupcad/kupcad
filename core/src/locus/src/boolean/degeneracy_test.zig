@@ -589,7 +589,7 @@ test "degeneracy: a cut parallel to an edge just past the intersection tolerance
     try testing.expectEqual(@as(usize, 5), kept.counts().faces);
 }
 
-test "degeneracy: a hull through a cavity and its wall 1.5 tolerances thick: pieces of one face in different shells, apart" {
+test "degeneracy: a hull through a cavity and its wall 1.5 tolerances thick (once pieces of one face in different shells): the wall below the minimum feature size, refused" {
     // The 10K fuzz session's second find (2026-11-14), the chain's last step: the box cuts
     // a face of the hull into a piece inside the cavity and one outside the box with a
     // notch where the box is, both in the face's plane, in different shells. The overlap
@@ -611,10 +611,13 @@ test "degeneracy: a hull through a cavity and its wall 1.5 tolerances thick: pie
     defer cavity.deinit();
     var wall = try sound(&outer, &cavity, .difference);
     defer wall.deinit();
-    try expectIdentities(&h, &wall);
+    // Since the operand precondition (2026-11-15, Leo: one refusal before the paves in
+    // place of those added find by find) the wall is below the boolean's minimum feature
+    // size: refused whatever reaches it, every operation either way round.
+    try expectBelowFeatureSize(&h, &wall);
 }
 
-test "degeneracy: a hull through a wall 1.25 tolerances thick into its cavity: the section along the wall's outer side meets the cavity's side only at its gapped end" {
+test "degeneracy: a hull through a wall 1.25 tolerances thick into its cavity (once its section met the cavity's side by a gap): the wall below the minimum feature size, refused" {
     // The 10K fuzz session's third run (2026-11-14, locus_solids), reduced: a hull's face
     // crosses the wall's two sides, its section along the outer one from a corner merged
     // onto the wall's edge (a gap of 9.7e-6) to where a hull edge enters, which lies over
@@ -637,10 +640,13 @@ test "degeneracy: a hull through a wall 1.25 tolerances thick into its cavity: t
     defer cavity.deinit();
     var wall = try sound(&outer, &cavity, .difference);
     defer wall.deinit();
-    try expectIdentities(&h, &wall);
+    // Since the operand precondition (2026-11-15, Leo: one refusal before the paves in
+    // place of those added find by find) the wall is below the boolean's minimum feature
+    // size: refused whatever reaches it, every operation either way round.
+    try expectBelowFeatureSize(&h, &wall);
 }
 
-test "degeneracy: a plate's bottom a hair under another's, one plane: the plane chosen holds the pieces lying on either, whichever operand comes first" {
+test "degeneracy: a plate 1.9 tolerances thick with a hull's edge on its bottom (once the plane chosen for two bottoms): the plate below the minimum feature size, refused" {
     // The 10K fuzz session's fourth run (2026-11-14, locus), reduced: a plate 1.9
     // tolerances thick with a hull's edge 1.4e-5 over its bottom, lying on it, and a second
     // plate whose bottom is 1e-5 under the first's. The paves found the bottoms in one
@@ -658,12 +664,9 @@ test "degeneracy: a plate's bottom a hair under another's, one plane: the plane 
     for (corners, &points) |c, *p| p.* = vec.add(c, .{ 1, 5e-6, 5e-6 });
     var h = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
     defer h.deinit();
-    var first = try sound(&lower, &h, .@"union");
-    defer first.deinit();
-    var upper = try box(.{ 1.5, 3.5, 3 - half }, .{ 2.5, 4.5, 3 + half });
-    defer upper.deinit();
-    try helpers.expectIdentitiesAtTolerance(&upper, &first);
-    try helpers.expectIdentitiesAtTolerance(&first, &upper);
+    // Since the operand precondition (2026-11-15) a plate 1.9 tolerances thick is below
+    // the boolean's minimum feature size: the chain stops at its first step
+    try expectBelowFeatureSize(&lower, &h);
 }
 
 test "degeneracy: a strip of a face under the other's face rising at 26.6°, no sample clear of it, takes its side from the faces at its section" {
@@ -709,7 +712,7 @@ test "degeneracy: a tetrahedron's tip through a box's top by 2.45e-5, its sectio
     try expectProbe(&a, &tip);
 }
 
-test "degeneracy: a face in one plane with a wall's side 1.25 tolerances off its cavity: the plane chosen keeps the wall's side off the cavity" {
+test "degeneracy: a face in one plane with a wall's side 1.25 tolerances off its cavity (once the plane chosen): the wall below the minimum feature size, refused" {
     // The 10K fuzz session's sixth run (2026-11-15, locus_solids), reduced: a block in a
     // wall's material above its cavity, its side 7.5e-6 inside the wall's outer side, one
     // plane with it. The group took the first operand's plane, the block's, and moved the
@@ -725,11 +728,12 @@ test "degeneracy: a face in one plane with a wall's side 1.25 tolerances off its
     defer wall.deinit();
     var block = try box(.{ 1.9, 0.5, 1.8 }, .{ 2 + 0.25 * xsect, 1, 2 });
     defer block.deinit();
-    try helpers.expectIdentitiesAtTolerance(&block, &wall);
-    try helpers.expectIdentitiesAtTolerance(&wall, &block);
+    // Since the operand precondition (2026-11-15) the wall is below the boolean's minimum
+    // feature size, refused before a plane is chosen
+    try expectBelowFeatureSize(&block, &wall);
 }
 
-test "degeneracy: two walls' sides in one plane, each 1.25 tolerances off its cavity: neither plane keeps the other's side off its cavity, refused" {
+test "degeneracy: two walls' sides in one plane, each 1.25 tolerances off its cavity: each wall below the minimum feature size, refused" {
     // Each wall's side is 2.5e-5 from its own cavity's side and 3.75e-6 past the plane
     // between them, over a strip where the walls meet; either side's plane takes the other
     // within 1.75e-5 of its cavity, so no plane of the group holds both apart
@@ -747,21 +751,12 @@ test "degeneracy: two walls' sides in one plane, each 1.25 tolerances off its ca
     defer cavity_b.deinit();
     var b = try sound(&outer_b, &cavity_b, .difference);
     defer b.deinit();
-    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
-        var diag = Diagnostics.init(testing.allocator);
-        defer diag.deinit();
-        if (pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null)) |made| {
-            var result = made;
-            result.deinit();
-            return error.TestExpectedError;
-        } else |_| {}
-        errdefer std.debug.print("{s}: {f}\n", .{ @tagName(op), diag });
-        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
-        try testing.expect(std.mem.indexOf(u8, diag.first().?.label, "each plane of which") != null);
-    }
+    // Refused by the provenance's plane choice until the operand precondition
+    // (2026-11-15), which refuses either wall before the paves
+    try expectBelowFeatureSize(&a, &b);
 }
 
-test "degeneracy: a hull's edge within the tolerance of a plate's two front edges 2.5e-5 apart: its crossings merge beyond the reach of one, refused" {
+test "degeneracy: a hull's edge within the tolerance of a plate's two front edges 2.5e-5 apart: the plate below the minimum feature size, refused" {
     // The nightly solids fuzzer (2026-11-14, locus_solids), reduced: a plate 1.25
     // tolerances thick, a hull's edge rising at 45° across its front 1.9e-5 from the top
     // edge and 1.8e-6 from the bottom one. Its crossing with the top edge welded to the
@@ -778,25 +773,12 @@ test "degeneracy: a hull's edge within the tolerance of a plate's two front edge
     defer diag.deinit();
     var hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
     defer hull.deinit();
-    for ([2][2]*const Body{ .{ &plate, &hull }, .{ &hull, &plate } }) |operands| {
-        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
-            var refusal = Diagnostics.init(testing.allocator);
-            defer refusal.deinit();
-            if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &refusal, null)) |made| {
-                var result = made;
-                result.deinit();
-                return error.TestExpectedError;
-            } else |e| {
-                errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), refusal });
-                try testing.expectEqual(error.Degenerate, e);
-                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
-                try testing.expect(std.mem.indexOf(u8, refusal.first().?.label, "its crossing merged with") != null);
-            }
-        }
-    }
+    // Refused at the weld (66cb4442) until the operand precondition (2026-11-15), which
+    // refuses the plate, 2.5e-5 thick, before the paves
+    try expectBelowFeatureSize(&plate, &hull);
 }
 
-test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 tolerances thick, within the tolerance of its top and bottom at once: refused; a post through the plate made" {
+test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 tolerances thick, within the tolerance of its top and bottom at once: both below the minimum feature size, refused" {
     // The nightly solids fuzzer (2026-11-14, locus), reduced: a tetrahedron 1.9 tolerances
     // thick across a plate 1.25 thick, one top face rising 3.8e-5 rad from the plate's top
     // and within the tolerance of its top and its bottom at once over x 2.04–2.43. Their
@@ -814,29 +796,17 @@ test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 toleranc
     defer tet.deinit();
     var plate = try box(.{ 1, 3, -1.25e-5 }, .{ 3, 4, 1.25e-5 });
     defer plate.deinit();
-    for ([2][2]*const Body{ .{ &tet, &plate }, .{ &plate, &tet } }) |operands| {
-        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
-            var refusal = Diagnostics.init(testing.allocator);
-            defer refusal.deinit();
-            if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &refusal, null)) |made| {
-                var result = made;
-                result.deinit();
-                return error.TestExpectedError;
-            } else |e| {
-                errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), refusal });
-                try testing.expectEqual(error.Degenerate, e);
-                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
-                try testing.expect(std.mem.indexOf(u8, refusal.first().?.label, "both within reach of one face") != null);
-            }
-        }
-    }
+    // Refused as a face sandwiched between two (d1743fcd), and a post through the plate
+    // made, until the operand precondition (2026-11-15): the plate, 2.5e-5 thick, and
+    // the tetrahedron, its edges 3.8e-5 apart, are below the boolean's minimum feature
+    // size, refused whatever reaches them
+    try expectBelowFeatureSize(&tet, &plate);
     var post = try box(.{ 1.5, 3.2, -1 }, .{ 2.5, 3.8, 1 });
     defer post.deinit();
-    try expectIdentities(&post, &plate);
-    try expectIdentities(&plate, &post);
+    try expectBelowFeatureSize(&post, &plate);
 }
 
-test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4e-5, is on it by its vertex's reach, not its line's: made and sound" {
+test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4e-5 (the plate below the minimum feature size, refused), and two hulls' difference: made and sound" {
     // The nightly solids fuzzer (2026-11-15, locus_solids and locus), reduced: a hull's
     // edge crosses a plate 1.9 tolerances thick at its front, 1.4e-5 under its top front
     // edge, where the paves merged their crossing with a gap of 6.8e-6. The overlap rules
@@ -858,8 +828,9 @@ test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4
     defer wedge.deinit();
     var plate = try box(.{ 0.999995, 2.00002, 2 - 1.4e-5 }, .{ 3.999995, 3.00002, 2 + 2.4e-5 });
     defer plate.deinit();
-    try expectIdentities(&wedge, &plate);
-    try expectIdentities(&plate, &wedge);
+    // The plate, 3.8e-5 thick, is below the boolean's minimum feature size since the
+    // operand precondition (2026-11-15): refused; the two hulls are made
+    try expectBelowFeatureSize(&wedge, &plate);
     var first = try Hull.of(&.{ .{ 3, 0, 2 }, .{ 1, 2, 0 }, .{ 3, 4, 4 }, .{ 4, 4, 3 } }, .{ 2e-5, -2e-5, 2e-5 });
     defer first.deinit();
     var second = try Hull.of(&.{ .{ 4, 3, 1 }, .{ 4, 4, 0 }, .{ 0, 4, 4 }, .{ 1, 2, 3 }, .{ 2, 2, 2 }, .{ 4, 3, 0 }, .{ 3, 3, 2 }, .{ 2, 2, 0 } }, .{ -2e-5, -5e-6, 1e-5 });
@@ -868,7 +839,7 @@ test "degeneracy: a hull's edge ending 3.1e-5 over a slot's bottom, its line 2.4
     try expectIdentities(&second, &first);
 }
 
-test "degeneracy: a hull's ridge through a flat tetrahedron, their intersection a needle whose end with no gap is 2.6e-5 off its other face: made and sound" {
+test "degeneracy: a hull's ridge through a flat tetrahedron 1.5 tolerances thick (once a needle the overlap rules misjudged): the tetrahedron below the minimum feature size, refused" {
     // The nightly solids fuzzer (2026-11-15, locus_solids), reduced: a hull's top edge,
     // turned 0.014 rad, runs through a tetrahedron 1.5 tolerances thick, merged with its
     // upper faces with a gap of 7.4e-6; the hull's two faces there cut its lower edge
@@ -890,8 +861,10 @@ test "degeneracy: a hull's ridge through a flat tetrahedron, their intersection 
     defer ridge.deinit();
     var flat = try Hull.of(&.{ .{ 2, 2, 4 - 1.5e-5 }, .{ 4, 2, 4 - 1.5e-5 }, .{ 3, 1, 4 + 1.5e-5 }, .{ 3, 3, 4 + 1.5e-5 } }, 0, .{ 0, -2e-5, 0 });
     defer flat.deinit();
-    try expectIdentities(&ridge, &flat);
-    try expectIdentities(&flat, &ridge);
+    // The tetrahedron, its edges 3e-5 apart, is below the boolean's minimum feature size
+    // since the operand precondition (2026-11-15): refused. 86b72d89's rule (an edge in a
+    // plane by its ends' own reach) stays in the overlap rules, which check any body
+    try expectBelowFeatureSize(&ridge, &flat);
 }
 
 test "degeneracy: a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from its edges: refused" {
@@ -1271,6 +1244,19 @@ test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its
     }
 }
 
+/// Each operation of `a` and `b`, either way round, refused before the paves: one of them
+/// has two features that do not meet nearer than twice the intersection tolerance and
+/// their gaps (`pipeline.featureSize`, the minimum feature size).
+fn expectBelowFeatureSize(a: *const Body, b: *const Body) !void {
+    for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
+        try expectRefused(operands[0], operands[1], .below_feature_size);
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, operands[0], operands[1], .@"union", .{}, &diag, null));
+        try testing.expect(std.mem.indexOf(u8, diag.first().?.label, "two features of") != null);
+    }
+}
+
 /// Each operation of `a` and `b` refused with `code`.
 fn expectRefused(a: *const Body, b: *const Body, code: diagnostics.Code) !void {
     for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
@@ -1329,7 +1315,7 @@ test "degeneracy: a face between a flat tetrahedron's opposite edges is refused:
     try expectRefused(&tetra, &b, .below_feature_size);
 }
 
-test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its upper edge within the tolerance over it, is classified by a point clear of the plate" {
+test "degeneracy: a flat tetrahedron 1.5 tolerances thick, its face 3e-4 rad off a plate's top: below the minimum feature size, refused" {
     // The gap draws' first find (2026-11-14), at a zone of 1e-4: the tetrahedron's upper
     // edge 5e-5 over the plate's top and its lower 2.5e-4 under it, so its upper faces
     // cross the top at 3e-4 rad 1/6 from the edge; the paves take the edge's ends for where
@@ -1348,19 +1334,13 @@ test "degeneracy: a flat tetrahedron's face 3e-4 rad off a plate's top, its uppe
     defer diag.deinit();
     var tetra = try @import("../construct/hull.zig").hull(testing.allocator, t, &.{ .{ -1, 2, mid - half }, .{ 1, 2, mid - half }, .{ 0, 1, mid + half }, .{ 0, 3, mid + half } }, &diag);
     defer tetra.deinit();
-    var i = try sound(&plate, &tetra, .intersection);
-    defer i.deinit();
-    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&i));
-    try testing.expectApproxEqAbs(try volume(&tetra), try volume(&i), t.xsect * 4);
-    var u = try sound(&plate, &tetra, .@"union");
-    defer u.deinit();
-    try testing.expectApproxEqAbs(try volume(&plate), try volume(&u), t.xsect * 4);
-    // The difference is a void whose edge lies on the plate's top within the tolerance: a
-    // void touching its outer shell along a line, refused by design
-    try expectPinched(&plate, &tetra);
+    // Classified by a point clear of the plate until the operand precondition
+    // (2026-11-15): the tetrahedron, 1.5 tolerances thick, is below the boolean's minimum
+    // feature size, refused
+    try expectBelowFeatureSize(&plate, &tetra);
 }
 
-test "degeneracy: a plane between a flat tetrahedron's edges cuts a section 4.2e-5 across, classified at its incenter" {
+test "degeneracy: a plane between a flat tetrahedron's edges 3e-5 apart: below the minimum feature size, the split refused" {
     // The gap draws' second find (2026-11-14): a tetrahedron whose opposite edges are 1.5
     // intersection tolerances apart, cut by the plane x = z between them at 45°; the cut's
     // section on the plane is a triangle 2 long and 4.2e-5 across, its centroid a third of
@@ -1373,15 +1353,11 @@ test "degeneracy: a plane between a flat tetrahedron's edges cuts a section 4.2e
     defer tetra.deinit();
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var parts = try trim.splitByPlane(testing.allocator, &tetra, .{ 1, 0, -1 }, 0, .{}, &diag);
-    defer for (&parts) |*part| part.deinit();
-    for (&parts) |*part| {
-        var report = try @import("../topology/check.zig").run(testing.allocator, part, .global);
-        defer report.deinit(testing.allocator);
-        try testing.expect(report.ok());
-        try @import("../query/overlap.zig").check(testing.allocator, part, .{}, &diag);
-    }
-    try testing.expectApproxEqAbs(try volume(&tetra), try volume(&parts[0]) + try volume(&parts[1]), CLOSE);
+    // Split and classified at the section's incenter until the operand precondition
+    // (2026-11-15): the tetrahedron, its edges 3e-5 apart, is below the minimum feature
+    // size of the boolean a split is, refused
+    try testing.expectError(error.Degenerate, trim.splitByPlane(testing.allocator, &tetra, .{ 1, 0, -1 }, 0, .{}, &diag));
+    try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
 }
 
 test "degeneracy: a void touching its outer shell along a line, at a point, or another void at a corner is refused by design; a solid in a cavity touching it is two solids" {

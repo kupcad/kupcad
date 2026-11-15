@@ -256,6 +256,8 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
         return result;
     }
     for ([2]*const Body{ a, b }, 0..) |operand, k| try validAt(allocator, operand, tol, k, common, diag);
+    const decide: incidence.Decider = .{ .tol = tol, .scale = @max(try magnitudeOf(a, diag), try magnitudeOf(b, diag)) };
+    for ([2]*const Body{ a, b }, 0..) |operand, k| try featureSize(allocator, operand, decide, k, diag);
 
     var paves = try pave.run(allocator, a, b, tol, common, diag, &stage);
     defer paves.deinit();
@@ -309,7 +311,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     try warnTouching(allocator, &result, diag);
     var index = try index_mod.FaceIndex.build(allocator, &result, diag);
     defer index.deinit(allocator);
-    r.near = try overlap.nearest(allocator, &result, &index, tol, diag);
+    r.near = try overlap.nearest(allocator, &result, &index, tol, 0, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
 }
@@ -424,6 +426,27 @@ fn contacts(paves: *const pave.Paves, classes: []const classify.Classified, r: *
     @memset(on, 0);
     for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
     for (on, 0..) |operands, v| if (operands == 3) try r.contacts.append(r.allocator, paves.point(@intCast(v)));
+}
+
+/// Operand `k`'s minimum feature size at the boolean's tolerance (architecture §3, T3;
+/// Stroud p.466, as ACIS refuses a body below its resolution): two features of it that do
+/// not meet (a vertex and an edge or a face it is not on, two edges sharing no vertex)
+/// nearer than twice the intersection tolerance and their vertices' gaps are within the
+/// boolean's reach of one point at once, and no decision of the tolerance there keeps them
+/// apart. Refused (`below_feature_size`; at that distance to rounding `at_tolerance`,
+/// D27), naming the first feature, before any interference is decided, whether or not
+/// the other operand comes near (Leo, 2026-11-15: one precondition in place of the
+/// refusals the paves added find by find where the other operand reached such a pair).
+fn featureSize(allocator: std.mem.Allocator, operand: *const Body, decide: incidence.Decider, k: usize, diag: *Diagnostics) Error!void {
+    var index = try index_mod.FaceIndex.build(allocator, operand, diag);
+    defer index.deinit(allocator);
+    const near = try overlap.nearest(allocator, operand, &index, decide.tol, decide.band(), diag) orelse return;
+    const label = if (k == 0) "two features of the first operand that do not meet," else "two features of the second operand that do not meet,";
+    return switch (decide.within(near.distance, near.limit)) {
+        .apart => {},
+        .same => diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = near.a, .label = label, .measured = near.distance, .threshold = near.limit }),
+        .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = near.a, .label = label, .measured = c.measured, .threshold = c.limit }),
+    };
 }
 
 /// Operand `k` as the boolean holds it, at the boolean's tolerance `tol`: one built at

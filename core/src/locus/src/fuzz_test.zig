@@ -1276,6 +1276,12 @@ const RefusalTally = struct {
     codes: [std.enums.values(diagnostics.Code).len]usize = @splat(0),
     errors: [TALLIED_ERRORS]struct { name: []const u8 = "", count: usize = 0 } = @splat(.{}),
 
+    /// A run ended refused as the generator drew it to be (a solid below the minimum
+    /// feature size, refused as an operand): a run, its refusal no rule's spread.
+    fn addExpected(self: *RefusalTally) void {
+        self.runs += 1;
+    }
+
     /// A run ended with `diag`'s findings: its failures' codes, each once.
     fn add(self: *RefusalTally, diag: *const Diagnostics) void {
         self.runs += 1;
@@ -1738,9 +1744,16 @@ const MOVE_SHIFTS = [_]vec.Vec3{ .{ 0.5, -1, 2 }, .{ 1e3, -2e3, 500 }, .{ 1e5, -
 const PLATE_STRETCH: f64 = 50;
 /// The gap a solid with a gap of its own keeps between two of its features, in its own
 /// intersection tolerances (research/consistent-tolerances.md, T2): past the tolerance, so
-/// the solid is valid, and within twice it, so a probe at the gap's middle is within the
-/// boolean's reach of both sides.
-const GAP_XSECTS = [_]f64{ 1.25, 1.5, 1.9 };
+/// the solid is valid. The first three are within twice it, a probe at the gap's middle
+/// within the boolean's reach of both sides: below the boolean's minimum feature size,
+/// refused as operands since 2026-11-15 (Leo: one precondition before the paves), so they
+/// exercise that refusal either way round. The rest are just past twice it, where another
+/// operand's face can reach one side and not both. Appended, so a replay line's index
+/// keeps its gap.
+const GAP_XSECTS = [_]f64{ 1.25, 1.5, 1.9, 2.1, 2.5, 3 };
+/// The boolean's minimum feature size in intersection tolerances (`pipeline.featureSize`):
+/// a gap under it is a solid every boolean with a non-empty other refuses as an operand.
+const MIN_FEATURE_XSECTS: f64 = 2;
 /// How far a thin wall's cavity reaches back from the wall, and how far it keeps in from
 /// the solid's other faces.
 const WALL_DEPTH: f64 = 1.5;
@@ -1970,10 +1983,14 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
     errdefer std.debug.print("the solid chain that failed:\n{s}", .{log.text.items});
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    defer if (tally) |t| t.add(&diag);
+    // A refusal of a solid drawn below the minimum feature size, as an operand: expected
+    var expected = false;
+    defer if (tally) |t| if (expected) t.addExpected() else t.add(&diag);
     errdefer std.debug.print("the findings: {f}\n", .{diag});
-    var current = (try generatedSolid(source, &log, null, &diag)) orelse return .refused;
+    const drawn = (try generatedSolid(source, &log, null, &diag)) orelse return .refused;
+    var current = drawn.body;
     defer current.deinit();
+    const thin_current = drawn.thin;
     try expectSolid(&current, &diag);
     // The chain's first solid and its boolean steps, for the chain moved whole
     var first = try current.clone(testing.allocator);
@@ -1999,9 +2016,9 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             defer front_report.deinit();
             var back_report = solid_boolean.pipeline.Report.init(testing.allocator);
             defer back_report.deinit();
-            var front = solid_boolean.trim.trimByPlane(testing.allocator, &current, normal, at, .{}, &diag, &front_report) catch |err| return cleanSolid(err);
+            var front = solid_boolean.trim.trimByPlane(testing.allocator, &current, normal, at, .{}, &diag, &front_report) catch |err| return thinRefused(err, &front_report, thin_current, &expected);
             defer front.deinit();
-            var back = solid_boolean.trim.trimByPlane(testing.allocator, &current, vec.neg(normal), -at, .{}, &diag, &back_report) catch |err| return cleanSolid(err);
+            var back = solid_boolean.trim.trimByPlane(testing.allocator, &current, vec.neg(normal), -at, .{}, &diag, &back_report) catch |err| return thinRefused(err, &back_report, thin_current, &expected);
             defer back.deinit();
             try expectSolid(&front, &diag);
             try expectSolid(&back, &diag);
@@ -2009,8 +2026,10 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area + front_report.shift + back_report.shift);
             continue;
         }
-        var other = (try generatedSolid(source, &log, current.tol, &diag)) orelse continue;
+        const other_drawn = (try generatedSolid(source, &log, current.tol, &diag)) orelse continue;
+        var other = other_drawn.body;
         defer other.deinit();
+        const thin = thin_current or other_drawn.thin;
         try expectSolid(&other, &diag);
         const op = pick(solid_boolean.pipeline.Op, source);
         try log.add("  {s}\n", .{@tagName(op)});
@@ -2022,7 +2041,14 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |each| {
             var report = solid_boolean.pipeline.Report.init(testing.allocator);
             defer report.deinit();
-            results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return cleanSolid(err);
+            results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return thinRefused(err, &report, thin, &expected);
+            // A solid below the minimum feature size is no operand of a boolean with a
+            // non-empty other
+            if (thin and !current.isEmpty() and !other.isEmpty()) {
+                made += 1;
+                std.debug.print("a solid drawn below the minimum feature size was taken as an operand: {s}\n", .{@tagName(each)});
+                return error.ThinOperandTaken;
+            }
             shifts[made] = report.shift;
             gaps[made] = report.max_gap;
             made += 1;
@@ -2253,6 +2279,21 @@ fn refusedMove(err: anyerror) anyerror!void {
 
 /// A refusal by design is clean; the general path failing on valid planar operands is a
 /// find, and out of memory is the harness's own.
+/// A boolean step's refusal: `cleanSolid`'s, and when the step holds a solid drawn below
+/// the minimum feature size (`thin`), refused as an operand, before any interference
+/// (`expected` set, the run checked: the generator's knowledge is the oracle). A thin
+/// solid refused in a later stage is a find: the precondition missed it.
+fn thinRefused(err: anyerror, report: *const solid_boolean.pipeline.Report, thin: bool, expected: *bool) anyerror!Outcome {
+    const outcome = try cleanSolid(err);
+    if (!thin or err == error.OutOfMemory) return outcome;
+    if (report.failed_in != .operands) {
+        std.debug.print("a solid drawn below the minimum feature size was refused at {t}, not as an operand\n", .{report.failed_in.?});
+        return error.ThinOperandTaken;
+    }
+    expected.* = true;
+    return .checked;
+}
+
 fn cleanSolid(err: anyerror) anyerror!Outcome {
     return switch (err) {
         error.OutOfMemory, error.NotValid, error.IntersectionFailed => err,
@@ -2340,7 +2381,17 @@ const NearMove = struct {
 /// tolerance of its own size (`Tolerance.fromSize` of its largest extent, placed: a chain
 /// mixes zones, which each boolean merges to the larger). Null for a clean refusal (a hull
 /// of points in a plane, an extreme placement refused).
-fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: *Diagnostics) !?Body {
+/// A drawn solid, and whether it was drawn below the boolean's minimum feature size (a gap
+/// under `MIN_FEATURE_XSECTS`, placed rigidly, so it stays that thin).
+const Generated = struct { body: Body, thin: bool };
+
+fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: *Diagnostics) !?Generated {
+    var thin = false;
+    const body = (try generatedBody(source, log, with, diag, &thin)) orelse return null;
+    return .{ .body = body, .thin = thin };
+}
+
+fn generatedBody(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: *Diagnostics, thin: *bool) !?Body {
     var drawn: SolidShape = undefined;
     const kind = source.valueRangeAtMost(u8, 0, 3);
     if (kind == 3) {
@@ -2353,6 +2404,7 @@ fn generatedSolid(source: anytype, log: *Log, with: ?tolerance.Tolerance, diag: 
         }
         try log.add("{t} with a gap of {d} intersection tolerances about ({d}, {d}, {d}), across ({d}, {d}, {d}) to ({d}, {d}, {d})", .{ gap.kind, GAP_XSECTS[gap.xsects], gap.at[0], gap.at[1], gap.at[2], gap.lo[0], gap.lo[1], gap.lo[2], gap.hi[0], gap.hi[1], gap.hi[2] });
         drawn = .{ .gap = gap };
+        thin.* = GAP_XSECTS[gap.xsects] < MIN_FEATURE_XSECTS;
     } else if (kind != 1) {
         var lo: vec.Vec3 = undefined;
         var hi: vec.Vec3 = undefined;

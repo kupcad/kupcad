@@ -1089,7 +1089,7 @@ test "boolean: a box and a plate the tolerance apart, a merged crossing in an ed
     }
 }
 
-test "boolean: a section across a strip a little over the tolerance wide is imprinted on it, though its ends and middle are on the strip's boundary" {
+test "boolean: a step whose riser is 1.025 tolerances high is made; the next boolean with it refused, below the minimum feature size" {
     // A step 1.025 intersection tolerances high (its riser a strip that wide), crossed by
     // a box's face: the section across the riser has both ends on its long sides and its
     // middle within the tolerance of both, and was taken for the strip's boundary, the
@@ -1104,20 +1104,25 @@ test "boolean: a section across a strip a little over the tolerance wide is impr
     defer step.deinit();
     var b = try box(.{ 0.5, 0.5, 0.5 }, .{ 1.5, 2, 2 });
     defer b.deinit();
+    // Since the operand precondition (2026-11-15) the riser's long edges, 2.05e-5 apart,
+    // are below the boolean's minimum feature size: every boolean with the step refused
     for ([_]Op{ .@"union", .intersection, .difference }) |op| {
-        var result = try sound(&step, &b, op);
-        result.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &step, &b, op, .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
     }
-    try expectIdentities(&step, &b);
 }
 
 test "boolean: an operand valid at its own tolerance but not at the larger one the boolean takes is refused, mixed_tolerance" {
     // The gap draws (2026-11-14): a flat tetrahedron at a zone of 1e-5, its opposite edges
     // 3e-5 apart, joined whole with a plate at 1e-4: at the larger tolerance its own faces
-    // met away from their boundaries, and the union came out failing the overlap rules
+    // met away from their boundaries, and the union came out failing the overlap rules.
+    // Here 6e-5 apart, past its own minimum feature size (twice its tolerance, 4e-5), so
+    // that at one tolerance it is joined
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var tetra = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 3e-5 }, .{ 0, 1, 3e-5 } }, &diag);
+    var tetra = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 6e-5 }, .{ 0, 1, 6e-5 } }, &diag);
     defer tetra.deinit();
     var plate = try boxAt(Tolerance.fromZone(1e-4), .{ -50, 5, 0 }, .{ 50, 60, 3 });
     defer plate.deinit();
@@ -1137,22 +1142,28 @@ test "boolean: an operand valid at its own tolerance but not at the larger one t
     try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
 }
 
-test "boolean: the report keeps the result's nearest features that do not meet, where a next boolean reaching both refuses" {
+test "boolean: the report keeps the result's nearest features that do not meet, which the next boolean with it refuses" {
     // research/consistent-tolerances.md, T3: a chain sees the step that will refuse before
-    // it does; a flat tetrahedron joined with a box far from it keeps its edges 1.5e-5 apart
+    // it does. Two boxes 3e-5 apart, each far past the minimum feature size, joined: two
+    // solids whose faces are 3e-5 apart, under twice the tolerance (4e-5); the next boolean
+    // with the union refuses it as an operand (`below_feature_size`, 2026-11-15)
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    // Wound outward: the lower edge's faces face down, the upper's up
-    var tetra = try primitives.polyhedron(testing.allocator, tol, &.{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 1.5e-5 }, .{ 0, 1, 1.5e-5 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 2, 1, 3 }, .{ 0, 2, 3 } }, &diag);
-    defer tetra.deinit();
+    var lower = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
+    defer lower.deinit();
+    var upper = try box(.{ 0, 0, 1 + 3e-5 }, .{ 1, 1, 2 });
+    defer upper.deinit();
     var far = try box(.{ 5, 5, 5 }, .{ 6, 6, 6 });
     defer far.deinit();
     var r = pipeline.Report.init(testing.allocator);
     defer r.deinit();
-    var u = try pipeline.boolean(testing.allocator, &tetra, &far, .@"union", .{}, &diag, &r);
+    var u = try pipeline.boolean(testing.allocator, &lower, &upper, .@"union", .{}, &diag, &r);
     defer u.deinit();
     try testing.expect(r.near != null);
-    try testing.expectApproxEqAbs(@as(f64, 1.5e-5), r.near.?.distance, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 3e-5), r.near.?.distance, 1e-12);
+    diag.findings.clearRetainingCapacity();
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &u, &far, .@"union", .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
     // Two boxes apart: nothing near
     var other = try box(.{ 0, 0, 0 }, .{ 1, 1, 1 });
     defer other.deinit();

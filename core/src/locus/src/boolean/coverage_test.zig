@@ -305,7 +305,16 @@ fn overlappingFace(cov: *Coverage) !void {
     defer star.deinit();
     var other = try box(.{ -0.05, 0.7, -1 }, .{ 0.05, 0.8, 2 });
     defer other.deinit();
-    try cov.boolean(&star, &other, .difference, .{}, .faces_overlap);
+    // The star's edges cross, two features 0 apart: the boolean refuses it as an operand
+    // (`below_feature_size`, the minimum feature size, 2026-11-15) before the imprint. The
+    // imprint's guard stays for a face over its plane twice without crossing edges (a
+    // hole loop wound as its outer one, which no builder makes), driven here past the
+    // precondition as the other guards are, through the stages
+    try cov.boolean(&star, &other, .difference, .{}, .below_feature_size);
+    var stage: pave.Stage = .operands;
+    var paves = try pave.run(testing.allocator, &star, &other, tol, .{}, &diag, &stage);
+    defer paves.deinit();
+    try cov.refused(imprint.run(testing.allocator, &paves, .{}, &diag), &diag, .faces_overlap);
 }
 
 /// A prism 1 high on the pentagram of a unit circle's fifths taken every second: a closed

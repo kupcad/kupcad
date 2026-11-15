@@ -74,19 +74,22 @@ pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnosti
     defer solids.deinit(allocator);
     try facePairs(allocator, body, &index, &solids, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
-    if (try nearest(allocator, body, &index, tol, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = 2 * tol.xsect });
+    if (try nearest(allocator, body, &index, tol, 0, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = near.limit });
 }
 
-/// Two features of a body that do not meet, the distance between them.
-pub const Near = struct { distance: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef };
+/// Two features of a body that do not meet, the distance between them, and the least
+/// distance they must keep (twice the tolerance and their vertices' gaps).
+pub const Near = struct { distance: f64, limit: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef };
 
 /// The nearest two features of `body` that do not meet come, when nearer than twice the
 /// intersection tolerance and their vertices' gaps (the minimum feature size a boolean
 /// reaching both needs, Hoffmann p.118 with ε the boolean's reach, architecture §3;
 /// research/consistent-tolerances.md, T3): a vertex and a face or an edge it is not on, or
 /// two edges sharing no vertex (two planar faces apart are nearest at one of those). Null
-/// when none is. Planar faces and straight edges (curved ones M5's).
-pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, tol: Tolerance, diag: *Diagnostics) Error!?Near {
+/// when none is. `band`: how far past its limit a pair still counts (D27's, for a caller
+/// that refuses a pair at its limit to rounding; 0 for a plain report). Planar faces and
+/// straight edges (curved ones M5's).
+pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, tol: Tolerance, band: f64, diag: *Diagnostics) Error!?Near {
     if (body.kind != .solid) return null;
     const reach = 2 * tol.xsect;
     var best: ?Near = null;
@@ -100,7 +103,7 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         try edges.append(allocator, types.EdgeIndex.of(i));
         var box = geometry.Box3.ofPoint(body.point(e.start));
         box.grow(body.point(e.end));
-        try boxes.append(allocator, box.inflated(reach / 2 + @max(body.vertex(e.start).gap, body.vertex(e.end).gap)));
+        try boxes.append(allocator, box.inflated(reach / 2 + @max(body.vertex(e.start).gap, body.vertex(e.end).gap) + band / 2));
     }
     var tree = try bvh_mod.Bvh.build(allocator, boxes.items);
     defer tree.deinit(allocator);
@@ -125,17 +128,17 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         const within = reach + v.gap;
         // A vertex and an edge it does not end
         near.out.clearRetainingCapacity();
-        tree.query(geometry.Box3.ofPoint(p).inflated(reach / 2 + v.gap), &near, Collect.visit);
+        tree.query(geometry.Box3.ofPoint(p).inflated(reach / 2 + v.gap + band), &near, Collect.visit);
         if (near.failed) return error.OutOfMemory;
         for (near.out.items) |item| {
             const e = body.edge(edges.items[item]);
             if (e.start == vertex or e.end == vertex) continue;
             const d = in_face.edgeDistance(body, edges.items[item], p);
-            try closer(&best, d, within + @max(body.vertex(e.start).gap, body.vertex(e.end).gap), .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
+            try closer(&best, d, within + @max(body.vertex(e.start).gap, body.vertex(e.end).gap), band, .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
         }
         // A vertex and a face it is not on
         near.out.clearRetainingCapacity();
-        index.bvh.query(geometry.Box3.ofPoint(p).inflated(within), &near, Collect.visit);
+        index.bvh.query(geometry.Box3.ofPoint(p).inflated(within + band), &near, Collect.visit);
         if (near.failed) return error.OutOfMemory;
         for (near.out.items) |item| {
             const f = index.faces[item];
@@ -145,7 +148,7 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
             const h = plane.height(p);
             const foot = vec.addScaled(p, plane.n, -h);
             const d = if (try in_face.classify(body, f, foot, in_face.uvOf(body, f, foot), 0, diag) == .inside) @abs(h) else try in_face.boundaryDistance(body, f, p, diag);
-            try closer(&best, d, within, .of(.vertex, vi), .of(.face, @backingInt(f)));
+            try closer(&best, d, within, band, .of(.vertex, vi), .of(.face, @backingInt(f)));
         }
     }
     // Two edges sharing no vertex
@@ -173,15 +176,16 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         if (x.start == y.start or x.start == y.end or x.end == y.start or x.end == y.end) continue;
         const d = distance.segmentSegment(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end)).distance;
         const gaps = @max(body.vertex(x.start).gap, body.vertex(x.end).gap) + @max(body.vertex(y.start).gap, body.vertex(y.end).gap);
-        try closer(&best, d, reach + gaps, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
+        try closer(&best, d, reach + gaps, band, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
     }
     return best;
 }
 
-/// `best` made the pair `a`, `b` when `d` is within `within` and nearer than it was.
-fn closer(best: *?Near, d: f64, within: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef) Error!void {
-    if (!(d < within)) return;
-    if (best.* == null or d < best.*.?.distance) best.* = .{ .distance = d, .a = a, .b = b };
+/// `best` made the pair `a`, `b` when `d` is within `within` (and `band`) and nearer
+/// than it was.
+fn closer(best: *?Near, d: f64, within: f64, band: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef) Error!void {
+    if (!(d < within + band)) return;
+    if (best.* == null or d < best.*.?.distance) best.* = .{ .distance = d, .limit = within, .a = a, .b = b };
 }
 
 /// Whether vertex `v` is a corner of face `f`.

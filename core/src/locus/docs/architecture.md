@@ -456,13 +456,18 @@ cannot be split and is reported (`TooSmallEdge`) rather than cut (OCCT
 **Incidence is decided once** (H p.81–82, 117): every face pair of a boolean is analysed
 one time and the result posted to both bodies; the "mark A on B, then B on A" symmetric
 design is not used because the two passes can disagree. Decisions test against surfaces
-and input data, not against derived curves (S p.751). A minimum feature size holds where an
-operation reaches: features that do not meet are more than `2·(xsect + gaps)` apart where a
-boolean comes within its reach of both (Hoffmann's `δ > 2ε` with ε the boolean's reach,
-`xsect` and the vertices' gaps, not the zone; Hoffmann–Hopcroft–Karasick ask 3ε). A body
-may be nearer elsewhere: the overlap rules warn (`features_near`) and a boolean's report
-keeps its result's nearest pair, where the next one reaching both will refuse
-(research/consistent-tolerances.md). Edges shorter than the checker's minimum are
+and input data, not against derived curves (S p.751). A minimum feature size is every
+boolean's precondition on its operands: features that do not meet are more than
+`2·(xsect + gaps)` apart (Hoffmann's `δ > 2ε` with ε the boolean's reach, `xsect` and the
+vertices' gaps, not the zone; Hoffmann–Hopcroft–Karasick ask 3ε), else the operand is
+refused before any interference is decided (`below_feature_size`, `pipeline.featureSize`
+over `overlap.nearest`, D27's band about the limit; Stroud p.466, as ACIS refuses a body
+below its resolution; Leo, 2026-11-15, in place of refusals the paves added find by find
+where the other operand reached such a pair, and costing about 3% of a boolean). A body
+may be nearer: an operation's result is one (the overlap rules warn, `features_near`, and
+a boolean's report keeps its result's nearest pair), which the next boolean refuses
+(research/consistent-tolerances.md). The paves' own refusals below are what an operand
+past the minimum can still bring about, the two operands together. Edges shorter than the checker's minimum are
 collapsed by `simplify` at the end of a boolean (H p.117–118). Where two faces of one operand come within the intersection
 tolerance of each other away from where they meet (a merged vertex inside one, clear of
 its boundary, within the tolerance of the other), no decision of the tolerance is
