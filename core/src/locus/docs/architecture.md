@@ -467,7 +467,10 @@ where the other operand reached such a pair, and costing about 3% of a boolean).
 may be nearer: an operation's result is one (the overlap rules warn, `features_near`, and
 a boolean's report keeps its result's nearest pair), which the next boolean refuses
 (research/consistent-tolerances.md). The paves' own refusals below are what an operand
-past the minimum can still bring about, the two operands together. Edges shorter than the checker's minimum are
+past the minimum can still bring about, the two operands together: properties of the pair
+and its merged vertices (whose gaps reach up to the zone beyond the tolerance), kept in the
+paves where that state lives (Leo, 2026-11-15: the precondition stays at `2·xsect`; at
+`3·xsect` it would subsume them but refuse valid thin walls). Edges shorter than the checker's minimum are
 collapsed by `simplify` at the end of a boolean (H p.117–118). Where two faces of one operand come within the intersection
 tolerance of each other away from where they meet (a merged vertex inside one, clear of
 its boundary, within the tolerance of the other), no decision of the tolerance is
