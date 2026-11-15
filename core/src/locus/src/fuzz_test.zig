@@ -1969,6 +1969,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // vertex under the plate's top took the notch's edge with it, joined, 3.6e-4 under
         "solids 3 2 2 1 2 4 0 1 4 3 0 1 3 11 3 0 8 3 3 1 7 2 0 4 2 0 1 2 2 3 0 3 3 1 3 0 3 3 0 3 4 3 0 0 7 1 2 1 10 15 1 3 0 1 2 1 2 1 4 2 0 2 1 2 12 3 2 9 0",
         "solids 0 1 3 0 3 3 4 0 1 8 2 -2 11 1 5 3 2 0 1 4 1 4 0 4 2 2 9 7 9 11 1 3 2 0 4 1 3 2 4 3 3 13 0 9 8 2",
+        // The session on 6120922e (2026-11-15, both targets): a flat tetrahedron drawn
+        // below the minimum feature size, trimmed at an offset not finite, refused by the
+        // trim's argument check before the boolean ran: the fuzzer's own thin-operand oracle
+        // read the stage the report never had (a panic)
+        "solids 3 1 1 3 0 1 0 1 3 0 1 4 3 2 2 12 5 3 0 -1 1 0 1 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
@@ -2290,12 +2295,15 @@ fn refusedMove(err: anyerror) anyerror!void {
 /// A boolean step's refusal: `cleanSolid`'s, and when the step holds a solid drawn below
 /// the minimum feature size (`thin`), refused as an operand, before any interference
 /// (`expected` set, the run checked: the generator's knowledge is the oracle). A thin
-/// solid refused in a later stage is a find: the precondition missed it.
+/// solid refused in a later stage is a find: the precondition missed it. A refusal before
+/// the boolean ran (a trim's argument, not finite: no stage in the report) is the plain
+/// clean one.
 fn thinRefused(err: anyerror, report: *const solid_boolean.pipeline.Report, thin: bool, expected: *bool) anyerror!Outcome {
     const outcome = try cleanSolid(err);
-    if (!thin or err == error.OutOfMemory) return outcome;
-    if (report.failed_in != .operands) {
-        std.debug.print("a solid drawn below the minimum feature size was refused at {t}, not as an operand\n", .{report.failed_in.?});
+    if (!thin) return outcome;
+    const stage = report.failed_in orelse return outcome;
+    if (stage != .operands) {
+        std.debug.print("a solid drawn below the minimum feature size was refused at {t}, not as an operand\n", .{stage});
         return error.ThinOperandTaken;
     }
     expected.* = true;
