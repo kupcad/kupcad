@@ -1961,6 +1961,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // a needle 2.8e-5 thick, its end with no gap 2.6e-5 off its other face taken as in
         // its plane by its far end's gap: its two faces "lying on" each other
         "solids 1 6 3 4 4 1 0 4 3 4 2 0 3 1 0 3 2 3 4 1 0 2 4 3 2 7 9 12 2 0 -1 -1 -1 10 5 2 3 2 1 4 3 4 2 2 3 4 1 4 2 -2 8 0 15 1",
+        // The 10K session on 31034cc4 (2026-11-15): (locus) a flat tetrahedron 1.9
+        // tolerances thick joined after a difference, two faces of the union in one plane
+        // overlapping: refused as an operand since the precondition, as the fuzzer now
+        // expects of a solid drawn below the minimum feature size; (locus_solids) a plate's
+        // top 1.8e-4 over a notch's ceiling, the plate first: a section's line through a
+        // vertex under the plate's top took the notch's edge with it, joined, 3.6e-4 under
+        "solids 3 2 2 1 2 4 0 1 4 3 0 1 3 11 3 0 8 3 3 1 7 2 0 4 2 0 1 2 2 3 0 3 3 1 3 0 3 3 0 3 4 3 0 0 7 1 2 1 10 15 1 3 0 1 2 1 2 1 4 2 0 2 1 2 12 3 2 9 0",
+        "solids 0 1 3 0 3 3 4 0 1 8 2 -2 11 1 5 3 2 0 1 4 1 4 0 4 2 2 9 7 9 11 1 3 2 0 4 1 3 2 4 3 3 13 0 9 8 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

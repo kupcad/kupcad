@@ -16,7 +16,8 @@
 //!   one): pieces of one curve record, or of two lines the same within the tolerance (the
 //!   angle, and the far end of the one on the other within the intersection tolerance,
 //!   decided with D27's band, either way round), the one then given the other's line (OCCT's
-//!   `UnifySameDomain` joining edges through two-valent vertices). The boolean gives each
+//!   `UnifySameDomain` joining edges through two-valent vertices), when that line, over the
+//!   joined edge, stays on its faces as the checker holds an edge to them. The boolean gives each
 //!   edge its source's line (D28), so pieces of two operands' edges meet so.
 //! - An edge no longer than the minimum feature size (`check.shortest`, measured as the
 //!   checker measures it, `check.edgeLength`, D27's band beyond) collapses into its start
@@ -291,8 +292,15 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
 }
 
 /// Whether edge `move` lies on edge `keep`'s line within the tolerance: parallel within the
-/// angle, and its far end (the one it does not share with `keep`) within the intersection
-/// tolerance and its gap of the line. Within rounding of either is refused (`at_tolerance`).
+/// angle, its far end (the one it does not share with `keep`) within the intersection
+/// tolerance and its gap of the line, and the line there on `move`'s faces within the
+/// tolerance and the edge's gap, as the checker holds an edge to its surfaces (on planes a
+/// line's height is linear: its ends decide, and `keep`'s other end is its own). Within
+/// rounding of any is refused (`at_tolerance`). Without the last, a section's line, through
+/// a vertex 1.8e-4 under the plane it lies in at a tolerance of 2e-4, joined a notch's
+/// edge on that line and took the joined edge 3.6e-4 under the plane at its far end, the
+/// tolerance spent twice (the 10K session, 2026-11-15: a plate's top and a notch's
+/// ceiling 1.8e-4 under it, the plate first, `edge_off_surface`). Two such edges stay two.
 fn sameLine(body: *const Body, keep: types.EdgeIndex, move: types.EdgeIndex, diag: *Diagnostics) Error!bool {
     const tol = body.tol;
     const k = body.edge(keep);
@@ -301,11 +309,19 @@ fn sameLine(body: *const Body, keep: types.EdgeIndex, move: types.EdgeIndex, dia
     const other = body.geometry.curve(m.curve).line;
     const far = if (m.start == k.start or m.start == k.end) m.end else m.start;
     const p = body.point(far);
-    const comparisons = [_]canonical.Comparison{
-        canonical.Comparison.angle(1.0 - @abs(vec.dot(line.d, other.d)), tol.angle),
-        canonical.Comparison.distance(canonical.lineOffset(line, p), incidence.reach(tol, body.vertex(far).gap), canonical.magnitude(&.{ p, line.o })),
-    };
-    return switch (canonical.verdict(&comparisons)) {
+    var tally: canonical.Tally = .{};
+    tally.add(canonical.Comparison.angle(1.0 - @abs(vec.dot(line.d, other.d)), tol.angle));
+    tally.add(canonical.Comparison.distance(canonical.lineOffset(line, p), incidence.reach(tol, body.vertex(far).gap), canonical.magnitude(&.{ p, line.o })));
+    // The line where the joined edge would end, on the faces about it
+    const end = line.eval(line.project(p));
+    for (traverse.coedgesOfEdge(body, move)) |c| {
+        if (c == .none) continue;
+        const face = body.face(body.loop(body.coedge(c).loop).face);
+        if (face.surface.kind != .plane) return false;
+        const plane = body.geometry.planes.items[face.surface.index];
+        tally.add(canonical.Comparison.distance(@abs(plane.height(end)), tol.xsect + m.gap, canonical.magnitude(&.{ end, plane.frame.origin })));
+    }
+    return switch (tally.verdict()) {
         .same => true,
         .apart => false,
         .at_tolerance => |at| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(move)), .label = "two edges meeting end to end, on one line or not, to within rounding", .measured = at.measured, .threshold = at.limit }),

@@ -867,6 +867,26 @@ test "degeneracy: a hull's ridge through a flat tetrahedron 1.5 tolerances thick
     try expectBelowFeatureSize(&ridge, &flat);
 }
 
+test "degeneracy: a plate's top 1.8e-4 over a notch's ceiling, at a tolerance of 2e-4: a section and the notch's edge on one line stay two where joined they leave the plate's top, either way round" {
+    // The 10K session (2026-11-15, locus_solids), reduced: a box less another leaves a
+    // notch whose ceiling, z = 4.00002, is 1.8e-4 under a plate's top at a zone of 1e-4,
+    // one plane. On the box's side the plate's top leaves a section whose line runs through
+    // its merged vertices, from the plate's top down to the notch's corner; simplify joined
+    // the notch's edge onto that line, its far end within the tolerance of the line, and
+    // the joined edge ended 3.6e-4 under the plate's top (`edge_off_surface`, the plate
+    // first). A join keeps an edge on its faces as the checker does
+    var a = try box(.{ 0, 2e-5, 3.5 }, .{ 2, 3.00002, 4.5 });
+    defer a.deinit();
+    var b = try box(.{ 1.00002, 1.00002, 2e-5 }, .{ 4.00002, 4.00002, 4.00002 });
+    defer b.deinit();
+    var notched = try sound(&a, &b, .difference);
+    defer notched.deinit();
+    var plate = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -97.98, -48, 2.0002 }, .{ 102.02, 52, 4.0002 });
+    defer plate.deinit();
+    try helpers.expectIdentitiesAtTolerance(&plate, &notched);
+    try helpers.expectIdentitiesAtTolerance(&notched, &plate);
+}
+
 test "degeneracy: a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from its edges: refused" {
     // The nightly (2026-11-15, locus), reduced: a box's top 7e-5 over a plate's, at the
     // plate's tolerance of 2e-4, one plane: the union's top takes the box's (D28), its
