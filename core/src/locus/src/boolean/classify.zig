@@ -235,7 +235,6 @@ fn byDihedral(paves: *const Paves, fragments: *const Fragments, i: usize, diag: 
 /// on neither, or a face there in one plane with the fragment's.
 fn pieceSide(paves: *const Paves, other: u1, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
     const body = paves.operands[other];
-    const angle = paves.tol.angle;
     for (paves.edge_paves[other], 0..) |list, e| {
         if (list.items.len < 2) continue;
         for (list.items[0 .. list.items.len - 1], list.items[1..]) |u, w| {
@@ -250,7 +249,7 @@ fn pieceSide(paves: *const Paves, other: u1, x: u32, y: u32, normal: Vec3, into:
             if (first == .none or second == .none) return corrupt(diag);
             const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
             const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
-            if (inOnePlane(normal, n1, angle) or inOnePlane(normal, n2, angle)) return null;
+            if (paves.tol.parallel(normal, n1) or paves.tol.parallel(normal, n2)) return null;
             // Convex when the second face turns behind the first along the first's loop
             const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
             const convex = vec.dot(vec.cross(n1, n2), along) > 0;
@@ -265,17 +264,11 @@ fn pieceSide(paves: *const Paves, other: u1, x: u32, y: u32, normal: Vec3, into:
         for (list.items) |s| {
             if (s[0] != segment[0] or s[1] != segment[1]) continue;
             const n_g = in_face.outwardNormal(body, types.FaceIndex.of(g), .{ 0, 0 });
-            if (inOnePlane(normal, n_g, angle)) return null;
+            if (paves.tol.parallel(normal, n_g)) return null;
             return if (vec.dot(into, n_g) < 0) .inside else .outside;
         }
     }
     return null;
-}
-
-/// Whether unit normals `a` and `b` are of one plane within the angular tolerance `angle`
-/// (`1 − cos`), either way round.
-fn inOnePlane(a: Vec3, b: Vec3, angle: f64) bool {
-    return 1 - @abs(vec.dot(a, b)) <= angle;
 }
 
 fn corrupt(diag: *Diagnostics) Error {

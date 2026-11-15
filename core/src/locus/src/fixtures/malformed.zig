@@ -36,6 +36,7 @@ pub const NAMES = [_][]const u8{
     "too_large_for_zone",
     "too_large_far_out",
     "gap_too_large",
+    "gap_order",
     "edge_off_surface",
     "loop_winding",
     "shell_inside_out",

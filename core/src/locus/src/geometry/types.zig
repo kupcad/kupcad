@@ -14,6 +14,9 @@ pub const PCurveKind = enum(u8) { line2, circle2, nurbs2 };
 
 /// The most entities of one kind an arena addresses: a 24-bit index.
 pub const MAX_PER_KIND: u32 = 1 << 24;
+/// The Newton bound of the free-form kinds' projections (`project(p, eps, PROJECT_STEPS)`),
+/// one for the checker, the queries, the measures, the sweeps and the tessellator.
+pub const PROJECT_STEPS: u32 = 50;
 
 /// A curve of the arena: its kind, and its index in that kind's array.
 pub const CurveRef = packed struct(u32) {

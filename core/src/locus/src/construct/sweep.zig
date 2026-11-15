@@ -750,8 +750,8 @@ fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb:
             for (n.points, points) |q, *mapped| mapped.* = vec.weighted(map.point(vec.project4(q)), q[3]);
             const ref = g.addNurbsCurve(b.allocator, .{ .degree = n.degree, .knots = n.knots, .points = points }) catch |e| return b.fail(e);
             const copy = g.curve(ref);
-            const ta = copy.project(pa, b.body.tol.approx, 50);
-            const tb = copy.project(pb, b.body.tol.approx, 50);
+            const ta = copy.project(pa, b.body.tol.approx, geometry.PROJECT_STEPS);
+            const tb = copy.project(pb, b.body.tol.approx, geometry.PROJECT_STEPS);
             return .{ .curve = ref, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb };
         },
     }
@@ -761,8 +761,8 @@ fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb:
 /// `pa` when the edge runs the curve forward, from `pb` otherwise; the same point twice
 /// is the full turn (a circle of one edge).
 fn arcOn(ref: geometry.CurveRef, curve: curves.Curve, pa: Vec3, pb: Vec3, same_sense: bool, tol: Tolerance) Copied {
-    const ta = curve.project(pa, tol.approx, 50);
-    const tb = curve.project(pb, tol.approx, 50);
+    const ta = curve.project(pa, tol.approx, geometry.PROJECT_STEPS);
+    const tb = curve.project(pb, tol.approx, geometry.PROJECT_STEPS);
     const period = curve.domain().span();
     if (same_sense) {
         const end = if (tb <= ta + tol.param) tb + period else tb;

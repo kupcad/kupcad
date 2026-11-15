@@ -627,7 +627,9 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    Coincident vertices merge into one with the enclosing ball; a vertex on an edge or an
    edge crossing an edge splits the edge there (`mev` split form) on its shrunk range;
    collinear overlaps become *common blocks* (one edge record shared by both bodies).
-   Vertices whose gap grew are re-run through the lower stages once. This catches every
+   A vertex's gap is fixed by vertex–vertex and never grows after it (T5; OCCT grows
+   tolerances and re-runs the lower stages for those vertices, `RepeatIntersection`: here
+   a point made later that would need a larger gap is refused). This catches every
    touching and coincident configuration before any curve is computed.
 2. **Face–face** (§7.2) on the remaining pairs gives intersection curves with pcurves on
    both faces. A curve's ends snap to the vertices of stage 1; a section edge is created

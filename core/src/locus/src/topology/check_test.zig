@@ -177,6 +177,7 @@ const MALFORMED = [_]Malformed{
     .{ .name = "too_large_for_zone", .what = "a unit tetrahedron under a zone of 1e-13, below its coordinates' spacing", .breaks = tooLargeForZone, .level = .geometric, .rule = .too_large_for_tolerance },
     .{ .name = "too_large_far_out", .what = "the tetrahedron moved a thousand kilometres out at a zone of 1e-5", .breaks = tooLargeFarOut, .level = .geometric, .rule = .too_large_for_tolerance },
     .{ .name = "gap_too_large", .what = "a vertex's gap a hundred times the zone", .breaks = gapTooLarge, .level = .geometric, .rule = .gap_too_large },
+    .{ .name = "gap_order", .what = "an edge's gap half the zone, its start vertex's as large and its end vertex's none", .breaks = gapOrder, .level = .geometric, .rule = .gap_order },
     .{ .name = "edge_off_surface", .what = "a face's plane moved a hundredth off its edges", .breaks = edgeOffSurface, .level = .geometric, .rule = .edge_off_surface },
     .{ .name = "loop_winding", .what = "a face flipped alone: its loop runs the wrong way for its sense", .breaks = loopWinding, .level = .geometric, .rule = .loop_winding },
     .{ .name = "shell_inside_out", .what = "the whole shell turned inside out: every local rule holds, its volume is negative", .breaks = shellInsideOut, .level = .geometric, .rule = .shell_inside_out },
@@ -304,6 +305,13 @@ fn tooLargeFarOut(b: *Body) !void {
 
 fn gapTooLarge(b: *Body) !void {
     b.vertex(types.VertexIndex.of(0)).gap = 1e-3;
+}
+
+fn gapOrder(b: *Body) !void {
+    // The end's, not only the start's (the rule read the start alone until 2026-11-15)
+    const e = b.edge(types.EdgeIndex.of(0));
+    e.gap = tol.zone / 2;
+    b.vertex(e.start).gap = tol.zone / 2;
 }
 
 fn edgeOffSurface(b: *Body) !void {

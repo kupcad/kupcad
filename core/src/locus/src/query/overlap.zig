@@ -37,6 +37,7 @@ const traverse = @import("../topology/traverse.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
+const distance = @import("distance.zig");
 const point_in_body = @import("point_in_body.zig");
 const bvh_mod = @import("../spatial/bvh.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
@@ -169,7 +170,7 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         const x = body.edge(edges.items[pair[0]]);
         const y = body.edge(edges.items[pair[1]]);
         if (x.start == y.start or x.start == y.end or x.end == y.start or x.end == y.end) continue;
-        const d = segmentDistance3(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end));
+        const d = distance.segmentSegment(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end)).distance;
         const gaps = @max(body.vertex(x.start).gap, body.vertex(x.end).gap) + @max(body.vertex(y.start).gap, body.vertex(y.end).gap);
         try closer(&best, d, reach + gaps, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
     }
@@ -195,41 +196,6 @@ fn onFace(body: *const Body, f: types.FaceIndex, v: types.VertexIndex, diag: *Di
 
 fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
     return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
-}
-
-/// The distance between the segments from `a` to `b` and from `c` to `d` in space (Ericson,
-/// Real-Time Collision Detection §5.1.9).
-fn segmentDistance3(a: Vec3, b: Vec3, c: Vec3, d: Vec3) f64 {
-    const d1 = vec.sub(b, a);
-    const d2 = vec.sub(d, c);
-    const r = vec.sub(a, c);
-    const aa = vec.dot(d1, d1);
-    const ee = vec.dot(d2, d2);
-    const f = vec.dot(d2, r);
-    var s: f64 = 0;
-    var t: f64 = 0;
-    if (aa == 0 and ee == 0) return vec.distance(a, c);
-    if (aa == 0) {
-        t = std.math.clamp(f / ee, 0, 1);
-    } else {
-        const cc = vec.dot(d1, r);
-        if (ee == 0) {
-            s = std.math.clamp(-cc / aa, 0, 1);
-        } else {
-            const bb = vec.dot(d1, d2);
-            const denom = aa * ee - bb * bb;
-            s = if (denom > 0) std.math.clamp((bb * f - cc * ee) / denom, 0, 1) else 0;
-            t = (bb * s + f) / ee;
-            if (t < 0) {
-                t = 0;
-                s = std.math.clamp(-cc / aa, 0, 1);
-            } else if (t > 1) {
-                t = 1;
-                s = std.math.clamp((bb - cc) / aa, 0, 1);
-            }
-        }
-    }
-    return vec.distance(vec.addScaled(a, d1, s), vec.addScaled(c, d2, t));
 }
 
 /// Which solid each shell of a body belongs to (ISO 10303-42: a solid is an outer shell and

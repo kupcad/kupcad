@@ -67,6 +67,18 @@ const Error = diagnostics.Error;
 /// The most corners a convex polygon clipped for `Filler.sandwiched` holds: a box clipped
 /// by four half-planes and three triangles' nine, each adding a corner at most.
 const MAX_CLIPPED = 64;
+/// How many intersection tolerances apart two parallel faces of the operands may lie for
+/// the warning that the result will have faces that thin.
+const NEARLY_COPLANAR: f64 = 100;
+/// How near the intersection tolerance a distance may come, in rounding of the operands'
+/// largest coordinate, and still be decided: a distance within this of the tolerance is
+/// the tolerance to rounding, which one computation finds within it and another beyond
+/// (the solids fuzzer's finds of 2026-11-13, an operand moved by the tolerance exactly).
+const AT_TOLERANCE_ULPS: f64 = 64;
+
+/// The squared sine of the angle under which two edges count as parallel for edge–edge:
+/// their crossing, if any, lies along an overlap that vertex–edge already split.
+const PARALLEL: f64 = 1e-20;
 
 /// No merged vertex.
 pub const NONE: u32 = std.math.maxInt(u32);
@@ -1739,19 +1751,6 @@ fn closestOnLines(p: Vec3, d: Vec3, q: Vec3, e: Vec3) ?[2]f64 {
     if (denom <= PARALLEL * a * c) return null;
     return .{ (b * f - c * g) / denom, (a * f - b * g) / denom };
 }
-
-/// How many intersection tolerances apart two parallel faces of the operands may lie for
-/// the warning that the result will have faces that thin.
-const NEARLY_COPLANAR: f64 = 100;
-/// How near the intersection tolerance a distance may come, in rounding of the operands'
-/// largest coordinate, and still be decided: a distance within this of the tolerance is
-/// the tolerance to rounding, which one computation finds within it and another beyond
-/// (the solids fuzzer's finds of 2026-11-13, an operand moved by the tolerance exactly).
-const AT_TOLERANCE_ULPS: f64 = 64;
-
-/// The squared sine of the angle under which two edges count as parallel for edge–edge:
-/// their crossing, if any, lies along an overlap that vertex–edge already split.
-const PARALLEL: f64 = 1e-20;
 
 fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
     return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);

@@ -318,7 +318,7 @@ fn loopPolygon(body: *const Body, l: types.LoopIndex, surface: surfaces.Surface,
         for (0..samples) |k| {
             const t = from + (to - from) * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(samples));
             const uv = if (coedge.pcurve.isNone())
-                surface.project(body.geometry.curve(e.curve).eval(t), body.tol.approx, 50)
+                surface.project(body.geometry.curve(e.curve).eval(t), body.tol.approx, geometry.PROJECT_STEPS)
             else
                 body.geometry.pcurve(coedge.pcurve).eval(t);
             try polygon.append(body.allocator, uv);

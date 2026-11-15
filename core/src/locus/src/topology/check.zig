@@ -390,7 +390,9 @@ const Checker = struct {
                 if (len <= shortest(tol)) try self.add(.edge_too_short, .of(.edge, i), len, shortest(tol));
             }
             // The gaps are ordered: vertex ≥ edge
-            if (b.vertex(e.start).gap + tol.zone * 0 < e.gap and b.vertex(e.start).gap < e.gap) try self.add(.gap_order, .of(.edge, i), e.gap, b.vertex(e.start).gap);
+            for ([_]VertexIndex{ e.start, e.end }) |v| {
+                if (b.vertex(v).gap < e.gap) try self.add(.gap_order, .of(.edge, i), e.gap, b.vertex(v).gap);
+            }
             if (!(e.gap <= tol.zone)) try self.add(.gap_too_large, .of(.edge, i), e.gap, tol.zone);
             // The curve lies on both faces' surfaces, at samples
             const pair = traverse.coedgesOfEdge(b, EdgeIndex.of(i));
@@ -402,7 +404,7 @@ const Checker = struct {
                 while (k < EDGE_SAMPLES) : (k += 1) {
                     const t = e.t0 + (e.t1 - e.t0) * (@as(f64, @floatFromInt(k)) + 0.5) / EDGE_SAMPLES;
                     const p = curve.eval(t);
-                    const uv = surface.project(p, tol.approx, 50);
+                    const uv = surface.project(p, tol.approx, geometry.PROJECT_STEPS);
                     const d = vec.distance(surface.eval(uv[0], uv[1]), p);
                     if (!(d <= tol.xsect + e.gap)) {
                         try self.add(.edge_off_surface, .of(.edge, i), d, tol.xsect + e.gap);
@@ -560,7 +562,7 @@ const Checker = struct {
                 } else if (periodic) {
                     trusted = false;
                 } else {
-                    try uv.append(self.allocator, surface.project(p, tol.approx, 50));
+                    try uv.append(self.allocator, surface.project(p, tol.approx, geometry.PROJECT_STEPS));
                 }
             }
         }

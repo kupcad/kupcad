@@ -1026,7 +1026,7 @@ const Provenance = struct {
                 if (std.mem.indexOfScalar(u32, meets, @backingInt(e.start)) != null or std.mem.indexOfScalar(u32, meets, @backingInt(e.end)) != null) continue;
                 const a = body.point(e.start);
                 const b = body.point(e.end);
-                const reach = p.tol.xsect + @max(body.vertex(e.start).gap, body.vertex(e.end).gap);
+                const reach = planar_faces.edgeReach(body, &e, p.tol);
                 const ha = target.height(a);
                 const hb = target.height(b);
                 if (@abs(ha) > reach and @abs(hb) > reach and (ha > 0) == (hb > 0)) continue;

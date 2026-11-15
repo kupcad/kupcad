@@ -283,7 +283,7 @@ const Builder = struct {
                 for (0..pts.len - 1) |step| {
                     const k = if (coedge.same_sense) step else pts.len - 1 - step;
                     const id = if (k == 0) self.idOf(e.start, shell) else if (k == pts.len - 1) self.idOf(e.end, shell) else self.interior_start[@backingInt(coedge.edge)] + @as(u32, @intCast(k - 1));
-                    const uv = if (coedge.pcurve.isNone()) surface.project(pts[k], body.tol.approx, 50) else body.geometry.pcurve(coedge.pcurve).eval(params[k]);
+                    const uv = if (coedge.pcurve.isNone()) surface.project(pts[k], body.tol.approx, geometry.PROJECT_STEPS) else body.geometry.pcurve(coedge.pcurve).eval(params[k]);
                     try self.ring_uv.append(self.allocator, uv);
                     try self.ring_id.append(self.allocator, id);
                 }

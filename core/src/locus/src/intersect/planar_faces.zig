@@ -9,9 +9,10 @@
 //! point where "in both faces" can change along `L`. Sorted along `L`, each crossing and
 //! the middle of each gap between two is classified against both faces
 //! (`query/in_face.zig`); a run of crossings in both, each gap between them in both by its
-//! middle, is a segment, and a crossing in both next to no such gap is a point. Tolerant classification of 3D points
-//! (§6's second tier), never an angle: two faces are coplanar when every edge of one lies
-//! within the zone of the other's plane, decided at the faces' own size.
+//! middle, is a segment, and a crossing in both next to no such gap is a point. Tolerant
+//! classification of 3D points (§6's second tier), never an angle: two faces are coplanar
+//! when every edge of one lies in the other's plane, each of its ends within the
+//! intersection tolerance and its vertex's gap of it (`crossings`).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");

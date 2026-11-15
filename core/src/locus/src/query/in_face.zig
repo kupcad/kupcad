@@ -30,8 +30,8 @@ const MAX_DEPTH: u8 = 40;
 /// halves' angles sum to the chord's within `AGREE`.
 const PIECE_ANGLE: f64 = 0.25;
 const AGREE: f64 = 1e-9;
-/// The Newton bound of the free-form kinds' projections in the queries (the tessellator's).
-pub const NEWTON_STEPS: u32 = 50;
+/// The Newton bound of the free-form kinds' projections in the queries.
+pub const NEWTON_STEPS: u32 = geometry.PROJECT_STEPS;
 
 pub const Place = enum { inside, outside, boundary };
 
