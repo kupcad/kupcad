@@ -30,9 +30,10 @@
 //! meet there, no decision of the tolerance is consistent (the minimum feature size,
 //! architecture §3), and the paves refuse it (`below_feature_size`): at a merged vertex,
 //! within reach of two faces that meet nowhere near it (`featureSize`); and at a face, two
-//! faces of the other operand in its plane but not in one (`coplanarTogether`), or two
+//! faces of the other operand in its plane but not in one (`coplanarTogether`), two
 //! pieces they leave on it within the tolerance of each other in its plane where they share
-//! no merged vertex (`sectionsApart`).
+//! no merged vertex (`sectionsApart`), or two faces of the other parallel to it, sharing no
+//! vertex, both within the tolerance of one point of it (`sandwiched`).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -50,6 +51,7 @@ const bbox = @import("../measure/bbox.zig");
 const in_face = @import("../query/in_face.zig");
 const face_edges = @import("../query/face_edges.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const overlap = @import("../query/overlap.zig");
 const curve_surface = @import("../intersect/curve_surface.zig");
 const predicates = @import("../math/predicates.zig");
 const Body = body_mod.Body;
@@ -61,6 +63,10 @@ const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
+
+/// The most corners a convex polygon clipped for `Filler.sandwiched` holds: a box clipped
+/// by four half-planes and three triangles' nine, each adding a corner at most.
+const MAX_CLIPPED = 64;
 
 /// No merged vertex.
 pub const NONE: u32 = std.math.maxInt(u32);
@@ -162,6 +168,66 @@ const NearFaces = struct {
         c.items[c.count] = item;
         c.count += 1;
         return true;
+    }
+};
+
+/// The scratch of `Filler.sandwiched`: a face's triangles and two others', in its plane.
+const Sandwich = struct {
+    f: std.ArrayList([3]Vec2) = .empty,
+    g1: std.ArrayList([3]Vec2) = .empty,
+    g2: std.ArrayList([3]Vec2) = .empty,
+
+    fn deinit(self: *Sandwich, allocator: std.mem.Allocator) void {
+        self.f.deinit(allocator);
+        self.g1.deinit(allocator);
+        self.g2.deinit(allocator);
+    }
+};
+
+/// A convex polygon in a plane, counter-clockwise, clipped by half-planes (Sutherland and
+/// Hodgman).
+const Convex = struct {
+    points: [MAX_CLIPPED]Vec2 = undefined,
+    len: usize = 0,
+
+    /// The part where `n · q ≤ c`.
+    fn clip(self: Convex, n: Vec2, c: f64) Convex {
+        var out: Convex = .{};
+        for (0..self.len) |i| {
+            const a = self.points[i];
+            const b = self.points[(i + 1) % self.len];
+            const sa = c - vec.dot2(n, a);
+            const sb = c - vec.dot2(n, b);
+            if (sa >= 0) out.push(a);
+            if ((sa >= 0) != (sb >= 0)) out.push(vec.addScaled2(a, vec.sub2(b, a), sa / (sa - sb)));
+        }
+        return out;
+    }
+
+    /// The part inside triangle `t` (counter-clockwise): left of each of its sides.
+    fn clipTriangle(self: Convex, t: [3]Vec2) Convex {
+        var out = self;
+        for (0..3) |i| {
+            const a = t[i];
+            const d = vec.sub2(t[(i + 1) % 3], a);
+            const n: Vec2 = .{ d[1], -d[0] };
+            out = out.clip(n, vec.dot2(n, a));
+        }
+        return out;
+    }
+
+    fn push(self: *Convex, q: Vec2) void {
+        std.debug.assert(self.len < MAX_CLIPPED);
+        self.points[self.len] = q;
+        self.len += 1;
+    }
+
+    /// Its area, about its first corner.
+    fn area(self: Convex) f64 {
+        if (self.len < 3) return 0;
+        var twice: f64 = 0;
+        for (1..self.len - 1) |i| twice += vec.cross2(vec.sub2(self.points[i], self.points[0]), vec.sub2(self.points[i + 1], self.points[0]));
+        return twice / 2;
     }
 };
 
@@ -352,6 +418,7 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     for (0..2) |k| for (p.sections[k]) |*list| sortUnique([2]u32, list, lessPair);
     try filler.coplanarTogether();
     try filler.sectionsApart();
+    try filler.sandwiched();
     return p;
 }
 
@@ -1458,6 +1525,142 @@ const Filler = struct {
         };
     }
 
+    /// Each face of one operand within the intersection tolerance of two faces of the
+    /// other at once, the three parallel within the angular tolerance and the two sharing
+    /// no vertex (Leo, 2026-11-15): the two are closer than twice the tolerance where they
+    /// do not meet, and the face between them is within the tolerance of both over a band
+    /// as wide as their small angle makes it, where the paves' sections (through merged
+    /// vertices) may lie anywhere and the result's records decide what the shape is. No
+    /// decision of the tolerance is consistent (the minimum feature size). Within both is
+    /// at a point of the face whose feet on the two planes lie in those faces, within the
+    /// tolerance of both planes (`reachesBoth`). A face crossing a thin feature steeply is
+    /// not this: its sections with the two sides lie apart where the paves put them, and
+    /// `sectionsApart` refuses them nearer than the tolerance. Refused
+    /// (`below_feature_size`), naming the second of the two. The nightly solids fuzzer
+    /// (2026-11-14): a flat tetrahedron's face 3.8e-5 rad off the top of a plate 2.5e-5
+    /// thick, within the tolerance of its top and its bottom over x 2.04–2.43; with the
+    /// plate first the union was pinched and the intersection a sliver, with the
+    /// tetrahedron first both sound.
+    fn sandwiched(self: *Filler) Error!void {
+        const p = self.p;
+        var pairs = try self.overlapping(&self.face_tree[0], &self.face_tree[1]);
+        defer pairs.deinit(self.allocator);
+        var scratch: Sandwich = .{};
+        defer scratch.deinit(self.allocator);
+        var near: std.ArrayList(types.FaceIndex) = .empty;
+        defer near.deinit(self.allocator);
+        for (0..2) |k| {
+            const other = 1 - k;
+            // The pairs by the face of operand `k`
+            if (k == 1) std.mem.sort([2]u32, pairs.items, {}, lessSecond);
+            var start: usize = 0;
+            while (start < pairs.items.len) {
+                var end = start;
+                while (end < pairs.items.len and pairs.items[end][k] == pairs.items[start][k]) end += 1;
+                defer start = end;
+                const f = self.faces[k][pairs.items[start][k]];
+                const frame = planar_faces.frameOf(self.body(k), f).?;
+                near.clearRetainingCapacity();
+                for (pairs.items[start..end]) |pair| {
+                    const g = self.faces[other][pair[other]];
+                    if (p.tol.parallel(frame.z, planar_faces.frameOf(self.body(other), g).?.z)) try near.append(self.allocator, g);
+                }
+                if (near.items.len < 2) continue;
+                for (near.items, 0..) |g1, i| for (near.items[i + 1 ..]) |g2| {
+                    if (!try self.reachesBoth(k, f, frame, other, g1, g2, &scratch)) continue;
+                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(g2)), .label = if (other == 0) "two faces of the first operand that do not meet, both within reach of one face of the second parallel to them," else "two faces of the second operand that do not meet, both within reach of one face of the first parallel to them,", .threshold = p.tol.xsect });
+                };
+            }
+        }
+    }
+
+    /// Whether a point of face `f` of operand `k` (in the plane of `frame`) lies within the
+    /// intersection tolerance of the planes of faces `g1` and `g2` of operand `other`, its
+    /// feet on them in the faces, where the two share no vertex: the faces' triangles, put
+    /// in `f`'s plane (`g1`'s and `g2`'s along their own normals, where a point's foot on
+    /// them lies), meet in a region of positive area within the band of both planes.
+    fn reachesBoth(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame, other: usize, g1: types.FaceIndex, g2: types.FaceIndex, scratch: *Sandwich) Error!bool {
+        const p = self.p;
+        const xsect = p.tol.xsect;
+        // The band of both planes over the face's box in its plane, first: mostly empty
+        try self.flatTriangles(k, f, frame, null, &scratch.f);
+        var box: Convex = .{};
+        var lo: Vec2 = .{ std.math.inf(f64), std.math.inf(f64) };
+        var hi: Vec2 = .{ -std.math.inf(f64), -std.math.inf(f64) };
+        for (scratch.f.items) |t| for (t) |q| {
+            lo = .{ @min(lo[0], q[0]), @min(lo[1], q[1]) };
+            hi = .{ @max(hi[0], q[0]), @max(hi[1], q[1]) };
+        };
+        if (scratch.f.items.len == 0) return false;
+        box.points[0..4].* = .{ lo, .{ hi[0], lo[1] }, hi, .{ lo[0], hi[1] } };
+        box.len = 4;
+        for ([2]types.FaceIndex{ g1, g2 }) |g| {
+            // The plane's height over `f`'s plane, affine in its coordinates
+            const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other), g).?);
+            const at = plane.height(frame.origin);
+            const slope: Vec2 = .{ vec.dot(plane.n, frame.x), vec.dot(plane.n, frame.y) };
+            box = box.clip(slope, xsect - at).clip(.{ -slope[0], -slope[1] }, xsect + at);
+        }
+        if (!(box.area() > 0)) return false;
+        if (try self.shareVertex(other, g1, g2)) return false;
+        try self.flatTriangles(other, g1, frame, planar_faces.frameOf(self.body(other), g1).?.z, &scratch.g1);
+        try self.flatTriangles(other, g2, frame, planar_faces.frameOf(self.body(other), g2).?.z, &scratch.g2);
+        for (scratch.f.items) |tf| {
+            const in_f = box.clipTriangle(tf);
+            if (!(in_f.area() > 0)) continue;
+            for (scratch.g1.items) |t1| {
+                const in_g1 = in_f.clipTriangle(t1);
+                if (!(in_g1.area() > 0)) continue;
+                for (scratch.g2.items) |t2| if (in_g1.clipTriangle(t2).area() > 0) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Face `g` of operand `k`'s triangles in the plane of `frame`, counter-clockwise
+    /// there, into `out`: its merged vertices put on that plane along `direction` (the face's
+    /// own normal, where a point's foot on it lies), or straight down for none.
+    fn flatTriangles(self: *Filler, k: usize, g: types.FaceIndex, frame: Frame, direction: ?Vec3, out: *std.ArrayList([3]Vec2)) Error!void {
+        const p = self.p;
+        out.clearRetainingCapacity();
+        const corners = try overlap.FaceTriangles.ofFace(self.allocator, self.body(k), g, self.diag);
+        defer self.allocator.free(corners);
+        const plane = planar_faces.planeOf(frame);
+        for (corners) |t| {
+            var flat: [3]Vec2 = undefined;
+            for (t, &flat) |v, *q| {
+                const point = p.point(p.vertex_of[k][@backingInt(v)]);
+                const onto = if (direction) |n| vec.addScaled(point, n, -plane.height(point) / vec.dot(plane.n, n)) else point;
+                q.* = planar_faces.flat(frame, onto);
+            }
+            const turn = vec.cross2(vec.sub2(flat[1], flat[0]), vec.sub2(flat[2], flat[0]));
+            if (turn == 0) continue;
+            if (turn < 0) std.mem.swap(Vec2, &flat[1], &flat[2]);
+            try out.append(self.allocator, flat);
+        }
+    }
+
+    /// Whether faces `f` and `g` of operand `k` share a vertex.
+    fn shareVertex(self: *Filler, k: usize, f: types.FaceIndex, g: types.FaceIndex) Error!bool {
+        const body_k = self.body(k);
+        var mine: std.ArrayList(u32) = .empty;
+        defer mine.deinit(self.allocator);
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| try mine.append(self.allocator, @backingInt(body_k.coedgeStart(c)));
+        }
+        std.mem.sort(u32, mine.items, {}, std.sort.asc(u32));
+        loops = traverse.Loops.init(body_k, g);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                if (std.sort.binarySearch(u32, mine.items, @backingInt(body_k.coedgeStart(c)), orderU32) != null) return true;
+            }
+        }
+        return false;
+    }
+
     /// Each pave block of face `f` of operand `k` whose middle is inside face `g` of
     /// operand `other` (one plane): a section segment of `g`.
     fn blocksInside(self: *Filler, k: usize, f: types.FaceIndex, other: usize, g: types.FaceIndex) Error!void {
@@ -1537,6 +1740,14 @@ const PARALLEL: f64 = 1e-20;
 
 fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
     return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
+}
+
+fn lessSecond(_: void, x: [2]u32, y: [2]u32) bool {
+    return x[1] < y[1] or (x[1] == y[1] and x[0] < y[0]);
+}
+
+fn orderU32(key: u32, item: u32) std.math.Order {
+    return std.math.order(key, item);
 }
 
 fn sortUnique(comptime T: type, list: *std.ArrayList(T), comptime lessThan: fn (void, T, T) bool) void {

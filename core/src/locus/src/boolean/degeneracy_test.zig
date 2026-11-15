@@ -796,34 +796,44 @@ test "degeneracy: a hull's edge within the tolerance of a plate's two front edge
     }
 }
 
-test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate's top, within the tolerance of it over a band: its piece takes its side from its pieces on the plate" {
+test "degeneracy: a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 tolerances thick, within the tolerance of its top and bottom at once: refused; a post through the plate made" {
     // The nightly solids fuzzer (2026-11-14, locus), reduced: a tetrahedron 1.9 tolerances
-    // thick across a plate 1.25 thick, one top face rising 3.8e-5 rad from the plate's top,
-    // within the tolerance of it over a band 0.5 wide; their section is that face's edge on
-    // the plate's top edge. The face's piece over the plate was cast from a sample 1.2e-5
-    // above the top, outside, where its pieces on the plate put it under the top: inside.
-    // Both the piece and the plate's top were kept, and an edge had three faces in every
-    // operation. A ray starts beyond the intersection tolerance of the other, the reach
-    // the paves decide contact by; within it, a piece takes its side from the faces at its
-    // pieces. (With the plate first, the common block along the tetrahedron's upper edge
-    // takes the plate's line, D28, 1.65e-5 under the tetrahedron's faces: the order's
-    // part, not the classification's.)
+    // thick across a plate 1.25 thick, one top face rising 3.8e-5 rad from the plate's top
+    // and within the tolerance of its top and its bottom at once over x 2.04–2.43. Their
+    // sections, through merged vertices, lay at the band's edge, the face's piece over the
+    // plate was classified against them (an edge with three faces), and with the plate
+    // first the records made the union pinched and the intersection a sliver where the
+    // tetrahedron first made both sound. No decision of the tolerance is consistent: the
+    // plate's sides are closer than twice the tolerance where they do not meet, and the
+    // face reaches both (Leo, 2026-11-15). Refused, every operation either way round. A
+    // post crossing the plate steeply reaches both sides too, along its sections, which
+    // lie 2.5e-5 apart where the paves put them: made and sound.
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var tet = try @import("../construct/hull.zig").hull(testing.allocator, tol, &.{ .{ 2, 3.99999, -9e-6 }, .{ 4, 3.99999, -9e-6 }, .{ 3, 2.99999, 2.9e-5 }, .{ 3, 4.99999, 2.9e-5 } }, &diag);
     defer tet.deinit();
     var plate = try box(.{ 1, 3, -1.25e-5 }, .{ 3, 4, 1.25e-5 });
     defer plate.deinit();
-    var joined = try sound(&tet, &plate, .@"union");
-    defer joined.deinit();
-    try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
-    var common = try sound(&tet, &plate, .intersection);
-    defer common.deinit();
-    var rest = try sound(&tet, &plate, .difference);
-    defer rest.deinit();
-    const slab = tol.xsect * (try areaOf(&tet) + try areaOf(&plate));
-    try testing.expectApproxEqAbs(try volume(&tet) + try volume(&plate), try volume(&joined) + try volume(&common), slab);
-    try testing.expectApproxEqAbs(try volume(&tet) - try volume(&common), try volume(&rest), slab);
+    for ([2][2]*const Body{ .{ &tet, &plate }, .{ &plate, &tet } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var refusal = Diagnostics.init(testing.allocator);
+            defer refusal.deinit();
+            if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &refusal, null)) |made| {
+                var result = made;
+                result.deinit();
+                return error.TestExpectedError;
+            } else |e| {
+                errdefer std.debug.print("{s}: {s}, {f}\n", .{ @tagName(op), @errorName(e), refusal });
+                try testing.expectEqual(error.Degenerate, e);
+                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
+                try testing.expect(std.mem.indexOf(u8, refusal.first().?.label, "both within reach of one face") != null);
+            }
+        }
+    }
+    var post = try box(.{ 1.5, 3.2, -1 }, .{ 2.5, 3.8, 1 });
+    defer post.deinit();
+    try expectIdentities(&post, &plate);
+    try expectIdentities(&plate, &post);
 }
 
 test "degeneracy: an edge lying across two coplanar faces of the other, touching them" {

@@ -1930,6 +1930,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // front edge and 1.8e-6 from its bottom one, 2.5e-5 below: the top crossing welded to
         // the bottom one's vertex, the top edge's piece ending 2.56e-5 off its line
         "solids 3 0 0 3 0 2 3 1 2 0 3 4 1 -1 0 3 11 3 0 0 1 -1 10 1 0 0 0 0 10 1 3 1 6 1 1 2 4 4 1 1 4 0 0 3 3 0 0 0 0 3 3 3 3 4 5 -2 4 0",
+        // And (locus): a flat tetrahedron's face 3.8e-5 rad off a plate 1.25 tolerances thick,
+        // within the tolerance of its top and bottom at once: an edge with three faces, and
+        // the operands swapped, pinched or a sliver
+        "solids 3 0 2 4 1 3 4 1 3 4 3 4 2 3 2 2 3 3 2 3 2 2 3 1 3 4 1 4 0 3 4 3 0 6 5 11 0 2 0 0 3 0 4 2 4 3 1 5 2 4 2 0 3 3 0 0 1 0 2 4 2 3 0 1 2 2 2 2 0 3 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
