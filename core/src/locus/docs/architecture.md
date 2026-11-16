@@ -482,13 +482,17 @@ R3): two faces of one operand both in a face's plane must be in one plane or sha
 (a wall 1.5 tolerances thick with a face inside it), and the pieces one operand leaves on a
 face must keep the tolerance apart in its plane where they share no merged vertex (a flat
 tetrahedron's opposite edges both in the face's plane, crossing there); both refused
-`below_feature_size`. A face within the tolerance of two faces of the other operand at
-one point, the two parallel and sharing no vertex (a flat tetrahedron's face 3.8e-5 rad
-off a plate 2.5e-5 thick: the operands' order chose the result), was refused by the
-paves (`pave.sandwiched`, d1743fcd) until the operand precondition, which refuses such a
-pair (within twice the tolerance of each other) first: the detector was deleted, the
-first the precondition subsumes. A face crossing a thin feature steeply
-reaches both sides too, along sections the paves keep apart: made. An operand built at a finer tolerance than the boolean takes (the
+`below_feature_size`. So too a face within the tolerance of two faces of the other
+operand at one point, the three parallel within the angular tolerance and the two facing
+apart (`pave.sandwiched`, over the faces' triangles in its plane): a flat tetrahedron's
+face 3.8e-5 rad off a plate 2.5e-5 thick (the operands' order chose the result). Two
+such faces that do not meet are refused first by the operand precondition (within twice
+the tolerance of each other), so the rule was deleted (6120922e); two that meet at an
+edge at an angle within the angular tolerance (a knife edge) are not, and a hull's top
+along a flat tetrahedron 2.1 tolerances thick lay within the zone of its upper and lower
+faces at once, unclassified (Leo, 2026-11-16: the rule back, whether the two meet or
+not). A face crossing a thin feature steeply reaches both sides too, along sections the
+paves keep apart: made. An operand built at a finer tolerance than the boolean takes (the
 larger of the two, §6) must be valid at the boolean's, or the result is not
 (`mixed_tolerance`).
 

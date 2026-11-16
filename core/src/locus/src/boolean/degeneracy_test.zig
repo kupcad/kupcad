@@ -1533,6 +1533,30 @@ test "degeneracy: a face between a flat tetrahedron's opposite edges is refused:
     try expectRefused(&tetra, &b, .below_feature_size);
 }
 
+test "degeneracy: a face along a flat tetrahedron's knife edges, past its thick middle, is refused: within the tolerance of two of its faces at once" {
+    // The 10K session's find (2026-11-16, locus_solids), as the edge-case matrix draws it:
+    // a tetrahedron 2.1 tolerances thick (past the minimum feature size, its opposite
+    // edges 4.2e-5 apart), its faces meeting at about 4e-5 rad, and a box's top through its
+    // middle covering it only past a diagonal, away from the thick middle. There the top
+    // is within the zone of the tetrahedron's upper and lower faces at once, which meet at
+    // a knife edge, and a piece of it inside the tetrahedron had no sample off its
+    // boundary (`unclassified`). The two faces facing apart within the tolerance of one
+    // point of a face parallel to them bound a feature thinner than twice it there,
+    // whether they meet or not: refused, every operation either way round
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = 2.1e-5;
+    const points = [_]Vec3{ .{ 1, 2, -half }, .{ 3, 2, -half }, .{ 2, 1, half }, .{ 2, 3, half } };
+    var knife = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer knife.deinit();
+    var b0 = try box(.{ 2.4, -2, -1 }, .{ 6, 6, 0 });
+    defer b0.deinit();
+    var top = try turned(&b0, .{ 2.4, 2, 0 }, .{ 0, 0, 1 }, 0.6);
+    defer top.deinit();
+    try expectRefused(&knife, &top, .below_feature_size);
+    try expectRefused(&top, &knife, .below_feature_size);
+}
+
 test "degeneracy: a flat tetrahedron 1.5 tolerances thick, its face 3e-4 rad off a plate's top: below the minimum feature size, refused" {
     // The gap draws' first find (2026-11-14), at a zone of 1e-4: the tetrahedron's upper
     // edge 5e-5 over the plate's top and its lower 2.5e-4 under it, so its upper faces
