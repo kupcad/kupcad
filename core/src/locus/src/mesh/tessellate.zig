@@ -50,7 +50,7 @@ const Error = diagnostics.Error;
 const NONE: u32 = std.math.maxInt(u32);
 const TWO_PI: f64 = 2 * std.math.pi;
 /// Two parameter values closer than this share of the face's UV box are one grid line
-/// (an edge's grid point within `edges.END_SLACK` of its end is left to the vertex).
+/// (an edge's grid point within the zone of its end is left to the vertex).
 const GRID_MERGE: f64 = 1e-9;
 /// How often a free-form face is triangulated again with the midpoints that stood off.
 const MAX_REFINE_ROUNDS: usize = 8;

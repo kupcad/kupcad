@@ -3,11 +3,11 @@
 //! them is watertight by construction. A line is its two vertices. A circle's edge takes
 //! the points of the grid a full circle of its radius gets at the `Resolution`,
 //! `segmentsFor(r)` equal steps from angle 0, that lie strictly inside the edge's range,
-//! between its vertices: the very polygon KupCAD's mesh engine builds for the same circle
-//! (kernel parity), and two arcs of one circle meet on the grid. A degenerate edge is one
-//! point. Two arcs tangent at a vertex and curving the same way bound a cusp, and there
-//! the flatter arc takes the tighter one's points' tangent coordinates too (`matchCusps`),
-//! so the two polylines cannot cross. A free-form edge (an ellipse, a NURBS curve) is cut
+//! between its vertices and farther than the zone from them: the very polygon KupCAD's
+//! mesh engine builds for the same circle (kernel parity), and two arcs of one circle
+//! meet on the grid. A degenerate edge is one point. Two arcs tangent at a vertex and
+//! curving the same way bound a cusp, and there the flatter arc takes the tighter one's
+//! points' tangent coordinates too (`matchCusps`), so the two polylines cannot cross. A free-form edge (an ellipse, a NURBS curve) is cut
 //! where its certified chords say (`chords.zig`): each span's enclosure within the bow the
 //! resolution allows a circle's segment of that chord.
 
@@ -25,8 +25,9 @@ const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 const Tolerance = tolerance.Tolerance;
 
-/// How near a grid angle may come to an edge's end, as a share of the step, and still
-/// count as a point of its own rather than the vertex.
+/// How near a parameter may come to an edge's end, as a share of the step (or of the
+/// range), and still count as its own rather than the end's: the parameters' rounding. A
+/// circle's grid point is the vertex's also within the zone of it (`discretizeRefined`).
 const END_SLACK: f64 = 1e-9;
 const TWO_PI: f64 = 2 * std.math.pi;
 /// How often a circle's grid may be doubled: 2^8 times the resolution's count at most.
@@ -97,13 +98,19 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
                 const n = @as(u64, resolution.segmentsFor(circle.r)) << shift;
                 const step = TWO_PI / @as(f64, @floatFromInt(n));
                 // The grid angles strictly between the ends; a few more steps than the
-                // range holds are tried, since a range may start anywhere on the circle
+                // range holds are tried, since a range may start anywhere on the circle.
+                // One within the zone of an end is the vertex (one point under the
+                // tolerance): its chord to the vertex would be shorter than the zone, its
+                // direction noise (an arc ending 4.2e-8 before the grid point where a
+                // line of its face is tangent to it ran its chord back along the line, the
+                // ring not simple: the fuzzer, 2026-11-16)
+                const slack = @max(END_SLACK * step, body.tol.zone / circle.r);
                 const first: i64 = @intFromFloat(@floor(e.t0 / step));
                 const last: i64 = @intFromFloat(@ceil(e.t1 / step));
                 var k = first;
                 while (k <= last) : (k += 1) {
                     const angle = @as(f64, @floatFromInt(k)) * step;
-                    if (angle <= e.t0 + END_SLACK * step or angle >= e.t1 - END_SLACK * step) continue;
+                    if (angle <= e.t0 + slack or angle >= e.t1 - slack) continue;
                     try interior[i].append(allocator, .{ .t = angle, .p = circle.eval(angle) });
                 }
             },

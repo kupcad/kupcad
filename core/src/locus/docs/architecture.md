@@ -996,7 +996,10 @@ two curved faces, by the finer of the two, so adjacent faces share identical bou
 points and the mesh is watertight by construction. A circle of radius `r` is cut into
 exactly `Resolution.segmentsFor(r)` equal segments starting at angle 0, and an arc into
 the segments of that same grid it covers, rounded outward: the very polygon KupCAD's mesh
-engine builds for the same circle. That is the kernel-parity rule (every parameter means
+engine builds for the same circle (a grid point within the zone of the arc's end is that
+end: an arc ending 4.2e-8 before the grid angle where its face's line was tangent to it
+ran a chord back along the line, the ring not simple, 2026-11-16). That is the
+kernel-parity rule (every parameter means
 the same on both engines): a cylinder tessellated by Locus has the vertices Manifold's
 cylinder has, so the parity tests' bounding boxes and the viewer's picture agree. Two arcs
 tangent at a vertex and curving the same way bound a cusp, where chords of the two cross

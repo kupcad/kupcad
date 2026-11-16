@@ -2029,6 +2029,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 16 zones off, within the zone along the tangent, the touch an exit (ray cast:
         // the sides halfway to the neighbours, the segment's ends among them)
         "chain 2 5 6 4 4 1 0 0 2 3 2 3 2 1 3 1 3 4 3 8 1 3 0 5 0 4 1 1 0 4 4 2 6 3 2 6 4 3 1 1 1 4 1 1 0 2 3 2 1 3 6",
+        // The session on f8c19412 (2026-11-16), the locus target: a chain moved whole, a
+        // sliver between a line and an arc tangent to it at the circle's grid angle π, the
+        // arc ending 1.2e-8 rad before it; that grid point the arc's own, the ring back
+        // along the line (edges: a grid point within the zone of an end is the vertex)
+        "chain 1 4 4 5 4 4 0 5 4 2 4 3 4 4 2 3 2 0 3 4 5 2 6 3 6 5 2 3 4 3 2 3 4 6 4 1 1 3 0 4 5 2 2 4 1 0 1 7 1 1 1 1 3 6 6 4 2 1 4 1 5 5 4 2 2 1 3 1 2 3 2 2 2 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

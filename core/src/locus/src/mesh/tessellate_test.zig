@@ -580,6 +580,39 @@ test "tessellate: two long arcs tangent at a cusp, each sweeping past a quarter 
     }
 }
 
+test "tessellate: an arc's grid point within the zone of its end is the end's: no chord along the tangent line beside it (fuzz find)" {
+    // The locus fuzzer's find (the 10K session on f8c19412, 2026-11-16), a face of a chain
+    // moved whole, as it came: a sliver between the line x = 100000 and an arc of radius
+    // 3.54 tangent to it at the circle's grid angle π, the arc ending 1.2e-8 rad before
+    // it. The grid point at π was the arc's own, 4.2e-8 from its end and on the line, and
+    // the ring ran back along the line from it (not simple: the face failed)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const Arc = primitives.OutlineArc;
+    const a: Vec2 = .{ 100000, -199995.9593898218 };
+    const b: Vec2 = .{ 100000.00573026108, -199995.95857121306 };
+    const c: Vec2 = .{ 100000, -199995.75735927073 };
+    const outline = [_]primitives.OutlineEdge{
+        .{ .a = a, .b = b },
+        .{ .a = b, .b = c, .arc = Arc{ .c = .{ 100003.53553390593, -199995.75735931288 }, .r = 3.5355339059327378, .ccw = false } },
+        .{ .a = c, .b = a },
+    };
+    var sheet = try primitives.outlines(testing.allocator, tol, &.{&outline}, &diag);
+    defer sheet.deinit();
+    const exact = (try mass.mass(&sheet, .{}, &diag)).area;
+    // The sliver is a few chords' segments wide: the mesh within the arc's whole segment,
+    // ½ r² (θ − sin θ), the most its chords can cut off
+    const r = 3.5355339059327378;
+    const span = 2 * std.math.asin(vec.distance2(b, c) / (2 * r));
+    const segment = r * r * (span - @sin(span)) / 2;
+    for ([_]tolerance.Resolution{ .{}, .{ .segments = 8 }, .{ .segments = 64 } }) |resolution| {
+        var mesh = try meshOf(&sheet, resolution);
+        defer mesh.deinit(testing.allocator);
+        for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        try testing.expectApproxEqAbs(exact, area(mesh), segment * (1 + 1e-6));
+    }
+}
+
 test "tessellate: solids touching at a corner, along an edge or apex to apex are each closed by the mesh's indices" {
     // research/manifold-parity.md: two cubes sharing an edge exported a 3MF object with an
     // edge on four triangles (3MF judges by indices; lib3mf's IsManifoldAndOriented said
