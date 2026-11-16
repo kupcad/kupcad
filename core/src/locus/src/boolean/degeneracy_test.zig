@@ -1438,6 +1438,33 @@ test "degeneracy: two faces a hair off parallel, within the tolerance of each ot
     try expectRefused(&b, &plate, .below_feature_size);
 }
 
+test "degeneracy: faces at right angles sharing merged vertices, one off the others' line within its reach, cross along their line" {
+    // The 10K session's find on 415e356d (2026-11-16, solids): a plate's top and a box's
+    // side at right angles shared four merged vertices, one of them 1.8e-4 below the
+    // others' line (the tolerance, 2e-4). Measured from the line through it, the others
+    // were off one line, so the pair was taken for one plane, and a fragment of the plate's
+    // top inside the box's side found no twin (`imprint_unmatched`). Here a prism's front,
+    // notched down to 0.9 tolerances below the plate's top edge: the notch's apex, the first
+    // of the three merged vertices on both faces, is the noisy one. Planes at an angle meet
+    // along their own line, whatever the vertices on both
+    var solid = try helpers.notchedPrism(tol, 1 - 0.9 * tol.xsect);
+    defer solid.deinit();
+    var plate = try box(.{ 0, 0, 0.5 }, .{ 10, 5, 1 });
+    defer plate.deinit();
+    try expectAllSound(&solid, &plate);
+}
+
+/// Each operation of `a` and `b`, either way round, made and sound; the identities.
+fn expectAllSound(a: *const Body, b: *const Body) !void {
+    for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+    }
+    try expectIdentities(a, b);
+}
+
 test "degeneracy: an edge passing another within the tolerance in its end's strip, the end not on it, is refused either way round" {
     // The locus fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
     // tetrahedron's corner in a plate's top, 2.2e-5 from its edge (beyond the tolerance,

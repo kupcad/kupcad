@@ -13,6 +13,7 @@ const Body = @import("../topology/body.zig").Body;
 const check = @import("../topology/check.zig");
 const primitives = @import("../construct/primitives.zig");
 const transform = @import("../construct/transform.zig");
+const sweep = @import("../construct/sweep.zig");
 const mat = @import("../math/mat.zig");
 const mass = @import("../measure/mass.zig");
 const overlap = @import("../query/overlap.zig");
@@ -306,6 +307,20 @@ pub fn turned(body: *const Body, origin: Vec3, axis: Vec3, angle: f64) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     return transform.transform(testing.allocator, body, &mat.Affine.rotateAbout(origin, vec.normalized(axis).?, angle), .{}, &diag);
+}
+
+/// The prism from y = -4 to 0 at `t` whose front, the rectangle x 2..8, z 0..3, is
+/// notched down from its top to the apex (5, 0, `apex`), the notch's sides at 63.4° to
+/// the top.
+pub fn notchedPrism(t: Tolerance, apex: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outline = try primitives.polygon(testing.allocator, t, &.{ .{ 2, 0 }, .{ 8, 0 }, .{ 8, 3 }, .{ 6, 3 }, .{ 5, apex }, .{ 4, 3 }, .{ 2, 3 } }, &diag);
+    defer outline.deinit();
+    var along = try sweep.extrude(testing.allocator, &outline, .{ 0, 0, 4 }, .{}, &diag);
+    defer along.deinit();
+    // A quarter turn about x takes y to z and z to −y
+    return turned(&along, .{ 0, 0, 0 }, vec.X3, std.math.pi / 2.0);
 }
 
 test "boolean: tilted boxes, no plane on an axis: the identities, and a diamond's corners cut off a cube" {

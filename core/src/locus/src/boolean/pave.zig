@@ -1443,8 +1443,10 @@ const Filler = struct {
     /// Every pair of faces of `a` and `b`: lying in one plane, recorded, and each one's
     /// pave blocks inside the other a section segment of it; else the merged vertices both
     /// lie on, sorted along their planes' line, each gap whose middle is in both faces a
-    /// section segment of each face it is inside of. Two planes meet along one line, so
-    /// merged vertices on both faces off one line put the faces in one plane where they
+    /// section segment of each face it is inside of. The line is `meetingLine`'s: planes at
+    /// an angle meet along their own line; planes parallel within the angular tolerance
+    /// have none (their normals' cross product is noise), so they meet along the merged
+    /// vertices' line, and merged vertices off one line put them in one plane where they
     /// meet, whatever corners of theirs lie off it elsewhere: the pair is recorded as lying
     /// in one plane, and the plane the pipeline gives the pair holds both faces or the pair
     /// is refused (`Provenance.samePlanes`). Taken for a line, they were ordered by the noise
@@ -1487,13 +1489,15 @@ const Filler = struct {
                 } else if (on_a.items[i] < on_b.items[j]) i += 1 else j += 1;
             }
             if (both.items.len < 2) continue;
-            if (!try self.onOneLine(both.items, .of(.face, @backingInt(fb)))) {
-                try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
-                try self.blocksInside(1, fb, 0, fa);
-                try self.blocksInside(0, fa, 1, fb);
-                continue;
-            }
-            const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
+            const line = switch (try self.meetingLine(frame_a.z, frame_b.z, both.items, .of(.face, @backingInt(fb)))) {
+                .line => |d| d,
+                .one_plane => {
+                    try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
+                    try self.blocksInside(1, fb, 0, fa);
+                    try self.blocksInside(0, fa, 1, fb);
+                    continue;
+                },
+            };
             const Order = struct {
                 points: []const Vec3,
                 line: Vec3,
@@ -1528,22 +1532,43 @@ const Filler = struct {
         }
     }
 
-    /// Whether merged vertices `vertices` (at least two) lie on one line, each within its
-    /// reach of the line through the first and the one farthest from it (`entity` named
+    /// The direction of the line two faces with unit normals `n_a` and `n_b` meet along,
+    /// through merged vertices `vertices` on both (at least two, each more than the welding
+    /// distance from the others), or that they lie in one plane there. Planes at an angle
+    /// meet along their own line, each such vertex within its reach of both planes and so
+    /// near it, however far from a line through two of them: a box's side and a plate's
+    /// top, at right angles, shared four vertices, one 1.8e-4 below the others' line, and
+    /// measured from it the others were off one line, the pair taken for one plane and its
+    /// imprints disagreeing (the 10K session on 415e356d). Planes parallel within the
+    /// angular tolerance have no line of their own, so the vertices' (`lineThrough`), or
+    /// one plane when they are off one line; at that tolerance to rounding, refused
+    /// (`at_tolerance`, D27).
+    fn meetingLine(self: *Filler, n_a: Vec3, n_b: Vec3, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
+        const cos = @abs(vec.dot(n_a, n_b));
+        switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - cos, self.p.tol.angle)})) {
+            .apart => return .{ .line = vec.normalized(vec.cross(n_a, n_b)).? },
+            .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two faces of the operands sharing merged vertices, parallel or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+            .same => return if (try self.lineThrough(vertices, entity)) |d| .{ .line = d } else .one_plane,
+        }
+    }
+
+    /// The direction of the line through merged vertices `vertices` (at least two, each
+    /// more than the welding distance from the others), the first and the one farthest from
+    /// it, when every other lies within its reach of that line, else null (`entity` named
     /// when one is at its reach to rounding).
-    fn onOneLine(self: *Filler, vertices: []const u32, entity: diagnostics.EntityRef) Error!bool {
+    fn lineThrough(self: *Filler, vertices: []const u32, entity: diagnostics.EntityRef) Error!?Vec3 {
         const p = self.p;
         const u = p.point(vertices[0]);
         var far = vertices[1];
         for (vertices[2..]) |v| {
             if (vec.distance(p.point(v), u) > vec.distance(p.point(far), u)) far = v;
         }
-        const d = vec.normalized(vec.sub(p.point(far), u)) orelse return true;
+        const d = vec.normalized(vec.sub(p.point(far), u)).?;
         for (vertices[1..]) |v| {
             if (v == far) continue;
-            if (!try self.within(vec.length(vec.cross(vec.sub(p.point(v), u), d)), self.reachOf(v), entity)) return false;
+            if (!try self.within(vec.length(vec.cross(vec.sub(p.point(v), u), d)), self.reachOf(v), entity)) return null;
         }
-        return true;
+        return d;
     }
 
     /// A warning (`nearly_coplanar`, OCCT's BadPositioning) for each face of `a` parallel to

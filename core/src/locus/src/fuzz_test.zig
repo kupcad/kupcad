@@ -2036,6 +2036,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 2.15e-4 off, apart by the tolerance alone (incidence: two edges meet within the
         // tolerance and both edges' gaps)
         "solids 0 2 4 0 2 0 3 3 2 -1 13 11 9 3 3 2 3 4 3 4 3 4 2 0 2 1 2 14 -1 0 5 1 1 0 1 4 0 1 0 4 1 2 10 3 4 16 1 2 3 1 5 2 0 4 4 1 3 2 0 2 1 6 12 7 13 0",
+        // The 10K session on 415e356d (locus_solids): a plate's top and a box's side at
+        // right angles sharing four merged vertices, one 1.8e-4 below the others' line,
+        // taken for one plane (pave: planes at an angle meet along their own line)
+        "solids 1 4 3 2 3 4 0 4 2 3 2 2 2 0 3 2 11 2 11 9 2 3 0 2 4 1 3 1 4 3 0 1 2 2 9 1 3 10 0 1 2 2 4 1 2 2 3 2 2 8 1 9 13 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
