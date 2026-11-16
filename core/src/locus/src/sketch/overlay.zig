@@ -19,13 +19,15 @@ const std = @import("std");
 const vec = @import("../math/vec.zig");
 const trig = @import("../math/trig.zig");
 const predicates = @import("../math/predicates.zig");
+const canonical = @import("../geometry/canonical.zig");
 const grid = @import("../spatial/grid.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 
 /// `OutOfRange`: a coordinate too far from the origin for the welder's grid.
-pub const Error = error{ OutOfMemory, TooMany, OutOfRange };
+/// `AtTolerance`: two curves the zone apart to within rounding (D27), touching or not.
+pub const Error = error{ OutOfMemory, TooMany, OutOfRange, AtTolerance };
 
 /// The most inputs an overlay labels (a batch boolean's operands).
 pub const MAX_INPUTS: usize = 1 << 16;
@@ -418,9 +420,9 @@ pub const Overlay = struct {
         if (gi.arc == null and gj.arc == null) {
             n = self.lineLine(gi, gj, &candidates);
         } else if (gi.arc != null and gj.arc != null) {
-            n = self.arcArc(gi, gj, &candidates);
+            n = try self.arcArc(gi, gj, &candidates);
         } else {
-            n = self.lineArc(if (gi.arc == null) gi else gj, if (gi.arc == null) gj else gi, &candidates);
+            n = try self.lineArc(if (gi.arc == null) gi else gj, if (gi.arc == null) gj else gi, &candidates);
         }
         for (candidates[0..n]) |p| {
             const v = try self.vertex(p);
@@ -491,23 +493,38 @@ pub const Overlay = struct {
 
     /// The crossings of a line segment and an arc, inside both: whether the line meets
     /// the circle, touches it or misses it, and where each root lies along the segment,
-    /// by the exact predicates (a touch is the one point, the foot of the centre's
-    /// perpendicular); whether the point is on the arc, by the chord. The point itself
-    /// is a construction, welded by the caller.
-    fn lineArc(self: *const Overlay, line: Given, arc_edge: Given, out: *[4]Vec2) usize {
+    /// by the exact predicates (D26; a touch is the one point, the foot of the centre's
+    /// perpendicular); whether the point is on the arc, by the chord. A line missing the
+    /// circle by no more than the zone touches it (D16, as `arcArc`), one point midway
+    /// between the foot and the circle. The point itself is a construction, welded by the
+    /// caller.
+    fn lineArc(self: *const Overlay, line: Given, arc_edge: Given, out: *[4]Vec2) Error!usize {
         const arc = arc_edge.arc.?;
         const a = self.point(line.a);
         const b = self.point(line.b);
+        const arc_a = self.point(arc_edge.a);
+        const arc_b = self.point(arc_edge.b);
         const disc = predicates.lineCircleDiscriminant(a, b, arc.c, arc.r);
-        if (disc < 0) return 0;
+        if (disc < 0) {
+            // Missing the circle by no more than the zone: a touch, midway between the
+            // perpendicular's foot and the circle
+            const d = vec.sub2(b, a);
+            const s = vec.dot2(vec.sub2(arc.c, a), d) / vec.dot2(d, d);
+            const foot = vec.addScaled2(a, d, s);
+            const off = vec.distance2(foot, arc.c);
+            const scale = @max(magnitude2(a), magnitude2(b), magnitude2(arc.c) + arc.r);
+            if (!try self.touch(off - arc.r, scale)) return 0;
+            const p = vec.addScaled2(arc.c, vec.sub2(foot, arc.c), (off + arc.r) / (2 * off));
+            if (s <= 0 or s >= 1 or !onArcStrictly(arc_a, arc_b, arc, p)) return 0;
+            out[0] = p;
+            return 1;
+        }
         const d = vec.sub2(b, a);
         const f = vec.sub2(a, arc.c);
         const qa = vec.dot2(d, d);
         const qb = 2 * vec.dot2(f, d);
         const qc = vec.dot2(f, f) - arc.r * arc.r;
         const root = if (disc == 0) 0 else @sqrt(@max(qb * qb - 4 * qa * qc, 0));
-        const arc_a = self.point(arc_edge.a);
-        const arc_b = self.point(arc_edge.b);
         var n: usize = 0;
         for ([_]predicates.Root{ .first, .second }, [_]f64{ -root, root }) |which, signed| {
             const place = predicates.lineCircleCrossing(a, b, arc.c, arc.r, which) orelse continue;
@@ -522,24 +539,47 @@ pub const Overlay = struct {
     }
 
     /// The crossings of two arcs inside both (cocircular arcs overlap along their ends).
-    /// Whether the circles meet is the exact sign on their centres and radii (D26,
-    /// `predicates.circlePair`), never a threshold on the square-rooted distance: a pair
-    /// missing by less than the zone took a touch point on neither circle. Touching, one
-    /// point on the line of the centres; crossing, `h²` in factored form,
-    /// `((r₁ + r₂)² − d²)(d² − (r₁ − r₂)²) / 4d²`, each factor positive.
-    fn arcArc(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) usize {
+    /// How the circles lie is the exact sign on their centres and radii (D26,
+    /// `predicates.circlePair`). Crossing, the two points, `h²` in factored form,
+    /// `((r₁ + r₂)² − d²)(d² − (r₁ − r₂)²) / 4d²`, each factor positive (two within the
+    /// zone of each other are one, welded). Touching, or missing each other by no more
+    /// than the zone, outside (`d − (r₁ + r₂)`) or inside (`|r₁ − r₂| − d`): one point,
+    /// coincidence first (D16, Leo 2026-11-16), on the line of the centres midway
+    /// between their nearest points (`touch`), never the radical line's foot, which near
+    /// an inner touch moves by the gap times `(r₁ + r₂)/d` (a pair missing by less than
+    /// the zone took a touch point on neither circle). The exact sign alone (2026-11-14)
+    /// left a touch to the rounding of the radii: two circles on the grid touching inside,
+    /// of radii √11.25 and √0.3125, came out nested by 1e-16, no vertex was made where
+    /// they touch, and a sheet's face touched itself there (the nightly, 2026-11-16, run
+    /// 43773180777).
+    fn arcArc(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) Error!usize {
         const ai = gi.arc.?;
         const aj = gj.arc.?;
         const between = vec.sub2(aj.c, ai.c);
         const dist = vec.length2(between);
         // Concentric within the zone: one circle, welded (`addEdge`), overlapping
         if (dist <= self.tol.zone) return 0;
+        const a_i = self.point(gi.a);
+        const b_i = self.point(gi.b);
+        const a_j = self.point(gj.a);
+        const b_j = self.point(gj.b);
         const pair = predicates.circlePair(ai.c, ai.r, aj.c, aj.r);
-        if (pair == .apart or pair == .nested) return 0;
+        if (pair != .crossing) {
+            // Along the centres from `ai`'s, the point midway between the nearest points
+            const scale = @max(magnitude2(ai.c) + ai.r, magnitude2(aj.c) + aj.r);
+            const outside = pair == .apart or pair == .touching_outside;
+            const gap = if (outside) dist - (ai.r + aj.r) else @abs(ai.r - aj.r) - dist;
+            if (!try self.touch(gap, scale)) return 0;
+            const x = if (outside) (ai.r + dist - aj.r) / 2 else if (ai.r >= aj.r) (ai.r + dist + aj.r) / 2 else (dist - ai.r - aj.r) / 2;
+            const p = vec.addScaled2(ai.c, vec.scale2(between, 1.0 / dist), x);
+            if (!onArcStrictly(a_i, b_i, ai, p) or !onArcStrictly(a_j, b_j, aj, p)) return 0;
+            out[0] = p;
+            return 1;
+        }
         // The radical line: `x` along the centres, `h` across it
         const d2 = vec.dot2(between, between);
         const x = (d2 + ai.r * ai.r - aj.r * aj.r) / (2 * dist);
-        const h = if (pair != .crossing) 0 else blk: {
+        const h = blk: {
             const sum = ai.r + aj.r;
             const diff = ai.r - aj.r;
             break :blk @sqrt(@max((sum * sum - d2) * (d2 - diff * diff), 0)) / (2 * dist);
@@ -547,10 +587,6 @@ pub const Overlay = struct {
         const along = vec.scale2(between, 1.0 / dist);
         const across = Vec2{ -along[1], along[0] };
         const foot = vec.addScaled2(ai.c, along, x);
-        const a_i = self.point(gi.a);
-        const b_i = self.point(gi.b);
-        const a_j = self.point(gj.a);
-        const b_j = self.point(gj.b);
         var n: usize = 0;
         for ([_]f64{ h, -h }) |side| {
             const p = vec.addScaled2(foot, across, side);
@@ -560,6 +596,16 @@ pub const Overlay = struct {
             n += 1;
         }
         return n;
+    }
+
+    /// Whether two curves `gap` apart (signed, either way) touch: within the zone (D16), at
+    /// it to rounding of coordinates of size `scale` refused (D27, `AtTolerance`).
+    fn touch(self: *const Overlay, gap: f64, scale: f64) Error!bool {
+        return switch (canonical.verdict(&.{canonical.Comparison.distance(@abs(gap), self.tol.zone, scale)})) {
+            .same => true,
+            .apart => false,
+            .at_tolerance => error.AtTolerance,
+        };
     }
 
     /// A piece of a given edge between two vertices, as an arrangement edge: the one
@@ -1432,6 +1478,11 @@ fn slotAt(s: Segment, at: Vec2) u32 {
 }
 
 /// Whether `p` is left of `q`: by x, then by y.
+/// The size of a point's larger coordinate: what its distances are rounded at.
+fn magnitude2(p: Vec2) f64 {
+    return @max(@abs(p[0]), @abs(p[1]));
+}
+
 fn lefter(p: Vec2, q: Vec2) bool {
     return p[0] < q[0] or (p[0] == q[0] and p[1] < q[1]);
 }

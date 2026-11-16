@@ -392,6 +392,7 @@ pub fn mapError(diag: *Diagnostics, err: anyerror) Error {
         error.OutOfMemory => error.OutOfMemory,
         error.TooMany => diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the sketch's edges" }),
         error.OutOfRange => diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .label = "a coordinate" }),
+        error.AtTolerance => diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "two curves of a sketch the zone apart to within rounding, touching or not," }),
         else => unreachable,
     };
 }

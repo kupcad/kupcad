@@ -254,6 +254,7 @@ pub fn overlayError(diag: *Diagnostics, err: anyerror) Error {
         error.OutOfMemory => error.OutOfMemory,
         error.TooMany => diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "a face's edges in the overlay" }),
         error.OutOfRange => diag.fail(error.InvalidInput, .{ .code = .too_large_for_tolerance, .label = "a coordinate" }),
+        error.AtTolerance => diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "two curves of a face the zone apart to within rounding, touching or not," }),
         else => unreachable,
     };
 }

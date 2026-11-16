@@ -369,18 +369,21 @@ test "overlay: a line tangent to a circle meets it at one vertex, which cuts the
     try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces);
     try testing.expectApproxEqAbs(PI, areaWhere(&o, 1, 0).area, 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 4), areaWhere(&o, 0, 1).area, 1e-9);
-    // The same with the tangent a hair outside the circle: no touch, the map is planar
-    // all the same (the vertex nearest the line is 1 away, outside its zone)
-    var o2 = Overlay.init(testing.allocator, tol);
-    defer o2.deinit();
-    _ = try o2.addInput();
-    try circle(&o2, .{ 0, 0 }, 1);
-    _ = try o2.addInput();
-    const above = std.math.nextAfter(f64, 1.0, 2.0);
-    try polygon(&o2, &.{ .{ -1, above }, .{ 1, above }, .{ 1, 3 }, .{ -1, 3 } });
-    try o2.run();
-    try expectPlanar(&o2);
-    try testing.expectEqual(@as(usize, 6), o2.edges.items.len);
+    // The same with the tangent a hair outside the circle, and half the zone outside:
+    // within the zone, a touch all the same (coincidence first, D16; the exact sign said a
+    // miss); twice the zone outside, none, and the map is planar all the same
+    for ([_]f64{ std.math.nextAfter(f64, 1.0, 2.0), 1 + tol.zone / 2, 1 + 2 * tol.zone }) |above| {
+        var o2 = Overlay.init(testing.allocator, tol);
+        defer o2.deinit();
+        _ = try o2.addInput();
+        try circle(&o2, .{ 0, 0 }, 1);
+        _ = try o2.addInput();
+        try polygon(&o2, &.{ .{ -1, above }, .{ 1, above }, .{ 1, 3 }, .{ -1, 3 } });
+        try o2.run();
+        try expectPlanar(&o2);
+        const touches = above - 1 <= tol.zone;
+        try testing.expectEqual(@as(usize, if (touches) 8 else 6), o2.edges.items.len);
+    }
 }
 
 test "overlay: a hole whose leftmost vertex is a circle's centre, the ray through the circle's tangency with a line" {
@@ -639,11 +642,14 @@ test "overlay: a ring doubling back along a tangent circle, a line crossing both
     try expectPlanar(&o);
 }
 
-test "overlay: circles missing each other by less than the zone meet nowhere, exactly" {
-    // A circle inside another, 1e-6 short of it at the top, where neither has an end: the
+test "overlay: circles missing each other by less than the zone touch at one vertex on both; by more, meet nowhere; by the zone, refused" {
+    // A circle inside another, 1e-6 short of it at the top, where neither has an end. The
     // meeting test on the square-rooted distance with the zone's slack took them as
-    // touching there and cut both at a point on neither; the exact signs of their centres
-    // and radii say nested (D26)
+    // touching there and cut both at a point on neither (the radical line's foot); the
+    // exact signs alone (D26) then said nested, which left a touch of two circles on the
+    // grid to the rounding of their radii (the nightly, 2026-11-16). Coincidence first
+    // (D16, Leo 2026-11-16): within the zone they touch, at one vertex midway between
+    // them, within the zone of both
     var o = Overlay.init(testing.allocator, tol);
     defer o.deinit();
     _ = try o.addInput();
@@ -651,8 +657,50 @@ test "overlay: circles missing each other by less than the zone meet nowhere, ex
     _ = try o.addInput();
     try circle(&o, .{ 0, 1 }, 1 - 1e-6);
     try o.run();
-    try testing.expectEqual(@as(usize, 4), o.points.items.len);
-    for (o.points.items) |p| try testing.expect(@abs(p[0]) > 0.5);
+    try testing.expectEqual(@as(usize, 5), o.points.items.len);
+    var at_top: usize = 0;
+    for (o.points.items) |p| if (@abs(p[0]) < 0.5) {
+        at_top += 1;
+        try testing.expect(@abs(vec.length2(.{ p[0], p[1] }) - 2) <= tol.zone);
+        try testing.expect(@abs(vec.distance2(.{ p[0], p[1] }, .{ 0, 1 }) - (1 - 1e-6)) <= tol.zone);
+    };
+    try testing.expectEqual(@as(usize, 1), at_top);
+    try expectPlanar(&o);
+    // Twice the zone short: nested, no vertex at the top
+    var apart = Overlay.init(testing.allocator, tol);
+    defer apart.deinit();
+    _ = try apart.addInput();
+    try circle(&apart, .{ 0, 0 }, 2);
+    _ = try apart.addInput();
+    try circle(&apart, .{ 0, 1 }, 1 - 2 * tol.zone);
+    try apart.run();
+    try testing.expectEqual(@as(usize, 4), apart.points.items.len);
+    try expectPlanar(&apart);
+    // The zone short to rounding: refused (D27)
+    var at = Overlay.init(testing.allocator, tol);
+    defer at.deinit();
+    _ = try at.addInput();
+    try circle(&at, .{ 0, 0 }, 2);
+    _ = try at.addInput();
+    try circle(&at, .{ 0, 1 }, 1 - tol.zone);
+    try testing.expectError(error.AtTolerance, at.run());
+}
+
+test "overlay: two circles on the grid touching inside, their radii square roots, meet at one vertex" {
+    // The nightly's find (2026-11-16, run 43773180777, locus): radii √11.25 and √0.3125,
+    // centres √7.8125 apart, their difference: touching inside at (3.6, 6.8). The radii
+    // rounded, the exact sign said nested, no vertex was made there, and a sheet's face
+    // between the arcs touched itself where it had none
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try circle(&o, .{ 3, 3.5 }, @sqrt(11.25));
+    _ = try o.addInput();
+    try circle(&o, .{ 3.5, 6.25 }, @sqrt(0.3125));
+    try o.run();
+    var at_touch: usize = 0;
+    for (o.points.items) |p| at_touch += @intFromBool(vec.distance2(.{ p[0], p[1] }, .{ 3.6, 6.8 }) <= tol.zone);
+    try testing.expectEqual(@as(usize, 1), at_touch);
     try expectPlanar(&o);
 }
 

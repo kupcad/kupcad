@@ -1987,6 +1987,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // vertices on two lines 8.7e-5 apart, joined whole one way round and to two edges
         // the other (simplify: a chain is decided whole)
         "solids 0 2 4 3 4 2 3 1 1 3 7 8 4 3 1 1 8 4 3 2 4 1 3 0 2 2 0 0 2 4 1 1 1 2 3 1 3 0 4 4 0 0 3 1 0 2 2 1 0 9 10 3 0 2 2 1 3 1 4 3 4 3 3 13 7 4 4 2",
+        // The same nightly, the locus target: two circles on the grid touching inside,
+        // their radii square roots, nested by the exact sign to rounding, no vertex where
+        // they touch; a sheet's face touched itself there (the overlay: coincidence first)
+        "chain 1 3 4 6 6 6 3 6 2 1 1 1 1 2 0 2 0 3 7 3 2 0 1 2 4 6 2 0 0 4 6 3 3 2 3 3 3 4 1 0 1 4 3 6 4 5 2 1 6 2 2 4 4 0 5 6 5 2 3 4 0 1 1 0 2 1 0 1 1 1 1 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
