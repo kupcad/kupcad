@@ -202,7 +202,17 @@ fn readJson(buf: *[MAX_JSON_BYTES]u8, smith: *Smith) anyerror!void {
     defer body.deinit();
     // What loads is a body the checker can grade, never one that trips it
     var report = try check.run(testing.allocator, &body, .global);
-    report.deinit(testing.allocator);
+    defer report.deinit(testing.allocator);
+    // A sheet the checker passes is one the sheet rule grades too, as a sheet from outside
+    // the kernel is gated before any operation or the mesher reads it (Leo, 2026-11-16):
+    // sound or a fault, never a trip
+    if (!report.ok() or body.kind != .sheet) return;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    overlap.check(testing.allocator, &body, &diag) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => {},
+    };
 }
 
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
@@ -1991,6 +2001,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // their radii square roots, nested by the exact sign to rounding, no vertex where
         // they touch; a sheet's face touched itself there (the overlay: coincidence first)
         "chain 1 3 4 6 6 6 3 6 2 1 1 1 1 2 0 2 0 3 7 3 2 0 1 2 4 6 2 0 0 4 6 3 3 2 3 3 3 4 1 0 1 4 3 6 4 5 2 1 6 2 2 4 4 0 5 6 5 2 3 4 0 1 1 0 2 1 0 1 1 1 1 1",
+        // The session on f9f68f6a (2026-11-16), the locus target: the same, two unions
+        // later
+        "chain 1 7 6 3 5 2 4 0 4 5 5 1 2 3 1 1 3 3 2 3 3 3 4 2 0 2 4 4 2 0 1 3 5 3 0 4 1 3 0 3 4 4 0 4 6 4 1 3 3 6 3 2 3 3 0 0 2 7 5 6 4 6 5 5 5 5 3 2 4 4 4 6 2 2 2 1 3 0 2 2 1 3 0 7 3 6 5 5 6 5 4 5 4 3 2 6 1 0 4 2 1 0 1 3 3 2 2 0",
+        // The sheet rule's first plain run (2026-11-16): a round join's line tangent to its
+        // arc at their vertex, turned and moved 2e6 out, cut again 2.26e-5 along by the
+        // sheet's own overlay (the overlay: two curves meet once per contact)
+        "chain 3 7 2 3 3 6 0 6 3 0 0 4 3 6 1 6 3 2 4 2 2 2 3 3 1 2 2 3 5 0 2 1 2 0 3 7 4 4 5 5 5 1 3 6 4 1 4 4 0 0 4 1 3 1 4 1 3 0 2 1 3 1 2 4 3 4 1 7 -1 0 3 3 2 0 1 7 3 3 3 3 1 5 2 5 4 1 4 6 3 3 4 4 4 4 2 3 4 0 5 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

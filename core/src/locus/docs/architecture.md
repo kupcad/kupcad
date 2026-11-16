@@ -1185,9 +1185,17 @@ it by design, §7.4); no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:
-the sheet overlaid with itself winds once about every region of it, a rule beside the
+the sheet overlaid with itself winds once about every region of it, and makes no point
+past the sheet's own vertices, its edges meeting only there (`not_simple`, since
+2026-11-16: OCCT's `BOPAlgo_CheckerSI` in 2D, the overlay's own decisions asked of one
+sheet, never a second nearness test, which would take the √(2·r·zone) a tangent arc
+stays by a side, or `zone / sin θ` at an acute corner, for a fault), a rule beside the
 overlay since the checker imports no operation (§4), run where sheets are graded, the
-fuzzer's chains and the sketch tests; for solids with planar faces, since 2026-11-12,
+fuzzer's chains and the sketch tests, and the gate of a sheet taken from outside the
+kernel (`body_json.load`, an importer) before any operation or the mesher reads it; the
+kernel's own sheets are made by the overlay and are not run through it again (Leo,
+2026-11-16; no host path loads a sheet's structure today, the JSON reader's fuzz target
+grades every sheet it loads); for solids with planar faces, since 2026-11-12,
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
 `intersect/planar_faces.zig`, within `xsect` of an edge of each, a piece a run of
 crossings in both faces, an edge's end within `xsect` and its gap of the other's plane

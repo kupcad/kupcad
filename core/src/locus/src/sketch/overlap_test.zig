@@ -1,7 +1,9 @@
 //! The sheet overlap rule: sound sheets pass (a square, a plate with a hole, two squares
 //! apart, a sketch boolean's result, the fuzzer's lens sheet as it is built now); a face
 //! over another, each in a shell of its own, which the checker passes, fails; so do two
-//! faces facing opposite ways.
+//! faces facing opposite ways. A face whose rings touch where it has no vertex, which the
+//! checker passes, fails as not simple; the same touch at a vertex, as a boolean makes it,
+//! passes.
 
 const std = @import("std");
 const testing = std.testing;
@@ -18,6 +20,8 @@ const test_bodies = @import("../construct/test_bodies.zig");
 const boolean = @import("boolean.zig");
 const overlap = @import("overlap.zig");
 const Vec2 = vec.Vec2;
+const mat = @import("../math/mat.zig");
+const transform = @import("../construct/transform.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 
@@ -109,4 +113,77 @@ test "sheet overlap: two faces apart facing opposite ways fail it" {
     defer diag.deinit();
     try testing.expectError(error.NotValid, overlap.check(testing.allocator, &opposite, &diag));
     try testing.expectEqual(.faces_overlap, diag.first().?.code);
+}
+
+/// A 4 by 4 square face with a hole, the circle of radius 1 about `(2, 3 - drop)`, run
+/// clockwise from its vertices at its east and west points: at `drop = 0` its rim touches
+/// the square's top side at `(2, 4)`, where neither ring has a vertex.
+fn squareWithHole(drop: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.Builder.init(testing.allocator, tol, .sheet, &diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    var corners: [4]types.VertexIndex = undefined;
+    for (&corners, [4]Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 4 }, .{ 0, 4 } }) |*v, p| v.* = try b.vertex(.{ p[0], p[1], 0 });
+    var outer: [4]sew.EdgeSpec = undefined;
+    for (0..4) |k| outer[k] = try b.straight(corners[k], corners[(k + 1) % 4]);
+    const c: vec.Vec3 = .{ 2, 3 - drop, 0 };
+    const east = try b.vertex(vec.add(c, .{ 1, 0, 0 }));
+    const west = try b.vertex(vec.add(c, .{ -1, 0, 0 }));
+    // Clockwise seen from above: the circle's frame turned over
+    const circle = b.interner.circle(testing.allocator, &b.body.geometry, .{ .c = c, .x = vec.X3, .y = vec.neg(vec.Y3), .r = 1 }) catch |e| return b.fail(e);
+    const hole = [2]sew.EdgeSpec{
+        .{ .start = east, .end = west, .curve = circle, .t0 = 0, .t1 = std.math.pi },
+        .{ .start = west, .end = east, .curve = circle, .t0 = std.math.pi, .t1 = 2 * std.math.pi },
+    };
+    const plane = try b.plane(geometry.Frame.world, &.{});
+    const specs = [1]sew.FaceSpec{.{ .surface = plane, .loops = &.{ .{ .edges = &outer }, .{ .edges = &hole } }, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 4, 4 } } }};
+    return b.finish(&specs, .sheet);
+}
+
+test "sheet overlap: a hole touching its face's side where neither ring has a vertex passes the checker and fails as not simple" {
+    // The nightly's find (2026-11-16, run 43773180777, locus) left a face whose rings
+    // touched where it had no vertex; the checker passed it and the mesher was the first
+    // to refuse. The sheet's own overlay finds the touch (coincidence first) and the
+    // point it makes is no vertex of the sheet. Within the zone, the same; a hole a
+    // hair more than the zone below, sound
+    for ([_]f64{ 0, 0.5 * tol.zone }) |drop| {
+        var touching = try squareWithHole(drop);
+        defer touching.deinit();
+        var report = try check.run(testing.allocator, &touching, .global);
+        defer report.deinit(testing.allocator);
+        try testing.expect(report.ok());
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.NotValid, overlap.check(testing.allocator, &touching, &diag));
+        try testing.expectEqual(.not_simple, diag.first().?.code);
+        try testing.expectEqual(@as(f64, 1), diag.first().?.measured);
+    }
+    var clear = try squareWithHole(2 * tol.zone);
+    defer clear.deinit();
+    try expectSound(&clear);
+}
+
+test "sheet overlap: a circle cut from a square touching its side leaves a vertex at the touch, and passes" {
+    // The touch as the boolean makes it: the face's rings meet at a vertex of both, where
+    // the arcs and the side stay within the zone of each other for √(2·r·zone) on either
+    // side (a nearness rule would have taken that for a fault)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var square = try primitives.square(testing.allocator, tol, 4, 4, false, &diag);
+    defer square.deinit();
+    var disc0 = try primitives.circle(testing.allocator, tol, 1, &diag);
+    defer disc0.deinit();
+    var disc = try transform.transform(testing.allocator, &disc0, &mat.Affine.translate(.{ 2, 3, 0 }), .{}, &diag);
+    defer disc.deinit();
+    var cut = try boolean.boolean(testing.allocator, &.{ &square, &disc }, .difference, .{}, &diag);
+    defer cut.deinit();
+    var at_touch: usize = 0;
+    for (cut.vertices.items) |v| {
+        if (v.tombstone) continue;
+        at_touch += @intFromBool(vec.distance(cut.geometry.points.items[@backingInt(v.point)], .{ 2, 4, 0 }) <= tol.zone);
+    }
+    try testing.expectEqual(@as(usize, 1), at_touch);
+    try expectSound(&cut);
 }
