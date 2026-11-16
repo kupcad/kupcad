@@ -18,6 +18,8 @@
 //! is one candidate strictly inside its face, the segment not tangent there, crosses by
 //! the sign of its normal against the segment. Any other (an edge, a vertex, a tangency)
 //! is decided by what is on either side: the points halfway to the neighbouring places
+//! (the segment's ends neighbouring the first and the last, since along a tangent the
+//! segment stays within the zone of a curved face for √(2·r·zone), past any fixed step)
 //! are classified (`point_in_body.zig`), and the difference is the crossing; no
 //! difference is a touch, reported as an entry and an exit at the same distance, which
 //! cancel (as the mesh engine reports a grazed corner).
@@ -50,8 +52,8 @@ pub const CLEAN_COSINE: f64 = 1e-6;
 const FREE_FORM_GRID: usize = 16;
 /// How far beyond its corners' box a free-form cell may bulge, as a share of its size.
 const CELL_BULGE: f64 = 0.5;
-/// How far from a place a sample point stands when there is no neighbouring place on
-/// that side, in zones.
+/// How far from a place a sample point stands at least when it is the first or the last
+/// and the segment's end is nearer than twice this, in zones.
 const SIDE_STEP_ZONES: f64 = 16;
 /// Newton steps polishing a free-form root to the last bits after Levenberg–Marquardt.
 const POLISH_STEPS: usize = 4;
@@ -118,9 +120,14 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
             try hits.append(allocator, .{ .t = t, .point = point, .normal = place[0].normal, .crossing = if (place[0].cosine < 0) 1 else -1, .face = place[0].face });
             continue;
         }
-        // Decided by the sides: halfway to the neighbouring places, or a step out
-        const before_t = if (k > 0) (places.items[k - 1][0].t + place[0].t) / 2 else place[0].t - SIDE_STEP_ZONES * zone;
-        const after_t = if (k + 1 < places.items.len) (place[0].t + places.items[k + 1][0].t) / 2 else place[0].t + SIDE_STEP_ZONES * zone;
+        // Decided by the sides: halfway to the neighbouring places, the segment's ends the
+        // neighbours of the first and the last (nothing meets it between), or a step out
+        // when the place is nearer an end than that. Never a fixed step from the place
+        // alone: along a tangent the segment stays within the zone of a curved face for
+        // √(2·r·zone), and a side sampled there is on the boundary (the locus fuzzer's
+        // find, the nightly of 2026-11-16: a touch 16 zones from its side was an exit)
+        const before_t = if (k > 0) (places.items[k - 1][0].t + place[0].t) / 2 else @min(place[0].t / 2, place[0].t - SIDE_STEP_ZONES * zone);
+        const after_t = if (k + 1 < places.items.len) (place[0].t + places.items[k + 1][0].t) / 2 else @max((place[0].t + length) / 2, place[0].t + SIDE_STEP_ZONES * zone);
         const before_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, before_t), options, diag);
         const after_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, after_t), options, diag);
         // In the solid or on its boundary, within the zone, is 1

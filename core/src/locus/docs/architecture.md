@@ -961,7 +961,10 @@ extrusion, revolution and NURBS surfaces (sampled: a grazing pair between seeds 
 missed); kept when in the face or on its boundary. Candidates within the zone of one
 another are one place; a place that is one candidate strictly inside its face, not
 tangent, crosses by the sign of its normal; any other (edge, vertex, tangency) is decided
-by classifying the points halfway to its neighbours, the difference being the crossing, no
+by classifying the points halfway to its neighbours (the segment's ends the neighbours of
+the first and the last: along a tangent the segment stays within the zone of a curved
+face for √(2·r·zone), and a side 16 zones off was on the boundary, a touch counted as an
+exit, 2026-11-16), the difference being the crossing, no
 difference a touch reported as an entry and an exit at one distance (as the mesh engine
 reports a grazed corner), the entry first, but where both sides are strictly inside (the
 line two solids of the body touch along, crossed from one into the other) the exit first,

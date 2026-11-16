@@ -2024,6 +2024,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // plane)
         "solids 0 2 4 1 3 1 4 0 0 6 3 12 3 2 2 3 1 0 3 4 2 4 1 3 0 1 7 3 2 0 2 5 0",
         "solids 2 2 4 0 3 1 4 2 3 9 0 -2 2 2 1 2 0 4 1 3 3 4 0 3 7 1 14 1 11 3 1",
+        // The nightly of 2026-11-16 (run 43816774581, on f8c19412), the locus target: a
+        // ray exactly tangent to an extruded arc's side inside the face, its side sampled
+        // 16 zones off, within the zone along the tangent, the touch an exit (ray cast:
+        // the sides halfway to the neighbours, the segment's ends among them)
+        "chain 2 5 6 4 4 1 0 0 2 3 2 3 2 1 3 1 3 4 3 8 1 3 0 5 0 4 1 1 0 4 4 2 6 3 2 6 4 3 1 1 1 4 1 1 0 2 3 2 1 3 6",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

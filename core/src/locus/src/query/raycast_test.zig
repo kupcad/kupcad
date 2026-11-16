@@ -237,6 +237,24 @@ test "ray cast and containment: a cylinder across, along its axis, tangent; a co
     try expectHits(over, &.{ 10, 10 }, &.{ 1, -1 });
 }
 
+test "ray cast: a curved face touched inside it, another place beside, is a touch: its sides are halfway to the neighbours and the segment's ends" {
+    // The locus fuzzer's find (the nightly of 2026-11-16, run 43816774581): a horizontal
+    // ray exactly tangent to an extruded arc's side inside the face, and an edge 0.55 on.
+    // The side towards the ray's origin was sampled 16 zones from the touch, which along a
+    // tangent is within the zone of the surface for √(2·r·zone) (5.9e-3 there): on the
+    // boundary, so in, and the touch counted as an exit. Here a ray over the top of a
+    // torus's tube, through its hole on the diagonal, touches the tube twice, each touch
+    // the other's neighbour on one side and the segment's end on the other
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var ring = try Indexed.of(try primitives.torus(testing.allocator, tol, 5, 1, &diag));
+    defer ring.deinit();
+    const over = try ring.cast(.{ -8, -8, 1 }, .{ 8, 8, 1 });
+    defer testing.allocator.free(over);
+    const half = 8 * @sqrt(2.0);
+    try expectHits(over, &.{ half - 5, half - 5, half + 5, half + 5 }, &.{ 1, -1, 1, -1 });
+}
+
 test "ray cast and containment: a plate with a hole, a stadium slab, free-form faces" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
