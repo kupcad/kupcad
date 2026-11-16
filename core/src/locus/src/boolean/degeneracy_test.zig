@@ -1544,6 +1544,33 @@ test "degeneracy: a hull's ridge through a thin plate, from the plate's side at 
     try expectProbe(&ridge, &plate);
 }
 
+test "degeneracy: a ridge under a flat tetrahedron's corner, where its top and bottom are within the tolerance, cuts off a band thinner than it: refused" {
+    // The 10K session's find on b1053969 (2026-11-16, locus), its operands as the chain
+    // left them: a hull whose horizontal ridge passes 1.3e-5 under the front corner of a
+    // tetrahedron 2.1 tolerances thick at its middle, where its top and bottom are within
+    // the tolerance of each other. The union imprinted the ridge and cut off the corner's
+    // triangle of the bottom, 0.3 across, which lay wholly within the tolerance of the top
+    // over it; the overlap rules found the result's faces on each other. A kept piece of a
+    // face lying on another kept face of its operand facing apart is refused (Leo: the
+    // fragment rule), either way round
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const ridge_points = [_]Vec3{ .{ 1.3381837175357336, 0.7471433042130544, -2e-05 }, .{ -0.503713391573891, 3.317632564928533, 3.99998 }, .{ 2.953336489125606, 2.2935202066613396, 0.99998 }, .{ 2.2935202066613396, 1.0426635108743938, 2.99998 }, .{ 1.7024797933386606, 2.953336489125606, 3.99998 }, .{ 2.589040413322679, 0.08732702174878793, 0.99998 } };
+    const flat_points = [_]Vec3{ .{ -0.999995, 4, 3.999959000000071 }, .{ 1.000005, 4, 3.999959000000071 }, .{ 5e-06, 3, 4.000001000000071 }, .{ 5e-06, 5, 4.000001000000071 } };
+    const hull = @import("../construct/hull.zig");
+    var ridge = try hull.hull(testing.allocator, tol, &ridge_points, &diag);
+    defer ridge.deinit();
+    var flat = try hull.hull(testing.allocator, tol, &flat_points, &diag);
+    defer flat.deinit();
+    for ([2][2]*const Body{ .{ &ridge, &flat }, .{ &flat, &ridge } }) |operands| {
+        var refused = Diagnostics.init(testing.allocator);
+        defer refused.deinit();
+        try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, operands[0], operands[1], .@"union", .{}, &refused, null));
+        try testing.expectEqual(diagnostics.Code.below_feature_size, refused.first().?.code);
+    }
+    try expectProbe(&ridge, &flat);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

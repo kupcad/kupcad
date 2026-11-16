@@ -65,8 +65,10 @@ const imprint = @import("imprint.zig");
 const classify = @import("classify.zig");
 const select = @import("select.zig");
 const simplify = @import("simplify.zig");
+const bvh_mod = @import("../spatial/bvh.zig");
 const Body = body_mod.Body;
 const Frame = geometry.Frame;
+const Box3 = geometry.Box3;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
@@ -283,6 +285,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     for (fragments.items.items, classes) |fragment, c| r.fragments[fragment.operand][@backingInt(c.class)] += 1;
     const keeps = try select.run(allocator, op, &fragments, classes);
     defer allocator.free(keeps);
+    try refuseLyingOnOwn(allocator, &paves, &fragments, keeps, diag);
     try contacts(&paves, classes, r);
     try common.checkCancel();
 
@@ -774,6 +777,100 @@ fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments,
             if (solids.same(body.face(body.loop(c.loop).face).shell, shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand on a face of the other, inside one solid)" });
         }
     }
+}
+
+/// Refuses two kept fragments of one operand, of faces facing apart, one lying in the
+/// other's plane (every corner within its reach of it: the coplanar decision the paves and
+/// the overlap rules share) over a point inside the other: the cut left a piece of a band
+/// of the operand thinner than the tolerance, and the result's shell would lie on itself
+/// there (`below_feature_size`; Leo, 2026-11-16, the fragment rule). A hull's ridge 1.3e-5
+/// under a flat tetrahedron's front corner, where its top and bottom are within the
+/// tolerance of each other, cut off the corner's triangle of the bottom, 0.3 across,
+/// wholly within reach of the top over it; the union kept both and the overlap rules
+/// found its faces on each other (the 10K session on b1053969). A thin band left whole
+/// lies in no other face's plane, its faces reaching past it (an operand's own edge).
+fn refuseLyingOnOwn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, keeps: []const select.Keep, diag: *Diagnostics) Error!void {
+    var kept: std.ArrayList(u32) = .empty;
+    defer kept.deinit(allocator);
+    var boxes: std.ArrayList(Box3) = .empty;
+    defer boxes.deinit(allocator);
+    for (fragments.items.items, keeps, 0..) |_, keep, i| {
+        if (keep == .drop) continue;
+        var box = Box3.empty;
+        var gap: f64 = 0;
+        for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
+            box.grow(paves.point(m));
+            gap = @max(gap, paves.gaps.items[m]);
+        };
+        try kept.append(allocator, @intCast(i));
+        try boxes.append(allocator, box.inflated(incidence.reach(paves.tol, gap) + paves.rounding));
+    }
+    var tree = try bvh_mod.Bvh.build(allocator, boxes.items);
+    defer tree.deinit(allocator);
+    const Pairs = struct {
+        allocator: std.mem.Allocator,
+        out: std.ArrayList([2]u32) = .empty,
+        failed: bool = false,
+        fn visit(self: *@This(), x: u32, y: u32) bool {
+            if (x >= y) return true;
+            self.out.append(self.allocator, .{ x, y }) catch {
+                self.failed = true;
+                return false;
+            };
+            return true;
+        }
+    };
+    var pairs: Pairs = .{ .allocator = allocator };
+    defer pairs.out.deinit(allocator);
+    tree.queryPairs(&tree, &pairs, Pairs.visit);
+    if (pairs.failed) return error.OutOfMemory;
+    std.mem.sort([2]u32, pairs.out.items, {}, lessPair);
+    var samples: std.ArrayList(Vec3) = .empty;
+    defer samples.deinit(allocator);
+    for (pairs.out.items) |pair| {
+        const i = kept.items[pair[0]];
+        const j = kept.items[pair[1]];
+        const fi = fragments.items.items[i];
+        const fj = fragments.items.items[j];
+        if (fi.operand != fj.operand or fi.face == fj.face) continue;
+        const body = paves.operands[fi.operand];
+        const n_i = in_face.outwardNormal(body, types.FaceIndex.of(fi.face), .{ 0, 0 });
+        const n_j = in_face.outwardNormal(body, types.FaceIndex.of(fj.face), .{ 0, 0 });
+        if (vec.dot(n_i, n_j) >= 0) continue;
+        for ([2][2]u32{ .{ i, j }, .{ j, i } }) |order| {
+            if (!try lyingOn(allocator, paves, fragments, order[0], order[1], &samples, diag)) continue;
+            const fragment = fragments.items.items[order[0]];
+            return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a piece of a face of the first operand lying on another face of it facing apart, a band of it thinner than the tolerance which the cut left on its own," else "a piece of a face of the second operand lying on another face of it facing apart, a band of it thinner than the tolerance which the cut left on its own,", .threshold = paves.tol.xsect });
+        }
+    }
+}
+
+fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
+    return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
+}
+
+/// Whether fragment `i` lies in the plane of fragment `j`'s face, every corner within its
+/// reach of it (D27: at that reach to rounding, refused), over a point strictly inside `j`
+/// and beyond the reach of its face's boundary: `i`'s sample farthest from its edges.
+fn lyingOn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, i: u32, j: u32, samples: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
+    const fj = fragments.items.items[j];
+    const body = paves.operands[fj.operand];
+    const g = types.FaceIndex.of(fj.face);
+    const frame = planar_faces.frameOf(body, g).?;
+    const plane = planar_faces.planeOf(frame);
+    for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
+        switch (paves.decide.onPlane(plane.height(paves.point(m)), paves.gaps.items[m])) {
+            .same => {},
+            .apart => return false,
+            .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, fj.face), .label = "a piece of a face lying on another face of its operand or not, a corner at the reach of its plane to rounding", .measured = c.measured, .threshold = c.limit }),
+        }
+    };
+    samples.clearRetainingCapacity();
+    try classify.sample(allocator, paves, fragments, i, samples);
+    if (samples.items.len == 0) return false;
+    const p = samples.items[0];
+    if (try planar_faces.place(body, g, p, 0, paves.tol, diag) != .inside) return false;
+    return aroundPoint(paves, fragments, j, frame, planar_faces.flat(frame, p), std.math.maxInt(u32));
 }
 
 /// Whether fragment `i` holds the point `at` (merged vertex `m`) strictly inside, by the

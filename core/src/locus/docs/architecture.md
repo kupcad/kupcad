@@ -814,7 +814,12 @@ importing only those before it, which the layering test holds):**
   plane holds the region more closely, a tie to rounding by the planes' fixed order
   (`Classified.represents`; the first operand's made the result hang on the operands' order
   where the faces are two planes, 2026-11-15). A coplanar group's plane is chosen alike, by
-  what it moves (D28, 2026-11-16).
+  what it moves (D28, 2026-11-16). Two kept fragments of one operand, of faces facing
+  apart, one lying in the other's plane (every corner within its reach) over a point
+  inside the other, are refused `below_feature_size` before assembly (Leo, 2026-11-16,
+  the fragment rule): the cut left a piece of a band of the operand thinner than the
+  tolerance (a ridge under a flat tetrahedron's corner cut off a triangle of its bottom
+  within the tolerance of its top), and the result's shell would lie on itself there.
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of

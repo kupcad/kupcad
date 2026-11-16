@@ -2052,6 +2052,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the union's slit mouth on the plate's side 9e-5 long, its middle placed with the
         // ends' gaps (planar_faces.meet: a gap's middle has no gap, as the paves')
         "solids 1 5 1 2 2 4 3 0 1 4 0 1 0 1 2 3 2 2 0 0 1 2 4 12 5 9 1 1 3 0 5 0 0 4 1 1 4 4 3 4 2 1 -1 10 3 2",
+        // The 10K session on b1053969 (locus): a hull's ridge under a flat tetrahedron's
+        // corner, cutting off a triangle of its bottom within the tolerance of its top
+        // (pipeline: a kept piece lying on another face of its operand, refused)
+        "solids 0 3 4 3 4 1 3 2 3 5 4 10 10 2 3 1 6 1 1 0 2 0 1 2 1 3 0 4 4 2 3 4 3 2 1 0 2 3 1 14 14 8 2 0 1 3 2 3 0 1 2 4 3 4 4 2 4 3 3 0 10 7 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

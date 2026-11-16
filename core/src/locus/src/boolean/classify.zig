@@ -648,7 +648,7 @@ fn sameDomain(paves: *const Paves, body: *const Body, f: types.FaceIndex, other:
 /// rightly, takes for a ring touching itself; the point keeps clear of it all the same, since the
 /// other operand touches the face there (a centroid on the slit's tip was found on the
 /// other's boundary, 2026-11-12).
-fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, i: usize, out: *std.ArrayList(Vec3)) Error!void {
+pub fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, i: usize, out: *std.ArrayList(Vec3)) Error!void {
     const fragment = fragments.items.items[i];
     const frame = planar_faces.frameOf(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face)).?;
     var points: std.ArrayList(Vec2) = .empty;
