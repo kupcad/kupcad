@@ -2040,6 +2040,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // right angles sharing four merged vertices, one 1.8e-4 below the others' line,
         // taken for one plane (pave: planes at an angle meet along their own line)
         "solids 1 4 3 2 3 4 0 4 2 3 2 2 2 0 3 2 11 2 11 9 2 3 0 2 4 1 3 1 4 3 0 1 2 2 9 1 3 10 0 1 2 2 4 1 2 2 3 2 2 8 1 9 13 1",
+        // The 10K session on 06478dc2 (locus_solids): a hull's corner on a box's edge by
+        // the segment between ends with gaps, 2.06e-4 from the edge's line with no gap
+        // (pipeline: a piece's ends cover their distance from its line)
+        "solids 2 2 4 0 2 0 3 2 2 14 1 10 12 3 2 0 3 4 0 4 3 4 3 1 3 9 -2 16 2 2 1 6 3 4 0 2 2 4 4 1 3 2 3 1 0 0 0 3 0 2 1 3 -2 4 10 14 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

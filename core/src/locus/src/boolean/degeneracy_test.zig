@@ -1496,6 +1496,30 @@ test "degeneracy: a plate's front inside a notch 1.25 tolerances deep under its 
     }
 }
 
+test "degeneracy: a corner put on an edge between gapped ends, off the edge's line past the tolerance, carries the gap it needs" {
+    // The 10K session's find on 06478dc2 (2026-11-16, solids), reduced: a box at a zone of
+    // 1e-4 whose top's corners at y = 2.5 lie their gap of 1e-4 under its plane (what a
+    // chain's merges leave), and a tetrahedron's apex 1e-4 off the box's side, 1.9e-4 under
+    // its top edge at y = 2: 1.49e-4 from the segment between the edge's ends, on it by the
+    // tolerance (2e-4), and 2.15e-4 from the edge's line, which the union's edge keeps (in
+    // the find 1.68e-4 and 2.06e-4). The apex had no gap and the checker refused the union
+    // (`vertex_off_curve`); its gap now covers the distance
+    var block = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ 3, 0, 2 }, .{ 4, 2.5, 3 });
+    defer block.deinit();
+    for (block.vertices.items) |*v| {
+        const p = &block.geometry.points.items[@backingInt(v.point)];
+        if (p[1] != 2.5 or p[2] != 3) continue;
+        p[2] -= 1e-4;
+        v.gap = 1e-4;
+    }
+    var report = try check.run(testing.allocator, &block, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    var t = try tetrahedron(.{ 3 - 1e-4, 2, 3 - 1.9e-4 }, .{ 2, 4, 0 }, .{ 1, 2, 4 }, .{ 2, 0, 2 });
+    defer t.deinit();
+    try expectAllSound(&block, &t);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
