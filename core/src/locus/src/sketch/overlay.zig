@@ -425,7 +425,7 @@ pub const Overlay = struct {
             n = try self.lineArc(if (gi.arc == null) gi else gj, if (gi.arc == null) gj else gi, &candidates);
         }
         for (candidates[0..n]) |p| {
-            if (try self.sameMeeting(gi, gj, p)) continue;
+            if (self.sameMeeting(gi, gj, p)) continue;
             const v = try self.vertex(p);
             try self.cutAt(i, v, cuts);
             try self.cutAt(j, v, cuts);
@@ -436,16 +436,19 @@ pub const Overlay = struct {
     }
 
     /// Whether `p`, where given edges `gi` and `gj` meet, is the meeting a vertex they share
-    /// already is: the two stay within the zone of each other all the way from that vertex
-    /// to `p`, so they never part between (two curves meet once per contact, as the
-    /// booleans' edges do, KNOWLEDGE "Two edges meet once, too"). At a tangent join the
-    /// touch's place along the curves is ill-conditioned, a rounding δ of the line moving it
-    /// by √(2·r·δ): an offset's round join turned and moved 2e6 out, its line and arc
-    /// tangent at their vertex, met again 2.26e-5 along, and the sheet's own overlay cut
-    /// both there (the sheet rule's first run, 2026-11-16). Two lines need none: an end on
-    /// the other's line is never their crossing (`lineLine`). Within rounding of the zone,
-    /// refused (`AtTolerance`).
-    fn sameMeeting(self: *const Overlay, gi: Given, gj: Given, p: Vec2) Error!bool {
+    /// already is: from that vertex to `p` the two never part by more than the rounding of
+    /// their coordinates (D27's band), so the arithmetic cannot tell `p` from the vertex's
+    /// own contact (two curves meet once per contact, as the booleans' edges do, KNOWLEDGE
+    /// "Two edges meet once, too"). At a tangent join the touch's place along the curves is
+    /// ill-conditioned, a rounding δ of the line moving it by √(2·r·δ): an offset's round
+    /// join turned and moved 2e6 out, its line and arc tangent at their vertex, 1.3e-10
+    /// apart up to a point 2.26e-5 along, which the sheet's own overlay cut (the sheet
+    /// rule's first run, 2026-11-16). Parting by more is a second meeting, cut: two arcs
+    /// crossing at a shared vertex and again 5.8e-3 on, a lens 9.2e-6 thick between them,
+    /// left uncut, crossed where the map had no vertex (the zone, tried first, merged
+    /// them: the overlay target, the same day). Two lines need none: an end on the other's
+    /// line is never their crossing (`lineLine`).
+    fn sameMeeting(self: *const Overlay, gi: Given, gj: Given, p: Vec2) bool {
         if (gi.arc == null and gj.arc == null) return false;
         for ([2]u32{ gi.a, gi.b }) |v| {
             if (v != gj.a and v != gj.b) continue;
@@ -463,7 +466,7 @@ pub const Overlay = struct {
                 scale = @max(scale, magnitude2(arc.c) + arc.r);
                 break :blk segmentApart(from, p, arc);
             };
-            if (try self.touch(apart, scale)) return true;
+            if (apart <= canonical.Comparison.distance(apart, 0, scale).band) return true;
         }
         return false;
     }

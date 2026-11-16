@@ -2008,6 +2008,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // arc at their vertex, turned and moved 2e6 out, cut again 2.26e-5 along by the
         // sheet's own overlay (the overlay: two curves meet once per contact)
         "chain 3 7 2 3 3 6 0 6 3 0 0 4 3 6 1 6 3 2 4 2 2 2 3 3 1 2 2 3 5 0 2 1 2 0 3 7 4 4 5 5 5 1 3 6 4 1 4 4 0 0 4 1 3 1 4 1 3 0 2 1 3 1 2 4 3 4 1 7 -1 0 3 3 2 0 1 7 3 3 3 3 1 5 2 5 4 1 4 6 3 3 4 4 4 4 2 3 4 0 5 3",
+        // The session on 7a1bfb5e (2026-11-16), the overlay target: two arcs crossing at a
+        // shared vertex and again 5.8e-3 on, a lens 9.2e-6 thick between, the second
+        // crossing left uncut by a meeting rule at the zone (the rule is the rounding)
+        "overlay 3 1 1 8 8 11 7 15 3 4 3 3 8 15 22 2 20 10 5 19 22 7 4 7 2 8 6 5 3 2 1 2 2 1 1 0 1 3 0 1 3 2 1 1 1 0 1 2 0 3 0 1 1 0 22 15 7 4 0 1 2 1 4 15 15 6 3 14 8 19 10 6 0 19 4 2 1 0 4 1 1 4 0 1 2 0 0 1 6 16 18 8 24 21 3 7 23 1 8 6 7 20 7 5 11 9 3 3 3 0 4 3 1 2 0 0 1 0 0 3 3 1 4 1 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

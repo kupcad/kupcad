@@ -708,6 +708,40 @@ test "overlay: a line tangent to an arc at their shared vertex, far out, meets i
     try expectPlanar(&o);
 }
 
+test "overlay: two arcs crossing at a shared vertex and again 5.8e-3 on, a lens 9.2e-6 thick between, are cut at both" {
+    // The overlay target's find (2026-11-16, on 7a1bfb5e), the arrangement as it came:
+    // taking a meeting the curves reach from a shared vertex within the zone for that
+    // vertex's own left the second crossing uncut, and the map was not planar. Only a
+    // meeting within rounding of the vertex's contact is it; the lens is merged as before
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 2, 2.75 }, .b = .{ 3.75, 0.75 } });
+    try o.addEdge(.{ .a = .{ 3.75, 0.75 }, .b = .{ 0.75, 0.75 } });
+    try o.addEdge(.{ .a = .{ 0.75, 0.75 }, .b = .{ 3.75, 5.5 }, .arc = .{ .c = .{ 4.625, 1.625 }, .r = 3.972562145517676, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 3.75, 5.5 }, .b = .{ 5, 2.5 } });
+    try o.addEdge(.{ .a = .{ 5, 2.5 }, .b = .{ 4.75, 5.5 } });
+    try o.addEdge(.{ .a = .{ 4.75, 5.5 }, .b = .{ 1, 1.75 }, .arc = .{ .c = .{ 1.9375, 4.5625 }, .r = 2.9646353064078554, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 1, 1.75 }, .b = .{ 2, 1.5 }, .arc = .{ .c = .{ 1.5625, 1.875 }, .r = 0.5762215285808054, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 2, 1.5 }, .b = .{ 2, 2.75 } });
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 7.5, 3.75 }, .b = .{ 3.5, 3.7500000000000004 }, .arc = .{ .c = .{ 5.5, 3.75 }, .r = 2, .ccw = true } });
+    try o.addEdge(.{ .a = .{ 3.5, 3.7500000000000004 }, .b = .{ 7.5, 3.75 }, .arc = .{ .c = .{ 5.5, 3.75 }, .r = 2, .ccw = true } });
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = .{ 3.75, 3.75 }, .b = .{ 0.75, 3.5 } });
+    try o.addEdge(.{ .a = .{ 0.75, 3.5 }, .b = .{ 4.75, 2.5 } });
+    try o.addEdge(.{ .a = .{ 4.75, 2.5 }, .b = .{ 0, 4.75 } });
+    try o.addEdge(.{ .a = .{ 0, 4.75 }, .b = .{ 3.75, 3.75 } });
+    try o.addEdge(.{ .a = .{ 4, 4.5 }, .b = .{ 6, 5.25 } });
+    try o.addEdge(.{ .a = .{ 6, 5.25 }, .b = .{ 1.7500000000000002, 5.75 } });
+    try o.addEdge(.{ .a = .{ 1.7500000000000002, 5.75 }, .b = .{ 2, 1.5 } });
+    try o.addEdge(.{ .a = .{ 2, 1.5 }, .b = .{ 5, 1.75 }, .arc = .{ .c = .{ 3.625, 0.125 }, .r = 2.1286732957408003, .ccw = false } });
+    try o.addEdge(.{ .a = .{ 5, 1.75 }, .b = .{ 2.75, 2.25 } });
+    try o.addEdge(.{ .a = .{ 2.75, 2.25 }, .b = .{ 4, 4.5 } });
+    try o.run();
+    try expectPlanar(&o);
+}
+
 test "overlay: two circles on the grid touching inside, their radii square roots, meet at one vertex" {
     // The nightly's find (2026-11-16, run 43773180777, locus): radii √11.25 and √0.3125,
     // centres √7.8125 apart, their difference: touching inside at (3.6, 6.8). The radii
