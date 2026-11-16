@@ -12,8 +12,9 @@
 //! by the tightest turn (the edge arriving at the point continues into the first edge
 //! leaving it clockwise), so each passage through a point is a wedge of the region there
 //! and the sweep meets no crossing; the triangles are then counted against Euler's
-//! formula and their area against the polygon's. Indices are the caller's point indices;
-//! triangles come out counter-clockwise.
+//! formula, their area against the polygon's, and their boundary against the rings (a
+//! ring's point on another's edge passes neither count nor area). Indices are the caller's
+//! point indices; triangles come out counter-clockwise.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -80,6 +81,7 @@ pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagno
     const covered = trianglesArea(rings.points, triangles.items);
     const area = polygonArea(polygon);
     if (@abs(covered - area) > AREA_SLACK * @max(area, 1)) return notSimple(diag, covered, area);
+    try expectRingSides(allocator, rings, triangles.items, diag);
     try delaunay(allocator, rings, triangles.items);
     for (triangles.items) |*t| for (t) |*corner| {
         corner.* = woven.source[corner.*];
@@ -224,6 +226,38 @@ fn polygonArea(polygon: Polygon) f64 {
         }
     }
     return twice / 2;
+}
+
+/// Every ring edge a side of one triangle, run the ring's way (the region on its left),
+/// and of none run the other way: the triangles' boundary is the rings, the check the
+/// count and the area cannot make. A ring's point on
+/// another ring's edge, which the rings cannot pass twice (no passage through a point is
+/// there to reweave), gave triangles across the edge, outside the region as much as they
+/// left of it uncovered; their count and their signed area were the polygon's (the fuzzer,
+/// 2026-11-16: a face's notch reaching an arc's chord, the mesh 3.66 short of the face).
+/// Flat triangles, left out, never have a ring edge for a side: the ring repeats no point
+/// in a row.
+fn expectRingSides(allocator: std.mem.Allocator, rings: Polygon, triangles: []const [3]u32, diag: *Diagnostics) Error!void {
+    var uses: std.AutoHashMapUnmanaged(u64, u32) = .empty;
+    defer uses.deinit(allocator);
+    try uses.ensureTotalCapacity(allocator, @intCast(rings.points.len));
+    for (0..rings.rings()) |r| {
+        const first = rings.starts[r];
+        const last = rings.starts[r + 1] - 1;
+        for (first..last + 1) |i| uses.putAssumeCapacity(directedKey(@intCast(i), if (i == last) first else @intCast(i + 1)), 0);
+    }
+    for (triangles) |t| for (0..SIDES) |i| {
+        const a = t[i];
+        const b = t[(i + 1) % SIDES];
+        if (uses.getPtr(directedKey(a, b))) |count| count.* += 1;
+        if (uses.contains(directedKey(b, a))) return notSimpleCount(diag, a, b);
+    };
+    var it = uses.iterator();
+    while (it.next()) |entry| if (entry.value_ptr.* != 1) return notSimpleCount(diag, entry.value_ptr.*, 1);
+}
+
+fn directedKey(a: u32, b: u32) u64 {
+    return (@as(u64, a) << 32) | b;
 }
 
 fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) f64 {

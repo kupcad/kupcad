@@ -2044,6 +2044,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the segment between ends with gaps, 2.06e-4 from the edge's line with no gap
         // (pipeline: a piece's ends cover their distance from its line)
         "solids 2 2 4 0 2 0 3 2 2 14 1 10 12 3 2 0 3 4 0 4 3 4 3 1 3 9 -2 16 2 2 1 6 3 4 0 2 2 4 4 1 3 2 3 1 0 0 0 3 0 2 1 3 -2 4 10 14 2",
+        // The 10K session on 06478dc2 (locus): a chain moved whole, a face's notch reaching
+        // exactly onto an arc's one chord, triangulated across it, the mesh 3.66 short
+        // (triangulate: the triangles' boundary is the rings)
+        "chain 1 4 4 4 2 6 2 2 4 6 2 2 1 3 0 3 4 4 1 3 1 15 2 1 3 4 2 1 0 2 7 0 4 4 6 3 0 5 0 3 4 2 1 4 6 1 3 1 4 4 4 2 4 4 6 0 4 5 2 6 6 6 1 6 3 6 6 1 3 0 2 2 1 0 0 2 4 1 0 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

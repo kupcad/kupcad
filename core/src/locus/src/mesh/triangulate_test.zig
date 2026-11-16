@@ -255,6 +255,12 @@ test "triangulate: what is not a simple polygon is refused, saying what" {
     try expectRefused(&.{ .{ 0, 0 }, .{ 10, 10 }, .{ 10, 0 }, .{ 0, 10 } }, &.{ 0, 4 }, .not_simple);
     // A hole outside its outer ring
     try expectRefused(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 20, 2 }, .{ 20, 8 }, .{ 28, 8 }, .{ 28, 2 } }, &.{ 0, 4, 8 }, .not_simple);
+    // A notch from the top whose tip lies on the ring's own edge, below or beside it: no
+    // passage through one point, so nothing to reweave; the triangles crossed the edge,
+    // their count and signed area the polygon's all the same (the fuzzer, 2026-11-16: a
+    // face's notch reaching an arc's chord)
+    try expectRefused(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 6, 10 }, .{ 5, 0 }, .{ 4, 10 }, .{ 0, 10 } }, &.{ 0, 7 }, .not_simple);
+    try expectRefused(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 4, 10 }, .{ 10, 5 }, .{ 2, 10 }, .{ 0, 10 } }, &.{ 0, 7 }, .not_simple);
 }
 
 test "triangulate: allocation failure anywhere leaves nothing allocated" {
