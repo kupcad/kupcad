@@ -1332,6 +1332,20 @@ the table (`-Dupdate-snapshots`) and are the body reader's fuzz seeds too.
   (`-Dfuzz-draws`, which core's build sets; plain and wasm runs write nothing). The
   wall-clock bound: a watchdog thread in the worker stops a run past 120 s (forty times
   the slowest seen) with a panic, so a hang leaves its line as a crash does.
+- **Edge-case matrix** (`boolean/matrix_test.zig`, Leo, 2026-11-16): the configurations
+  the solids fuzzer's finds came from, drawn on purpose. Nearly every find was two
+  features of two operands at a boundary of the tolerance (the reach, the minimum feature
+  size, the rounding band about either) in an orientation where one decision was made in
+  two places; a family places two solids by one feature pair (a face along a face, an
+  edge along an edge above or beside it, a face along a thin plate or a flat
+  tetrahedron's knife edges, cut on a diagonal past its thick middle, an apex over a
+  face, an edge, a corner or an end's strip, a face at a hollow box's wall, a face along a
+  solid whose corners carry gaps) and walks a ladder of distances in intersection
+  tolerances, angles and the second operand's zone. Every case runs the fuzzer's own
+  oracles (`boolean/oracle_test.zig`, one module for both drivers) and the step under
+  rigid moves; failures are listed by family. A fast tier runs with the tests (about a
+  minute in Debug); `-Dedge-matrix=true` runs every value, as the nightly does (some
+  3,300 cases, a minute in ReleaseSafe). Its knife family drew find (ag) before the fix.
 - **Allocation failure**: every operation under KupCAD's failing-allocator sweep leaves
   nothing allocated and its inputs untouched.
 - **Determinism**: §6.

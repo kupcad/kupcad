@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
     // The fixtures (src/fixtures/*.json, the primitives' bodies as JSON) are rewritten from
     // the current output instead of compared with it; the diff is reviewed like code.
     test_paths.addOption(bool, "update_snapshots", b.option(bool, "update-snapshots", "Rewrite the body JSON fixtures from the current output") orelse false);
+    test_paths.addOption(bool, "edge_matrix_full", b.option(bool, "edge-matrix", "Run every value of the edge-case matrix's ladders, not the fast tier (the nightly's)") orelse false);
     // The fuzz finds a plain run replays (src/fuzz_test.zig): a file of the `replay:` lines
     // a failing chain or arrangement prints, read here so the tests touch no file system
     // (they run under wasmtime too). Empty without the option, and the replay test skips.

@@ -145,6 +145,29 @@ jobs:
         working-directory: core
         run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=fast --summary line
 
+  edge-matrix:
+    # Locus's edge-case matrix in full (core/src/locus/src/boolean/matrix_test.zig): every
+    # value of every ladder of the configurations the fuzzers' finds came from, under the
+    # fuzzer's oracles; the pull-request tests run its fast tier. ReleaseSafe: the safety
+    # checks kept, a few thousand booleans in a minute.
+    name: Locus edge-case matrix (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        with:
+          zig-version-file: .tool-versions
+
+      - name: Run the matrix
+        working-directory: core/src/locus
+        run: zig build test -Doptimize=ReleaseSafe -Dedge-matrix=true -Dtest-filter="edge matrix" --summary line
+
   gc-stress:
     # Every test with every VM collecting at each object allocation: a value a native or
     # the VM forgot to root is swept at once and the test fails where it is used.
