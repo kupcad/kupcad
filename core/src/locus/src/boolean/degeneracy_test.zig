@@ -1338,6 +1338,41 @@ test "degeneracy: a chain of edges on two lines 8.7e-5 apart is joined whole, ei
     try helpers.expectIdentitiesAtTolerance(&joined, &plate);
 }
 
+test "degeneracy: an edge on a face by its ends' reach and off it by its line is refused, never laid in the face" {
+    // The 10K session's find on 7a1bfb5e (2026-11-16, the solids target), as it came: a
+    // hull cut by a scaled box leaves corners with gaps of 5.3e-6 on its face x = 0.99998,
+    // 2.1e-5 from a box's face x = 1.000005 (within the tolerance and their gaps), the
+    // edge between them on its line 2.5e-5 from it. The section of the cut's floor with
+    // the box's face took that edge for itself, and the union laid it in the box's face as
+    // a slit, 2.5e-5 off the face's surface (`edge_off_surface`). An existing edge stands
+    // for a section only where its line lies on the other face as the checker holds it
+    const Affine = mat.Affine;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0, 1, 0 }, .{ 4, 2, 4 }, .{ 3, 2, 1 }, .{ 0, 0, 2 }, .{ 2, 0, 4 }, .{ 2, 1, 0 }, .{ 2, 0, 4 }, .{ 4, 1, 1 } };
+    var h0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h0.deinit();
+    var h = try helpers.moved(&h0, .{ -5e-6, 2e-5, -5e-6 });
+    defer h.deinit();
+    // The generator's placement of the scaled box, composed as it composes it
+    var c0 = try helpers.boxAt(tol, .{ 0, 0, 2 }, .{ 2, 2, 3 });
+    defer c0.deinit();
+    var place = Affine.translate(vec.ZERO3);
+    place = Affine.scaleBy(.{ 0.5, 1, 0.5 }).compose(&place);
+    place = Affine.translate(vec.ZERO3).compose(&place);
+    place = Affine.translate(.{ -1.9999999971578292e-5, 2.000000002842171e-5, -5e-6 }).compose(&place);
+    var c = try @import("../construct/transform.zig").transform(testing.allocator, &c0, &place, .{}, &diag);
+    defer c.deinit();
+    var cut = try sound(&h, &c, .intersection);
+    defer cut.deinit();
+    var b0 = try box(.{ 1, 0, 0 }, .{ 2, 4, 4 });
+    defer b0.deinit();
+    var b = try helpers.moved(&b0, .{ 5e-6, -1e-5, -2e-5 });
+    defer b.deinit();
+    try expectRefused(&cut, &b, .below_feature_size);
+    try expectRefused(&b, &cut, .below_feature_size);
+}
+
 test "degeneracy: an edge passing another within the tolerance in its end's strip, the end not on it, is refused either way round" {
     // The locus fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
     // tetrahedron's corner in a plate's top, 2.2e-5 from its edge (beyond the tolerance,

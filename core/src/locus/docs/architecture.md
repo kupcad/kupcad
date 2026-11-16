@@ -720,7 +720,13 @@ importing only those before it, which the layering test holds):**
   the computed point can be several `xsect` from where edge–edge met the face's edge);
   then each face's merged vertices (its edges' paves and what the face stages found), and
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
-  line, each gap whose middle is in both a section segment of each face it is inside of.
+  line, each gap whose middle is in both a section segment of each face it is inside of
+  (a gap along a face's boundary is the run of its pave blocks there, OCCT's
+  `IsExistingPaveBlock`, and that run's edges go into the result with their lines, D28:
+  each line must lie on the other face's plane within `xsect` and the edge's gap at the
+  block's ends, as the checker holds an edge, else refused `below_feature_size`; a hull's
+  edge whose corners reached a box's face by their gaps, its line 2.5e-5 off it, was laid
+  in the face as a slit, 2026-11-16).
   Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
   one's pave blocks inside the other its section segments, whose ends must lie in that
   face's plane within the tolerance and their gaps (where in it is the imprint's), else

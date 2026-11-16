@@ -1213,7 +1213,9 @@ const Filler = struct {
     /// 3.3e-5 from where a face cut its three edges was the section's on one of its faces
     /// and not on another, by a hair of reach, and the corner's faces did not close (the
     /// 10K fuzz session, 2026-11-15). The edges are lines (M4): a block whose ends are
-    /// within reach of the piece is within reach along it.
+    /// within reach of the piece is within reach along it. The run found is the section,
+    /// and its edges' lines go into the result (D28): each must lie on the other face's
+    /// plane as the checker holds an edge to its surfaces (`runOnPlane`).
     fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, other: FaceRef) Error!bool {
         const p = self.p;
         const operand = self.body(k);
@@ -1222,15 +1224,22 @@ const Filler = struct {
         const reach = @max(self.reachOf(u), self.reachOf(w));
         var ring: std.ArrayList(u32) = .empty;
         defer ring.deinit(self.allocator);
+        // The edge of the block from each ring vertex to the next
+        var ring_edges: std.ArrayList(types.EdgeIndex) = .empty;
+        defer ring_edges.deinit(self.allocator);
         var loops = traverse.Loops.init(operand, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             // The loop as its merged vertices in order, each coedge's paves its way round
             ring.clearRetainingCapacity();
+            ring_edges.clearRetainingCapacity();
             var it = traverse.Coedges.init(operand, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const coedge = operand.coedge(c);
                 const list = p.edge_paves[k][@backingInt(coedge.edge)].items;
-                for (0..list.len - 1) |i| try ring.append(self.allocator, if (coedge.same_sense) list[i].vertex else list[list.len - 1 - i].vertex);
+                for (0..list.len - 1) |i| {
+                    try ring.append(self.allocator, if (coedge.same_sense) list[i].vertex else list[list.len - 1 - i].vertex);
+                    try ring_edges.append(self.allocator, coedge.edge);
+                }
             }
             const n = ring.items.len;
             for (ring.items, 0..) |v, start| {
@@ -1240,7 +1249,10 @@ const Filler = struct {
                     var i = (start + step) % n;
                     while (i != start) : (i = (i + step) % n) {
                         const x = ring.items[i];
-                        if (x == w) return true;
+                        if (x == w) {
+                            try self.runOnPlane(k, ring.items, ring_edges.items, start, i, step, other);
+                            return true;
+                        }
                         if (!Incidence.in(p.incidences.items, .{ .face = other, .vertex = x })) break;
                         const off = vec.distance(p.point(x), closestOnSegment(a, b, p.point(x)));
                         if (!try self.within(off, reach, .of(.face, @backingInt(f)))) break;
@@ -1249,6 +1261,47 @@ const Filler = struct {
             }
         }
         return false;
+    }
+
+    /// The run of face boundary blocks from ring position `from` to `to` (stepping by
+    /// `step` round a ring of `ring.len`), which `alongBoundary` takes for a section with
+    /// face `other`, on that face's plane: each block's line, where its ends project on
+    /// it, within the intersection tolerance and the edge's gap of the plane, as the
+    /// checker holds an edge to its surfaces. The run's vertices are on the face by their
+    /// reach, which spends their gaps; a line beyond its own reach of the plane would put
+    /// the edge on the face with the tolerance spent twice (the 10K session on 7a1bfb5e,
+    /// 2026-11-16: a hull's edge between corners 2.1e-5 from a box's face, their gaps
+    /// 5.3e-6, its line 2.5e-5 from it, laid in the face as a slit, `edge_off_surface`).
+    /// Refused, the edge within twice the tolerance of a face it does not lie in
+    /// (`below_feature_size`; a pair the paves refuse, Leo 2026-11-15), as `weld` refuses
+    /// a merged vertex beyond a feature's reach.
+    fn runOnPlane(self: *Filler, k: usize, ring: []const u32, edges: []const types.EdgeIndex, from: usize, to: usize, step: usize, other: FaceRef) Error!void {
+        const p = self.p;
+        const operand = self.body(k);
+        const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other.operand), types.FaceIndex.of(other.face)).?);
+        const n = ring.len;
+        var i = from;
+        while (i != to) {
+            const next = (i + step) % n;
+            // The block between ring positions `i` and `next` is the edge of the earlier one
+            const e = edges[if (step == 1) i else next];
+            const edge = operand.edge(e);
+            if (operand.geometry.curve(edge.curve) == .line) {
+                const line = operand.geometry.curve(edge.curve).line;
+                const limit = p.tol.xsect + edge.gap;
+                for ([2]u32{ ring[i], ring[next] }) |v| {
+                    const height = @abs(plane.height(line.eval(line.project(p.point(v)))));
+                    if (!try self.within(height, limit, .of(.edge, @backingInt(e)))) return self.diag.fail(error.Degenerate, .{
+                        .code = .below_feature_size,
+                        .entity = .of(.edge, @backingInt(e)),
+                        .label = if (k == 0) "an edge of the first operand, on a face of the second by its ends' reach and off it by its line," else "an edge of the second operand, on a face of the first by its ends' reach and off it by its line,",
+                        .measured = height,
+                        .threshold = limit,
+                    });
+                }
+            }
+            i = next;
+        }
     }
 
     // --- common blocks ---

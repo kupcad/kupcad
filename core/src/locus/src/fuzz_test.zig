@@ -2012,6 +2012,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // shared vertex and again 5.8e-3 on, a lens 9.2e-6 thick between, the second
         // crossing left uncut by a meeting rule at the zone (the rule is the rounding)
         "overlay 3 1 1 8 8 11 7 15 3 4 3 3 8 15 22 2 20 10 5 19 22 7 4 7 2 8 6 5 3 2 1 2 2 1 1 0 1 3 0 1 3 2 1 1 1 0 1 2 0 3 0 1 1 0 22 15 7 4 0 1 2 1 4 15 15 6 3 14 8 19 10 6 0 19 4 2 1 0 4 1 1 4 0 1 2 0 0 1 6 16 18 8 24 21 3 7 23 1 8 6 7 20 7 5 11 9 3 3 3 0 4 3 1 2 0 0 1 0 0 3 3 1 4 1 0",
+        // The same session, the solids target: a hull's edge on a box's face by its
+        // corners' reach (their gaps) and 2.5e-5 off it by its line, laid in the face as a
+        // slit by the union (the paves: an existing edge stands for a section only on the
+        // face by its line)
+        "solids 1 8 0 1 0 4 2 4 3 2 1 0 0 2 2 0 4 2 1 0 2 0 4 4 1 1 3 1 4 7 4 3 3 1 0 0 2 0 2 2 3 2 0 0 1 0 10 11 4 8 2 3 0 1 2 0 4 0 4 2 1 3 6 8 15 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
