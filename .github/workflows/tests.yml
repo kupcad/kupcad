@@ -38,14 +38,14 @@ jobs:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
+        uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
         with:
           version: '^12.15'
           node-version-file: .tool-versions
           cache: true
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        uses: xyzzylabs/setup-zig@c0fdcf100ed8a4e5619d2bf55fae0bf0dab9ba0a # v1.0.7
         with:
           zig-version-file: .tool-versions
           use-cache: ${{ env.ZIG_CACHE }}
@@ -123,7 +123,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        uses: xyzzylabs/setup-zig@c0fdcf100ed8a4e5619d2bf55fae0bf0dab9ba0a # v1.0.7
         with:
           zig-version-file: .tool-versions
           use-cache: ${{ env.ZIG_CACHE }}
@@ -186,7 +186,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        uses: xyzzylabs/setup-zig@c0fdcf100ed8a4e5619d2bf55fae0bf0dab9ba0a # v1.0.7
         with:
           zig-version-file: .tool-versions
           use-cache: ${{ env.ZIG_CACHE }}
@@ -254,7 +254,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        uses: xyzzylabs/setup-zig@c0fdcf100ed8a4e5619d2bf55fae0bf0dab9ba0a # v1.0.7
         with:
           zig-version-file: .tool-versions
           use-cache: ${{ env.ZIG_CACHE }}
@@ -332,14 +332,14 @@ jobs:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
+        uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
         with:
           version: '^12.15'
           node-version-file: .tool-versions
           cache: true
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@2082e552e19803253444ed0f0124948d16e9a926 # v1.0.6
+        uses: xyzzylabs/setup-zig@c0fdcf100ed8a4e5619d2bf55fae0bf0dab9ba0a # v1.0.7
         with:
           zig-version-file: .tool-versions
           use-cache: ${{ env.ZIG_CACHE }}
