@@ -793,8 +793,10 @@ importing only those before it, which the layering test holds):**
   clear of the other's boundary takes its side from the faces about a piece of its
   boundary lying on the other's (OCCT's IsInternalFace: behind the other's face it is a
   section with, or in the wedge of material between the two faces of the other's edge it
-  is a piece of; a tetrahedron's tip 2.45e-5 through a face leaves a section 8.7e-6 in
-  inradius), `unclassified` only when no piece decides or two disagree. Since
+  is a piece of, where a face in the fragment's plane leaves the other face to decide
+  beyond the edge; a tetrahedron's tip 2.45e-5 through a face leaves a section 8.7e-6 in
+  inradius, a plate's front inside a notch 1.25 tolerances deep a triangle 2.5e-5 a side),
+  `unclassified` only when no piece decides or two disagree. Since
   2026-11-15 (the M0–M4 review, Leo's order; Hoffmann pp. 86–93, OCCT's builder) the seams
   come first: a fragment with pieces lying clearly on the other operand (along its edges,
   or sections whose middles lie in their faces beyond reach of the faces' boundaries,

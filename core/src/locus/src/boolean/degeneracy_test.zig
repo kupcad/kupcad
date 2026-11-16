@@ -1472,6 +1472,30 @@ test "degeneracy: a notch's apex on a face turned 0.3 rad from it, 3 tolerances 
     try expectAllSound(&solid, &plate);
 }
 
+test "degeneracy: a plate's front inside a notch 1.25 tolerances deep under its edge is outside the notched solid, the union's sliver refused" {
+    // The edge-case matrix (2026-11-16): a plate's front in one plane with a notched
+    // front, the notch's apex 1.25 tolerances under the plate's top edge: the plate's
+    // front inside the notch is a triangle 2.5e-5 a side, every point within the tolerance
+    // of the notch's sides, so no ray decides it, and its seams along the notch's edges
+    // were read as undecided (the notched front in its plane). Beyond the edge from that
+    // front, the notch's side alone bounds the material: outside it. The intersection and
+    // the difference are made; the union keeps the triangle, a sliver, refused
+    var solid = try helpers.notchedPrism(tol, 1 - 1.25 * tol.xsect);
+    defer solid.deinit();
+    var plate = try box(.{ 0, 0, 0.5 }, .{ 10, 5, 1 });
+    defer plate.deinit();
+    for ([2][2]*const Body{ .{ &solid, &plate }, .{ &plate, &solid } }) |operands| {
+        for ([_]pipeline.Op{ .intersection, .difference }) |op| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, operands[0], operands[1], .@"union", .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.sliver_face, diag.first().?.code);
+    }
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

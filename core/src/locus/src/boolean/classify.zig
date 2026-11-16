@@ -374,8 +374,14 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
 
 /// The side of `body` that direction `into` leaves its edge `e` towards, in a face of
 /// normal `normal`: in the material between the edge's two faces, behind both at a convex
-/// edge and behind either at a concave one; null for a curved edge, or a face there in one
-/// plane with the fragment's.
+/// edge and behind either at a concave one. A face of the two in one plane with the
+/// fragment's bounds the material along that plane, so the other face decides alone where
+/// `into` runs beyond the edge, away from it: in front of the other at a convex edge, behind
+/// it at a concave one (a plate's front inside a notch 1.25 tolerances deep under its edge,
+/// the notched front in its plane, every point of it within the tolerance of the notch's
+/// sides, which no ray decides: the edge-case matrix, 2026-11-16). Null for a curved edge,
+/// for `into` running onto that face (one region with it, the twins' to decide), or both
+/// faces in that plane.
 fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
     const edge = body.edge(e);
     const line = switch (body.geometry.curve(edge.curve)) {
@@ -387,9 +393,18 @@ fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal:
     if (first == .none or second == .none) return corrupt(diag);
     const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
     const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
-    if (paves.tol.parallel(normal, n1) or paves.tol.parallel(normal, n2)) return null;
-    // Convex when the second face turns behind the first along the first's loop
+    // Along the first face's loop, each face lying to the left of its own coedge
     const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
+    const in_plane = [2]bool{ paves.tol.parallel(normal, n1), paves.tol.parallel(normal, n2) };
+    if (in_plane[0] and in_plane[1]) return null;
+    if (in_plane[0] or in_plane[1]) {
+        const face_n = if (in_plane[0]) n1 else n2;
+        const other_n = if (in_plane[0]) n2 else n1;
+        const onto = vec.cross(face_n, if (in_plane[0]) along else vec.scale(along, -1));
+        if (vec.dot(into, onto) > 0) return null;
+        return if (vec.dot(into, other_n) < 0) .inside else .outside;
+    }
+    // Convex when the second face turns behind the first along the first's loop
     const convex = vec.dot(vec.cross(n1, n2), along) > 0;
     const behind_first = vec.dot(into, n1) < 0;
     const behind_second = vec.dot(into, n2) < 0;
