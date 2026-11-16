@@ -344,7 +344,10 @@ that "these two faces lie on the same surface" is an index compare in `simplify`
 `UnifySameDomain` has to recover this by comparing geometry). The interner serves the
 constructions (primitives, sweeps, sketches), which make geometry; the boolean does not
 intern its result's geometry, it copies it by provenance (D28): what the paves found
-coincident shares one record, and nothing is decided again by geometry.
+coincident shares one record, and nothing is decided again by geometry. What the copy
+costs is carried by the vertices: a vertex the paves put on an edge (by the segment
+between its merged ends) has its gap grown to cover its distance from the edge's line
+beyond `xsect`, as OCCT grows a vertex's tolerance, refused past the zone (2026-11-16).
 
 ### 5.2 Topology
 
@@ -1033,7 +1036,11 @@ pcurve's start, so the ring runs along the pole line), scaled to be near-isometr
 surface's derivative lengths at the middle of its UV box (on a cylinder `u` is radians and
 `v` millimetres; without the scaling every triangle is a sliver); triangulated by monotone
 partition (BKOS ch. 3, deterministic, holes native), then Lawson flips to a constrained
-Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped). A curved face
+Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped). Before the flips the
+triangles are checked by their count (Euler), their area and their boundary: each ring
+edge a side of one triangle, run its ring's way, and of none run the other (a ring's
+point on another ring edge, a notch reaching an arc's chord, passes count and area with
+triangles across the edge; 2026-11-16); a polygon failing any of them is not simple. A curved face
 (cylinder, cone, sphere, torus; 2026-11-11) then gets interior points: the tensor grid of
 its boundary's distinct `u` and `v` values and of the resolution's own parameter lines
 around each circular direction (the grid a full circle of that direction's largest radius
