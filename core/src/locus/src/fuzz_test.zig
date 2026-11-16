@@ -58,7 +58,6 @@ const solid_query = struct {
 };
 const edges = @import("mesh/edges.zig");
 const canonical = @import("geometry/canonical.zig");
-const solid_distance = @import("query/distance.zig");
 const geometry = @import("geometry/types.zig");
 const types = @import("topology/types.zig");
 const chords = @import("mesh/chords.zig");
@@ -94,11 +93,8 @@ const EXTREME_ONE_IN: u8 = 16;
 const EXTREMES = [_]f64{ -std.math.inf(f64), std.math.inf(f64), std.math.nan(f64), std.math.floatMax(f64), std.math.floatTrueMin(f64), -1e15, -1e-15, 1e-15, 1e15, 1e-5, 2e-5 };
 /// How close an identity of areas must hold, relative to the larger area.
 const AREA_CLOSE = 1e-9;
-/// How close the booleans' identities must hold beyond the welding: the overlay welds
-/// vertices and arcs within the zone, which moves a boundary by up to the zone, so a
-/// result's area may differ from its operands' own by the zone times their perimeters
-/// (`weldingSlack`); this is the rounding on top.
-const IDENTITY_CLOSE = 1e-9;
+/// How close the booleans' identities must hold beyond the welding (`weldingSlack`).
+const IDENTITY_CLOSE = oracle.IDENTITY_CLOSE;
 /// The directory a fuzz worker writes each run's draws in (`DrawLog`), from the build's
 /// `-Dfuzz-draws`; empty, none are written.
 const FUZZ_DRAWS_DIR: []const u8 = @import("test_paths").fuzz_draws;
@@ -1772,16 +1768,7 @@ const WALL_INSET: f64 = 0.25;
 /// scaled by the largest scale, corner to corner (a placement past the tolerance's reach
 /// is refused before the chain starts).
 const SOLID_REACH: f64 = 2 * @as(f64, SOLID_GRID) * PLATE_STRETCH * @sqrt(3.0);
-/// A measure's rounding where a move takes it, in ulps of the distance times the area:
-/// mass sums terms that size (as D27 reckons, 64).
-const MOVE_ROUNDING_ULPS = 64;
-/// Points each boolean step of a solid chain checks membership at (`expectMembership`).
-const MEMBERSHIP_POINTS = 24;
-/// How far a membership point keeps from both operands' boundaries, in intersection
-/// tolerances beyond the step's largest gap: a result's faces lie within the tolerance of
-/// the operands' (D28: a plane holds its group's faces within it, a merged vertex is within
-/// it and its gap of what it merged), and a point is classified within the zone.
-const MEMBERSHIP_CLEAR = 4;
+const MOVE_ROUNDING_ULPS = oracle.MOVE_ROUNDING_ULPS;
 
 const solid_boolean = struct {
     const pipeline = @import("boolean/pipeline.zig");
@@ -1789,6 +1776,7 @@ const solid_boolean = struct {
     const tests = @import("boolean/pipeline_test.zig");
     const step_corpus = @import("boolean/step_corpus.zig");
 };
+const oracle = @import("boolean/oracle_test.zig");
 const solid_hull = @import("construct/hull.zig");
 
 test "fuzz: booleans of solids take any generated chain" {
@@ -2138,23 +2126,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
                 .difference => "the solids fuzzer's difference",
             }, report.max_gap, report.shift);
         }
-        const ma = try mass.mass(&current, .{}, &diag);
-        const mb = try mass.mass(&other, .{}, &diag);
-        const va = ma.volume;
-        const vb = mb.volume;
-        const vu = try solidVolume(&results[0], &diag);
-        const vi = try solidVolume(&results[1], &diag);
-        const vd = try solidVolume(&results[2], &diag);
-        // Faces closer than the intersection tolerance are one plane: the slab between them,
-        // at most the tolerance times the smaller operand's area, may count either way
-        const close = IDENTITY_CLOSE * @max(va + vb, 1) + tolerance.Tolerance.merge(current.tol, other.tol).xsect * @min(ma.area, mb.area);
-        errdefer std.debug.print("volumes: a {d}, b {d}, union {d}, intersection {d}, difference {d}\n", .{ va, vb, vu, vi, vd });
-        // and each result's faces given their coplanar group's plane moved by what its
-        // report says (D28)
-        try testing.expectApproxEqAbs(va + vb, vu + vi, close + shifts[0] + shifts[1]);
-        try testing.expectApproxEqAbs(va - vi, vd, close + shifts[1] + shifts[2]);
-        try expectMembership(&current, &other, &results, @max(gaps[0], gaps[1], gaps[2]), &diag);
-        try expectSwapped(&current, &other, results[0..2], shifts[0..2], close, &diag);
+        try oracle.expectStep(&current, &other, &results, shifts, gaps, &diag);
         const keep: usize = switch (op) {
             .@"union" => 0,
             .intersection => 1,
@@ -2172,144 +2144,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
     return .checked;
 }
 
-/// A boolean step of a solid chain: its other operand and the operation the chain kept.
-const SolidStep = struct { other: Body, op: solid_boolean.pipeline.Op };
-
-/// The operands the other way round (the research review's item 19): B ∪ A and B ∩ A have
-/// the counts and shells of A ∪ B and A ∩ B (`results`), and their area and volume to the
-/// slab of faces closer than the tolerance (`close`) and both ways' shifts. The first
-/// operand's geometry is preferred where they agree (D28), so the records may differ; the
-/// shape may not. A refusal the other way round is a find: the paves decide pairs, not
-/// orders.
-fn expectSwapped(a: *const Body, b: *const Body, results: []const Body, shifts: []const f64, close: f64, diag: *Diagnostics) !void {
-    for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection }, results, shifts) |op, *forward, shift| {
-        var report = solid_boolean.pipeline.Report.init(testing.allocator);
-        defer report.deinit();
-        var swapped = try solid_boolean.pipeline.boolean(testing.allocator, b, a, op, .{}, diag, &report);
-        defer swapped.deinit();
-        errdefer std.debug.print("{s} the other way round: {any}, shells {any}; forward {any}, shells {any}\n", .{ @tagName(op), swapped.counts(), solid_boolean.tests.shellKinds(&swapped), forward.counts(), solid_boolean.tests.shellKinds(forward) });
-        try testing.expectEqual(forward.counts(), swapped.counts());
-        try testing.expectEqual(solid_boolean.tests.shellKinds(forward), solid_boolean.tests.shellKinds(&swapped));
-        const m = try mass.mass(forward, .{}, diag);
-        const ms = try mass.mass(&swapped, .{}, diag);
-        const slack = close + shift + report.shift;
-        errdefer std.debug.print("{s} the other way round: area {d}, volume {d}; forward {d}, {d}\n", .{ @tagName(op), ms.area, ms.volume, m.area, m.volume });
-        try testing.expectApproxEqAbs(m.volume, ms.volume, slack);
-        try testing.expectApproxEqAbs(m.area, ms.area, slack + forward.tol.xsect * m.area);
-    }
-}
-
-/// Membership where it is clear (research/li-chen-egc.md §4, Shapiro's set-membership
-/// classification): at a point farther than `MEMBERSHIP_CLEAR` intersection tolerances and
-/// the step's largest gap from both operands' boundaries, the union, the intersection and
-/// the difference (`results`, in that order) each hold the point exactly when their
-/// operation on its membership in the operands says so, and none has it on its boundary.
-/// The volume identities hold for a result whose pieces are wrongly placed but sized
-/// right; this does not. The points from a skewed sequence, every other one over the
-/// overlap of the operands' boxes (where both hold points), the rest over both boxes;
-/// their distances to the operands' boundaries exact on their meshes (planar faces mesh
-/// exactly); a classification refused (every ray met an edge) skips its point.
-fn expectMembership(a: *const Body, b: *const Body, results: *const [3]Body, gap: f64, diag: *Diagnostics) !void {
-    const fault = (try membershipFault(a, b, results, gap, diag)) orelse return;
-    const p = fault.p;
-    std.debug.print("membership at ({d}, {d}, {d}), {d} clear: a {s}, b {s}; union {s}, intersection {s}, difference {s}\n", .{ p[0], p[1], p[2], fault.clear, @tagName(fault.places[0]), @tagName(fault.places[1]), @tagName(fault.places[2]), @tagName(fault.places[3]), @tagName(fault.places[4]) });
-    return error.MembershipDisagrees;
-}
-
-/// A point where membership disagrees (`expectMembership`): where it is, how far it keeps
-/// from the operands' boundaries, and its place in a, b and the three results.
-const MembershipFault = struct { p: vec.Vec3, clear: f64, places: [5]solid_query.point_in_body.Place };
-
-fn membershipFault(a: *const Body, b: *const Body, results: *const [3]Body, gap: f64, diag: *Diagnostics) !?MembershipFault {
-    const clear = MEMBERSHIP_CLEAR * tolerance.Tolerance.merge(a.tol, b.tol).xsect + gap;
-    var meshes: [2]tessellate.Mesh = undefined;
-    var meshed: usize = 0;
-    defer for (meshes[0..meshed]) |*m| m.deinit(testing.allocator);
-    var indexes: [5]solid_query.FaceIndex = undefined;
-    var indexed: usize = 0;
-    defer for (indexes[0..indexed]) |*x| x.deinit(testing.allocator);
-    for ([_]*const Body{ a, b }) |operand| {
-        meshes[meshed] = try tessellate.tessellate(testing.allocator, operand, .{}, .{}, diag);
-        meshed += 1;
-    }
-    for ([_]*const Body{ a, b, &results[0], &results[1], &results[2] }) |body| {
-        indexes[indexed] = try solid_query.FaceIndex.build(testing.allocator, body, diag);
-        indexed += 1;
-    }
-    const both = indexes[0].box.merge(indexes[1].box);
-    var common: geometry.Box3 = undefined;
-    for (0..3) |c| {
-        common.min[c] = @max(indexes[0].box.min[c], indexes[1].box.min[c]);
-        common.max[c] = @min(indexes[0].box.max[c], indexes[1].box.max[c]);
-    }
-    for (0..MEMBERSHIP_POINTS) |i| {
-        const box = if (i % 2 == 0 and !common.isEmpty()) common else both;
-        const span = box.size();
-        const k: f64 = @floatFromInt(i);
-        const p: vec.Vec3 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1], box.min[2] + @mod(k * 0.7549 + 0.37, 1) * span[2] };
-        if (distanceToMesh(&meshes[0], p) <= clear or distanceToMesh(&meshes[1], p) <= clear) continue;
-        var places: [5]solid_query.point_in_body.Place = undefined;
-        var refused = false;
-        for (&places, 0..) |*place, j| {
-            const body = switch (j) {
-                0 => a,
-                1 => b,
-                else => &results[j - 2],
-            };
-            place.* = solid_query.point_in_body.classify(testing.allocator, body, &indexes[j], p, .{}, diag) catch |err| {
-                _ = try cleanSolid(err);
-                refused = true;
-                break;
-            };
-        }
-        if (refused) continue;
-        const in_a = places[0] == .inside;
-        const in_b = places[1] == .inside;
-        const want = [3]bool{ in_a or in_b, in_a and in_b, in_a and !in_b };
-        var agrees = true;
-        for (places) |place| agrees = agrees and place != .boundary;
-        for (want, places[2..]) |w, place| agrees = agrees and w == (place == .inside);
-        if (!agrees) return .{ .p = p, .clear = clear, .places = places };
-    }
-    return null;
-}
-
-test "Fuzz solids: membership finds a union of the right volume misplaced, which the identities pass" {
-    // Two boxes overlapping at a corner, their three booleans; then the union moved a
-    // quarter along x: every volume the same, so the identities hold, but points of the
-    // operands it no longer covers are found outside it
-    var diag = Diagnostics.init(testing.allocator);
-    defer diag.deinit();
-    var a = try primitives.box(testing.allocator, tol, 2, 2, 2, false, &diag);
-    defer a.deinit();
-    var b = try transform.transform(testing.allocator, &a, &Affine.translate(.{ 1, 1, 1 }), .{}, &diag);
-    defer b.deinit();
-    var results: [3]Body = undefined;
-    var made: usize = 0;
-    defer for (results[0..made]) |*r| r.deinit();
-    for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |op| {
-        results[made] = try solid_boolean.pipeline.boolean(testing.allocator, &a, &b, op, .{}, &diag, null);
-        made += 1;
-    }
-    try expectMembership(&a, &b, &results, 0, &diag);
-    var moved = try transform.transform(testing.allocator, &results[0], &Affine.translate(.{ 0.25, 0, 0 }), .{}, &diag);
-    std.mem.swap(Body, &results[0], &moved);
-    moved.deinit();
-    const fault = (try membershipFault(&a, &b, &results, 0, &diag)).?;
-    // A point of a the union no longer covers
-    try testing.expectEqual(.inside, fault.places[0]);
-    try testing.expectEqual(.outside, fault.places[2]);
-}
-
-/// The distance from `p` to the nearest triangle of `mesh`.
-fn distanceToMesh(mesh: *const tessellate.Mesh, p: vec.Vec3) f64 {
-    var nearest = std.math.inf(f64);
-    for (mesh.triangles) |t| {
-        const corners = [3]vec.Vec3{ mesh.positions[t[0]], mesh.positions[t[1]], mesh.positions[t[2]] };
-        nearest = @min(nearest, vec.distance(p, solid_distance.closestOnTriangle(p, corners)));
-    }
-    return nearest;
-}
+const SolidStep = oracle.Step;
 
 /// The chain again with its first solid and every other operand under one drawn rigid move
 /// (§9.2's invariance of measures): the same counts and shells as the chain's result, its
@@ -2322,37 +2157,7 @@ fn expectMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []con
     const shift = MOVE_SHIFTS[source.index(MOVE_SHIFTS.len)];
     try log.add("moved whole: turned {d} about ({d}, {d}, {d}), shifted ({d}, {d}, {d})\n", .{ angle, axis[0], axis[1], axis[2], shift[0], shift[1], shift[2] });
     const move = Affine.translate(shift).compose(&Affine.rotate(axis, angle));
-    var moved = transform.transform(testing.allocator, first, &move, .{}, diag) catch |err| return refusedMove(err);
-    defer moved.deinit();
-    for (steps) |step| {
-        var other = transform.transform(testing.allocator, &step.other, &move, .{}, diag) catch |err| return refusedMove(err);
-        defer other.deinit();
-        var report = solid_boolean.pipeline.Report.init(testing.allocator);
-        defer report.deinit();
-        var next = solid_boolean.pipeline.boolean(testing.allocator, &moved, &other, step.op, .{}, diag, &report) catch |err| {
-            _ = try cleanSolid(err);
-            return;
-        };
-        defer next.deinit();
-        try expectSolid(&next, diag);
-        try solid_boolean.tests.expectReportFits(&report, &moved, &other, &next, step.op);
-        std.mem.swap(Body, &moved, &next);
-    }
-    errdefer std.debug.print("moved whole: {any}, shells {any}; the chain's: {any}, shells {any}\n", .{ moved.counts(), solid_boolean.tests.shellKinds(&moved), result.counts(), solid_boolean.tests.shellKinds(result) });
-    try testing.expectEqual(result.counts(), moved.counts());
-    try testing.expectEqual(solid_boolean.tests.shellKinds(result), solid_boolean.tests.shellKinds(&moved));
-    const m = try mass.mass(result, .{}, diag);
-    const mm = try mass.mass(&moved, .{}, diag);
-    const distance = vec.length(shift) + SOLID_REACH;
-    const close = IDENTITY_CLOSE * @max(m.volume, 1) + result.tol.xsect * m.area + MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * distance * @max(m.area, 1);
-    errdefer std.debug.print("moved whole: area {d}, volume {d}; the chain's: area {d}, volume {d}\n", .{ mm.area, mm.volume, m.area, m.volume });
-    try testing.expectApproxEqAbs(m.area, mm.area, close);
-    try testing.expectApproxEqAbs(m.volume, mm.volume, close);
-}
-
-/// A move refused (a solid past the tolerance's reach once moved) ends the check cleanly.
-fn refusedMove(err: anyerror) anyerror!void {
-    if (err == error.OutOfMemory) return err;
+    try oracle.expectMovedWhole(first, steps, result, &move, vec.length(shift) + SOLID_REACH, diag);
 }
 
 /// A refusal by design is clean; the general path failing on valid planar operands is a
@@ -2376,10 +2181,8 @@ fn thinRefused(err: anyerror, report: *const solid_boolean.pipeline.Report, thin
 }
 
 fn cleanSolid(err: anyerror) anyerror!Outcome {
-    return switch (err) {
-        error.OutOfMemory, error.NotValid, error.IntersectionFailed => err,
-        else => .refused,
-    };
+    try oracle.clean(err);
+    return .refused;
 }
 
 /// A drawn solid before its placement: a box from `lo` to `hi`, the hull of points, or a
@@ -2597,21 +2400,10 @@ fn refusedSolid(err: anyerror) anyerror!?Body {
     return null;
 }
 
-/// A solid passes every rule of the checker and the overlap rules.
-fn expectSolid(body: *const Body, diag: *Diagnostics) !void {
-    var report = try check.run(testing.allocator, body, .global);
-    defer report.deinit(testing.allocator);
-    if (report.first()) |f| {
-        std.debug.print("the checker: {f}\n", .{f});
-        return error.ResultNotValid;
-    }
-    solid_overlap.check(testing.allocator, body, .{}, diag) catch |err| {
-        // The rule that failed, before the warnings the result carries
-        if (diag.first()) |f| std.debug.print("the overlap rules: {f}\n", .{f});
-        return err;
-    };
-}
+const expectSolid = oracle.expectSolid;
+const solidVolume = oracle.solidVolume;
 
-fn solidVolume(body: *const Body, diag: *Diagnostics) !f64 {
-    return (try mass.mass(body, .{}, diag)).volume;
+/// A move refused (a solid past the tolerance's reach once moved) ends the check cleanly.
+fn refusedMove(err: anyerror) anyerror!void {
+    if (err == error.OutOfMemory) return err;
 }

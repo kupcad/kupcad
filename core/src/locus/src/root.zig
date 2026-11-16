@@ -181,6 +181,7 @@ test {
     _ = @import("boolean/corpus_test.zig");
     _ = @import("boolean/coverage_test.zig");
     _ = @import("boolean/parameters_test.zig");
+    _ = @import("boolean/oracle_test.zig");
     _ = @import("construct/decompose_test.zig");
     _ = @import("construct/test_bodies.zig");
     _ = @import("determinism_test.zig");
