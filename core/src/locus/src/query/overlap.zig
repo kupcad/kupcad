@@ -134,7 +134,7 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
             const e = body.edge(edges.items[item]);
             if (e.start == vertex or e.end == vertex) continue;
             const d = in_face.edgeDistance(body, edges.items[item], p);
-            try closer(&best, d, within + @max(body.vertex(e.start).gap, body.vertex(e.end).gap), band, .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
+            try closer(&best, d, within + incidence.edgeGap(body.vertex(e.start).gap, body.vertex(e.end).gap), band, .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
         }
         // A vertex and a face it is not on
         near.out.clearRetainingCapacity();
@@ -175,7 +175,7 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         const y = body.edge(edges.items[pair[1]]);
         if (x.start == y.start or x.start == y.end or x.end == y.start or x.end == y.end) continue;
         const d = distance.segmentSegment(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end)).distance;
-        const gaps = @max(body.vertex(x.start).gap, body.vertex(x.end).gap) + @max(body.vertex(y.start).gap, body.vertex(y.end).gap);
+        const gaps = incidence.edgeGap(body.vertex(x.start).gap, body.vertex(x.end).gap) + incidence.edgeGap(body.vertex(y.start).gap, body.vertex(y.end).gap);
         try closer(&best, d, reach + gaps, band, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
     }
     return best;

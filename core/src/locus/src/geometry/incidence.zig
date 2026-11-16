@@ -6,10 +6,19 @@
 //! never measured again).
 //!
 //! A vertex reaches as far as the intersection tolerance and its gap (`reach`), measured
-//! at the vertex's point: it is on a plane, a curve or a face's boundary within that of
-//! it, and two vertices are one within the tolerance and both gaps. An edge lies in a
-//! plane when both its end vertices are on it (a line; a curved edge's curve between them
-//! too), a face when every vertex of it is. A distance within rounding of its limit is
+//! at the vertex's point: it is on a plane or a curve within that of it, and two vertices
+//! are one within the tolerance and both gaps. An edge reaches by its gap too, the larger
+//! of its end vertices' (`edgeGap`: its curve lies within them of the segment between
+//! their points): a vertex is on an edge, or a face's boundary there, within the tolerance,
+//! its gap and the edge's (`onEdge`), and two edges meet within the tolerance and both
+//! edges' gaps (`edgesMeet`), as two things interfere within the tolerance and the sum of
+//! their gaps (architecture §7.1; OCCT's Tol(V) + Tol(E), Tol(E1) + Tol(E2)), an edge
+//! measured by the segment between its end vertices' points; its curve itself, which a
+//! face's boundary is, needs no widening (`onCurve`). The paves
+//! measured an edge's crossing against the tolerance alone while a face was in another's
+//! plane by its corners' gaps (Leo, 2026-11-16: the 10K session's find af). An edge lies in
+//! a plane when both its end vertices are on it (a line; a curved edge's curve between
+//! them too), a face when every vertex of it is. A distance within rounding of its limit is
 //! neither (D27, `canonical.Verdict.at_tolerance`): the caller refuses it or, checking a
 //! body that exists, takes the plain comparison (`holds`).
 
@@ -22,6 +31,13 @@ pub const Verdict = canonical.Verdict;
 /// How far a vertex with gap `gap` reaches: the intersection tolerance and its gap.
 pub fn reach(tol: Tolerance, gap: f64) f64 {
     return tol.xsect + gap;
+}
+
+/// How far an edge reaches beyond the tolerance: the larger of its end vertices' gaps
+/// (`gap_start`, `gap_end`), within which its curve lies of the segment between their
+/// points all along.
+pub fn edgeGap(gap_start: f64, gap_end: f64) f64 {
+    return @max(gap_start, gap_end);
 }
 
 /// The decisions at a tolerance, for coordinates of size `scale` at most (what their
@@ -47,9 +63,23 @@ pub const Decider = struct {
         return self.within(@abs(height), reach(self.tol, gap));
     }
 
-    /// A vertex with gap `gap`, `distance` from a curve or a face's boundary, on it.
+    /// A vertex with gap `gap`, `distance` from a curve or a face's boundary (the edges'
+    /// curves themselves, which their end vertices' gaps do not widen: those are the
+    /// segments' between the vertices' points, `onEdge`), on it.
     pub fn onCurve(self: Decider, distance: f64, gap: f64) Verdict {
         return self.within(distance, reach(self.tol, gap));
+    }
+
+    /// A vertex with gap `gap`, `distance` from an edge with gap `edge_gap` (`edgeGap`), on
+    /// it.
+    pub fn onEdge(self: Decider, distance: f64, gap: f64, edge_gap: f64) Verdict {
+        return self.within(distance, self.tol.xsect + gap + edge_gap);
+    }
+
+    /// Two edges with gaps `gap_a` and `gap_b` (`edgeGap`), their nearest points
+    /// `distance` apart, meeting there.
+    pub fn edgesMeet(self: Decider, distance: f64, gap_a: f64, gap_b: f64) Verdict {
+        return self.within(distance, self.tol.xsect + gap_a + gap_b);
     }
 
     /// Two vertices `distance` apart, with gaps `gap_a` and `gap_b`, one vertex.

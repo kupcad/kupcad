@@ -2031,6 +2031,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // tetrahedron 2.1 tolerances thick, its faces meeting at a knife edge, a piece of
         // the top within the zone of both (pave: the sandwich whether the two meet or not)
         "solids 1 6 4 3 0 1 3 0 1 0 2 0 0 1 4 1 2 4 4 2 1 3 6 8 9 14 2 1 3 0 4 3 2 3 4 1 4 4 2 4 3 -2 6 12 2 1 1 3 2 3 2 1 4 2 1 2 2 2 4 1 7 0 7 2 0",
+        // The 10K session on 39788958 (locus): a box's bottom in a hollow box's by its
+        // front corners' gaps of 3.5e-5, the hollow box's edge crossing the front edge
+        // 2.15e-4 off, apart by the tolerance alone (incidence: two edges meet within the
+        // tolerance and both edges' gaps)
+        "solids 0 2 4 0 2 0 3 3 2 -1 13 11 9 3 3 2 3 4 3 4 3 4 2 0 2 1 2 14 -1 0 5 1 1 0 1 4 0 1 0 4 1 2 10 3 4 16 1 2 3 1 5 2 0 4 4 1 3 2 0 2 1 6 12 7 13 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -703,10 +703,16 @@ importing only those before it, which the layering test holds):**
   past the zone, gaps a chain recorded or the centre's rounding at exactly `xsect`, refused
   there as `Degenerate`, `gap_too_large`);
   vertex–edge for every merged vertex against the edges of the operand it holds no vertex
-  of (on the segment within `xsect` plus its gap, its foot in the edge's shrunk range:
+  of (on the segment within `xsect`, its gap and the edge's, the larger of its ends'
+  (`incidence.Decider.onEdge`; the segment lies within them of the edge's curve), its
+  foot in the edge's shrunk range:
   beyond `xsect` and the end's gap from either end; an edge whose shrunk range is under
   `2·xsect` is not split but refused, `TooSmallEdge` naming it);
-  edge–edge by the closest points of the two lines (parallel lines skipped: their overlaps
+  edge–edge by the closest points of the two lines, within `xsect` and both edges' gaps
+  (`edgesMeet`; by `xsect` alone a box's edge between corners with gaps of 3.5e-5, its
+  face in another's plane by them, missed that face's edge crossing it, 2026-11-16; a
+  crossing whose vertex would lie past the zone from both refused, `gap_too_large`, as a
+  ball past it is) (parallel lines skipped: their overlaps
   are made of vertex–edge's paves; two edges with a pave in common skipped, two straight
   edges meeting once, there, however far the computed point is: at a shallow angle they
   run within `xsect` of each other for `xsect / sin θ`; a crossing on both segments in an

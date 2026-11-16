@@ -503,7 +503,7 @@ const Filler = struct {
         }
         // `a`'s points in a grid wide enough for the tolerance and two gaps, each at most the
         // zone (a ball past it is refused below)
-        var near = grid.Grid.init(2 * (p.tol.xsect + 2 * p.tol.zone + p.rounding));
+        var near = grid.Grid.init(2 * (p.tol.xsect + p.tol.zone + p.rounding));
         defer near.deinit(self.allocator);
         for (p.points.items, 0..) |q, i| near.insert(self.allocator, @intCast(i), q) catch |e| return welderError(self.diag, e);
         const b = self.body(1);
@@ -575,7 +575,7 @@ const Filler = struct {
             }
         };
         var search: Search = .{ .p = p, .q = q, .gap = gap };
-        near.query(q, p.tol.xsect + 2 * p.tol.zone + p.rounding, &search, Search.visit) catch |e| return welderError(self.diag, e);
+        near.query(q, p.tol.xsect + p.tol.zone + p.rounding, &search, Search.visit) catch |e| return welderError(self.diag, e);
         if (search.at != NONE) return self.atTolerance(vec.distance(p.points.items[search.at], q), p.tol.xsect + p.gaps.items[search.at] + gap, .of(.vertex, search.at));
         return if (search.best == NONE) null else search.best;
     }
@@ -624,6 +624,13 @@ const Filler = struct {
         return incidence.reach(self.p.tol, self.p.gaps.items[v]);
     }
 
+    /// Edge `e` of operand `k`'s gap: its merged ends' larger (`incidence.edgeGap`), within
+    /// which the edge lies of the segment between their points.
+    fn edgeGapOf(self: *const Filler, k: usize, e: types.EdgeIndex) f64 {
+        const v = self.ends(k, e);
+        return incidence.edgeGap(self.p.gaps.items[v[0]], self.p.gaps.items[v[1]]);
+    }
+
     fn atTolerance(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error {
         return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = stageLabel(self.stage.*), .measured = d, .threshold = limit });
     }
@@ -642,9 +649,18 @@ const Filler = struct {
     /// feature, never a pave the feature's own reach denies. The solids fuzzer
     /// (2026-11-14): a hull's edge 1.9e-5 from a plate's top edge and 1.8e-6 from its
     /// bottom one, 2.5e-5 below, at a tolerance of 2e-5: the top crossing welded to the
-    /// bottom one's vertex, the top edge's piece ending 2.56e-5 off its line.
+    /// bottom one's vertex, the top edge's piece ending 2.56e-5 off its line. A new one
+    /// whose gap would pass the zone is refused (`gap_too_large`), as vertex–vertex refuses
+    /// a ball past it: two edges meet within the tolerance and their gaps
+    /// (`incidence.Decider.edgesMeet`), and their crossing halfway can lie farther than the
+    /// zone from both (the edge-case matrix, 2026-11-16: a box's corners 5e-5 under its
+    /// top, its edge 2.3e-4 under another box's at a tolerance of 2e-4, welded a vertex
+    /// 1.15e-4 from each, the union past the zone).
     fn weld(self: *Filler, q: Vec3, gap: f64, made_on: [2]Feature) Error!u32 {
-        const found = try self.find(q) orelse return self.addPoint(q, gap, 0);
+        const found = try self.find(q) orelse {
+            if (gap > self.p.tol.zone) return self.diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = made_on[0].entity(), .label = stageLabel(self.stage.*), .measured = gap, .threshold = self.p.tol.zone });
+            return self.addPoint(q, gap, 0);
+        };
         const reach = self.reachOf(found);
         for (made_on) |feature| {
             const beyond = try self.beyondReach(found, reach, feature) orelse continue;
@@ -671,7 +687,7 @@ const Filler = struct {
         switch (feature) {
             .edge => |e| {
                 const distance = self.edgeDistance(e.k, e.e, point);
-                return if (try self.within(distance, reach, feature.entity())) null else distance;
+                return if (try self.within(distance, reach + self.edgeGapOf(e.k, e.e), feature.entity())) null else distance;
             },
             .face => |f| {
                 const operand = self.body(f.k);
@@ -847,7 +863,8 @@ const Filler = struct {
     }
 
     /// `endStrip` for a point `q` reaching `reach`, not yet a merged vertex: refused when
-    /// within its reach of edge `e` of operand `k` with its foot in an end's strip.
+    /// within its reach and the edge's gap of edge `e` of operand `k` with its foot in an
+    /// end's strip.
     fn stripAt(self: *Filler, k: usize, e: types.EdgeIndex, q: Vec3, reach: f64) Error!void {
         const at_ends = self.ends(k, e);
         const p0 = self.p.point(at_ends[0]);
@@ -857,7 +874,7 @@ const Filler = struct {
         const s = vec.dot(vec.sub(q, p0), d) / len_sq;
         if (s < 0 or s > 1) return;
         const off = vec.distance(q, vec.addScaled(p0, d, s));
-        if (!try self.within(off, reach, .of(.edge, @backingInt(e)))) return;
+        if (!try self.within(off, reach + self.edgeGapOf(k, e), .of(.edge, @backingInt(e)))) return;
         const len = @sqrt(len_sq);
         return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = @min(s, 1 - s) * len, .threshold = self.p.tol.xsect });
     }
@@ -891,7 +908,7 @@ const Filler = struct {
     }
 
     /// Merged vertex `v` as a pave of every edge of operand `k` it lies on (within the
-    /// tolerance and its gap), but `skip`.
+    /// tolerance, its gap and the edge's: `incidence.Decider.onEdge`), but `skip`.
     fn onEdges(self: *Filler, k: usize, v: u32, skip: ?types.EdgeIndex) Error!void {
         const q = self.p.point(v);
         const Collect = struct {
@@ -917,15 +934,20 @@ const Filler = struct {
                 try self.endStrip(k, e, v);
                 continue;
             };
-            if (!try self.within(at.distance, self.reachOf(v), .of(.edge, @backingInt(e)))) continue;
+            if (!try self.within(at.distance, self.reachOf(v) + self.edgeGapOf(k, e), .of(.edge, @backingInt(e)))) continue;
             try self.addPave(k, e, v, at);
         }
     }
 
     // --- edge–edge ---
 
-    /// Every pair of edges of `a` and `b` crossing within the tolerance, away from their
-    /// ends, gives a merged vertex on both, tried against every other edge too. Two
+    /// Every pair of edges of `a` and `b` crossing within the tolerance and both edges'
+    /// gaps (`incidence.Decider.edgesMeet`: by the tolerance alone, a box's edge between
+    /// corners with gaps of 3.5e-5, its face in another's plane by those gaps, was apart
+    /// from an edge of that face crossing it 2.15e-4 off at a tolerance of 2e-4, and the
+    /// crossing was put on the face beside it, not on the edge: the 10K session,
+    /// 2026-11-16), away from their ends, gives a merged vertex on both, tried against
+    /// every other edge too. Two
     /// straight edges meet once: a pave both already have (an end on the other edge,
     /// vertex–edge's; ends merged, vertex–vertex's; an earlier crossing) is where they
     /// meet, however far the computed crossing is from it, as edge–face takes a pave the
@@ -956,7 +978,7 @@ const Filler = struct {
             const c0 = vec.addScaled(p0, d0, closest[0]);
             const c1 = vec.addScaled(q0, d1, closest[1]);
             const gap = vec.distance(c0, c1);
-            if (!try self.within(gap, self.p.tol.xsect, .of(.edge, @backingInt(ea)))) continue;
+            if (!try self.within(gap, self.p.tol.xsect + self.edgeGapOf(0, ea) + self.edgeGapOf(1, eb), .of(.edge, @backingInt(ea)))) continue;
             const mid = vec.lerp(c0, c1, 0.5);
             const along_a = self.along(0, ea, mid);
             const along_b = self.along(1, eb, mid);

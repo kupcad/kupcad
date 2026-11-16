@@ -191,13 +191,13 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
     return any and every_in;
 }
 
-/// How near an edge a plane or a point must come to be on it: the intersection tolerance
-/// and the larger of its ends' gaps, as a boolean takes a vertex to lie on a face
-/// (`boolean/pave.zig`'s vertex–face). One reach for a curved edge between its ends lying
-/// in a plane (`crossings`, its ends by their own) and a point on a face's boundary
-/// (`query/overlap.zig`).
+/// How near an edge a plane or a point with no gap must come to be on it: the
+/// intersection tolerance and the edge's gap (`incidence.edgeGap`, the larger of its ends'),
+/// as a boolean puts a vertex on an edge (`incidence.Decider.onEdge`). For a curved edge
+/// between its ends lying in a plane (`crossings`, its ends by their own) and an edge kept
+/// apart from a plane (`boolean/pipeline.zig`'s `keepsApart`).
 pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64 {
-    return incidence.reach(tol, @max(body.vertex(edge.start).gap, body.vertex(edge.end).gap));
+    return incidence.reach(tol, incidence.edgeGap(body.vertex(edge.start).gap, body.vertex(edge.end).gap));
 }
 
 /// Whether `p`, reaching `gap` beyond the tolerance, lies in both faces, their boundaries

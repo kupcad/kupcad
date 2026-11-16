@@ -1533,6 +1533,41 @@ test "degeneracy: a face between a flat tetrahedron's opposite edges is refused:
     try expectRefused(&tetra, &b, .below_feature_size);
 }
 
+test "degeneracy: an edge between corners with gaps, crossed by an edge of a face its face lies in by those gaps, meets it or is refused, never put beside it" {
+    // The 10K session's find (2026-11-16, locus), reduced: a box at a zone of 1e-4 whose
+    // bottom's front corners lie 3.5e-5 under its plane with that gap and the edge between
+    // them on a line 7e-5 under it (as a chain's merges leave them), and a box whose bottom is 1.8e-4 over that plane, its side crossing the
+    // front edge. The bottoms are one plane by the corners' reach (2.15e-4 within 2.35e-4);
+    // edge–edge measured the crossing edges' 2.15e-4 against the tolerance alone (2e-4),
+    // apart, and the crossing went on the box's front face beside the edge: the bottom's
+    // overlay cut a piece where the paves put no point (`imprint_unmatched`). Two edges
+    // meet within the tolerance and both edges' gaps; here the crossing would need a
+    // vertex past the zone from both: refused, every operation either way round
+    const coarse = Tolerance.fromZone(1e-4);
+    var a = try helpers.boxAt(coarse, .{ 1.5, 1.00005, 2e-5 }, .{ 3.5, 2.002, 3.00002 });
+    defer a.deinit();
+    for (a.vertices.items) |*v| {
+        const p = &a.geometry.points.items[@backingInt(v.point)];
+        if (p[1] != 1.00005 or p[2] != 2e-5) continue;
+        p[2] -= 3.5e-5;
+        v.gap = 3.5e-5;
+    }
+    // The front bottom edge's own line 7e-5 under the plane, its corners within their gap
+    for (a.edges.items) |e| {
+        const p0 = a.point(e.start);
+        const p1 = a.point(e.end);
+        if (e.curve.kind != .line or p0[1] != 1.00005 or p1[1] != 1.00005 or p0[2] > 0 or p1[2] > 0) continue;
+        a.geometry.lines.items[e.curve.index].o[2] = -5e-5;
+    }
+    var report = try check.run(testing.allocator, &a, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.first() == null);
+    var b = try helpers.boxAt(coarse, .{ 0.2499, 0.9998, 2e-4 }, .{ 2.0002, 2.9998, 2.0002 });
+    defer b.deinit();
+    try expectRefused(&a, &b, .gap_too_large);
+    try expectRefused(&b, &a, .gap_too_large);
+}
+
 test "degeneracy: a face along a flat tetrahedron's knife edges, past its thick middle, is refused: within the tolerance of two of its faces at once" {
     // The 10K session's find (2026-11-16, locus_solids), as the edge-case matrix draws it:
     // a tetrahedron 2.1 tolerances thick (past the minimum feature size, its opposite
