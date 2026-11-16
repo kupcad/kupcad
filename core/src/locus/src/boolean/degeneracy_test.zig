@@ -1520,6 +1520,30 @@ test "degeneracy: a corner put on an edge between gapped ends, off the edge's li
     try expectAllSound(&block, &t);
 }
 
+test "degeneracy: a hull's ridge through a thin plate, from the plate's side at 26.6°, joins them through the slit's mouth, no pinch" {
+    // The 10K session's find on b1053969 (2026-11-16, solids), its operands as the chain
+    // left them: a hull whose left face lies within the tolerance of a plate's left side,
+    // its ridge in the plate's top, the plate 3 tolerances thick. The union's underside
+    // has a slit where the hull passes through it, whose mouth on the side is 9e-5 long,
+    // its sides at 26.6° to the side's edge, the mouth's middle 2.01e-5 from them. The
+    // overlap rules placed that middle with the mouth's ends' gaps (2.5e-6), on the slit's
+    // side within reach, and inside the joined left face: the faces "touched", a pinch. A
+    // gap's middle is no vertex and is placed with no gap, as the paves place it. The
+    // plate less the hull is refused by design (the ridge leaves it pinched at a corner)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0.499995, 1.9999799999999432, 4.00001 }, .{ 1.999995, 2.999979999999943, 1e-05 }, .{ 0.499995, 3.999979999999943, 1e-05 }, .{ 0.499995, -2.000000005684342e-05, 2.00001 }, .{ 0.999995, 2.999979999999943, 4.00001 } };
+    var ridge = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer ridge.deinit();
+    var plate = try box(.{ 0.5, 0.5, 3.9999500000000636 }, .{ 4.5, 3.5, 4.000010000000064 });
+    defer plate.deinit();
+    for ([2][2]*const Body{ .{ &ridge, &plate }, .{ &plate, &ridge } }) |operands| {
+        var joined = try sound(operands[0], operands[1], .@"union");
+        joined.deinit();
+    }
+    try expectProbe(&ridge, &plate);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

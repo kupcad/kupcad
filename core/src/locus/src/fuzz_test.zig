@@ -2048,6 +2048,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // exactly onto an arc's one chord, triangulated across it, the mesh 3.66 short
         // (triangulate: the triangles' boundary is the rings)
         "chain 1 4 4 4 2 6 2 2 4 6 2 2 1 3 0 3 4 4 1 3 1 15 2 1 3 4 2 1 0 2 7 0 4 4 6 3 0 5 0 3 4 2 1 4 6 1 3 1 4 4 4 2 4 4 6 0 4 5 2 6 6 6 1 6 3 6 6 1 3 0 2 2 1 0 0 2 4 1 0 1",
+        // The 10K session on b1053969 (locus_solids): a hull's ridge through a thin plate,
+        // the union's slit mouth on the plate's side 9e-5 long, its middle placed with the
+        // ends' gaps (planar_faces.meet: a gap's middle has no gap, as the paves')
+        "solids 1 5 1 2 2 4 3 0 1 4 0 1 0 1 2 3 2 2 0 0 1 2 4 12 5 9 1 1 3 0 5 0 0 4 1 1 4 4 3 4 2 1 -1 10 3 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

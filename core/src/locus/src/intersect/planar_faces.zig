@@ -124,7 +124,12 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     // its ends and its middle as one straight segment, while a crossing in the band where
     // planes at a shallow angle stay within the tolerance of each other lies off their line:
     // a notch's apex 6e-5 under a plate's edge, the plate turned 0.3 rad, in both faces, the
-    // run's middle over the notch in neither (the edge-case matrix, 2026-11-16)
+    // run's middle over the notch in neither (the edge-case matrix, 2026-11-16). A gap's
+    // middle is a point that is no vertex, placed with no gap, as the paves place it: the
+    // ends' gaps reach the curve both lie on, not another edge one of them ends (a slit's
+    // mouth 9e-5 along the line, its sides at 26.6° to it, its middle 2.01e-5 from them,
+    // was on the slit's face by the ends' gaps of 2.5e-6 and in the other face: the faces
+    // "touched", a pinch; the 10K session on b1053969)
     const first = pieces.items.len;
     var joined = false;
     for (points, 0..) |m, i| {
@@ -132,7 +137,7 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
             joined = false;
             continue;
         }
-        const next_joined = i + 1 < points.len and try inBoth(a, fa, b, fb, points[i + 1].p, points[i + 1].gap, tol, diag) and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), @max(m.gap, points[i + 1].gap), tol, diag);
+        const next_joined = i + 1 < points.len and try inBoth(a, fa, b, fb, points[i + 1].p, points[i + 1].gap, tol, diag) and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), 0, tol, diag);
         if (next_joined) {
             try pieces.append(allocator, .{ .a = m.p, .b = points[i + 1].p, .gap_a = m.gap, .gap_b = points[i + 1].gap });
         } else if (!joined) {
