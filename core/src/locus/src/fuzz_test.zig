@@ -2034,6 +2034,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // arc ending 1.2e-8 rad before it; that grid point the arc's own, the ring back
         // along the line (edges: a grid point within the zone of an end is the vertex)
         "chain 1 4 4 5 4 4 0 5 4 2 4 3 4 4 2 3 2 0 3 4 5 2 6 3 6 5 2 3 4 3 2 3 4 6 4 1 1 3 0 4 5 2 2 4 1 0 1 7 1 1 1 1 3 6 6 4 2 1 4 1 5 5 4 2 2 1 3 1 2 3 2 2 2 2",
+        // The nightly of 2026-11-16 (run 43831843168, locus): a plate's top 1.9e-4 over a
+        // box's, either plane holding both; each order took its first operand's plane, and
+        // the union's section across the box's edge bent one way round (pipeline: the
+        // plane nearest the group's points)
+        "solids 1 6 3 4 0 3 0 3 3 3 3 1 1 4 2 0 4 0 4 3 0 0 0 2 8 4 14 11 3 1 0 0 4 3 4 1 3 2 3 3 13 5 6 0 3 3 1 0 1 1 3 1 3 4 2 2 4 2 10 14 9 1 1 8 2 2 1 3 1 4 0 3 0 2 7 3 9 10 9 8 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

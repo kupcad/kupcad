@@ -720,6 +720,35 @@ fn fragmentArea(paves: *const pave.Paves, fragments: *const imprint.Fragments, i
     return vec.length(twice) / 2;
 }
 
+/// Fragment `i`'s area and its area centroid, both in `plane` (the fragment's face's): each
+/// loop fanned from its first corner, a hole's triangles winding back and taking their
+/// share away. Null for a fragment of no area.
+fn areaCentroid(paves: *const pave.Paves, fragments: *const imprint.Fragments, i: usize, plane: surfaces.Plane) ?struct { area: f64, centroid: Vec3 } {
+    const n = plane.frame.z;
+    var area: f64 = 0;
+    var weighted = vec.ZERO3;
+    var origin: ?Vec3 = null;
+    for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
+        if (vertices.len < 3) continue;
+        const from = paves.point(vertices[0]);
+        const o = origin orelse from;
+        origin = o;
+        for (vertices[1 .. vertices.len - 1], vertices[2..]) |x, y| {
+            const p = paves.point(x);
+            const q = paves.point(y);
+            const signed = vec.dot(vec.cross(vec.sub(p, from), vec.sub(q, from)), n) / 2;
+            const centre = vec.scale(vec.add(vec.add(vec.sub(from, o), vec.sub(p, o)), vec.sub(q, o)), 1.0 / 3.0);
+            area += signed;
+            weighted = vec.addScaled(weighted, centre, signed);
+        }
+    }
+    if (area == 0) return null;
+    const centroid = vec.add(origin.?, vec.scale(weighted, 1 / area));
+    // On the face's plane: its corners lie off it by their gaps
+    return .{ .area = @abs(area), .centroid = vec.addScaled(centroid, n, -plane.height(centroid)) };
+}
+
 /// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
 /// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
 /// face's pieces, whose face piece and whose faces about the vertex are in shells of one
@@ -938,17 +967,25 @@ const Provenance = struct {
     }
 
     /// The groups of faces the paves found in one plane (`Paves.coplanar`, joined through
-    /// shared faces), each given one face's plane: the first, the first operand's before
-    /// the second's and by index (OCCT's same-domain representative), whose plane holds
-    /// every face of the group within the intersection tolerance: its own corners, the
-    /// merged vertices on it and the ends of its kept fragments' pieces on their lines,
+    /// shared faces), each given one face's plane (OCCT's same-domain representative): of
+    /// those whose plane holds every face of the group within the intersection tolerance,
+    /// the one moving the group's kept fragments least (`moved`, the report's shift), a tie
+    /// to rounding by the planes' fixed order (`planar_faces.planeBefore`); for one region
+    /// that is the plane nearest its corners, as a twin's copy is chosen
+    /// (`classify.represents`). Not the first operand's first: two planes 1.9e-4 apart at a
+    /// tolerance of 2e-4 both held a plate's top and a box's, each order of the operands
+    /// took its first operand's, and the union's section across the box's edge was one edge
+    /// A ∪ B and two B ∪ A (the nightly solids fuzzer, run 43831843168, 2026-11-16); by
+    /// the farthest point alone the two tied, and turning the operands whole turned the
+    /// tie. A face's points: its corners,
+    /// the merged vertices on it and the ends of its kept fragments' pieces on their lines,
     /// since each piece keeps its source's line (the pairs were found by one face lying in
     /// the other's plane, which a face a hair off parallel and larger need not; and a
     /// plate's bottom 1e-5 under another's, given its plane, left a hull's edge lying on
     /// the upper one 2.4e-5 off, past the tolerance the checker holds an edge to: the 10K
-    /// fuzz session, 2026-11-14, the operands swapped). A face the zone from it to within
-    /// rounding is refused (`at_tolerance`), and a group no plane of its own holds too
-    /// (`gap_too_large`: one plane for it would move a face past the tolerance).
+    /// fuzz session, 2026-11-14, the operands swapped). With no plane holding the group, a
+    /// face the tolerance from one to within rounding is refused (`at_tolerance`), else
+    /// the group (`gap_too_large`: one plane for it would move a face past the tolerance).
     fn samePlanes(self: *Provenance, diag: *Diagnostics) Error!void {
         const p = self.paves;
         const n_a: u32 = @intCast(p.operands[0].faces.items.len);
@@ -991,29 +1028,59 @@ const Provenance = struct {
 
     fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Face {
         const p = self.paves;
-        var pressed: ?Face = null;
+        // Every face's points, measured against each candidate's plane
+        var points: std.ArrayList(Vec3) = .empty;
+        defer points.deinit(self.allocator);
+        for (group) |member| {
+            try self.facePoints(nodeFace(member, n_a), diag);
+            try points.appendSlice(self.allocator, self.points.items);
+        }
+        const Candidate = struct { face: Face, plane: surfaces.Plane, moved: f64 };
+        var holding: std.ArrayList(Candidate) = .empty;
+        defer holding.deinit(self.allocator);
+        var at: ?struct { face: Face, comparison: canonical.Comparison } = null;
+        var scale = canonical.magnitude(points.items);
         for (group) |candidate| {
             const c = nodeFace(candidate, n_a);
             const candidate_plane = planeOf(p.operands[c.operand], c.face);
+            scale = @max(scale, canonical.magnitude(&.{candidate_plane.frame.origin}));
             var tally: canonical.Tally = .{};
-            for (group) |member| {
-                const g = nodeFace(member, n_a);
-                try self.facePoints(g, diag);
-                for (self.points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt)), p.tol.xsect, canonical.magnitude(&.{ pt, candidate_plane.frame.origin })));
-            }
+            for (points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt)), p.tol.xsect, canonical.magnitude(&.{ pt, candidate_plane.frame.origin })));
             switch (tally.verdict()) {
-                .same => {
-                    if (try self.keepsApart(group, n_a, candidate_plane, diag)) |g| {
-                        pressed = g;
-                        continue;
-                    }
-                    return c;
-                },
-                .at_tolerance => |at| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, c.face), .label = "a face's plane, which the faces the paves found in one plane with it lie in or not, to within rounding", .measured = at.measured, .threshold = at.limit }),
+                .same => try holding.append(self.allocator, .{ .face = c, .plane = candidate_plane, .moved = self.moved(group, n_a, candidate_plane) }),
+                .at_tolerance => |comparison| at = at orelse .{ .face = c, .comparison = comparison },
                 .apart => {},
             }
         }
+        // The least moved first: those as little as the least to rounding by the planes'
+        // order, then the rest by how much they move
+        var least = std.math.inf(f64);
+        for (holding.items) |candidate| least = @min(least, candidate.moved);
+        const Order = struct {
+            least: f64,
+            scale: f64,
+            fn first(o: @This(), x: Candidate) bool {
+                return canonical.sameToRounding(x.moved, o.least, o.scale);
+            }
+            fn lessThan(o: @This(), x: Candidate, y: Candidate) bool {
+                const fx = o.first(x);
+                const fy = o.first(y);
+                if (fx != fy) return fx;
+                if (!fx and x.moved != y.moved) return x.moved < y.moved;
+                return planar_faces.planeBefore(x.plane.frame, y.plane.frame);
+            }
+        };
+        std.mem.sort(Candidate, holding.items, Order{ .least = least, .scale = scale }, Order.lessThan);
+        var pressed: ?Face = null;
+        for (holding.items) |candidate| {
+            if (try self.keepsApart(group, n_a, candidate.plane, diag)) |g| {
+                pressed = pressed orelse g;
+                continue;
+            }
+            return candidate.face;
+        }
         if (pressed) |g| return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, g.face), .label = "a face of a group the paves found in one plane, each plane of which takes it within the tolerance of a feature of its own operand it is apart from", .threshold = p.tol.xsect });
+        if (at) |a| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, a.face.face), .label = "a face's plane, which the faces the paves found in one plane with it lie in or not, to within rounding", .measured = a.comparison.measured, .threshold = a.comparison.limit });
         const first = nodeFace(group[0], n_a);
         return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.face, first.face), .label = "faces the paves found in one plane, which no plane of theirs holds within the intersection tolerance", .threshold = p.tol.xsect });
     }
@@ -1131,6 +1198,31 @@ const Provenance = struct {
         const record = b.body.geometry.planes.items[entry.value_ptr.index];
         const normal = vec.scale(record.frame.z, record.frame.sign());
         return .{ .surface = entry.value_ptr.*, .same_sense = vec.dot(normal, outward) > 0 };
+    }
+
+    /// How far `target` moves the kept fragments of `group`'s faces over their area: the
+    /// volume between each fragment, in its own face's plane, and `target` (the height of
+    /// its area centroid times its area, a height over a plane being linear), as a mean
+    /// thickness; 0 for a group with nothing kept, and for a fragment its own plane holds.
+    /// Not the report's shift (the farthest corner times the area), which a hole's corners
+    /// off the face's plane by their gaps charged to the face's own plane (a plate's side
+    /// with a peg's face in it, 1e-5 out, took the peg's plane).
+    fn moved(self: *const Provenance, group: []const u32, n_a: u32, target: surfaces.Plane) f64 {
+        var volume: f64 = 0;
+        var area: f64 = 0;
+        for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
+            if (keep == .drop) continue;
+            for (group) |member| {
+                const g = nodeFace(member, n_a);
+                if (g.operand != fragment.operand or g.face != fragment.face) continue;
+                const own = planeOf(self.paves.operands[g.operand], g.face);
+                const at = areaCentroid(self.paves, self.fragments, i, own) orelse break;
+                volume += at.area * @abs(target.height(at.centroid));
+                area += at.area;
+                break;
+            }
+        }
+        return if (area > 0) volume / area else 0;
     }
 
     /// The largest distance of fragment `i`'s corners from `plane`.

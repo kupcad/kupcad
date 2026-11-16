@@ -990,24 +990,25 @@ test "boolean: the result's planes are its operands' own records, its lines thei
     try testing.expect(from_operands >= 12);
 }
 
-test "boolean: faces the paves found in one plane take the first operand's face's plane, the shift reported" {
+test "boolean: faces the paves found in one plane take the plane that moves them least, either way round, the shift reported" {
     // D28 (OCCT's same-domain faces): a peg's face 1e-5 out of a plate's, a group of two;
-    // its plane is the first operand's face's, the other face moved onto it by the gap over
-    // its area, which the report bounds (the nightly's find, run 43515591144, moved the
-    // plate's face by the interner's first record and nothing said so)
+    // its plane is the plate's face's, which moves the peg's small face by the gap, either
+    // way round (the first operand's once, which moved the plate's face with the peg
+    // first), and the report bounds what moved (the nightly's find, run 43515591144, moved
+    // the plate's face by the interner's first record and nothing said so)
     const plate_tol = Tolerance.fromSize(200);
     var plate = try boxAt(plate_tol, .{ 2.00001, -98.5, 0.5 }, .{ 102.00001, 101.5, 3.5 });
     defer plate.deinit();
     var peg = try boxAt(tol, .{ 2, -0.5, 1 }, .{ 3, 0.5, 2 });
     defer peg.deinit();
     const plate_volume = try volume(&plate);
-    for ([2][2]*const Body{ .{ &peg, &plate }, .{ &plate, &peg } }, [2]f64{ 2, 2.00001 }) |pair, plane_at| {
+    for ([2][2]*const Body{ .{ &peg, &plate }, .{ &plate, &peg } }) |pair| {
         var u = try sound(pair[0], pair[1], .@"union");
         defer u.deinit();
-        // The face toward -x on the first operand's plane, the record copied
+        // The face toward -x on the plate's plane, the record copied
         const face = types.FaceIndex.of(facing(&u, .{ -1, 0, 0 }));
         const plane = u.geometry.planes.items[u.face(face).surface.index];
-        try testing.expectEqual(plane_at, @abs(vec.dot(plane.frame.origin, plane.frame.z)));
+        try testing.expectEqual(2.00001, @abs(vec.dot(plane.frame.origin, plane.frame.z)));
         var report = pipeline.Report.init(testing.allocator);
         defer report.deinit();
         var again = try reported(pair[0], pair[1], .@"union", .{}, &report);

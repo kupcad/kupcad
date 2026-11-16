@@ -32,6 +32,7 @@ const index_mod = @import("../query/index.zig");
 const point_in_body = @import("../query/point_in_body.zig");
 const overlap = @import("../query/overlap.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const canonical = @import("../geometry/canonical.zig");
 const traverse = @import("../topology/traverse.zig");
 const incidence = @import("../geometry/incidence.zig");
 const face_edges = @import("../query/face_edges.zig");
@@ -489,26 +490,29 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
     return classes;
 }
 
-/// Coincident: inside a face of the other operand lying in this face's plane (`partners`),
-/// facing the same way or the other; null when outside them all. The imprint cut the
-/// fragment along those faces' boundaries, so it lies on one or off them all, whole: the
-/// first sample on no partner's boundary decides (one on a boundary gives way to the
-/// next), never a scan of every sample against every partner (a thousand-sided cap's
-/// four thousand samples off its partner took most of a boolean's time, 2026-11-13).
-/// Whether two fragments' sorted pieces are the same pieces (compared by their vertices:
-/// `std.mem.eql` of arrays does not compile in the fuzzer's LLVM build).
 /// Whether fragment `i`, of a face not in one plane with its twin `j`'s, is the pair's copy
 /// the result keeps: the one whose face's plane holds the region (their merged vertices)
-/// more closely, a tie by the planes in a fixed order. Not the first operand's, which made
-/// the result hang on the operands' order where the two faces are two planes: the region
-/// joins its own face's other fragments (one record), so A ∪ B kept a hull's corner the
-/// region reached and B ∪ A a flat tetrahedron's face over it (the 10K fuzz session,
-/// 2026-11-15). Both orders measure alike and choose alike.
+/// more closely, a tie (to rounding, `canonical.sameToRounding`) by the planes in a fixed
+/// order. Not the first operand's, which made the result hang on the operands' order where
+/// the two faces are two planes: the region joins its own face's other fragments (one
+/// record), so A ∪ B kept a hull's corner the region reached and B ∪ A a flat
+/// tetrahedron's face over it (the 10K fuzz session, 2026-11-15). Both orders measure
+/// alike and choose alike.
 fn represents(paves: *const Paves, fragments: *const Fragments, i: usize, j: usize) bool {
     const own = farthest(paves, fragments, i, i);
     const other = farthest(paves, fragments, j, i);
-    if (own != other) return own < other;
-    return planeBefore(planeOfFragment(paves, fragments, i), planeOfFragment(paves, fragments, j));
+    if (!canonical.sameToRounding(own, other, regionScale(paves, fragments, i, j))) return own < other;
+    return planar_faces.planeBefore(planeOfFragment(paves, fragments, i), planeOfFragment(paves, fragments, j));
+}
+
+/// The size of fragment `region`'s merged vertices' coordinates and of the origins of its
+/// face's plane and fragment `other`'s: what their heights over the two are rounded at.
+fn regionScale(paves: *const Paves, fragments: *const Fragments, region: usize, other: usize) f64 {
+    var scale = canonical.magnitude(&.{ planeOfFragment(paves, fragments, region).origin, planeOfFragment(paves, fragments, other).origin });
+    for (fragments.loopsOf(region)) |loop| for (fragments.loopVertices(loop)) |v| {
+        scale = @max(scale, canonical.magnitude(&.{paves.point(v)}));
+    };
+    return scale;
 }
 
 /// The plane of fragment `i`'s face.
@@ -525,23 +529,6 @@ fn farthest(paves: *const Paves, fragments: *const Fragments, of: usize, region:
         worst = @max(worst, @abs(vec.dot(vec.sub(paves.point(v), frame.origin), frame.z)));
     };
     return worst;
-}
-
-/// A fixed order of planes, whichever way they face: by their normal (turned so its first
-/// non-zero component is positive), then their offset along it.
-fn planeBefore(a: @import("../geometry/types.zig").Frame, b: @import("../geometry/types.zig").Frame) bool {
-    const na = canonicalNormal(a.z);
-    const nb = canonicalNormal(b.z);
-    for (na, nb) |x, y| if (x != y) return x < y;
-    return vec.dot(na, a.origin) < vec.dot(nb, b.origin);
-}
-
-fn canonicalNormal(n: Vec3) Vec3 {
-    for (n) |c| {
-        if (c > 0) return n;
-        if (c < 0) return vec.neg(n);
-    }
-    return n;
 }
 
 /// Each fragment's twin (`NONE` for none): the one fragment of the other operand over the

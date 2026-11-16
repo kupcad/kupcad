@@ -243,6 +243,26 @@ pub fn addFace(o: *overlay_mod.Overlay, body: *const Body, f: types.FaceIndex, f
     }
 }
 
+/// A fixed order of planes, whichever way they face: by their normal (turned so its first
+/// non-zero component is positive), then their offset along it. What a choice between
+/// planes that hold a region alike falls back on, so that both orders of a boolean's
+/// operands choose alike (`boolean/classify.zig`'s twins, `boolean/pipeline.zig`'s
+/// coplanar groups).
+pub fn planeBefore(a: Frame, b: Frame) bool {
+    const na = canonicalNormal(a.z);
+    const nb = canonicalNormal(b.z);
+    for (na, nb) |x, y| if (x != y) return x < y;
+    return vec.dot(na, a.origin) < vec.dot(nb, b.origin);
+}
+
+fn canonicalNormal(n: Vec3) Vec3 {
+    for (n) |c| {
+        if (c > 0) return n;
+        if (c < 0) return vec.neg(n);
+    }
+    return n;
+}
+
 /// `p` in the coordinates of `frame`'s plane.
 pub fn flat(frame: Frame, p: Vec3) Vec2 {
     const l = frame.toLocal(p);

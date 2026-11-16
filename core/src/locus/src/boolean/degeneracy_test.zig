@@ -889,17 +889,17 @@ test "degeneracy: a plate's top 1.8e-4 over a notch's ceiling, at a tolerance of
 
 test "degeneracy: a union's top moved 7e-5 onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from its edges: refused" {
     // The nightly (2026-11-15, locus), reduced: a box's top 7e-5 over a plate's, at the
-    // plate's tolerance of 2e-4, one plane: the union's top takes the box's (D28), its
-    // edges on the plate's lines below. A hull's top over it is within the tolerance of the
+    // plate's tolerance of 2e-4, one plane: the union's top takes the box's, the larger
+    // (D28: the plane moving the faces least), its edges on the plate's lines below. A hull's top over it is within the tolerance of the
     // plane and beyond it of the top's edge inside the hull's top: the faces were taken as
     // one plane, the edge imprinted on the hull's top, which the paves had kept off it
     // (`imprint_unmatched`). No decision of the tolerance is consistent: refused, every
     // operation either way round.
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var small = try helpers.boxAt(Tolerance.fromZone(1e-5), .{ 0.49998, 1.99998, 2.00002 }, .{ 0.99998, 5.99998, 4.00002 });
+    var small = try helpers.boxAt(Tolerance.fromZone(1e-5), .{ -49.50002, -48.00002, 2.00002 }, .{ 0.99998, 51.99998, 4.00002 });
     defer small.deinit();
-    var plate = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -97.9998, -47.9999, 0.99995 }, .{ 2.0002, 102.0001, 3.99995 });
+    var plate = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -7.9998, -2.9999, 0.99995 }, .{ 2.0002, 12.0001, 3.99995 });
     defer plate.deinit();
     var joined = try pipeline.boolean(testing.allocator, &small, &plate, .@"union", .{}, &diag, null);
     defer joined.deinit();
@@ -1336,6 +1336,48 @@ test "degeneracy: a chain of edges on two lines 8.7e-5 apart is joined whole, ei
     // the report's shift (the plate less the rest is refused, `pinched`, as it was before
     // chains were joined whole: the result would touch itself inside one solid)
     try helpers.expectIdentitiesAtTolerance(&joined, &plate);
+}
+
+test "degeneracy: a plate's top and a box's 1.9e-4 apart, both planes holding the two at a tolerance of 2e-4, give one plane either way round" {
+    // The nightly solids fuzzer's find (2026-11-16, run 43831843168), as it came: a turned
+    // hull united with a box, then joined with a plate (zone 1e-4) whose top lies 1.9e-4
+    // over the box's top. The paves find the two tops in one plane, and either top's
+    // plane holds both within the intersection tolerance. The group took its first
+    // operand's first face's plane, so A ∪ B lay in the box's top and B ∪ A in the
+    // plate's, where the hull's section across the box's top edge is two edges, not one
+    // line (22 vertices against 23). The group takes the plane nearest its points
+    const coarse = Tolerance.fromZone(1e-4);
+    const Affine = mat.Affine;
+    const middle: Vec3 = @splat(2);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 3, 4, 0 }, .{ 3, 0, 3 }, .{ 3, 3, 3 }, .{ 1, 1, 4 }, .{ 2, 0, 4 }, .{ 0, 4, 3 } };
+    var h0 = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer h0.deinit();
+    // The generator's placements, composed as it composes them
+    var place = Affine.rotateAbout(middle, .{ 1, 0, 0 }, std.math.pi / 2.0).compose(&Affine.translate(vec.ZERO3));
+    place = Affine.translate(.{ -2e-5, -5e-6, -2e-3 }).compose(&Affine.translate(vec.ZERO3).compose(&place));
+    var h = try @import("../construct/transform.zig").transform(testing.allocator, &h0, &place, .{}, &diag);
+    defer h.deinit();
+    var b0 = try helpers.boxAt(tol, .{ 0, 3, 1 }, .{ 4, 4, 3 });
+    defer b0.deinit();
+    var b = try helpers.moved(&b0, .{ 5e-6, 2e-3, 1e-5 });
+    defer b.deinit();
+    var joined = try sound(&h, &b, .@"union");
+    defer joined.deinit();
+    var p0 = try helpers.boxAt(coarse, .{ -48, -48, 0 }, .{ 52, 102, 3 });
+    defer p0.deinit();
+    var turn = Affine.rotateAbout(middle, .{ 0, 0, 1 }, 1e-6).compose(&Affine.translate(vec.ZERO3));
+    turn = Affine.translate(.{ 1.9999999855049212e-4, -1.9999999855049212e-4, 1.9999999855049212e-4 }).compose(&Affine.translate(vec.ZERO3).compose(&turn));
+    var plate = try @import("../construct/transform.zig").transform(testing.allocator, &p0, &turn, .{}, &diag);
+    defer plate.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var forward = try sound(&joined, &plate, op);
+        defer forward.deinit();
+        var swapped = try sound(&plate, &joined, op);
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+    }
 }
 
 test "degeneracy: an edge on a face by its ends' reach and off it by its line is refused, never laid in the face" {
@@ -1961,8 +2003,9 @@ test "degeneracy: OCCT's H7 thinned to 5, 3 and 1.5 intersection tolerances, the
 test "degeneracy: OCCT's spec case, a box 1e-6 and 1e-4 taller and deeper than the one it is joined to, united either way round" {
     // After OCCT's `dox/specification/boolean_operations` §11a.1.1, case 2: a cube of 10
     // and the next box along x, 10 + δ high and deep. Within the zone (δ = 1e-6) the tops
-    // and backs are one plane each (D28: the first operand's), so either union is a box,
-    // 6 faces, 20 · 10² one way and 20 · (10 + δ)² the other, each to its reported shift;
+    // and backs are one plane each (D28: the plane moving the faces least, here the two
+    // alike to rounding and taken by the planes' fixed order, z = 10 and y = 10), so either
+    // union is the same box, 6 faces, 20 · 10², to its reported shift;
     // at five intersection tolerances (δ = 1e-4) the steps stay, both unions the same nine
     // faces (the ends, bottom and front whole, two tops, two backs, the second's L-shaped
     // strip at x = 10 left uncovered), 1000 + 10 · (10 + δ)²
@@ -1982,7 +2025,7 @@ test "degeneracy: OCCT's spec case, a box 1e-6 and 1e-4 taller and deeper than t
             defer u.deinit();
             try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&u));
             try testing.expectEqual(@as(usize, if (within) 6 else 9), u.counts().faces);
-            const side = if (within and !swapped) 10 else 10 + over;
+            const side = if (within) 10 else 10 + over;
             const want = if (within) 20 * side * side else 1000 + 10 * side * side;
             if (within) try testing.expect(r.shift > 0);
             try testing.expectApproxEqAbs(want, try volume(&u), r.shift + CLOSE);

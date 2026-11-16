@@ -80,6 +80,15 @@ pub const Tally = struct {
     }
 };
 
+/// Whether two distances of size at most `scale` are one to rounding (D27's band): a
+/// choice between the things they measure takes them as equal, so that it does not hang on
+/// where the configuration is placed (two planes each 1.9e-4 from the farthest point of a
+/// group they hold chose one placed at the origin and the other moved whole, the 10K fuzz
+/// replay, 2026-11-16).
+pub fn sameToRounding(a: f64, b: f64, scale: f64) bool {
+    return @abs(a - b) <= Comparison.distance(a, b, scale).band;
+}
+
 /// The size of the largest coordinate of `points`: what their distances are rounded at.
 pub fn magnitude(points: []const Vec3) f64 {
     var m: f64 = 0;
