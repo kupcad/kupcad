@@ -114,23 +114,31 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     }
     const points = marks.items[0..kept];
 
-    // A piece is a run of crossings each in both faces, every gap between them in both by
-    // its middle: a gap's middle can be within the zone of a face whose end of it is twice
-    // that outside, and a piece reaching that end put a point of one face's boundary on
-    // the other face (the overlap rules' find in the solids fuzzer, 2026-11-13: a box's
-    // corner the intersection tolerance and a rounding from a triangle's corner)
+    // A piece is a gap between crossings, each end in both faces and the gap in both by its
+    // middle, as the paves cut a section (`boolean/pave.zig`'s face–face): a gap's middle
+    // can be within the zone of a face whose end of it is twice that outside, and a piece
+    // reaching that end put a point of one face's boundary on the other face (the overlap
+    // rules' find in the solids fuzzer, 2026-11-13: a box's corner the intersection
+    // tolerance and a rounding from a triangle's corner); a crossing in both with no such
+    // gap either side is a piece of its own, a point. A run of gaps was one piece, judged by
+    // its ends and its middle as one straight segment, while a crossing in the band where
+    // planes at a shallow angle stay within the tolerance of each other lies off their line:
+    // a notch's apex 6e-5 under a plate's edge, the plate turned 0.3 rad, in both faces, the
+    // run's middle over the notch in neither (the edge-case matrix, 2026-11-16)
     const first = pieces.items.len;
-    var open: ?Mark = null;
+    var joined = false;
     for (points, 0..) |m, i| {
         if (!try inBoth(a, fa, b, fb, m.p, m.gap, tol, diag)) {
-            if (open) |start| try pieces.append(allocator, .{ .a = start.p, .b = points[i - 1].p, .gap_a = start.gap, .gap_b = points[i - 1].gap });
-            open = null;
+            joined = false;
             continue;
         }
-        if (open == null) open = m;
-        if (i + 1 < points.len and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), @max(m.gap, points[i + 1].gap), tol, diag)) continue;
-        try pieces.append(allocator, .{ .a = open.?.p, .b = m.p, .gap_a = open.?.gap, .gap_b = m.gap });
-        open = null;
+        const next_joined = i + 1 < points.len and try inBoth(a, fa, b, fb, points[i + 1].p, points[i + 1].gap, tol, diag) and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), @max(m.gap, points[i + 1].gap), tol, diag);
+        if (next_joined) {
+            try pieces.append(allocator, .{ .a = m.p, .b = points[i + 1].p, .gap_a = m.gap, .gap_b = points[i + 1].gap });
+        } else if (!joined) {
+            try pieces.append(allocator, .{ .a = m.p, .b = m.p, .gap_a = m.gap, .gap_b = m.gap });
+        }
+        joined = next_joined;
     }
     return if (pieces.items.len > first) .crossing else .apart;
 }

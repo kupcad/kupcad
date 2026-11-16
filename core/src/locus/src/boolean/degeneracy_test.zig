@@ -1137,10 +1137,11 @@ test "degeneracy: a hull's edge across a box's floor, passing its corner within 
     var pieces: std.ArrayList(planar_faces.Piece) = .empty;
     defer pieces.deinit(testing.allocator);
     try testing.expectEqual(planar_faces.Relation.crossing, try planar_faces.meet(testing.allocator, &floor, top, &b, side, tol, &pieces, &diag));
-    try testing.expectEqual(@as(usize, 1), pieces.items.len);
-    for ([_]Vec3{ pieces.items[0].a, pieces.items[0].b }, [_]f64{ pieces.items[0].gap_a, pieces.items[0].gap_b }) |end, gap| {
-        try testing.expect(try planar_faces.place(&floor, top, end, gap, tol, &diag) != .outside);
-        try testing.expect(try planar_faces.place(&b, side, end, gap, tol, &diag) != .outside);
+    for (pieces.items) |piece| {
+        for ([_]Vec3{ piece.a, piece.b }, [_]f64{ piece.gap_a, piece.gap_b }) |end, gap| {
+            try testing.expect(try planar_faces.place(&floor, top, end, gap, tol, &diag) != .outside);
+            try testing.expect(try planar_faces.place(&b, side, end, gap, tol, &diag) != .outside);
+        }
     }
 }
 
@@ -1450,6 +1451,23 @@ test "degeneracy: faces at right angles sharing merged vertices, one off the oth
     var solid = try helpers.notchedPrism(tol, 1 - 0.9 * tol.xsect);
     defer solid.deinit();
     var plate = try box(.{ 0, 0, 0.5 }, .{ 10, 5, 1 });
+    defer plate.deinit();
+    try expectAllSound(&solid, &plate);
+}
+
+test "degeneracy: a notch's apex on a face turned 0.3 rad from it, 3 tolerances off where they cross, touches it there" {
+    // The edge-case matrix (2026-11-16): a plate against a notched front, turned 0.3 rad
+    // about its top edge, the notch's apex 3 tolerances under that edge and within the
+    // tolerance of the plate's front, as are the notch's sides down to it: the two fronts
+    // touch along the edge and down and up the notch's sides. The overlap rules joined
+    // those pieces into one run, judged as one straight segment whose middle, over the
+    // notch, is in neither face (`faces_intersect`); each piece is judged by itself, as
+    // the paves cut them
+    var solid = try helpers.notchedPrism(tol, 1 - 3 * tol.xsect);
+    defer solid.deinit();
+    var upright = try box(.{ 0, 0, 0.5 }, .{ 10, 5, 1 });
+    defer upright.deinit();
+    var plate = try turned(&upright, .{ 0, 0, 1 }, vec.X3, 0.3);
     defer plate.deinit();
     try expectAllSound(&solid, &plate);
 }
