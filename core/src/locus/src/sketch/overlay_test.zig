@@ -686,6 +686,28 @@ test "overlay: circles missing each other by less than the zone touch at one ver
     try testing.expectError(error.AtTolerance, at.run());
 }
 
+test "overlay: a line tangent to an arc at their shared vertex, far out, meets it there only" {
+    // The sheet rule's first run (2026-11-16, the plain chain run): a face of a union of
+    // an offset sheet, turned 0.014 rad and moved 2e6 out, its line tangent to its arc at
+    // their vertex. The touch's place along them moves by √(2·r·δ) for a rounding δ of the
+    // line (5e-5 at 2e6), and the overlay cut both 2.26e-5 from the vertex, a point the
+    // sheet does not have. Two curves that never part beyond the zone between their shared
+    // vertex and a meeting meet once, at the vertex. The face as it came
+    const a = Vec2{ 2000002.1381644835, -2999996.402944513 };
+    const v = Vec2{ 2000001.9573746538, -2999996.972016436 };
+    const b = Vec2{ 2000002.2701891724, -2999996.33661458 };
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try o.addEdge(.{ .a = a, .b = v });
+    try o.addEdge(.{ .a = v, .b = b, .arc = .{ .c = .{ 2000004.2177559903, -2999997.690122426 }, .r = 2.3717082451262845, .ccw = false } });
+    try o.addEdge(.{ .a = b, .b = a, .arc = .{ .c = .{ 2000003.9996, -2999999.9434328717 }, .r = 4, .ccw = true } });
+    try o.run();
+    try testing.expectEqual(@as(usize, 3), o.points.items.len);
+    try testing.expectEqual(@as(usize, 3), o.edges.items.len);
+    try expectPlanar(&o);
+}
+
 test "overlay: two circles on the grid touching inside, their radii square roots, meet at one vertex" {
     // The nightly's find (2026-11-16, run 43773180777, locus): radii √11.25 and √0.3125,
     // centres √7.8125 apart, their difference: touching inside at (3.6, 6.8). The radii

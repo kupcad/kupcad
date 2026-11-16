@@ -425,6 +425,7 @@ pub const Overlay = struct {
             n = try self.lineArc(if (gi.arc == null) gi else gj, if (gi.arc == null) gj else gi, &candidates);
         }
         for (candidates[0..n]) |p| {
+            if (try self.sameMeeting(gi, gj, p)) continue;
             const v = try self.vertex(p);
             try self.cutAt(i, v, cuts);
             try self.cutAt(j, v, cuts);
@@ -432,6 +433,39 @@ pub const Overlay = struct {
         // Each end of one on the other: a T-junction, or the end of an overlap
         for ([_]u32{ gj.a, gj.b }) |v| try self.cutAt(i, v, cuts);
         for ([_]u32{ gi.a, gi.b }) |v| try self.cutAt(j, v, cuts);
+    }
+
+    /// Whether `p`, where given edges `gi` and `gj` meet, is the meeting a vertex they share
+    /// already is: the two stay within the zone of each other all the way from that vertex
+    /// to `p`, so they never part between (two curves meet once per contact, as the
+    /// booleans' edges do, KNOWLEDGE "Two edges meet once, too"). At a tangent join the
+    /// touch's place along the curves is ill-conditioned, a rounding δ of the line moving it
+    /// by √(2·r·δ): an offset's round join turned and moved 2e6 out, its line and arc
+    /// tangent at their vertex, met again 2.26e-5 along, and the sheet's own overlay cut
+    /// both there (the sheet rule's first run, 2026-11-16). Two lines need none: an end on
+    /// the other's line is never their crossing (`lineLine`). Within rounding of the zone,
+    /// refused (`AtTolerance`).
+    fn sameMeeting(self: *const Overlay, gi: Given, gj: Given, p: Vec2) Error!bool {
+        if (gi.arc == null and gj.arc == null) return false;
+        for ([2]u32{ gi.a, gi.b }) |v| {
+            if (v != gj.a and v != gj.b) continue;
+            const from = self.point(v);
+            var scale = @max(magnitude2(from), magnitude2(p));
+            const apart = if (gi.arc != null and gj.arc != null) blk: {
+                const ai = gi.arc.?;
+                const aj = gj.arc.?;
+                scale = @max(scale, magnitude2(ai.c) + ai.r, magnitude2(aj.c) + aj.r);
+                // The stretch of `gi`'s arc from the shared vertex to `p`, run as the arc runs
+                const ends: [2]Vec2 = if (v == gi.a) .{ from, p } else .{ p, from };
+                break :blk arcStretchApart(ends[0], ends[1], ai, aj);
+            } else blk: {
+                const arc = (gi.arc orelse gj.arc).?;
+                scale = @max(scale, magnitude2(arc.c) + arc.r);
+                break :blk segmentApart(from, p, arc);
+            };
+            if (try self.touch(apart, scale)) return true;
+        }
+        return false;
     }
 
     /// A cut of given edge `i` at vertex `v`, when `v` lies on it and is neither end.
@@ -1478,6 +1512,34 @@ fn slotAt(s: Segment, at: Vec2) u32 {
 }
 
 /// Whether `p` is left of `q`: by x, then by y.
+/// How far the segment `a`–`b` strays from the circle of `arc`, inside or out: the
+/// distance from the centre is convex along a line, least at the foot of the
+/// perpendicular (or an end), greatest at an end.
+fn segmentApart(a: Vec2, b: Vec2, arc: Arc) f64 {
+    const d = vec.sub2(b, a);
+    const len_sq = vec.dot2(d, d);
+    const s = if (len_sq == 0) 0 else std.math.clamp(vec.dot2(vec.sub2(arc.c, a), d) / len_sq, 0, 1);
+    const nearest = vec.distance2(vec.addScaled2(a, d, s), arc.c);
+    const farthest = @max(vec.distance2(a, arc.c), vec.distance2(b, arc.c));
+    return @max(arc.r - nearest, farthest - arc.r);
+}
+
+/// How far the stretch from `a` to `b` of the arc `on` (run as it runs) strays from the
+/// circle of `other`, inside or out: a point going round a circle is nearest and farthest
+/// from another centre on the line of the two centres, so the stretch's ends and those
+/// two points of it, where it holds them, bound it.
+fn arcStretchApart(a: Vec2, b: Vec2, on: Arc, other: Arc) f64 {
+    var apart = @max(@abs(vec.distance2(a, other.c) - other.r), @abs(vec.distance2(b, other.c) - other.r));
+    const between = vec.sub2(other.c, on.c);
+    const dist = vec.length2(between);
+    if (dist == 0) return apart;
+    for ([_]f64{ on.r, -on.r }) |along| {
+        const q = vec.addScaled2(on.c, between, along / dist);
+        if (onArcStrictly(a, b, on, q)) apart = @max(apart, @abs(vec.distance2(q, other.c) - other.r));
+    }
+    return apart;
+}
+
 /// The size of a point's larger coordinate: what its distances are rounded at.
 fn magnitude2(p: Vec2) f64 {
     return @max(@abs(p[0]), @abs(p[1]));
