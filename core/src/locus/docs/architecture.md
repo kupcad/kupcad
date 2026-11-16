@@ -1353,7 +1353,8 @@ the table (`-Dupdate-snapshots`) and are the body reader's fuzz seeds too.
   edge along an edge above or beside it, a face along a thin plate or a flat
   tetrahedron's knife edges, cut on a diagonal past its thick middle, an apex over a
   face, an edge, a corner or an end's strip, a face at a hollow box's wall, a face along a
-  solid whose corners carry gaps) and walks a ladder of distances in intersection
+  solid whose corners carry gaps, a notch's apex at the edge of a face at an angle to it)
+  and walks a ladder of distances in intersection
   tolerances, angles and the second operand's zone. Every case runs the fuzzer's own
   oracles (`boolean/oracle_test.zig`, one module for both drivers) and the step under
   rigid moves; failures are listed by family. A fast tier runs with the tests (about a

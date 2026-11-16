@@ -13,7 +13,7 @@
 //! shows them all.
 //!
 //! The fast tier (a ladder's values on either side of each boundary) runs with the suite;
-//! `-Dedge-matrix=full` runs every value, as the nightly does.
+//! `-Dedge-matrix=true` runs every value, as the nightly does.
 
 const std = @import("std");
 const testing = std.testing;
@@ -342,4 +342,19 @@ fn gapped(zone: f64, miss: f64) !Body {
     defer report.deinit(testing.allocator);
     if (report.first() != null) return error.NotBuilt;
     return body;
+}
+
+test "edge matrix: a notch's apex at the edge of a face at an angle to it" {
+    // A prism whose front is notched down to d tolerances under a plate's top edge, the
+    // plate against that front at the coarser zone and turned about its edge: the plate's
+    // top and the front at an angle, sharing merged vertices, the apex off the others' line
+    // by its depth, within its reach or past it (find ai)
+    var tally: Tally = .{ .family = "notch apex at an edge" };
+    var buffer: [2 * DISTANCES.len]f64 = undefined;
+    for (zones()) |ratio| for (signedLadder(&buffer)) |d| for (angles()) |angle| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, apex {d} tolerances under the edge, {e} rad", .{ ratio, d, angle }), helpers.notchedPrism(Tolerance.fromZone(ZONE), 1 - d * x), tiltedBox(ZONE * ratio, .{ 0, 0, 0.5 }, .{ 10, 5, 1 }, .{ 0, 0, 1 }, vec.X3, angle), false);
+    };
+    try tally.finish();
 }
