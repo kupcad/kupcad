@@ -2017,6 +2017,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // slit by the union (the paves: an existing edge stands for a section only on the
         // face by its line)
         "solids 1 8 0 1 0 4 2 4 3 2 1 0 0 2 2 0 4 2 1 0 2 0 4 4 1 1 3 1 4 7 4 3 3 1 0 0 2 0 2 2 3 2 0 0 1 0 10 11 4 8 2 3 0 1 2 0 4 0 4 2 1 3 6 8 15 2",
+        // The session on e252409f (2026-11-16), both targets: two boxes' faces a hair off
+        // parallel (turned 1e-6), within the tolerance of each other at three corners of
+        // where they meet and past it at the fourth, both kept by the union one on the
+        // other (the paves: merged vertices on both faces off one line put them in one
+        // plane)
+        "solids 0 2 4 1 3 1 4 0 0 6 3 12 3 2 2 3 1 0 3 4 2 4 1 3 0 1 7 3 2 0 2 5 0",
+        "solids 2 2 4 0 3 1 4 2 3 9 0 -2 2 2 1 2 0 4 1 3 3 4 0 3 7 1 14 1 11 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

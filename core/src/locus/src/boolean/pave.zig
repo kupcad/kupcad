@@ -1354,7 +1354,15 @@ const Filler = struct {
     /// Every pair of faces of `a` and `b`: lying in one plane, recorded, and each one's
     /// pave blocks inside the other a section segment of it; else the merged vertices both
     /// lie on, sorted along their planes' line, each gap whose middle is in both faces a
-    /// section segment of each face it is inside of.
+    /// section segment of each face it is inside of. Two planes meet along one line, so
+    /// merged vertices on both faces off one line put the faces in one plane where they
+    /// meet, whatever corners of theirs lie off it elsewhere: the pair is recorded as lying
+    /// in one plane, and the plane the pipeline gives the pair holds both faces or the pair
+    /// is refused (`Provenance.samePlanes`). Taken for a line, they were ordered by the noise
+    /// of two parallel normals' cross product, and each face kept the other's imprint or
+    /// not by its own corners: a plate's top and another's bottom, a hair off parallel and
+    /// within the tolerance of each other over most of where they meet, past it at one
+    /// corner, were both kept, the union's face doubled (the 10K fuzz session on e252409f).
     fn faceFace(self: *Filler) Error!void {
         const p = self.p;
         var pairs = try self.overlapping(&self.face_tree[0], &self.face_tree[1]);
@@ -1390,6 +1398,12 @@ const Filler = struct {
                 } else if (on_a.items[i] < on_b.items[j]) i += 1 else j += 1;
             }
             if (both.items.len < 2) continue;
+            if (!try self.onOneLine(both.items, .of(.face, @backingInt(fb)))) {
+                try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
+                try self.blocksInside(1, fb, 0, fa);
+                try self.blocksInside(0, fa, 1, fb);
+                continue;
+            }
             const line = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse continue;
             const Order = struct {
                 points: []const Vec3,
@@ -1423,6 +1437,24 @@ const Filler = struct {
                 self.tally();
             }
         }
+    }
+
+    /// Whether merged vertices `vertices` (at least two) lie on one line, each within its
+    /// reach of the line through the first and the one farthest from it (`entity` named
+    /// when one is at its reach to rounding).
+    fn onOneLine(self: *Filler, vertices: []const u32, entity: diagnostics.EntityRef) Error!bool {
+        const p = self.p;
+        const u = p.point(vertices[0]);
+        var far = vertices[1];
+        for (vertices[2..]) |v| {
+            if (vec.distance(p.point(v), u) > vec.distance(p.point(far), u)) far = v;
+        }
+        const d = vec.normalized(vec.sub(p.point(far), u)) orelse return true;
+        for (vertices[1..]) |v| {
+            if (v == far) continue;
+            if (!try self.within(vec.length(vec.cross(vec.sub(p.point(v), u), d)), self.reachOf(v), entity)) return false;
+        }
+        return true;
     }
 
     /// A warning (`nearly_coplanar`, OCCT's BadPositioning) for each face of `a` parallel to

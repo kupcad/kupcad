@@ -727,7 +727,13 @@ importing only those before it, which the layering test holds):**
   block's ends, as the checker holds an edge, else refused `below_feature_size`; a hull's
   edge whose corners reached a box's face by their gaps, its line 2.5e-5 off it, was laid
   in the face as a slit, 2026-11-16).
-  Two faces whose vertices all lie on the other's plane are coplanar: recorded, and each
+  Two faces whose vertices all lie on the other's plane are coplanar, and so are two whose
+  merged vertices on both are off one line (two planes meet along one line: three points
+  of both off it put the faces in one plane where they meet, whatever corners lie off it
+  elsewhere; taken for a line they were ordered by the noise of two parallel normals' cross
+  product, and a plate's top and a box's bottom a hair off parallel, within `xsect` of
+  each other at three corners of where they meet and past it at the fourth, were both kept
+  by the union one on the other, 2026-11-16): recorded, and each
   one's pave blocks inside the other its section segments, whose ends must lie in that
   face's plane within the tolerance and their gaps (where in it is the imprint's), else
   refused `below_feature_size` (a chain's union top moved 7e-5

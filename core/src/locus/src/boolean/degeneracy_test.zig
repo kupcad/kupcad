@@ -1373,6 +1373,29 @@ test "degeneracy: an edge on a face by its ends' reach and off it by its line is
     try expectRefused(&b, &cut, .below_feature_size);
 }
 
+test "degeneracy: two faces a hair off parallel, within the tolerance of each other at three corners of where they meet and past it at the fourth, are one plane's or refused" {
+    // The 10K session's find on e252409f (2026-11-16, both targets), at one tolerance: a
+    // box's bottom tilted 4.7e-6 over a plate's top, 5e-6 above it at its corner inside the
+    // plate, 1.5e-5 where the plate's sides cross it and 2.5e-5 at the plate's corner
+    // inside it (the tolerance, 2e-5). Neither face lies in the other's plane by all its
+    // corners, so the pair was taken to meet along their planes' line, and the three merged
+    // vertices on both were ordered by the noise of the normals' cross product; the plate's
+    // top kept the box's imprint, the box's bottom not the plate's, and the union kept both
+    // where they meet, one on the other (`faces_intersect`). Merged vertices on both faces
+    // off one line put them in one plane, where its rules decide them: the plate's corner
+    // inside the box's bottom past the tolerance of its plane is refused
+    var plate = try box(.{ 0, 0, -1 }, .{ 4, 4, 0 });
+    defer plate.deinit();
+    var b0 = try box(.{ 1, 1, 0 }, .{ 5, 5, 1 });
+    defer b0.deinit();
+    var b1 = try turned(&b0, .{ 1, 1, 0 }, .{ 1, -1, 0 }, 1e-5 / 3.0 * @sqrt(2.0));
+    defer b1.deinit();
+    var b = try helpers.moved(&b1, .{ 0, 0, 5e-6 });
+    defer b.deinit();
+    try expectRefused(&plate, &b, .below_feature_size);
+    try expectRefused(&b, &plate, .below_feature_size);
+}
+
 test "degeneracy: an edge passing another within the tolerance in its end's strip, the end not on it, is refused either way round" {
     // The locus fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
     // tetrahedron's corner in a plate's top, 2.2e-5 from its edge (beyond the tolerance,
