@@ -22,7 +22,7 @@ catalog:
   '@sveltejs/vite-plugin-svelte': ^7.3.1
   '@testing-library/svelte': ^5.4.2
   '@types/node': ^26.6.6
-  jsdom: ^31.0.0
+  jsdom: ^31.0.1
   svelte: ^5.57.3
   svelte-check: ^4.7.8
   vite: ^8.3.8
