@@ -233,7 +233,7 @@ test "slice: the areas of a turned box's and a turned sphere's slices integrate 
     defer box.deinit();
     var tilted = try turned(&box, Affine.rotateXyzDegrees(30, 40, 10));
     defer tilted.deinit();
-    const bounds = try @import("../measure/bbox.zig").bodyBounds(&tilted);
+    const bounds = try @import("../topology/bbox.zig").bodyBounds(&tilted);
     // The area is piecewise quadratic in the height: Simpson's rule is exact on each piece,
     // and the pieces' ends cost little at this count
     try testing.expectApproxEqRel(@as(f64, 120), try integrated(&tilted, bounds.min[2], bounds.max[2], 120), 1e-3);

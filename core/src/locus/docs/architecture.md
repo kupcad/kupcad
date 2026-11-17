@@ -220,14 +220,14 @@ locus/
     math/             vec.zig mat.zig predicates.zig (exact orient/incircle) solve.zig (Newton, LM, Jacobi)
     tolerance.zig     Tolerance, Resolution
     geometry/         types.zig curves.zig pcurves.zig surfaces.zig nurbs.zig arena.zig
-    topology/         types.zig body.zig euler.zig traverse.zig check.zig tags.zig
+    topology/         types.zig body.zig euler.zig traverse.zig check.zig tags.zig bbox.zig integrals.zig
     spatial/          aabb.zig grid.zig (hashed welding grid) bvh.zig (preorder flat)
     sketch/           region.zig overlay.zig offset.zig hull.zig contours.zig
     construct/        primitives.zig sweep.zig (extrude, revolve) loft.zig sew.zig
     intersect/        curve_surface.zig surface_surface.zig planar_faces.zig march.zig events.zig
     boolean/          pave.zig imprint.zig classify.zig select.zig simplify.zig pipeline.zig section.zig
     local/            offset.zig shell.zig chamfer.zig fillet.zig
-    measure/          bbox.zig mass.zig genus.zig
+    measure/          mass.zig
     query/            point_in_body.zig raycast.zig distance.zig faces.zig overlap.zig
     mesh/             edges.zig triangulate.zig tessellate.zig
     io/               step_write.zig step_read.zig body_json.zig debug_obj.zig
@@ -973,7 +973,9 @@ Bounding box from edge extremes (closed form for circles and ellipses, convex hu
 NURBS) and surface extremes within each face's UV box. Volume and area by the divergence
 theorem integrated over each face's UV domain with Gauss quadrature on the tessellation's
 UV triangles (independent of the viewer's resolution, with an error estimate); closed forms
-for planar-bounded analytic faces later. As built (`measure/mass.zig`): a planar face
+for planar-bounded analytic faces later. As built (`topology/integrals.zig`, the boxes in
+`topology/bbox.zig`, both topology's since 2026-11-17 so that the checker takes the one
+measure of what a shell encloses, as `measure/mass.zig` and `markVoids` do): a planar face
 exactly, the region of its plane its loops bound, closed where a boolean left consecutive
 curves a gap apart, with the ribbons from its loops down to that region where an edge
 lies off the plane within the tolerance (D28: each face on its source's plane, each edge
@@ -1244,7 +1246,11 @@ no other edge does.
 *Orientation*: adjacent faces agree (the two coedges of each edge are opposite);
 outer loops counter-clockwise and holes clockwise in UV; `same_sense` consistent with the
 outward normal by one ray test per shell, and the cheap cross-check that the signed
-volume (divergence theorem) is positive for an outer shell and negative for a void.
+volume (divergence theorem, `integrals.shellVolume`: the measure `mass` and `markVoids`
+take) is positive for an outer shell and negative for a void. The checker's own fans
+from a point of each face's UV box swept, over an L-shaped face across a whole plate,
+its corners within the zone of its plane but 1e-4 apart in height, area whose heights did
+not cancel, and a sound wall measured inside out (the 10K session on c3a83ee8).
 *Geometric*: vertex points on their edges' curves within `xsect`; edge curves on both
 adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`, tested at
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's

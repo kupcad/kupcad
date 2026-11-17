@@ -7,9 +7,9 @@
 
 const std = @import("std");
 const geometry = @import("../geometry/types.zig");
-const types = @import("../topology/types.zig");
-const body_mod = @import("../topology/body.zig");
-const traverse = @import("../topology/traverse.zig");
+const types = @import("types.zig");
+const body_mod = @import("body.zig");
+const traverse = @import("traverse.zig");
 const Body = body_mod.Body;
 const Box3 = geometry.Box3;
 

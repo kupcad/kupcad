@@ -17,6 +17,7 @@ const types = @import("types.zig");
 const body_mod = @import("body.zig");
 const traverse = @import("traverse.zig");
 const condition = @import("condition.zig");
+const integrals = @import("integrals.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Body = body_mod.Body;
 const Finding = diagnostics.Finding;
@@ -488,41 +489,38 @@ const Checker = struct {
     /// Every loop runs counter-clockwise in UV about its face's outward normal when it is
     /// the outer one, clockwise when a hole (what `same_sense` and the surface's own
     /// orientation make of "the face to the left"); and the loops of a closed shell are
-    /// wound outward: the signed volume they enclose is positive for an outer shell,
-    /// negative for a void.
+    /// wound outward: the signed volume they enclose (`integrals.shellVolume`, the one
+    /// measure of it, which `markVoids` takes a shell's kind from) is positive for an
+    /// outer shell, negative for a void.
     fn windings(self: *Checker) Error!void {
         const b = self.body;
         var uv = std.ArrayList(Vec2).empty;
         defer uv.deinit(self.allocator);
         var xyz = std.ArrayList(Vec3).empty;
         defer xyz.deinit(self.allocator);
+        var scratch = diagnostics.Diagnostics.init(self.allocator);
+        defer scratch.deinit();
         var shells = traverse.Shells.init(b);
         while (shells.next() catch return) |s| {
-            var volume: f64 = 0;
-            // The point the fans' volumes are taken from: the shell's first, so far from the
-            // origin they are the shell's size, not its distance (§9.2)
-            var from: ?Vec3 = null;
             var faces = traverse.Faces.init(b, s);
             while (faces.next() catch return) |f| {
                 const face = b.face(f);
-                // The fans' apex: a point of the surface inside the face's UV box, so a
-                // curved face's bulge counts (a hemisphere's loop polygon is flat)
-                const surface = b.geometry.surface(face.surface);
-                const apex: ?Vec3 = if (face.uv_box.isEmpty()) null else surface.eval((face.uv_box.min[0] + face.uv_box.max[0]) / 2.0, (face.uv_box.min[1] + face.uv_box.max[1]) / 2.0);
                 var loops = traverse.Loops.init(b, f);
                 var outer = true;
                 while (loops.next() catch return) |l| : (outer = false) {
                     if (b.loop(l).first == .none) continue;
-                    const sampled = try self.sampleLoop(l, &uv, &xyz);
-                    if (from == null) from = xyz.items[0];
-                    volume += fanVolume(from.?, apex orelse xyz.items[0], xyz.items);
-                    if (!sampled) continue;
+                    if (!try self.sampleLoop(l, &uv, &xyz)) continue;
                     const area = shoelace(uv.items);
                     const want_ccw = outer == face.same_sense;
                     // A loop of no area (a spur, a lamina mid-construction) runs neither way
                     if (@abs(area) > b.tol.param * b.tol.param and (area > 0) != want_ccw) try self.add(.loop_winding, .of(.loop, @backingInt(l)), area, 0);
                 }
             }
+            // A body the structural rules found broken measures nothing
+            const volume = integrals.shellVolume(b, s, .{}, &scratch) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return,
+            };
             // A shell of no volume (a lamina mid-construction) is neither way round
             switch (b.shell(s).kind) {
                 .outer => if (volume < 0) try self.add(.shell_inside_out, .of(.shell, @backingInt(s)), volume, 0),
@@ -797,19 +795,6 @@ fn shoelace(points: []const Vec2) f64 {
         area += vec.cross2(vec.sub2(p, from), vec.sub2(q, from));
     }
     return area;
-}
-
-/// The signed volume between `from` and the fan of a polygon about `apex`: summed over a
-/// closed surface's loops it is the volume they enclose, whatever `from` is, positive when
-/// wound outward (the fans of one face share their apex, so a hole's fan takes its share
-/// away). From the world's origin, a shell 3.7e5 out summed terms of 5e16 to a volume of
-/// 0.1, and the sign was the rounding's (the solids fuzzer's moved chains, CI run
-/// 43509321095): `from` is a point of the shell.
-fn fanVolume(from: Vec3, apex: Vec3, points: []const Vec3) f64 {
-    const a = vec.sub(apex, from);
-    var volume: f64 = 0;
-    for (points, 0..) |p, i| volume += vec.dot(a, vec.cross(vec.sub(p, from), vec.sub(points[(i + 1) % points.len], from))) / 6.0;
-    return volume;
 }
 
 /// Whether `p` is inside the polygon by the even-odd rule.

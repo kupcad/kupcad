@@ -14,6 +14,7 @@ const types = @import("../topology/types.zig");
 const Body = @import("../topology/body.zig").Body;
 const check = @import("../topology/check.zig");
 const traverse = @import("../topology/traverse.zig");
+const integrals = @import("../topology/integrals.zig");
 const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
 const sew = @import("../construct/sew.zig");
@@ -80,25 +81,9 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
     _ = try sew.sew(&b.body, faces, .outer);
     var shells = traverse.Shells.init(&b.body);
     while (try shells.next()) |s| {
-        if (try shellVolume(&b.body, s) < 0) b.body.shell(s).kind = .void;
+        if (try integrals.shellVolume(&b.body, s, .{}, &diag) < 0) b.body.shell(s).kind = .void;
     }
     return b.body;
-}
-
-/// The volume shell `s` encloses, by the fan of each face about its first vertex: negative
-/// for a void's.
-fn shellVolume(body: *const Body, s: types.ShellIndex) !f64 {
-    var volume: f64 = 0;
-    var faces = traverse.Faces.init(body, s);
-    while (try faces.next()) |f| {
-        const apex = body.point(body.coedgeStart(body.loop(body.face(f).first_loop).first));
-        var loops = traverse.Loops.init(body, f);
-        while (try loops.next()) |l| {
-            var it = traverse.Coedges.init(body, l);
-            while (try it.next()) |c| volume += vec.dot(apex, vec.cross(body.point(body.coedgeStart(c)), body.point(body.coedgeEnd(c)))) / 6.0;
-        }
-    }
-    return volume;
 }
 
 /// Every rule of the checker passes `body`.

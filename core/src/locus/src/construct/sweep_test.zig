@@ -12,7 +12,7 @@ const check = @import("../topology/check.zig");
 const mass = @import("../measure/mass.zig");
 const primitives = @import("primitives.zig");
 const sweep = @import("sweep.zig");
-const bbox = @import("../measure/bbox.zig");
+const bbox = @import("../topology/bbox.zig");
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);

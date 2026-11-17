@@ -469,7 +469,7 @@ test "Driver: a material is every face's, in the mesh as each vertex's slot; fac
     defer driver.driver.destructFn(two);
     const body = &@as(*driver.BrepSolid, @ptrCast(@alignCast(two.ptr))).body;
     for (body.faces.items, 0..) |*f, i| {
-        const box = try locus.measure.bbox.faceBounds(body, .of(i));
+        const box = try locus.topology.bbox.faceBounds(body, .of(i));
         if (box.min[2] == 10) f.attribute = kernel.materialSlot(5);
     }
     const mixed = driver.driver.getMeshFn(std.testing.allocator, two) orelse return error.KernelFailed;

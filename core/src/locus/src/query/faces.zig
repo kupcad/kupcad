@@ -11,7 +11,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
-const mass = @import("../measure/mass.zig");
+const integrals = @import("../topology/integrals.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -83,10 +83,10 @@ fn planarMoments(body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Erro
             const curve = body.geometry.curve(edge.curve);
             const from = if (coedge.same_sense) edge.t0 else edge.t1;
             const to = if (coedge.same_sense) edge.t1 else edge.t0;
-            const step = (to - from) / @as(f64, @floatFromInt(mass.EDGE_SPANS));
-            for (0..mass.EDGE_SPANS) |k| {
+            const step = (to - from) / @as(f64, @floatFromInt(integrals.EDGE_SPANS));
+            for (0..integrals.EDGE_SPANS) |k| {
                 const a = from + step * @as(f64, @floatFromInt(k));
-                for (mass.GAUSS_10.nodes, mass.GAUSS_10.weights) |x, w| {
+                for (integrals.GAUSS_10.nodes, integrals.GAUSS_10.weights) |x, w| {
                     const t = a + step * (x + 1) / 2;
                     const s = curve.sample(t);
                     if (about == null) about = plane.project(s.p);

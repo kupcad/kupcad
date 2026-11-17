@@ -20,7 +20,7 @@ const check = @import("../topology/check.zig");
 const Interner = @import("../spatial/intern.zig").Interner;
 const sew = @import("sew.zig");
 const traverse = @import("../topology/traverse.zig");
-const mass = @import("../measure/mass.zig");
+const integrals = @import("../topology/integrals.zig");
 const sketch_boolean = @import("../sketch/boolean.zig");
 const overlay = @import("../sketch/overlay.zig");
 const Body = body_mod.Body;
@@ -173,14 +173,14 @@ pub const Builder = struct {
     }
 };
 
-/// Each outer shell of `body` enclosing negative volume made a void (`mass.shellVolume`):
+/// Each outer shell of `body` enclosing negative volume made a void (`integrals.shellVolume`):
 /// a cavity's faces, sewn as an outer shell's, face into it. One rule for the builders of
 /// voids, the boolean's assembly and a revolved sheet with a hole.
 pub fn markVoids(body: *Body, diag: *Diagnostics) Error!void {
     var shells = traverse.Shells.init(body);
     while (shells.next() catch return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the body" })) |s| {
         if (body.shell(s).kind != .outer) continue;
-        if (try mass.shellVolume(body, s, .{}, diag) < 0) body.shell(s).kind = .void;
+        if (try integrals.shellVolume(body, s, .{}, diag) < 0) body.shell(s).kind = .void;
     }
 }
 

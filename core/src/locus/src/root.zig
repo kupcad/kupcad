@@ -46,6 +46,8 @@ pub const topology = struct {
     pub const euler = @import("topology/euler.zig");
     pub const check = @import("topology/check.zig");
     pub const condition = @import("topology/condition.zig");
+    pub const bbox = @import("topology/bbox.zig");
+    pub const integrals = @import("topology/integrals.zig");
 };
 pub const Body = topology.Body;
 /// The 2D kernel: the overlay engine (D9), what sketch booleans and offsets are made of.
@@ -74,9 +76,9 @@ pub const mesh = struct {
     pub const tessellate = @import("mesh/tessellate.zig");
     pub const validate = @import("mesh/validate.zig");
 };
-/// Measures: bounding boxes (volume, area and genus in M1).
+/// Measures: volume, area and genus (M1; the bounding boxes and the faces' integrals they
+/// are taken from are topology's, `topology.bbox` and `topology.integrals`).
 pub const measure = struct {
-    pub const bbox = @import("measure/bbox.zig");
     pub const mass = @import("measure/mass.zig");
 };
 /// Input and output: the body as JSON (the canonical form, fixtures, traces), STEP.

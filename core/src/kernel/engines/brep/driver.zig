@@ -571,7 +571,7 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
 /// zone), as a new sheet: its intersection with a rectangle from the axis out past its box;
 /// null when all of it is at x ≥ 0 already.
 fn clipAtAxis(src: *const BrepSolid, diag: *locus.Diagnostics) !?Body {
-    const box = try locus.measure.bbox.bodyBounds(&src.body);
+    const box = try locus.topology.bbox.bodyBounds(&src.body);
     const tol = src.body.tol;
     if (!(box.min[0] < -tol.zone)) return null;
     // Past the box by its own size, so no edge of the sketch lies on the rectangle's far sides
@@ -782,7 +782,7 @@ fn genusImpl(handle: geom.GeometryHandle) i32 {
 
 /// The exact box of the part's edges and faces.
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    const box = locus.measure.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
+    const box = locus.topology.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
     if (box.isEmpty()) return null;
     return .{ .min = box.min, .max = box.max };
 }
@@ -854,7 +854,7 @@ fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
 }
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
-    const box = locus.measure.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
+    const box = locus.topology.bbox.bodyBounds(&solidOf(handle.ptr).body) catch return null;
     if (box.isEmpty()) return null;
     return .{ .min = .{ box.min[0], box.min[1] }, .max = .{ box.max[0], box.max[1] } };
 }

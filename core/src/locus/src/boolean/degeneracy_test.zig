@@ -1690,6 +1690,31 @@ test "degeneracy: a pyramid's bottom 0.4° off a box's top, its corner past the 
     try expectAllSound(&pyramid, &b);
 }
 
+test "degeneracy: a plate less a plate nudged against it is an L-shaped wall 2.5e-4 and 4e-4 thick under a top within the tolerance of the other's, sound" {
+    // The 10K session's find on c3a83ee8 (2026-11-17, locus), as the fuzzer drew it: two
+    // plates 100 by 150 at a zone of 1e-4, each nudged, their tops 1e-4 apart (in one
+    // plane), the difference a wall along two sides. The wall's top, an L across the whole
+    // plate, has corners up to 1e-4 apart in height; the checker's own fans from the middle
+    // of its UV box swept 7500 of area whose heights did not cancel and measured the shell
+    // -0.376, inside out. The one measure (`integrals.shellVolume`) takes the plane's region
+    // and the ribbons down to it
+    const at = Tolerance.fromZone(1e-4);
+    const na: Vec3 = .{ -5e-5, 1.9999999855049283e-4, -1.9999999855049283e-4 };
+    const nb: Vec3 = .{ 2.000000014495072e-4, -1.9999999855049283e-4, -1e-4 };
+    var a = try helpers.boxAt(at, vec.add(.{ 2, -48, 2 }, na), vec.add(.{ 102, 102, 4 }, na));
+    defer a.deinit();
+    var b = try helpers.boxAt(at, vec.add(.{ 2, -48, 1 }, nb), vec.add(.{ 102, 102, 4 }, nb));
+    defer b.deinit();
+    for ([2][2]*const Body{ .{ &a, &b }, .{ &b, &a } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+    }
+    // The tops, 1e-4 apart, are one plane: the identities hold to what that moved
+    try helpers.expectIdentitiesAtTolerance(&a, &b);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
