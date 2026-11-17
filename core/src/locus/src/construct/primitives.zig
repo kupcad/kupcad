@@ -173,14 +173,14 @@ pub const Builder = struct {
     }
 };
 
-/// Each outer shell of `body` enclosing negative volume made a void (`integrals.shellVolume`):
+/// Each outer shell of `body` enclosing negative volume made a void (`integrals.shellSense`):
 /// a cavity's faces, sewn as an outer shell's, face into it. One rule for the builders of
 /// voids, the boolean's assembly and a revolved sheet with a hole.
 pub fn markVoids(body: *Body, diag: *Diagnostics) Error!void {
     var shells = traverse.Shells.init(body);
     while (shells.next() catch return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the body" })) |s| {
         if (body.shell(s).kind != .outer) continue;
-        if (try integrals.shellVolume(body, s, .{}, diag) < 0) body.shell(s).kind = .void;
+        if (try integrals.shellSense(body, s, .{}, diag) < 0) body.shell(s).kind = .void;
     }
 }
 

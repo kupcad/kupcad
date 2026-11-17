@@ -12,6 +12,8 @@ const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
 const transform = @import("../construct/transform.zig");
 const mass = @import("mass.zig");
+const integrals = @import("../topology/integrals.zig");
+const traverse = @import("../topology/traverse.zig");
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
@@ -240,4 +242,43 @@ test "genus: a sphere 0, a torus 1, a slab with a hole 1, as the mesh engine cou
     defer slab.deinit();
     try testing.expectEqual(@as(i32, 1), try mass.genus(&slab, &diag));
     try testing.expectEqual(@as(i32, 0), try mass.genus(&plate, &diag));
+}
+
+test "integrals: a shell's sense is its measure's sign, the coarse rules' where they settle it: every curved primitive faces out, a revolved cavity in" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var cyl = try primitives.cylinder(testing.allocator, tol, 2, 5, true, &diag);
+    defer cyl.deinit();
+    var sphere = try primitives.sphere(testing.allocator, tol, 3, &diag);
+    defer sphere.deinit();
+    var cone = try primitives.cone(testing.allocator, tol, 2, 0, 3, false, &diag);
+    defer cone.deinit();
+    var torus = try primitives.torus(testing.allocator, tol, 5, 2, &diag);
+    defer torus.deinit();
+    // A square x ∈ [1, 5], y ∈ [0, 4] with a hole x, y ∈ [2, 4] × [1, 3], stood up and
+    // turned about z: a ring about a ring-shaped cavity of 2π · 3 · 4 (Pappus)
+    const outer = [_]vec.Vec2{ .{ 1, 0 }, .{ 5, 0 }, .{ 5, 4 }, .{ 1, 4 } };
+    const inner = [_]vec.Vec2{ .{ 2, 1 }, .{ 2, 3 }, .{ 4, 3 }, .{ 4, 1 } };
+    var section = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &outer, &inner }, &diag);
+    defer section.deinit();
+    var profile = try transform.transform(testing.allocator, &section, &mat.Affine.rotate(vec.X3, PI / 2.0), .{}, &diag);
+    defer profile.deinit();
+    var hollow = try sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 2 * PI, .{}, &diag);
+    defer hollow.deinit();
+    var voids: usize = 0;
+    for ([_]*const Body{ &cyl, &sphere, &cone, &torus, &hollow }) |body| {
+        const place = integrals.placeOf(body);
+        var shells = traverse.Shells.init(body);
+        while (try shells.next()) |s| {
+            const sense = try integrals.shellSense(body, s, .{}, &diag);
+            const measure = (try integrals.shell(body, s, place, .{}, &diag)).volume;
+            try testing.expectEqual(measure > 0, sense > 0);
+            try testing.expectApproxEqRel(measure, sense, 1e-6);
+            if (body.shell(s).kind == .void) {
+                voids += 1;
+                try testing.expectApproxEqRel(-2 * PI * 3 * 4, measure, CLOSE);
+            }
+        }
+    }
+    try testing.expectEqual(1, voids);
 }

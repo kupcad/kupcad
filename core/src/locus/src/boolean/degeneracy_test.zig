@@ -1696,7 +1696,7 @@ test "degeneracy: a plate less a plate nudged against it is an L-shaped wall 2.5
     // plane), the difference a wall along two sides. The wall's top, an L across the whole
     // plate, has corners up to 1e-4 apart in height; the checker's own fans from the middle
     // of its UV box swept 7500 of area whose heights did not cancel and measured the shell
-    // -0.376, inside out. The one measure (`integrals.shellVolume`) takes the plane's region
+    // -0.376, inside out. The one measure (`integrals.shellSense`) takes the plane's region
     // and the ribbons down to it
     const at = Tolerance.fromZone(1e-4);
     const na: Vec3 = .{ -5e-5, 1.9999999855049283e-4, -1.9999999855049283e-4 };

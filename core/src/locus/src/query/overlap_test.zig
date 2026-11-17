@@ -81,7 +81,7 @@ fn boxes(allocator: std.mem.Allocator, specs: []const BoxSpec) !Body {
     _ = try sew.sew(&b.body, faces, .outer);
     var shells = traverse.Shells.init(&b.body);
     while (try shells.next()) |s| {
-        if (try integrals.shellVolume(&b.body, s, .{}, &diag) < 0) b.body.shell(s).kind = .void;
+        if (try integrals.shellSense(&b.body, s, .{}, &diag) < 0) b.body.shell(s).kind = .void;
     }
     return b.body;
 }

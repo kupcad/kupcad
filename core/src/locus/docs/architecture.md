@@ -1246,8 +1246,11 @@ no other edge does.
 *Orientation*: adjacent faces agree (the two coedges of each edge are opposite);
 outer loops counter-clockwise and holes clockwise in UV; `same_sense` consistent with the
 outward normal by one ray test per shell, and the cheap cross-check that the signed
-volume (divergence theorem, `integrals.shellVolume`: the measure `mass` and `markVoids`
-take) is positive for an outer shell and negative for a void. The checker's own fans
+volume (divergence theorem, `integrals.shellSense`: the measure `mass` takes, as
+`markVoids` takes it, its curved faces integrated only as finely as the sign needs, a coarse
+Gauss pair first and the measure's own where that leaves the sign in doubt, as OCCT's
+`BRepGProp` takes its `Eps` from the caller; the checker's full measure of every cylinder
+built cost the benchmark 1.6×) is positive for an outer shell and negative for a void. The checker's own fans
 from a point of each face's UV box swept, over an L-shaped face across a whole plate,
 its corners within the zone of its plane but 1e-4 apart in height, area whose heights did
 not cancel, and a sound wall measured inside out (the 10K session on c3a83ee8).

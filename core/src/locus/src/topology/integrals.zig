@@ -43,9 +43,6 @@ const Error = diagnostics.Error;
 /// Points per coedge of a curved face's UV polygon: one per end for a straight pcurve,
 /// which is what every pcurve is today; a curved one is sampled this finely.
 const UV_SAMPLES: usize = 8;
-/// How closely the two Gauss rules on a triangle must agree, relative to the body's
-/// measure, before the finer one is taken.
-const AGREEMENT: f64 = 1e-11;
 /// How deep a triangle is split in four before its estimate is taken as it is.
 const MAX_SPLITS: u32 = 10;
 /// Gauss–Legendre points along a free-form edge, per span of the curve's parameter.
@@ -54,6 +51,10 @@ pub const EDGE_SPANS: usize = 8;
 pub const Gauss = struct { nodes: []const f64, weights: []const f64 };
 
 /// Gauss–Legendre rules on [−1, 1].
+const GAUSS_3 = Gauss{
+    .nodes = &.{ -0.7745966692414834, 0.0, 0.7745966692414834 },
+    .weights = &.{ 0.5555555555555556, 0.8888888888888888, 0.5555555555555556 },
+};
 const GAUSS_5 = Gauss{
     .nodes = &.{ -0.9061798459386640, -0.5384693101056831, 0.0, 0.5384693101056831, 0.9061798459386640 },
     .weights = &.{ 0.2369268850561891, 0.4786286704993665, 0.5688888888888889, 0.4786286704993665, 0.2369268850561891 },
@@ -62,6 +63,15 @@ pub const GAUSS_10 = Gauss{
     .nodes = &.{ -0.9739065285171717, -0.8650633666889845, -0.6794095682990244, -0.4333953941292472, -0.1488743389816312, 0.1488743389816312, 0.4333953941292472, 0.6794095682990244, 0.8650633666889845, 0.9739065285171717 },
     .weights = &.{ 0.0666713443086881, 0.1494513491505806, 0.2190863625159820, 0.2692667193099963, 0.2955242247147529, 0.2955242247147529, 0.2692667193099963, 0.2190863625159820, 0.1494513491505806, 0.0666713443086881 },
 };
+
+/// How finely a curved face is integrated (OCCT's `BRepGProp` takes its `Eps` from the
+/// caller alike): the two Gauss rules a UV triangle is taken by, and how closely they must
+/// agree, relative to the body's measure, before the finer one is taken.
+const Precision = struct { coarse: Gauss, fine: Gauss, agreement: f64 };
+/// The measure itself (`shell`).
+const MEASURE = Precision{ .coarse = GAUSS_5, .fine = GAUSS_10, .agreement = 1e-11 };
+/// The first pass of `shellSense`, which only asks which way a shell faces.
+const SENSE = Precision{ .coarse = GAUSS_3, .fine = GAUSS_5, .agreement = 1e-6 };
 
 /// One shell's integrals: the volume it encloses (signed by its faces' outward sense:
 /// negative for a void's), its area, and what the quadrature's two rules still differed by
@@ -77,21 +87,33 @@ pub const Integrals = struct {
 /// `place` is the body's (`placeOf`), what the quadrature's agreement is measured against
 /// and the centre of a shell of no extent.
 pub fn shell(body: *const Body, s: types.ShellIndex, place: Place, options: diagnostics.Options, diag: *Diagnostics) Error!Integrals {
+    return measure(body, s, place, MEASURE, options, diag);
+}
+
+/// The volume shell `s` of `body` encloses, signed by its faces' outward sense (negative
+/// for a void's, a cavity's faces facing into it), measured only as finely as its sign
+/// needs: what tells a closed shell a void (`markVoids`) and one wound inward (the
+/// checker). The quadrature's coarse pass settles the sign unless the volume is within
+/// what its two rules differed by; then the measure's own precision does. A planar face
+/// is exact either way. The checker takes it of every body built, so a cylinder no longer
+/// pays the measure's 125 points a UV triangle to be found facing out (34 here).
+pub fn shellSense(body: *const Body, s: types.ShellIndex, options: diagnostics.Options, diag: *Diagnostics) Error!f64 {
+    const place = placeOf(body);
+    const coarse = try measure(body, s, place, SENSE, options, diag);
+    if (@abs(coarse.volume) > coarse.volume_error) return coarse.volume;
+    return (try measure(body, s, place, MEASURE, options, diag)).volume;
+}
+
+fn measure(body: *const Body, s: types.ShellIndex, place: Place, precision: Precision, options: diagnostics.Options, diag: *Diagnostics) Error!Integrals {
     try options.checkCancel();
     const extent = place.extent;
-    var total = Totals{ .centre = try shellCentre(body, s, diag) orelse place.centre, .scale_volume = extent * extent * extent, .scale_area = extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
+    var total = Totals{ .centre = try shellCentre(body, s, diag) orelse place.centre, .precision = precision, .allowed_volume = precision.agreement * extent * extent * extent, .allowed_area = precision.agreement * extent * extent, .max_splits = @min(MAX_SPLITS, options.limits.subdivision_depth) };
     var faces = traverse.Faces.init(body, s);
     while (faces.next() catch return corrupt(diag)) |f| {
         try options.checkCancel();
         if (body.face(f).surface.kind == .plane) try planarFace(body, f, &total, diag) else try curvedFace(body, f, &total, diag);
     }
     return .{ .volume = total.volume / 3.0, .area = total.area, .volume_error = total.volume_error / 3.0, .area_error = total.area_error };
-}
-
-/// The volume shell `s` of `body` encloses, signed by its faces' outward sense: negative
-/// for a void's (a cavity's faces facing into it), what tells a closed shell a void.
-pub fn shellVolume(body: *const Body, s: types.ShellIndex, options: diagnostics.Options, diag: *Diagnostics) Error!f64 {
-    return (try shell(body, s, placeOf(body), options, diag)).volume;
 }
 
 /// The running sums: `volume` is `∮ (p − centre) · n dA` (a third of it is the volume),
@@ -102,8 +124,10 @@ const Totals = struct {
     area: f64 = 0,
     volume_error: f64 = 0,
     area_error: f64 = 0,
-    scale_volume: f64,
-    scale_area: f64,
+    precision: Precision,
+    /// What the rules on one triangle may differ by: the agreement times the body's measure
+    allowed_volume: f64,
+    allowed_area: f64,
     max_splits: u32,
 };
 
@@ -195,26 +219,38 @@ fn stepRibbon(a: Vec3, b: Vec3, frame: geometry.Frame, centre: Vec3) f64 {
     return height * vec.dot(vec.sub(middle, centre), vec.cross(frame.z, vec.sub(b, a)));
 }
 
-/// `stepRibbon` along a curve over `[t0, t1]`: closed for a line, by composite Gauss
-/// quadrature for any other.
+/// `stepRibbon` along a curve over `[t0, t1]`: closed for a line, nothing for a circle or an
+/// ellipse in the plane, by composite Gauss quadrature for any other.
 fn curveRibbon(curve: curves.Curve, t0: f64, t1: f64, frame: geometry.Frame, centre: Vec3) f64 {
     switch (curve) {
         .line => |l| return stepRibbon(l.eval(t0), l.eval(t1), frame, centre),
-        else => {
-            var sum: f64 = 0;
-            const step = (t1 - t0) / @as(f64, @floatFromInt(EDGE_SPANS));
-            for (0..EDGE_SPANS) |k| {
-                const a = t0 + step * @as(f64, @floatFromInt(k));
-                for (GAUSS_10.nodes, GAUSS_10.weights) |x, w| {
-                    const t = a + step * (x + 1.0) / 2.0;
-                    const p = curve.eval(t);
-                    const height = vec.dot(vec.sub(p, frame.origin), frame.z);
-                    sum += w * step / 2.0 * height * vec.dot(vec.sub(p, centre), vec.cross(frame.z, curve.d1(t)));
-                }
-            }
-            return sum;
-        },
+        // The height along a conic is `h(c) + a cos t (x · n) + b sin t (y · n)`: none
+        // anywhere when its centre and both axes lie in the plane (a face built, not merged)
+        .circle => |c| if (inPlane(c.c, c.x, c.y, frame)) return 0 else return gaussRibbon(curve, t0, t1, frame, centre),
+        .ellipse => |e| if (inPlane(e.c, e.x, e.y, frame)) return 0 else return gaussRibbon(curve, t0, t1, frame, centre),
+        .nurbs => return gaussRibbon(curve, t0, t1, frame, centre),
     }
+}
+
+/// Whether a conic about `c` with axes `x` and `y` lies in `frame`'s plane exactly.
+fn inPlane(c: Vec3, x: Vec3, y: Vec3, frame: geometry.Frame) bool {
+    return vec.dot(vec.sub(c, frame.origin), frame.z) == 0 and vec.dot(x, frame.z) == 0 and vec.dot(y, frame.z) == 0;
+}
+
+/// `stepRibbon` along a curve by composite Gauss quadrature.
+fn gaussRibbon(curve: curves.Curve, t0: f64, t1: f64, frame: geometry.Frame, centre: Vec3) f64 {
+    var sum: f64 = 0;
+    const step = (t1 - t0) / @as(f64, @floatFromInt(EDGE_SPANS));
+    for (0..EDGE_SPANS) |k| {
+        const a = t0 + step * @as(f64, @floatFromInt(k));
+        for (GAUSS_10.nodes, GAUSS_10.weights) |x, w| {
+            const t = a + step * (x + 1.0) / 2.0;
+            const p = curve.eval(t);
+            const height = vec.dot(vec.sub(p, frame.origin), frame.z);
+            sum += w * step / 2.0 * height * vec.dot(vec.sub(p, centre), vec.cross(frame.z, curve.d1(t)));
+        }
+    }
+    return sum;
 }
 
 /// `∫ (p − centre) × p' dt` over `[t0, t1]` of a curve: closed for a line, a circle and an
@@ -256,7 +292,7 @@ fn curvedFace(body: *const Body, f: types.FaceIndex, total: *Totals, diag: *Diag
         if (polygon.items.len < 3) continue;
         const apex = polygon.items[0];
         for (1..polygon.items.len - 1) |i| {
-            var q = Quadrature{ .surface = surface, .centre = total.centre, .max_splits = total.max_splits, .scale_volume = total.scale_volume, .scale_area = total.scale_area };
+            var q = Quadrature{ .surface = surface, .centre = total.centre, .precision = total.precision, .max_splits = total.max_splits, .allowed_volume = total.allowed_volume, .allowed_area = total.allowed_area };
             q.triangle(apex, polygon.items[i], polygon.items[i + 1], 0);
             total.volume += q.volume;
             total.area += s * q.area;
@@ -291,14 +327,15 @@ fn sense(same_sense: bool) f64 {
     return if (same_sense) 1 else -1;
 }
 
-/// The integrals over one UV triangle, refined by splitting in four until a 5-point and
-/// a 10-point rule (tensor Gauss–Legendre on the collapsed square) agree.
+/// The integrals over one UV triangle, refined by splitting in four until the precision's
+/// two rules (tensor Gauss–Legendre on the collapsed square) agree.
 const Quadrature = struct {
     surface: surfaces.Surface,
     centre: Vec3,
+    precision: Precision,
     max_splits: u32,
-    scale_volume: f64,
-    scale_area: f64,
+    allowed_volume: f64,
+    allowed_area: f64,
     volume: f64 = 0,
     area: f64 = 0,
     volume_error: f64 = 0,
@@ -307,11 +344,11 @@ const Quadrature = struct {
     const Pair = struct { volume: f64, area: f64 };
 
     fn triangle(self: *Quadrature, a: Vec2, b: Vec2, c: Vec2, splits: u32) void {
-        const coarse = self.rule(a, b, c, GAUSS_5);
-        const fine = self.rule(a, b, c, GAUSS_10);
+        const coarse = self.rule(a, b, c, self.precision.coarse);
+        const fine = self.rule(a, b, c, self.precision.fine);
         const dv = @abs(fine.volume - coarse.volume);
         const da = @abs(fine.area - coarse.area);
-        if (splits < self.max_splits and (dv > AGREEMENT * self.scale_volume or da > AGREEMENT * self.scale_area)) {
+        if (splits < self.max_splits and (dv > self.allowed_volume or da > self.allowed_area)) {
             const ab = vec.scale2(vec.add2(a, b), 0.5);
             const bc = vec.scale2(vec.add2(b, c), 0.5);
             const ca = vec.scale2(vec.add2(c, a), 0.5);

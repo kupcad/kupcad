@@ -489,7 +489,7 @@ const Checker = struct {
     /// Every loop runs counter-clockwise in UV about its face's outward normal when it is
     /// the outer one, clockwise when a hole (what `same_sense` and the surface's own
     /// orientation make of "the face to the left"); and the loops of a closed shell are
-    /// wound outward: the signed volume they enclose (`integrals.shellVolume`, the one
+    /// wound outward: the signed volume they enclose (`integrals.shellSense`, the one
     /// measure of it, which `markVoids` takes a shell's kind from) is positive for an
     /// outer shell, negative for a void.
     fn windings(self: *Checker) Error!void {
@@ -517,7 +517,7 @@ const Checker = struct {
                 }
             }
             // A body the structural rules found broken measures nothing
-            const volume = integrals.shellVolume(b, s, .{}, &scratch) catch |err| switch (err) {
+            const volume = integrals.shellSense(b, s, .{}, &scratch) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return,
             };
