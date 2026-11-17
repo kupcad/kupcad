@@ -316,8 +316,9 @@ const Seams = struct {
 /// session, 2026-11-14). `clear_only`: by the pieces that show their side clearly (`Side`),
 /// two of them disagreeing a contradiction of the paves, refused (`unclassified`); else by
 /// every piece, as the last resort for a fragment no ray decides, null when two disagree.
-/// Null when no piece decides (none lies on the other, or the faces there are in one plane
-/// with the fragment's within the angular tolerance).
+/// Null when no piece decides (none lies on the other, the faces there are in one plane
+/// with the fragment's within the angular tolerance, or the edge a piece is of runs across
+/// that plane: `wedgeSide`).
 fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, fragments: *const Fragments, i: usize, clear_only: bool, diag: *Diagnostics) Error!?Class {
     const fragment = fragments.items.items[i];
     const normal = in_face.outwardNormal(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face), .{ 0, 0 });
@@ -379,15 +380,28 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
 /// `into` runs beyond the edge, away from it: in front of the other at a convex edge, behind
 /// it at a concave one (a plate's front inside a notch 1.25 tolerances deep under its edge,
 /// the notched front in its plane, every point of it within the tolerance of the notch's
-/// sides, which no ray decides: the edge-case matrix, 2026-11-16). Null for a curved edge,
-/// for `into` running onto that face (one region with it, the twins' to decide), or both
-/// faces in that plane.
+/// sides, which no ray decides: the edge-case matrix, 2026-11-16). The wedge bounds the
+/// fragment's region only along an edge in the fragment's plane (within the angular
+/// tolerance, as `pave.meetingLine` takes planes for parallel): an edge across that plane,
+/// a piece of it on the face by reach alone, bounds no region of it, its faces cutting the
+/// plane along their own lines, and reads no side (a hull's edge across a plate's side
+/// 2.1 tolerances tall at 15.5°, within the tolerance of it over the crossing, read the
+/// side's piece inside the hull outside, 2.2° off the hull's face: the 10K session on
+/// 2b26eef1; Leo, 2026-11-17); at the angular tolerance to rounding, refused
+/// (`at_tolerance`, D27). Null for a curved edge, an edge across the plane, `into` running
+/// onto that face (one region with it, the twins' to decide), or both faces in that plane.
 fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
     const edge = body.edge(e);
     const line = switch (body.geometry.curve(edge.curve)) {
         .line => |l| l,
         else => return null,
     };
+    const across = vec.dot(line.d, normal);
+    switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - @sqrt(@max(1.0 - across * across, 0)), paves.tol.angle)})) {
+        .same => {},
+        .apart => return null,
+        .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(e)), .label = "an edge of the other operand on a fragment's face, in its plane or across it, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+    }
     const first = edge.coedge;
     const second = body.coedge(first).partner;
     if (first == .none or second == .none) return corrupt(diag);

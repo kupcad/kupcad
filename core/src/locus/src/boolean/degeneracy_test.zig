@@ -1600,6 +1600,27 @@ test "degeneracy: a ridge under a flat tetrahedron's corner, where its top and b
     try expectProbe(&ridge, &flat);
 }
 
+test "degeneracy: a hull's edge across a thin plate's side at 15.5°, within the tolerance of it over the crossing, reads no side there" {
+    // The 10K session's find on 2b26eef1 (2026-11-16, locus), its operands as the chain
+    // left them: a plate 2.1 tolerances thick whose side a hull's edge crosses at 15.5°,
+    // within the tolerance of the side over the whole crossing, 6.6e-5 long, and of both
+    // its long edges. The paves put that piece of the edge on the side, splitting it; the
+    // side's piece inside the hull read its seam from the edge's wedge as if the edge ran
+    // in its plane, 2.2° off the hull's face there: outside, against the plate's top beside
+    // it, inside, and the two clear seams of one component were refused. An edge across a
+    // fragment's plane bounds no region of it (its faces cut the plane along their own
+    // lines): its wedge reads no side, and the side's pieces take their component's and a
+    // ray's (Leo, 2026-11-17)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 9.999999717180685e-10, 0.4999999989999999, -1 }, .{ 1.0000000009999999, 0.4999999999999998, 3 }, .{ -1.000000001, 2.499999998, 1 }, .{ 0.9999999989999999, 2.5, 3 }, .{ 2.000000002, -0.49999999900000014, 1 }, .{ 1.999999943436137e-09, -0.5000000010000002, 1 }, .{ 0.9999999989999999, 2.5, 1 }, .{ 1.999999998, 3.500000001, -1 } };
+    var hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer hull.deinit();
+    var plate = try box(.{ -0.002, 1.0000049999999994, -2.1000000000270802e-05 }, .{ 0.998, 3.0000049999999994, 2.0999999999826713e-05 });
+    defer plate.deinit();
+    try expectAllSound(&hull, &plate);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

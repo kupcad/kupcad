@@ -2060,6 +2060,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 1.5e-4 off a plate's side plane and 2 across it taken for one plane once turned
         // (pave.faceFace: faces sharing no merged vertex do not meet)
         "solids 2 1 3 1 2 0 1 1 2 11 6 6 15 3 1 0 3 4 1 3 0 3 0 2 0 0 1 1 0 7 5 -1 10 0 1 0 1 4 1 2 3 4 1 1 0 3 3 3 0 3 1 8 3 1 0 2 1 0 4 3 4 2 0 4 4 0 1 1 2 3 1 3 2 1 4 2 1 1 13 7 13 16 0 1 3 1",
+        // The 10K session on 2b26eef1 (locus): a hull's edge across a thin plate's side at
+        // 15.5°, within the tolerance of it over the crossing, read as bounding the side's
+        // piece (classify.wedgeSide: an edge across the fragment's plane reads no side)
+        "solids 1 8 1 1 0 2 1 4 0 3 2 2 3 4 3 0 2 1 0 2 2 3 2 3 4 0 0 2 8 1 -2 -1 -2 4 3 1 3 0 3 4 0 1 2 1 3 4 1 4 0 0 1 14 3 0 10 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
