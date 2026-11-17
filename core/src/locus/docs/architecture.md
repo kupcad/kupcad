@@ -766,8 +766,11 @@ importing only those before it, which the layering test holds):**
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
   the result has faces that thin). A section piece lies on a face's boundary only when
   the paves put both its ends there (never by its middle's distance alone), and is then
-  not imprinted again. Each vertex strictly inside a face of the other operand is kept
-  (`Paves.touches`): a corner of one solid on a face of the other. Pave blocks of an edge of each operand between the same
+  not imprinted again. Each merged vertex strictly inside a face of the other operand is
+  kept (`Paves.touches`), whichever stage found it: a corner of one solid on a face of
+  the other, or crossings of its edges merged into one there (a tetrahedron's tip just
+  over the tolerance past a box's top, its pocket's apex on the top, 2026-11-17). Pave
+  blocks of an edge of each operand between the same
   two merged vertices are the common blocks, a table of their own (one edge of the result,
   the operands' contact for the result report).
 - `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its

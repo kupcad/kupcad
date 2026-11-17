@@ -2068,6 +2068,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // in it as a slit by its ends' reach, its four uses unpaired (pipeline.pairTouching:
         // a face holding the edge across its plane pairs its own two uses)
         "solids 1 7 2 4 3 1 4 1 2 3 4 1 1 3 1 1 3 0 1 1 3 2 0 0 1 8 0 0 2 2 6 10 7 4 1 2 0 0 1 0 3 2 3 1 3 -2 10 4 6 1",
+        // The 10K session on 600148f2 (locus_solids): a tetrahedron's tip just over the
+        // tolerance past a box's top, its edges' crossings one merged vertex, the
+        // difference's pocket touching the top there (pave.foundOn: a touch whichever
+        // stage finds the vertex inside a face)
+        "solids 2 1 3 2 4 1 2 3 2 0 -2 12 3 3 1 1 6 2 3 2 3 1 4 4 1 0 4 2 0 0 3 4 2 0 0 2 2 -1 2 8 5 0 3 0 0 4 2 4 1 4 1 1 6 6 8 3 2 2 1 4 4 0 0 2 0 1 2 0 0 0 3 3 2 2 3 0 -2 13 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

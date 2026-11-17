@@ -1645,6 +1645,25 @@ test "degeneracy: a hull's edge across a box's side at 28°, laid in it as a sli
     try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
 }
 
+test "degeneracy: a tetrahedron's tip 2.1e-4 over a box's top at a tolerance of 1e-4, its edges' crossings merged into one vertex, pinches the difference's pocket at a point" {
+    // The 10K session's find on 600148f2 (2026-11-17, locus_solids), reduced to its box
+    // and tetrahedron: in through the box's front, its tip past the top by just over the
+    // intersection tolerance (2e-4), its three edges crossing the top within it of each
+    // other, one merged vertex, the top given no section. The difference's pocket meets the
+    // top at that point, inside one solid, as a tetrahedron's corner on it would: a pinch
+    // (refused by design), which assembly took only for an operand's own vertex there,
+    // and the overlap rules found in the result
+    var a = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -0.0001, 1.9999, 0.9998 }, .{ 3.9999, 3.9999, 1.99979 });
+    defer a.deinit();
+    var through = try tetrahedron(.{ 5e-5, 3, 2 }, .{ 4.00005, 0, -1 }, .{ 2.00005, 0, 0 }, .{ 2.00005, 0, -1 });
+    defer through.deinit();
+    try expectPinched(&a, &through);
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var made = try sound(&a, &through, op);
+        made.deinit();
+    }
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

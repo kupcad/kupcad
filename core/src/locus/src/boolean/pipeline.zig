@@ -754,7 +754,8 @@ fn areaCentroid(paves: *const pave.Paves, fragments: *const imprint.Fragments, i
 }
 
 /// Refuses (`pinched`) a result that keeps a point contact inside one solid: a vertex of
-/// one operand strictly inside a face of the other (`Paves.touches`), on no edge of the
+/// one operand, or crossings of its edges merged into one, strictly inside a face of the
+/// other (`Paves.touches`), on no edge of the
 /// face's pieces, whose face piece and whose faces about the vertex are in shells of one
 /// solid (a pocket meeting the face it was cut from at a corner; a void's corner on its
 /// outer shell, research/manifold-parity.md's octahedral void). Two solids touching so
@@ -775,7 +776,7 @@ fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments,
         const shell = body.faces.items[j].shell;
         for (body.coedges.items, 0..) |c, ci| {
             if (c.tombstone or body.coedgeStart(types.CoedgeIndex.of(ci)) != v) continue;
-            if (solids.same(body.face(body.loop(c.loop).face).shell, shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand on a face of the other, inside one solid)" });
+            if (solids.same(body.face(body.loop(c.loop).face).shell, shell)) return diag.fail(error.Degenerate, .{ .code = .pinched, .entity = .of(.shell, @backingInt(shell)), .label = "the result (a corner of one operand, or its edges' crossings merged into one, on a face of the other, inside one solid)" });
         }
     }
 }
