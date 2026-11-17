@@ -713,10 +713,14 @@ const Filler = struct {
             .face => |f| {
                 const operand = self.body(f.k);
                 const plane = planar_faces.planeOf(planar_faces.frameOf(operand, f.f).?);
+                // Beyond the plane or outside the face settles it whatever the other, as
+                // `placeOnFace` decides; at the plane's reach to rounding inside, refused
                 const height = @abs(plane.height(point));
-                if (!try self.within(height, reach, feature.entity())) return height;
-                if (try self.placeIn(f.k, f.f, point, v) != .outside) return null;
-                return try in_face.boundaryDistance(operand, f.f, vec.addScaled(point, plane.n, -plane.height(point)), self.diag);
+                const verdict = self.p.decide.within(height, reach);
+                if (verdict == .apart) return height;
+                if (try self.placeIn(f.k, f.f, point, v) == .outside) return try in_face.boundaryDistance(operand, f.f, vec.addScaled(point, plane.n, -plane.height(point)), self.diag);
+                _ = try self.settle(verdict, feature.entity());
+                return null;
             },
         }
     }
@@ -798,6 +802,22 @@ const Filler = struct {
             .boundary => .boundary,
             .at_tolerance => |c| self.atTolerance(c.measured, c.limit, .of(.face, @backingInt(f))),
         };
+    }
+
+    /// Where merged vertex `v` lies on face `f` of operand `k` (`plane` its plane): null
+    /// when beyond its reach of the plane or outside the face, either settling it whatever
+    /// the other; else its place (`placeIn`). At its reach of the plane to rounding it is
+    /// refused only where the height decides, inside the face or on its boundary. One
+    /// decision for vertex–face, edge–face's paves and the feature-size rule: each asked the
+    /// plane first and refused a vertex at its reach of it over the notch of an L-shaped
+    /// face, outside it (step 1 of closing M4, order symmetry).
+    fn placeOnFace(self: *Filler, k: usize, f: types.FaceIndex, plane: Plane, v: u32) Error!?in_face.Place {
+        const height = self.planeVerdict(plane, v);
+        if (height == .apart) return null;
+        const place = try self.placeIn(k, f, self.p.point(v), v);
+        if (place == .outside) return null;
+        _ = try self.settle(height, .of(.face, @backingInt(f)));
+        return place;
     }
 
     /// Face `f` of operand `k`'s edges in trees, when it has many; built on first asking.
@@ -1069,9 +1089,7 @@ const Filler = struct {
         for (near.items[0..near.count]) |item| {
             const f = self.faces[k][item];
             const frame = planar_faces.frameOf(self.body(k), f).?;
-            if (!try self.onPlane(planar_faces.planeOf(frame), v, .of(.face, @backingInt(f)))) continue;
-            const place = try self.placeIn(k, f, q, v);
-            if (place == .outside) continue;
+            const place = try self.placeOnFace(k, f, planar_faces.planeOf(frame), v) orelse continue;
             self.p.reach.items[v] = @max(self.p.reach.items[v], @abs(planar_faces.planeOf(frame).height(q)));
             try self.foundOn(k, f, v, place);
         }
@@ -1130,10 +1148,7 @@ const Filler = struct {
                 var count: usize = 0;
                 for (near.items[0..near.count]) |item| {
                     const f = self.faces[k][item];
-                    const height = @abs(planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?).height(q));
-                    if (!try self.within(height, reach, .of(.face, @backingInt(f)))) continue;
-                    const place = try self.placeIn(k, f, q, v);
-                    if (place == .outside) continue;
+                    const place = try self.placeOnFace(k, f, planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?), v) orelse continue;
                     if (place == .inside) {
                         const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(k), f).?);
                         const foot = vec.addScaled(q, plane.n, -plane.height(q));
@@ -1270,12 +1285,9 @@ const Filler = struct {
         var best_place: in_face.Place = .outside;
         var best_distance = std.math.inf(f64);
         for (self.p.edge_paves[k][@backingInt(e)].items) |pave| {
-            const point = self.p.point(pave.vertex);
-            if (!try self.onPlane(plane, pave.vertex, .of(.face, @backingInt(f)))) continue;
-            const distance = vec.distance(point, q);
+            const distance = vec.distance(self.p.point(pave.vertex), q);
             if (distance >= best_distance) continue;
-            const place = try self.placeIn(other, f, point, pave.vertex);
-            if (place == .outside) continue;
+            const place = try self.placeOnFace(other, f, plane, pave.vertex) orelse continue;
             best = pave.vertex;
             best_place = place;
             best_distance = distance;

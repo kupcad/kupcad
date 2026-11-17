@@ -2466,3 +2466,21 @@ test "degeneracy: a box's top bent 1.5e-5 off a line at its middle corner, a pla
     defer b.deinit();
     try expectAllSound(&a, &b);
 }
+
+test "degeneracy: a box over the notch of an L-shaped top, its bottom the intersection tolerance over the top's plane, is apart from it, not refused" {
+    // Step 1 of closing M4 (order symmetry): "on a face" is on its plane and not outside
+    // it. Vertex–face, edge–face's paves and the feature-size rule asked the plane first
+    // and refused a vertex at its reach of it to rounding, though the vertex lay over the
+    // notch, outside the face, where its height decides nothing (`pave.placeOnFace`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outline = try primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 0.5 }, .{ 0.5, 0.5 }, .{ 0.5, 1 }, .{ 0, 1 } }, &diag);
+    defer outline.deinit();
+    var raised = try @import("../construct/sweep.zig").extrude(testing.allocator, &outline, .{ 0, 0, 1 }, .{}, &diag);
+    defer raised.deinit();
+    var l = try helpers.moved(&raised, .{ 0, 0, -1 });
+    defer l.deinit();
+    var b = try box(.{ 0.6, 0.6, tol.xsect }, .{ 0.9, 0.9, 1 });
+    defer b.deinit();
+    try expectAllSound(&l, &b);
+}
