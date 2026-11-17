@@ -46,6 +46,15 @@ pub const Comparison = struct {
     pub fn angle(measured: f64, limit: f64) Comparison {
         return .{ .measured = measured, .limit = limit, .band = AT_TOLERANCE_ULPS * std.math.floatEps(f64) };
     }
+
+    /// A line of unit direction `d` against a plane of unit normal `n`: `1 − cos` of the
+    /// angle between them, against `limit`. A line lies in a plane by its angle as well as
+    /// by its distance: over a short piece, distances within the tolerance hold a line
+    /// across the plane too.
+    pub fn lineInPlane(d: Vec3, n: Vec3, limit: f64) Comparison {
+        const across = vec.dot(d, n);
+        return angle(1.0 - @sqrt(@max(1.0 - across * across, 0)), limit);
+    }
 };
 
 /// What comparisons say together: the same, apart, or at the tolerance (the comparison

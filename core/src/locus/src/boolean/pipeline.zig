@@ -15,7 +15,8 @@
 //!    source face's or its coplanar group's plane, the source edge's or the section's
 //!    line, copied, never interned again); an edge more than two
 //!    fragments use (two solids touching along it) is one edge per solid, its uses paired
-//!    by the wedges of material about it; a shell enclosing negative volume a void;
+//!    by the wedges of material about it (a face holding it across its plane by reach
+//!    pairing its own two); a shell enclosing negative volume a void;
 //! 6. `simplify.zig`: faces on one plane merged across edges, edges joined across vertices
 //!    on a line;
 //! 7. the checker: the result passes it or the operation fails with its finding.
@@ -1410,7 +1411,14 @@ fn magnitudeOf(body: *const Body, diag: *Diagnostics) Error!f64 {
 /// Each edge more than two fragments use, where two solids of the result touch along it,
 /// made one edge per solid (`EdgeSpec.copy`): its uses sorted by the angle of their faces
 /// about it, and each pair of neighbours with material between them one edge (the face
-/// side away from a face's outward normal is its material).
+/// side away from a face's outward normal is its material). A wedge is read only about an
+/// edge in its face's plane (within the angular tolerance, `canonical.Comparison.lineInPlane`,
+/// as `classify.wedgeSide` reads one): a face holding the edge by reach alone, across its
+/// plane, has no side of it to turn to, and its two uses, of one plane, the two sides of a
+/// slit or the face's pieces either side of the edge, are that solid's edge (a hull's edge
+/// at 28° to a box's side, a corner 1e-5 inside it and the crossing of its edge 2.5e-5 on,
+/// laid in the side as a slit: the side's material, read about the hull's edge, took in the
+/// hull's face, and the four uses did not pair; the 10K session on 600148f2, 2026-11-17).
 pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, diag: *Diagnostics) Error!void {
     const Key = struct { lo: u32, hi: u32 };
     var groups: std.AutoArrayHashMapUnmanaged(Key, std.ArrayList(u32)) = .empty;
@@ -1425,52 +1433,87 @@ pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []se
         if (!entry.found_existing) entry.value_ptr.* = .empty;
         try entry.value_ptr.append(allocator, @intCast(i));
     }
+    const angle_of = try allocator.alloc(f64, uses.len);
+    defer allocator.free(angle_of);
+    var in_plane: std.ArrayList(u32) = .empty;
+    defer in_plane.deinit(allocator);
+    var across: std.ArrayList(u32) = .empty;
+    defer across.deinit(allocator);
     for (groups.keys(), groups.values()) |key, *list| {
         if (list.items.len <= 2) continue;
         if (list.items.len % 2 != 0) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result", .measured = @floatFromInt(list.items.len) });
         const origin = body.point(types.VertexIndex.of(key.lo));
         const axis = vec.normalized(vec.sub(body.point(types.VertexIndex.of(key.hi)), origin)) orelse return diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "an edge of a boolean's result" });
-        const r0 = vec.perpendicular(axis);
-        const r1 = vec.cross(axis, r0);
-        // Each use's face, as the direction into it from the edge, by its angle about the axis
-        const Sorted = struct {
-            angles: []const f64,
-            fn lessThan(ctx: @This(), x: u32, y: u32) bool {
-                return ctx.angles[x] < ctx.angles[y];
-            }
-        };
-        const angle_of = try allocator.alloc(f64, uses.len);
-        defer allocator.free(angle_of);
+        in_plane.clearRetainingCapacity();
+        across.clearRetainingCapacity();
         for (list.items) |u| {
-            const spec = specs[uses[u].spec];
-            const along = if (@backingInt(spec.start) == key.lo) axis else vec.neg(axis);
-            const into = vec.cross(normals[uses[u].face], along);
-            angle_of[u] = trig.atan2(vec.dot(into, r1), vec.dot(into, r0));
+            // The use's own line (D28: its source edge's or its section's), not the chord
+            // between the vertices, which their gaps turn on a short edge
+            const line = switch (body.geometry.curve(specs[uses[u].spec].curve)) {
+                .line => |l| l,
+                else => {
+                    try in_plane.append(allocator, u);
+                    continue;
+                },
+            };
+            switch (canonical.verdict(&.{canonical.Comparison.lineInPlane(line.d, normals[uses[u].face], body.tol.angle)})) {
+                .same => try in_plane.append(allocator, u),
+                .apart => try across.append(allocator, u),
+                .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "an edge of a boolean's result where solids touch, in a face's plane or across it, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+            }
         }
-        std.mem.sort(u32, list.items, Sorted{ .angles = angle_of }, Sorted.lessThan);
-        // Pair each use with its neighbour on its material side, turning about the axis
-        const n = list.items.len;
         var copy: u32 = 0;
-        var paired = try allocator.alloc(bool, n);
-        defer allocator.free(paired);
-        @memset(paired, false);
-        for (0..n) |k| {
-            const u = list.items[k];
-            const spec = specs[uses[u].spec];
-            const along = if (@backingInt(spec.start) == key.lo) axis else vec.neg(axis);
-            const into = vec.cross(normals[uses[u].face], along);
-            // Turning on about the axis from this face leaves it on its material side
-            if (vec.dot(vec.cross(axis, into), normals[uses[u].face]) >= 0) continue;
-            const next = (k + 1) % n;
-            if (paired[k] or paired[next]) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(n) });
-            paired[k] = true;
-            paired[next] = true;
-            specs[uses[u].spec].copy = copy;
-            specs[uses[list.items[next]].spec].copy = copy;
+        if (across.items.len > 0) {
+            // One face's plane, holding the edge by reach: its two uses one edge
+            if (across.items.len != 2 or !body.tol.parallel(normals[uses[across.items[0]].face], normals[uses[across.items[1]].face])) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(list.items.len) });
+            for (across.items) |u| specs[uses[u].spec].copy = copy;
             copy += 1;
         }
-        for (paired) |p| if (!p) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(n) });
+        try pairByWedges(allocator, specs, uses, normals, key.lo, axis, in_plane.items, angle_of, &copy, list.items.len, diag);
     }
+}
+
+/// The uses `list` of one edge from vertex `lo` along `axis`, each face holding it in its
+/// plane, paired by the wedges of material about it: sorted by the angle of their faces
+/// about the axis, each with its neighbour on its material side, from copy `copy` on.
+fn pairByWedges(allocator: std.mem.Allocator, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, lo: u32, axis: Vec3, list: []u32, angle_of: []f64, copy: *u32, total: usize, diag: *Diagnostics) Error!void {
+    const r0 = vec.perpendicular(axis);
+    const r1 = vec.cross(axis, r0);
+    // Each use's face, as the direction into it from the edge, by its angle about the axis
+    const Sorted = struct {
+        angles: []const f64,
+        fn lessThan(ctx: @This(), x: u32, y: u32) bool {
+            return ctx.angles[x] < ctx.angles[y];
+        }
+    };
+    for (list) |u| {
+        const spec = specs[uses[u].spec];
+        const along = if (@backingInt(spec.start) == lo) axis else vec.neg(axis);
+        const into = vec.cross(normals[uses[u].face], along);
+        angle_of[u] = trig.atan2(vec.dot(into, r1), vec.dot(into, r0));
+    }
+    std.mem.sort(u32, list, Sorted{ .angles = angle_of }, Sorted.lessThan);
+    // Pair each use with its neighbour on its material side, turning about the axis
+    const n = list.len;
+    var paired = try allocator.alloc(bool, n);
+    defer allocator.free(paired);
+    @memset(paired, false);
+    for (0..n) |k| {
+        const u = list[k];
+        const spec = specs[uses[u].spec];
+        const along = if (@backingInt(spec.start) == lo) axis else vec.neg(axis);
+        const into = vec.cross(normals[uses[u].face], along);
+        // Turning on about the axis from this face leaves it on its material side
+        if (vec.dot(vec.cross(axis, into), normals[uses[u].face]) >= 0) continue;
+        const next = (k + 1) % n;
+        if (paired[k] or paired[next]) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(total) });
+        paired[k] = true;
+        paired[next] = true;
+        specs[uses[u].spec].copy = copy.*;
+        specs[uses[list[next]].spec].copy = copy.*;
+        copy.* += 1;
+    }
+    for (paired) |p| if (!p) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(total) });
 }
 
 fn corrupt(diag: *Diagnostics) Error {

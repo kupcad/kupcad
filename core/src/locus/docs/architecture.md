@@ -833,7 +833,10 @@ importing only those before it, which the layering test holds):**
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of
-  material about it into one edge per solid (`EdgeSpec.copy`); a shell of negative volume
+  material about it into one edge per solid (`EdgeSpec.copy`), a wedge read only about an
+  edge in its face's plane (`canonical.Comparison.lineInPlane`, as `classify` reads one):
+  a face holding the edge across its plane by reach alone pairs its own two uses (a hull's
+  edge at 28° to a box's side, laid in it as a slit 2.5e-5 long, 2026-11-17); a shell of negative volume
   a void (`primitives.markVoids`). Shells of one solid touch nowhere (`overlap.Solids`: a
   void the innermost outer shell around a point inside one of its faces): a touch point
   whose face piece and faces about the vertex are of one solid, or where the body touches

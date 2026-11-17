@@ -382,7 +382,8 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
 /// the notched front in its plane, every point of it within the tolerance of the notch's
 /// sides, which no ray decides: the edge-case matrix, 2026-11-16). The wedge bounds the
 /// fragment's region only along an edge in the fragment's plane (within the angular
-/// tolerance, as `pave.meetingLine` takes planes for parallel): an edge across that plane,
+/// tolerance, `canonical.Comparison.lineInPlane`, as `pipeline.pairTouching` reads the
+/// result's wedges): an edge across that plane,
 /// a piece of it on the face by reach alone, bounds no region of it, its faces cutting the
 /// plane along their own lines, and reads no side (a hull's edge across a plate's side
 /// 2.1 tolerances tall at 15.5°, within the tolerance of it over the crossing, read the
@@ -396,8 +397,7 @@ fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal:
         .line => |l| l,
         else => return null,
     };
-    const across = vec.dot(line.d, normal);
-    switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - @sqrt(@max(1.0 - across * across, 0)), paves.tol.angle)})) {
+    switch (canonical.verdict(&.{canonical.Comparison.lineInPlane(line.d, normal, paves.tol.angle)})) {
         .same => {},
         .apart => return null,
         .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(e)), .label = "an edge of the other operand on a fragment's face, in its plane or across it, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),

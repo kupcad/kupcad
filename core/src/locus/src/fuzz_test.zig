@@ -2064,6 +2064,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 15.5°, within the tolerance of it over the crossing, read as bounding the side's
         // piece (classify.wedgeSide: an edge across the fragment's plane reads no side)
         "solids 1 8 1 1 0 2 1 4 0 3 2 2 3 4 3 0 2 1 0 2 2 3 2 3 4 0 0 2 8 1 -2 -1 -2 4 3 1 3 0 3 4 0 1 2 1 3 4 1 4 0 0 1 14 3 0 10 2",
+        // The 10K session on 600148f2 (locus): a hull's edge across a box's side at 28°, laid
+        // in it as a slit by its ends' reach, its four uses unpaired (pipeline.pairTouching:
+        // a face holding the edge across its plane pairs its own two uses)
+        "solids 1 7 2 4 3 1 4 1 2 3 4 1 1 3 1 1 3 0 1 1 3 2 0 0 1 8 0 0 2 2 6 10 7 4 1 2 0 0 1 0 3 2 3 1 3 -2 10 4 6 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -1621,6 +1621,30 @@ test "degeneracy: a hull's edge across a thin plate's side at 15.5°, within the
     try expectAllSound(&hull, &plate);
 }
 
+test "degeneracy: a hull's edge across a box's side at 28°, laid in it as a slit by its ends' reach, pairs by the planes that hold it" {
+    // The 10K session's find on 600148f2 (2026-11-17, locus), its operands as the chain
+    // left them: a hull's corner 1e-5 inside a box's side, its edge leaving at 28° to the
+    // side's plane and crossing the box's edge 2.5e-5 on, both ends within reach of the
+    // side, that piece of the edge laid in the side as a slit. The union's edge there has
+    // four uses, the hull's two faces and the slit's two sides; read about the hull's edge,
+    // the side's material took in a hull's face and the four did not pair
+    // (`edge_coedge_count`; on 415e356d the side was left unclassified). A wedge is read
+    // only about an edge in its face's plane: the side, holding the edge by reach alone,
+    // pairs its own two uses, the hull's faces theirs, two solids touching along the slit
+    // (Leo, 2026-11-17, as for a fragment's wedge)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0.9999900004999999, 7.9999800000001136, 6.000019999999999 }, .{ 0.49998999949999995, 7.9999800000001136, 2.000020002 }, .{ 0.9999900009999999, 5.9999800000001136, 8.00002 }, .{ 0.4999900004999999, 1.9999800000001138, 6.000020001999999 }, .{ -1.0000500000082742e-05, 1.9999800000001138, 2.000020004 }, .{ 1.4999899989999999, 3.9999800000001136, 1.9997999999886874e-05 } };
+    var hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer hull.deinit();
+    var side = try box(.{ -1, -1.9999999957367437e-05, 1.999995 }, .{ 0, 2.9999800000000425, 2.999995 });
+    defer side.deinit();
+    try expectAllSound(&hull, &side);
+    var u = try sound(&hull, &side, .@"union");
+    defer u.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&u));
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
