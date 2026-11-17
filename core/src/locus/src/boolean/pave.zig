@@ -65,6 +65,7 @@ const Box3 = geometry.Box3;
 const Bvh = bvh_mod.Bvh;
 const Frame = geometry.Frame;
 const Plane = curve_surface.Plane;
+const Verdict = canonical.Verdict;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
@@ -613,17 +614,30 @@ const Filler = struct {
     /// operands' topology would disagree with itself: refused (`at_tolerance`), naming
     /// `entity`, as a merged vertex past the zone is.
     fn within(self: *Filler, d: f64, limit: f64, entity: diagnostics.EntityRef) Error!bool {
-        return switch (self.p.decide.within(d, limit)) {
+        return self.settle(self.p.decide.within(d, limit), entity);
+    }
+
+    /// A decision's verdict taken: the same holds, apart does not, at the tolerance is
+    /// refused naming `entity`. The one place a verdict refuses; a decision of several
+    /// parts combines their verdicts first (`canonical.either`, `canonical.both`) and
+    /// settles once, so its outcome does not hang on which part was asked first.
+    fn settle(self: *Filler, verdict: Verdict, entity: diagnostics.EntityRef) Error!bool {
+        return switch (verdict) {
             .same => true,
             .apart => false,
-            .at_tolerance => self.atTolerance(d, limit, entity),
+            .at_tolerance => |c| self.atTolerance(c.measured, c.limit, entity),
         };
     }
 
     /// Whether merged vertex `v` is on `plane`, within its reach of it (`entity` named
     /// when at it to rounding).
     fn onPlane(self: *Filler, plane: Plane, v: u32, entity: diagnostics.EntityRef) Error!bool {
-        return self.within(@abs(plane.height(self.p.point(v))), self.reachOf(v), entity);
+        return self.settle(self.planeVerdict(plane, v), entity);
+    }
+
+    /// `onPlane`'s verdict, not yet taken.
+    fn planeVerdict(self: *const Filler, plane: Plane, v: u32) Verdict {
+        return self.p.decide.within(@abs(plane.height(self.p.point(v))), self.reachOf(v));
     }
 
     /// Merged vertex `v`'s reach: the intersection tolerance and its gap.
@@ -985,14 +999,18 @@ const Filler = struct {
             const c0 = vec.addScaled(p0, d0, closest[0]);
             const c1 = vec.addScaled(q0, d1, closest[1]);
             const gap = vec.distance(c0, c1);
-            if (!try self.within(gap, self.p.tol.xsect + self.edgeGapOf(0, ea) + self.edgeGapOf(1, eb), .of(.edge, @backingInt(ea)))) continue;
             const mid = vec.lerp(c0, c1, 0.5);
             const along_a = self.along(0, ea, mid);
             const along_b = self.along(1, eb, mid);
+            const off = closest[0] < 0 or closest[0] > 1 or closest[1] < 0 or closest[1] > 1;
+            // Off either segment the lines' crossing is no meeting whatever its gap (where
+            // an end is near the other edge, vertex–edge decided it), so its gap is not
+            // asked: at the tolerance to rounding 99 units past a box's edge, it refused a
+            // union the box's edge lay inside (the 10K session on 0fce3ff4, at)
+            if ((along_a == null or along_b == null) and off) continue;
+            if (!try self.within(gap, self.p.tol.xsect + self.edgeGapOf(0, ea) + self.edgeGapOf(1, eb), .of(.edge, @backingInt(ea)))) continue;
             if (along_a == null or along_b == null) {
-                // Off either segment the lines' crossing is no meeting (where an end is
-                // near the other edge, vertex–edge decided it); on both, in an end's strip
-                if (closest[0] < 0 or closest[0] > 1 or closest[1] < 0 or closest[1] > 1) continue;
+                // On both segments, in an end's strip
                 const reach = incidence.reach(self.p.tol, gap / 2);
                 if (along_a == null) try self.stripAt(0, ea, mid, reach);
                 if (along_b == null) try self.stripAt(1, eb, mid, reach);
@@ -1221,8 +1239,11 @@ const Filler = struct {
                 const h1 = plane.height(p1);
                 // An end on the plane is vertex–face's, by the reach vertex–face decided it
                 // with: the tolerance alone took an end with a gap, on the plane there, as
-                // across it here (the M0–M4 review, 2026-11-15: one predicate, one measure)
-                if (try self.onPlane(plane, v[0], .of(.edge, @backingInt(e))) or try self.onPlane(plane, v[1], .of(.edge, @backingInt(e))) or (h0 < 0) == (h1 < 0)) continue;
+                // across it here (the M0–M4 review, 2026-11-15: one predicate, one measure).
+                // Both ends asked, then decided: one on the plane settles it whatever the
+                // other (a plate's edge from a box's corner to an end at the tolerance to
+                // rounding was refused when it ran from that end; the 10K session on 0fce3ff4)
+                if ((h0 < 0) == (h1 < 0) or try self.settle(canonical.either(self.planeVerdict(plane, v[0]), self.planeVerdict(plane, v[1])), .of(.edge, @backingInt(e)))) continue;
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
                 if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
                     try self.foundOn(other, f, at.vertex, at.place);
@@ -1511,7 +1532,9 @@ const Filler = struct {
             if (both.items.len == 0) continue;
             const frame_a = planar_faces.frameOf(self.body(0), fa).?;
             const frame_b = planar_faces.frameOf(self.body(1), fb).?;
-            if (try self.liesIn(0, fa, frame_b) or try self.liesIn(1, fb, frame_a)) {
+            const a_in_b = try self.liesIn(0, fa, frame_b);
+            const b_in_a = try self.liesIn(1, fb, frame_a);
+            if (try self.settle(canonical.either(a_in_b, b_in_a), if (a_in_b == .at_tolerance) .of(.face, @backingInt(fa)) else .of(.face, @backingInt(fb)))) {
                 try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
                 try self.blocksInside(1, fb, 0, fa);
                 try self.blocksInside(0, fa, 1, fb);
@@ -1625,7 +1648,10 @@ const Filler = struct {
             const frame_b = planar_faces.frameOf(self.body(1), fb).?;
             if (!p.tol.parallel(frame_a.z, frame_b.z)) continue;
             const apart = try self.planeGap(0, fa, frame_b);
-            if (try self.within(apart, p.tol.xsect, .of(.face, @backingInt(fa))) or apart > reach) continue;
+            // A warning decides nothing, so it refuses nothing: at the tolerance to
+            // rounding is within it (`incidence.holds`), as the checker takes it. It refused
+            // a union whose operands, swapped, were made (the 10K session on 0fce3ff4, at)
+            if (incidence.holds(p.decide.within(apart, p.tol.xsect)) or apart > reach) continue;
             try self.diag.warn(.{ .code = .nearly_coplanar, .entity = .of(.face, @backingInt(fa)), .measured = apart, .threshold = p.tol.xsect });
         }
     }
@@ -1645,20 +1671,22 @@ const Filler = struct {
     }
 
     /// Whether every vertex of face `f` of operand `k` lies on the plane of `frame` within
-    /// the tolerance and its gap.
-    fn liesIn(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!bool {
+    /// the tolerance and its gap: apart at the first vertex clearly off it, whatever the
+    /// others; at the tolerance when one is at its reach to rounding and none is off.
+    fn liesIn(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!Verdict {
         const p = self.p;
         const plane = planar_faces.planeOf(frame);
         const body_k = self.body(k);
+        var verdict: Verdict = .same;
         var loops = traverse.Loops.init(body_k, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
-                const v = p.vertex_of[k][@backingInt(body_k.coedgeStart(c))];
-                if (!try self.onPlane(plane, v, .of(.face, @backingInt(f)))) return false;
+                verdict = canonical.both(verdict, self.planeVerdict(plane, p.vertex_of[k][@backingInt(body_k.coedgeStart(c))]));
+                if (verdict == .apart) return .apart;
             }
         }
-        return true;
+        return verdict;
     }
 
     /// Each face's coplanar partners (faces of the other operand lying in its plane,
@@ -1687,7 +1715,7 @@ const Filler = struct {
                     const f = types.FaceIndex.of(x[1]);
                     const g = types.FaceIndex.of(y[1]);
                     if (try self.adjacent(other, f, g)) continue;
-                    if (try self.liesIn(other, f, planar_faces.frameOf(self.body(other), g).?) and try self.liesIn(other, g, planar_faces.frameOf(self.body(other), f).?)) continue;
+                    if (try self.settle(try self.liesIn(other, f, planar_faces.frameOf(self.body(other), g).?), .of(.face, @backingInt(f))) and try self.settle(try self.liesIn(other, g, planar_faces.frameOf(self.body(other), f).?), .of(.face, @backingInt(g)))) continue;
                     return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, y[1]), .label = if (other == 0) "two faces of the first operand in the plane of one face of the second, not in one plane," else "two faces of the second operand in the plane of one face of the first, not in one plane,", .threshold = p.tol.xsect });
                 };
                 start = end;

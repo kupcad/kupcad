@@ -2081,6 +2081,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // L-shaped wall under a top whose corners lay 1e-4 apart in height, refused inside
         // out by the checker's own fans (integrals.shellSense, the one measure)
         "solids 2 2 4 1 4 2 4 2 1 4 9 10 15 1 2 2 2 4 1 4 1 4 3 2 11 10 6 14 1",
+        // The 10K session on 0fce3ff4 (locus): a box less a hull, then a plate turned and
+        // nudged at a tolerance of 1e-4, a face of each at the other's plane by its reach
+        // to rounding; made one way round and refused the other (canonical.either, the
+        // nearly-coplanar warning refusing nothing, edge-edge off a segment unasked,
+        // edge-face deciding both ends)
+        "solids 0 0 2 1 3 2 4 1 0 1 1 1 3 10 2 9 2 1 1 8 4 2 2 2 2 3 1 4 1 3 4 3 2 2 3 3 1 1 4 1 3 2 4 3 1 3 3 12 -2 4 1 2 2 1 3 0 3 1 4 0 0 1 2 12 3 10 8 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

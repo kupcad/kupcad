@@ -18,3 +18,19 @@ test "incidence: within, beyond and at the reach" {
     // The band holds every decision's
     try std.testing.expect(d.band() >= canonical.Comparison.distance(0, 4e-5, 10).band);
 }
+
+test "incidence: two parts decided together, at the tolerance only where the outcome hangs on it" {
+    const at: Verdict = .{ .at_tolerance = canonical.Comparison.distance(2e-5, 2e-5, 1) };
+    const parts = [_]Verdict{ .same, .apart, at };
+    for (parts) |x| for (parts) |y| {
+        const or_ = canonical.either(x, y);
+        const and_ = canonical.both(x, y);
+        // Whichever part is asked first
+        try std.testing.expectEqual(std.meta.activeTag(or_), std.meta.activeTag(canonical.either(y, x)));
+        try std.testing.expectEqual(std.meta.activeTag(and_), std.meta.activeTag(canonical.both(y, x)));
+        // A part that is the same settles "either", one apart settles "both", whatever
+        // the other; otherwise a part at the tolerance leaves the outcome open
+        if (x == .same or y == .same) try std.testing.expect(or_ == .same) else if (x == .apart and y == .apart) try std.testing.expect(or_ == .apart) else try std.testing.expect(or_ == .at_tolerance);
+        if (x == .apart or y == .apart) try std.testing.expect(and_ == .apart) else if (x == .same and y == .same) try std.testing.expect(and_ == .same) else try std.testing.expect(and_ == .at_tolerance);
+    };
+}

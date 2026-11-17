@@ -61,6 +61,28 @@ pub const Comparison = struct {
 /// within rounding of its limit).
 pub const Verdict = union(enum) { same, apart, at_tolerance: Comparison };
 
+/// Two verdicts as one decision that holds when either does (Kleene's strong three-valued
+/// "or", at the tolerance the unknown): the same when either is, whatever the other;
+/// apart when both are; else at the tolerance, the first one's comparison that is. A
+/// decision of two parts refuses only when its outcome hangs on a part at the tolerance,
+/// so it is the same whichever part is asked first: `pave` asked whether either of two
+/// faces lies in the other's plane one face first and refused at its corner the rounding
+/// from that plane while the other face lay in this one's plane outright, and with the
+/// operands swapped took them coplanar (the 10K session on 0fce3ff4, find at).
+pub fn either(a: Verdict, b: Verdict) Verdict {
+    if (a == .same or b == .same) return .same;
+    if (a == .apart and b == .apart) return .apart;
+    return if (a == .at_tolerance) a else b;
+}
+
+/// Two verdicts as one decision that holds when both do (Kleene's strong "and"): apart
+/// when either is, whatever the other; the same when both are; else at the tolerance.
+pub fn both(a: Verdict, b: Verdict) Verdict {
+    if (a == .apart or b == .apart) return .apart;
+    if (a == .same and b == .same) return .same;
+    return if (a == .at_tolerance) a else b;
+}
+
 /// Apart when any comparison is clearly past its limit (a NaN is), else at the tolerance
 /// when any is within rounding of it, else the same.
 pub fn verdict(comparisons: []const Comparison) Verdict {

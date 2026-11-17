@@ -1715,6 +1715,41 @@ test "degeneracy: a plate less a plate nudged against it is an L-shaped wall 2.5
     try helpers.expectIdentitiesAtTolerance(&a, &b);
 }
 
+test "degeneracy: a box's top lying in a long plate's bottom, the plate's far end its reach off the top's plane to rounding, is made either way round" {
+    // The 10K session's find on 0fce3ff4 (2026-11-18, locus), its mechanism: faces sharing
+    // merged vertices are coplanar when either lies in the other's plane. The box's top
+    // lies in the plate's plane outright (its far corners 2e-7 off it); the plate's bottom
+    // rises to the intersection tolerance exactly at its far end, at its reach of the
+    // top's plane to rounding. Asked the box's top first, coplanar; asked the plate's
+    // first, refused (at_tolerance): made one way round and refused the other. Both asked,
+    // then decided (`canonical.either`): coplanar either way
+    const xs = tol.xsect;
+    var a = try box(.{ 0, 0, -1 }, .{ 1, 1, 0 });
+    defer a.deinit();
+    const points = [_]Vec3{ .{ 0, 0, 0 }, .{ 100, 0, xs }, .{ 100, 1, xs }, .{ 0, 1, 0 }, .{ 0, 0, 1 }, .{ 100, 0, 1 }, .{ 100, 1, 1 }, .{ 0, 1, 1 } };
+    var plate = try polyhedron(&points, &.{ .{ 0, 3, 2 }, .{ 0, 2, 1 }, .{ 4, 5, 6 }, .{ 4, 6, 7 }, .{ 0, 1, 5 }, .{ 0, 5, 4 }, .{ 3, 7, 6 }, .{ 3, 6, 2 }, .{ 0, 4, 7 }, .{ 0, 7, 3 }, .{ 1, 2, 6 }, .{ 1, 6, 5 } });
+    defer plate.deinit();
+    for ([2][2]*const Body{ .{ &a, &plate }, .{ &plate, &a } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+    }
+    // The faces are one plane, the plate's bottom moved onto it by up to 2e-7
+    try helpers.expectIdentitiesAtTolerance(&a, &plate);
+}
+
+test "degeneracy: a box's bottom the intersection tolerance over another's top, beside it, is made, not refused by the nearly-coplanar warning" {
+    // The same find's second refusal: the paves' warning of faces parallel a hair apart
+    // (`nearly_coplanar`) settled its "in the plane" at the tolerance to rounding as a
+    // refusal. A warning decides nothing and refuses nothing (`incidence.holds`)
+    var a = try box(.{ 0, 0, -1 }, .{ 1, 1, 0 });
+    defer a.deinit();
+    var b = try box(.{ 1 + 5e-4, 0, tol.xsect }, .{ 2, 1, 1 });
+    defer b.deinit();
+    try expectAllSound(&a, &b);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
