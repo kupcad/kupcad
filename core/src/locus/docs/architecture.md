@@ -818,7 +818,12 @@ importing only those before it, which the layering test holds):**
   or sections whose middles lie in their faces beyond reach of the faces' boundaries,
   `in_face.placeWithin`) takes its side from them, clear pieces disagreeing refused
   (`unclassified`), and its component takes it by contagion; only a component with no
-  clear seam casts rays, and the reading of every piece is the last resort for a fragment
+  clear seam casts rays; a fragment no sample of which is clear of the other's boundary
+  takes its side from a ray from a corner of it the paves put on nothing of the other
+  (`classify.byCorner`, OCCT's `ComputeState` by an edge not on the other solid before a
+  point inside: a face 0.4° off a box's face, a corner of it its zone off its plane, the
+  piece cut off there within the zone of the box's face all over, its corner past the
+  tolerance, 2026-11-17), and the reading of every piece is the last resort for a fragment
   no ray decides (a piece along a face's boundary is unclear: there the face's neighbour
   bounds the material too). The report counts fragments by seam (`by_seam`); rays fell,
   and a union of two 1000-sided prisms took 18% less time.

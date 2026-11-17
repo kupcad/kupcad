@@ -1664,6 +1664,32 @@ test "degeneracy: a tetrahedron's tip 2.1e-4 over a box's top at a tolerance of 
     }
 }
 
+test "degeneracy: a pyramid's bottom 0.4° off a box's top, its corner past the tolerance over it but its plane within the zone of it, is classified by that corner" {
+    // The 10K session's find on c3a83ee8 (2026-11-17, locus_solids), reduced: a face
+    // whose corner lay its zone off its plane (a merged vertex of an earlier boolean),
+    // crossing a box's face at 0.4°, within the angular tolerance. The piece the box's face
+    // cut off at the corner lies within the zone of that face all over (the corner 2.1e-5
+    // over it, past the intersection tolerance, its plane 1.2e-5 there), so every sample
+    // of it was on the box's boundary, its section read nothing at that angle, and it was
+    // left unclassified. The paves put the corner on nothing of the box: a ray from it
+    // decides the piece
+    const p = 1.2e-5;
+    const d = 0.9e-5;
+    const z = struct {
+        // The bottom's plane, through its three corners at x = 2 and 4
+        fn at(x: f64) f64 {
+            return 1 + p - 0.007 * x;
+        }
+    };
+    const points = [_]Vec3{ .{ 0, 0, z.at(0) + d }, .{ 2, -1, z.at(2) }, .{ 2, 1, z.at(2) }, .{ 4, 0, z.at(4) }, .{ 2, 0, 3 } };
+    // The bottom's far triangle first, its plane the record the near one shares
+    var pyramid = try polyhedron(&points, &.{ .{ 1, 2, 3 }, .{ 0, 2, 1 }, .{ 4, 0, 1 }, .{ 4, 1, 3 }, .{ 4, 3, 2 }, .{ 4, 2, 0 } });
+    defer pyramid.deinit();
+    var b = try box(.{ -5, -5, 1 }, .{ 5, 5, 8 });
+    defer b.deinit();
+    try expectAllSound(&pyramid, &b);
+}
+
 /// Each operation of `a` and `b`, either way round, made and sound; the identities.
 fn expectAllSound(a: *const Body, b: *const Body) !void {
     for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {

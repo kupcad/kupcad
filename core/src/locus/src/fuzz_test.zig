@@ -2073,6 +2073,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // difference's pocket touching the top there (pave.foundOn: a touch whichever
         // stage finds the vertex inside a face)
         "solids 2 1 3 2 4 1 2 3 2 0 -2 12 3 3 1 1 6 2 3 2 3 1 4 4 1 0 4 2 0 0 3 4 2 0 0 2 2 -1 2 8 5 0 3 0 0 4 2 4 1 4 1 1 6 6 8 3 2 2 1 4 4 0 0 2 0 1 2 0 0 0 3 3 2 2 3 0 -2 13 2",
+        // The 10K session on c3a83ee8 (locus_solids): a trim's plane 0.4° off a face whose
+        // corner lay its zone off its plane, the piece cut off at the corner within the zone
+        // of the plane all over, its corner past the tolerance (classify.byCorner)
+        "solids 2 0 2 0 4 1 3 0 0 5 0 1 2 1 2 6 11 7 3 1 1 4 1 3 1 1 1 3 2 4 0 0 2 3 3 0 1 0 2 2 8 1 6 1 3 1 6 2 0 1 2 2 4 2 4 1 2 0 4 3 3 3 4 2 0 0 0 8 1 13 3 9 7 2 0 0 0 1 6 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

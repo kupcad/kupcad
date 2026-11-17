@@ -19,9 +19,11 @@
 //! component of fragments across pieces the other touches nowhere (contagion,
 //! research/truck.md §3) is one side, its seams agreeing, and only a component with no
 //! clear seam casts `query/point_in_body.zig`'s rays, one and a second that must agree. A
-//! fragment no sample of which is clear of the other's boundary takes its side from all
-//! its pieces (within reach of a face's boundary, where they may disagree); one with none
-//! is a contradiction of the paves (`unclassified`), refused.
+//! fragment no sample of which is clear of the other's boundary takes its side from a ray
+//! from a corner of it the paves put on nothing of the other (`byCorner`; OCCT's
+//! `ComputeState` takes a face's state from an edge not on the other solid before a point
+//! inside it), else from all its pieces (within reach of a face's boundary, where they
+//! may disagree); one with none is a contradiction of the paves (`unclassified`), refused.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -152,7 +154,9 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     const parent = try allocator.alloc(u32, n);
     defer allocator.free(parent);
     for (parent, 0..) |*p, i| p.* = @intCast(i);
-    if (contagion) try joinComponents(allocator, paves, fragments, decided, parent);
+    const on = try operandsOn(allocator, paves);
+    defer allocator.free(on);
+    if (contagion) try joinComponents(allocator, fragments, on, decided, parent);
 
     // Each fragment's seams first: the side its pieces on the other operand leave it
     // toward, a component's agreeing (one side of the other, as contagion takes it)
@@ -201,6 +205,7 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         }
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
         const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag)) orelse
+            (try byCorner(allocator, paves, &indexes, fragments, i, on, &samples, options, diag)) orelse
             (try bySeam(allocator, paves, &seams, fragments, i, false, diag)) orelse
             return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
         stats.rays += 1;
@@ -238,6 +243,36 @@ fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]i
         }
     }
     return null;
+}
+
+/// Inside or outside the other operand, by rays from the corners of fragment `i` the paves
+/// put on nothing of it (`on`, `operandsOn`), into `out`; null when it has none. A corner
+/// on nothing of the other lies beyond the tolerance and its gap of every face, edge and
+/// vertex of it, and so off its boundary, and the fragment, which meets the other only
+/// along its pieces on it, is on the corner's side (OCCT's `ComputeState`: a face's state
+/// by an edge not on the other solid before a point inside it). Taken where every sample
+/// lies on the other's boundary: a face a corner of which lay its zone off its plane (a
+/// boolean's merged vertex), 0.4° off a box's face, its corner past the tolerance over it
+/// and its plane within the zone of it all over the piece the box's face cut off (the 10K
+/// session on c3a83ee8, locus_solids).
+fn byCorner(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragments: *const Fragments, i: usize, on: []const u2, out: *std.ArrayList(Vec3), options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
+    const fragment = fragments.items.items[i];
+    const other_bit = @as(u2, 1) << (1 - fragment.operand);
+    out.clearRetainingCapacity();
+    for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |v| {
+        if (on[v] & other_bit == 0) try out.append(allocator, paves.point(v));
+    };
+    return byRay(allocator, paves, indexes, fragment, out.items, options, diag);
+}
+
+/// Which operands each merged vertex lies on, as bits (`1 << operand`): its own, and those
+/// it lies on a face of (the paves' incidences, a vertex on an edge or a vertex among them).
+fn operandsOn(allocator: std.mem.Allocator, paves: *const Paves) Error![]u2 {
+    const on = try allocator.alloc(u2, paves.points.items.len);
+    @memset(on, 0);
+    for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
+    for (paves.owners.items, on) |owners, *o| o.* |= owners;
+    return on;
 }
 
 /// The pieces of each operand the paves made (consecutive paves of an edge, and section
@@ -432,14 +467,8 @@ fn corrupt(diag: *Diagnostics) Error {
 
 /// Joins in `parent` the undecided fragments of one operand that share an edge piece
 /// (consecutive merged vertices of their loops, run opposite ways) whose ends neither lies
-/// on the other operand.
-fn joinComponents(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const Fragments, decided: []const bool, parent: []u32) Error!void {
-    // Which operands each merged vertex lies on (its faces' or its own)
-    const on = try allocator.alloc(u2, paves.points.items.len);
-    defer allocator.free(on);
-    @memset(on, 0);
-    for (paves.incidences.items) |inc| on[inc.vertex] |= @as(u2, 1) << inc.face.operand;
-    for (paves.owners.items, on) |owners, *o| o.* |= owners;
+/// on the other operand (`on`, `operandsOn`).
+fn joinComponents(allocator: std.mem.Allocator, fragments: *const Fragments, on: []const u2, decided: []const bool, parent: []u32) Error!void {
     const Key = struct { operand: u1, lo: u32, hi: u32 };
     var first_use: std.AutoHashMapUnmanaged(Key, u32) = .empty;
     defer first_use.deinit(allocator);
