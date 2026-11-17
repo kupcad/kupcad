@@ -23,6 +23,7 @@ const diagnostics = @import("../diagnostics.zig");
 const Body = @import("../topology/body.zig").Body;
 const Affine = @import("../math/mat.zig").Affine;
 const hull_mod = @import("../construct/hull.zig");
+const primitives = @import("../construct/primitives.zig");
 const check = @import("../topology/check.zig");
 const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
@@ -60,6 +61,25 @@ const MOVES = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
 const FAST_MOVES = MOVES[1..];
 /// How far from the origin a case's solids reach, at most, before a move.
 const REACH = 10;
+/// The walls a difference of two plates leaves, in intersection tolerances: under the
+/// reach, at it, the finds' 1.25 and 2 (ar: 2.5e-4 and 4e-4 at 2e-4), and values off the
+/// ladder's multiples, which meet no limit exactly (sums and halves of these do: refused at
+/// the tolerance to rounding, by design)
+const WALLS = [_]f64{ 0.5, 1, 1.25, 1.6, 2, 2.3, 3 };
+const FAST_WALLS = [_]f64{1.25};
+/// How far the second plate's top stands over the first's, in intersection tolerances:
+/// within reach (one lid, merged) and past it.
+const LIDS = [_]f64{ -1.1, -0.5, 0, 0.5, 0.9, 1.1 };
+const FAST_LIDS = [_]f64{0.5};
+/// The plates' size (ar's: 100 by 150), and how far they reach from the origin.
+const PLATE: Vec3 = .{ 100, 150, 2 };
+const PLATE_REACH = 200;
+/// How far a face's corner lies off its own plane, in its zone (a merged vertex's gap).
+const CORNER_GAPS = [_]f64{ 0, 0.5, 0.9 };
+const FAST_CORNER_GAPS = [_]f64{0.9};
+/// Slopes of a face crossing another within the angular tolerance (0.0141 at it).
+const SLOPES = [_]f64{ 1e-3, 0.007, 0.0141 };
+const FAST_SLOPES = [_]f64{0.007};
 
 fn distances() []const f64 {
     return if (FULL) &DISTANCES else &FAST_DISTANCES;
@@ -73,6 +93,18 @@ fn zones() []const f64 {
 fn moves() []const @TypeOf(MOVES[0]) {
     return if (FULL) &MOVES else FAST_MOVES;
 }
+fn walls() []const f64 {
+    return if (FULL) &WALLS else &FAST_WALLS;
+}
+fn lids() []const f64 {
+    return if (FULL) &LIDS else &FAST_LIDS;
+}
+fn cornerGaps() []const f64 {
+    return if (FULL) &CORNER_GAPS else &FAST_CORNER_GAPS;
+}
+fn slopes() []const f64 {
+    return if (FULL) &SLOPES else &FAST_SLOPES;
+}
 fn thicknesses() []const f64 {
     return if (FULL) &THICKNESSES else &FAST_THICKNESSES;
 }
@@ -80,20 +112,28 @@ fn thicknesses() []const f64 {
 /// The cases of one family: how many ran, and how each ended.
 const Tally = struct {
     family: []const u8,
+    /// How far the family's solids reach from the origin, at most, before a move.
+    reach: f64 = REACH,
     cases: usize = 0,
     made: usize = 0,
     refused: usize = 0,
     unbuilt: usize = 0,
     failed: usize = 0,
+    /// The refusals by their code, printed with the full tier's summary: a refusal grown
+    /// common shows which decision turns cases away
+    codes: std.EnumArray(diagnostics.Code, usize) = .initFill(0),
 
     /// Fails the test when any case did, after the family's summary.
     fn finish(self: *const Tally) !void {
-        if (FULL or self.failed > 0) std.debug.print("edge matrix, {s}: {d} cases, {d} made, {d} refused, {d} not built, {d} failed\n", .{ self.family, self.cases, self.made, self.refused, self.unbuilt, self.failed });
+        if (FULL or self.failed > 0) {
+            std.debug.print("edge matrix, {s}: {d} cases, {d} made, {d} refused, {d} not built, {d} failed\n", .{ self.family, self.cases, self.made, self.refused, self.unbuilt, self.failed });
+            for (std.enums.values(diagnostics.Code)) |code| if (self.codes.get(code) > 0) std.debug.print("  refused {t}: {d}\n", .{ code, self.codes.get(code) });
+        }
         if (self.failed > 0) return error.EdgeMatrixFailed;
     }
 };
 
-const Outcome = enum { made, refused };
+const Outcome = union(enum) { made, refused: diagnostics.Code };
 
 /// One case: `a` and `b` (null when either could not be built: a construction refusing a
 /// solid is no case), `thin` when one is drawn below the minimum feature size. Its
@@ -112,7 +152,7 @@ fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin
         return;
     };
     defer second.deinit();
-    const outcome = step(&first, &second, thin) catch |err| {
+    const outcome = step(&first, &second, thin, tally.reach) catch |err| {
         if (err == error.OutOfMemory) return err;
         tally.failed += 1;
         std.debug.print("edge matrix FAILED, {s}: {s}: {t}\n", .{ tally.family, name, err });
@@ -120,12 +160,15 @@ fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin
     };
     switch (outcome) {
         .made => tally.made += 1,
-        .refused => tally.refused += 1,
+        .refused => |code| {
+            tally.refused += 1;
+            tally.codes.getPtr(code).* += 1;
+        },
     }
 }
 
 /// The fuzzer's step on `a` and `b`, then the step under each of `MOVES`.
-fn step(a: *const Body, b: *const Body, thin: bool) !Outcome {
+fn step(a: *const Body, b: *const Body, thin: bool, reach: f64) !Outcome {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var results: [3]Body = undefined;
@@ -143,7 +186,7 @@ fn step(a: *const Body, b: *const Body, thin: bool) !Outcome {
                 std.debug.print("a solid below the minimum feature size refused at {t}, not as an operand\n", .{report.failed_in.?});
                 return error.ThinOperandTaken;
             }
-            return .refused;
+            return .{ .refused = if (diag.first()) |f| f.code else .unclassified };
         };
         made += 1;
         if (thin) return error.ThinOperandTaken;
@@ -157,7 +200,7 @@ fn step(a: *const Body, b: *const Body, thin: bool) !Outcome {
         const move = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
         for (oracle.OPS, &results) |op, *result| {
             const steps = [_]oracle.Step{.{ .other = b.*, .op = op }};
-            try oracle.expectMovedWhole(a, &steps, result, &move, vec.length(m.shift) + REACH, &diag);
+            try oracle.expectMovedWhole(a, &steps, result, &move, vec.length(m.shift) + reach, &diag);
         }
     }
     return .made;
@@ -357,4 +400,50 @@ test "edge matrix: a notch's apex at the edge of a face at an angle to it" {
         try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, apex {d} tolerances under the edge, {e} rad", .{ ratio, d, angle }), helpers.notchedPrism(Tolerance.fromZone(ZONE), 1 - d * x), tiltedBox(ZONE * ratio, .{ 0, 0, 0.5 }, .{ 10, 5, 1 }, .{ 0, 0, 1 }, vec.X3, angle), false);
     };
     try tally.finish();
+}
+
+test "edge matrix: plates nudged against each other, a difference leaving thin walls under one lid" {
+    // A plate 100 by 150 and one at the coarser zone nudged by w tolerances along x and y
+    // and its top l tolerances over the first's: the difference an L-shaped wall w thick
+    // along two sides under a lid the tops merged into, across the whole plate (finds ar:
+    // the checker's own fans called it inside out; at: a face at the other's plane by its
+    // reach to rounding, made one way round, refused the other)
+    var tally: Tally = .{ .family = "plates nudged", .reach = PLATE_REACH };
+    for (zones()) |ratio| for (walls()) |wx| for (walls()) |wy| for (lids()) |l| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, walls {d} and {d} tolerances, lid {d}", .{ ratio, wx, wy, l }), helpers.boxAt(Tolerance.fromZone(ZONE), .{ 0, 0, 0 }, PLATE), helpers.boxAt(Tolerance.fromZone(ZONE * ratio), .{ wx * x, -wy * x, -1 }, vec.add(PLATE, .{ 1, -wy * x, l * x })), false);
+    };
+    try tally.finish();
+}
+
+test "edge matrix: a face crossing another within the angle, a corner of it off its own plane" {
+    // A pyramid whose bottom crosses a box's top at a slope within the angular tolerance,
+    // its plane d tolerances over the top at the near corner, which lies g of its zone
+    // above that plane (a merged vertex's gap): the piece the top cuts off at the corner
+    // lies within the zone of it all over, the corner past the tolerance or not (find as)
+    var tally: Tally = .{ .family = "corner off its plane" };
+    var buffer: [2 * DISTANCES.len]f64 = undefined;
+    for (zones()) |ratio| for (signedLadder(&buffer)) |d| for (cornerGaps()) |g| for (slopes()) |slope| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, plane {d} tolerances over, corner {d} of the zone off, slope {d}", .{ ratio, d, g, slope }), cornerPyramid(d * x, g * ZONE, slope), helpers.boxAt(Tolerance.fromZone(ZONE * ratio), .{ -5, -5, -6 }, .{ 5, 5, 0 }), false);
+    };
+    try tally.finish();
+}
+
+/// The pyramid of find as at `ZONE`: its bottom's plane `over` above z = 0 at x = 0 and
+/// falling at `slope`, its corner at x = 0 `off` above that plane (within the zone, the
+/// plane the bottom's two triangles share), its apex 2 up.
+fn cornerPyramid(over: f64, off: f64, slope: f64) !Body {
+    const z = struct {
+        fn at(o: f64, s: f64, x: f64) f64 {
+            return o - s * x;
+        }
+    };
+    const points = [_]Vec3{ .{ 0, 0, z.at(over, slope, 0) + off }, .{ 2, -1, z.at(over, slope, 2) }, .{ 2, 1, z.at(over, slope, 2) }, .{ 4, 0, z.at(over, slope, 4) }, .{ 2, 0, 2 } };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // The bottom's far triangle first, its plane the record the near one shares
+    return primitives.polyhedron(testing.allocator, Tolerance.fromZone(ZONE), &points, &.{ .{ 1, 2, 3 }, .{ 0, 2, 1 }, .{ 4, 0, 1 }, .{ 4, 1, 3 }, .{ 4, 3, 2 }, .{ 4, 2, 0 } }, &diag);
 }
