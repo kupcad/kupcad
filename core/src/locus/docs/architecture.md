@@ -740,6 +740,12 @@ importing only those before it, which the layering test holds):**
   block's ends, as the checker holds an edge, else refused `below_feature_size`; a hull's
   edge whose corners reached a box's face by their gaps, its line 2.5e-5 off it, was laid
   in the face as a slit, 2026-11-16).
+  A pair of faces sharing no merged vertex does not meet, whatever their planes: faces in
+  one plane that overlap or touch have a corner of one on the other or edges crossing
+  (OCCT takes tangent faces for same-domain ones only by their common parts). Their boxes
+  overlapping is the trees' filter, which a rigid move changes, not a meeting: a box's face
+  1.5e-4 off a plate's side plane and 2 across it was recorded in one plane with it once
+  the operands were turned 0.3 rad, and given its plane (2026-11-16).
   Two faces whose vertices all lie on the other's plane are coplanar, and so are two
   parallel within the angular tolerance whose merged vertices on both are off one line
   (parallel planes have no line of their own: three points of both off one put the faces

@@ -411,6 +411,35 @@ test "degeneracy: walls 1e-4 apart joined stay two solids, warned of" {
     try expectIdentities(&a, &b);
 }
 
+test "degeneracy: a box's face 1.5e-4 off a plate's side plane and 2 across it, turned 0.3 rad: the two meet nowhere, as in place" {
+    // The 10K fuzz session on 2b26eef1 (the solids moved whole): at a tolerance of 2e-4 a
+    // box's face y = 2.00015 lies within it of the plane of a plate's side y = 2, the box
+    // 2 above the plate. Turned 0.3 rad about y, the plate's box in its trees grew over
+    // the other's and faceFace took the two faces for one plane, sharing no vertex; the
+    // box's face was given the plate's plane, moved 1.5e-4, and a hull's corner 1.5e-4
+    // over it was on it in place and off it turned. Faces that share no merged vertex do
+    // not meet: either way the operands meet nowhere and keep their planes
+    const t = Tolerance.fromZone(1e-4);
+    var plate = try helpers.boxAt(t, .{ -48, -48, 0 }, .{ 52, 2, 1 });
+    defer plate.deinit();
+    var block = try helpers.boxAt(t, .{ 1, 1, 3 }, .{ 4, 2.00015, 4 });
+    defer block.deinit();
+    for ([_]f64{ 0, 0.3 }) |angle| {
+        var a = try turned(&plate, .{ 0, 0, 0 }, .{ 0, 1, 0 }, angle);
+        defer a.deinit();
+        var b = try turned(&block, .{ 0, 0, 0 }, .{ 0, 1, 0 }, angle);
+        defer b.deinit();
+        var report = pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        var joined = try helpers.soundReported(&a, &b, .@"union", &report);
+        defer joined.deinit();
+        try testing.expect(report.by_containment);
+        // The rounding of the turned corners alone; the box's face moved would be 4.5e-4
+        try testing.expect(report.shift < CLOSE);
+        try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&joined));
+    }
+}
+
 test "degeneracy: operands moved to (1000, -700, 300)" {
     const far: Vec3 = .{ 1000, -700, 300 };
     var a = try box(far, vec.add(far, .{ 2, 2, 2 }));

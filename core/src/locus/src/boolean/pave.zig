@@ -1454,6 +1454,14 @@ const Filler = struct {
     /// not by its own corners: a plate's top and another's bottom, a hair off parallel and
     /// within the tolerance of each other over most of where they meet, past it at one
     /// corner, were both kept, the union's face doubled (the 10K fuzz session on e252409f).
+    /// A pair sharing no merged vertex does not meet, whatever their planes: faces in one
+    /// plane that overlap or touch have a corner of one on the other or edges crossing, as
+    /// OCCT takes tangent faces for same-domain ones only by their common parts. Their
+    /// boxes overlapping is the trees' filter, not a meeting: a plate's side and a box's
+    /// face 1.5e-4 off its plane, 2 apart across it, were recorded in one plane once the
+    /// operands were turned 0.3 rad and the plate's box grew over the other's, and the box's
+    /// face was given the plate's plane (the 10K fuzz session on 2b26eef1, the solids
+    /// moved whole).
     fn faceFace(self: *Filler) Error!void {
         const p = self.p;
         var pairs = try self.overlapping(&self.face_tree[0], &self.face_tree[1]);
@@ -1468,14 +1476,6 @@ const Filler = struct {
             try self.options.checkCancel();
             const fa = self.faces[0][pair[0]];
             const fb = self.faces[1][pair[1]];
-            const frame_a = planar_faces.frameOf(self.body(0), fa).?;
-            const frame_b = planar_faces.frameOf(self.body(1), fb).?;
-            if (try self.liesIn(0, fa, frame_b) or try self.liesIn(1, fb, frame_a)) {
-                try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
-                try self.blocksInside(1, fb, 0, fa);
-                try self.blocksInside(0, fa, 1, fb);
-                continue;
-            }
             try p.verticesOn(0, @backingInt(fa), &on_a);
             try p.verticesOn(1, @backingInt(fb), &on_b);
             both.clearRetainingCapacity();
@@ -1487,6 +1487,15 @@ const Filler = struct {
                     i += 1;
                     j += 1;
                 } else if (on_a.items[i] < on_b.items[j]) i += 1 else j += 1;
+            }
+            if (both.items.len == 0) continue;
+            const frame_a = planar_faces.frameOf(self.body(0), fa).?;
+            const frame_b = planar_faces.frameOf(self.body(1), fb).?;
+            if (try self.liesIn(0, fa, frame_b) or try self.liesIn(1, fb, frame_a)) {
+                try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
+                try self.blocksInside(1, fb, 0, fa);
+                try self.blocksInside(0, fa, 1, fb);
+                continue;
             }
             if (both.items.len < 2) continue;
             const line = switch (try self.meetingLine(frame_a.z, frame_b.z, both.items, .of(.face, @backingInt(fb)))) {

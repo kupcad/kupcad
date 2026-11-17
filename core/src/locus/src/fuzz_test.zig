@@ -2056,6 +2056,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // corner, cutting off a triangle of its bottom within the tolerance of its top
         // (pipeline: a kept piece lying on another face of its operand, refused)
         "solids 0 3 4 3 4 1 3 2 3 5 4 10 10 2 3 1 6 1 1 0 2 0 1 2 1 3 0 4 4 2 3 4 3 2 1 0 2 3 1 14 14 8 2 0 1 3 2 3 0 1 2 4 3 4 4 2 4 3 3 0 10 7 0",
+        // The 10K session on 2b26eef1 (locus_solids): a chain moved whole, a box's face
+        // 1.5e-4 off a plate's side plane and 2 across it taken for one plane once turned
+        // (pave.faceFace: faces sharing no merged vertex do not meet)
+        "solids 2 1 3 1 2 0 1 1 2 11 6 6 15 3 1 0 3 4 1 3 0 3 0 2 0 0 1 1 0 7 5 -1 10 0 1 0 1 4 1 2 3 4 1 1 0 3 3 3 0 3 1 8 3 1 0 2 1 0 4 3 4 2 0 4 4 0 1 1 2 3 1 3 2 1 4 2 1 1 13 7 13 16 0 1 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
