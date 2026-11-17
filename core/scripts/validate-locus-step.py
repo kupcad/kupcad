@@ -6,10 +6,16 @@ solids and volume Locus says it has (its manifest line and the header's report),
 validate-step.py holds KupCAD's own exports; the volume to a part in a million, the
 boolean's largest gap over the area (a vertex merged off a face's plane by its gap moves
 the face a reader rebuilds by that much) and its shift (the volume its faces moved onto
-their coplanar groups' planes, D28). Run `pnpm check:locus-step` from the
-repository root, with the bindings installed (`pip install -r core/scripts/requirements.txt`);
-with a directory argument, the files already written there are read instead of written
-anew.
+their coplanar groups' planes, D28). A result with a gap keeps each edge on its source's
+line (D28), off its faces' planes by up to the gap, so the faces a reader rebuilds each
+from its own region need not close, and OpenCascade's analytic volume, taken about the
+mean of the vertices, moves with that point: an L-shaped wall 2.5e-4 thick under a lid
+merged 1e-4 below its kept edges read -0.095 for 0.155 (-0.18 about the origin), while its
+triangles, closed by the nodes the faces share, measured 0.155003. Such a result's volume
+is measured on its triangles (validate-step.py's `triangulated`). Run `pnpm
+check:locus-step` from the repository root, with the bindings installed (`pip install -r
+core/scripts/requirements.txt`); with a directory argument, the files already written there
+are read instead of written anew.
 """
 
 import importlib.util
@@ -60,7 +66,12 @@ def check(directory):
             validate_step.VOLUME_TOLERANCE * float(volume) + float(gap) * float(area) + float(shift)
         )
         found = validate_step.problems(
-            pathlib.Path(directory) / name, int(faces), int(solids), float(volume), slack
+            pathlib.Path(directory) / name,
+            int(faces),
+            int(solids),
+            float(volume),
+            slack,
+            triangulated=float(gap) > 0,
         )
         if found:
             failed += 1

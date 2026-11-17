@@ -17,13 +17,19 @@ import subprocess
 import sys
 import tempfile
 
+from OCP.Bnd import Bnd_Box
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.GeomAbs import GeomAbs_Plane
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.STEPControl import STEPControl_Reader
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
+from OCP.TopoDS import TopoDS
 
 KUPCAD = pathlib.Path(__file__).resolve().parent.parent / "zig-out" / "bin" / "kupcad"
 
@@ -67,6 +73,13 @@ MODELS = {
     ),
 }
 VOLUME_TOLERANCE = 1e-6
+# The chordal deflection a shape is triangulated to when its volume is measured on its
+# triangles (`problems`' `triangulated`), relative to its box's diagonal; the triangles lie
+# off a curved face by at most that, so the volume is off by at most it times the curved
+# faces' area (a plane's triangles are the face). The angle each chord may turn by, in
+# radians.
+DEFLECTION = 1e-5
+ANGULAR_DEFLECTION = 0.1
 
 
 def read(path):
@@ -101,10 +114,12 @@ def reported(path):
     return {name: int(n) for n, name in re.findall(r"(\d+) (\w+)", match.group(1))}
 
 
-def problems(path, faces, solids, volume, slack=None):
+def problems(path, faces, solids, volume, slack=None, triangulated=False):
     """What is wrong with the STEP file at `path`, which should read as a valid shape of
     `faces` faces, `solids` solids and `volume`, to `slack` (by default, VOLUME_TOLERANCE
-    of it)."""
+    of it). `triangulated` measures the volume on the shape's triangles, closed by the
+    nodes its faces share along each edge, to DEFLECTION over its curved area as well: for a
+    shape whose faces, each rebuilt from its own region, need not close."""
     try:
         shape, complained = read(path)
     except (ValueError, RuntimeError) as err:
@@ -132,11 +147,34 @@ def problems(path, faces, solids, volume, slack=None):
             found.append(
                 f"the header reports {report.get('solids')} solids, OpenCascade finds {solids}"
             )
+    allowed = VOLUME_TOLERANCE * volume if slack is None else slack
     props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, props)
-    if abs(props.Mass() - volume) > (VOLUME_TOLERANCE * volume if slack is None else slack):
+    if triangulated:
+        box = Bnd_Box()
+        BRepBndLib.Add_s(shape, box)
+        deflection = DEFLECTION * box.CornerMin().Distance(box.CornerMax())
+        BRepMesh_IncrementalMesh(shape, deflection, False, ANGULAR_DEFLECTION, False)
+        allowed += deflection * curved_area(shape)
+        BRepGProp.VolumeProperties_s(shape, props, False, False, True)
+    else:
+        BRepGProp.VolumeProperties_s(shape, props)
+    if abs(props.Mass() - volume) > allowed:
         found.append(f"volume {props.Mass()}, not {volume}")
     return found
+
+
+def curved_area(shape):
+    """The area of `shape`'s faces other than planes."""
+    total = 0.0
+    faces = TopExp_Explorer(shape, TopAbs_FACE)
+    while faces.More():
+        face = TopoDS.Face(faces.Current())
+        if BRepAdaptor_Surface(face).GetType() != GeomAbs_Plane:
+            props = GProp_GProps()
+            BRepGProp.SurfaceProperties_s(face, props)
+            total += props.Mass()
+        faces.Next()
+    return total
 
 
 def build(script, *args):
