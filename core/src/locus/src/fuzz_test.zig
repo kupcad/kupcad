@@ -337,6 +337,7 @@ fn Recording(comptime Inner: type) type {
         draws: std.ArrayList(i64) = .empty,
         log: ?*DrawLog = null,
         watched: bool = false,
+        number: u64 = 0,
 
         const Self = @This();
 
@@ -346,7 +347,7 @@ fn Recording(comptime Inner: type) type {
         fn init(inner: Inner, kind: ReplayKind, run: FuzzRun) Self {
             if (run.log) |l| l.start(kind);
             if (run.watched) fuzz_watch.begin();
-            return .{ .inner = inner, .log = run.log, .watched = run.watched };
+            return .{ .inner = inner, .log = run.log, .watched = run.watched, .number = run.number };
         }
 
         fn valueRangeAtMost(self: *Self, comptime T: type, at_least: T, at_most: T) T {
@@ -377,6 +378,7 @@ fn Recording(comptime Inner: type) type {
         /// Prints the run's draws as one `replay:` line of `kind` (a line of a file given
         /// to `zig build test -Dfuzz-replay=FILE` in core/src/locus).
         fn report(self: *const Self, kind: []const u8) void {
+            if (self.number > 0) std.debug.print("fuzz: the run that failed is run {d} of this worker\n", .{self.number});
             std.debug.print("replay: {s}", .{kind});
             for (self.draws.items) |v| std.debug.print(" {d}", .{v});
             std.debug.print("\n", .{});
@@ -452,18 +454,26 @@ const DrawLog = struct {
     }
 };
 
-/// What a fuzz worker gives each run: its target's draws file, and the watchdog's bound.
+/// What a fuzz worker gives each run: its target's draws file, the watchdog's bound, and
+/// the run's number in the worker (from 1; 0 on a plain run).
 const FuzzRun = struct {
     log: ?*DrawLog = null,
     watched: bool = false,
+    number: u64 = 0,
 };
+
+/// How many runs of each target the worker has begun. A failing run prints its number with
+/// its `replay:` line: how far a session got before its first find, the measure of whether
+/// finds are converging (step 4 of closing M4: the cases to the first find should grow).
+var fuzz_runs_begun = std.EnumArray(ReplayKind, u64).initFill(0);
 
 /// A fuzz target's run as the worker keeps it: its draws file (opened the first time the
 /// worker runs one) and the watchdog (started then). Nothing on a plain run.
 fn fuzzRun(kind: ReplayKind) !FuzzRun {
     if (comptime !builtin.fuzz) return .{};
     try fuzz_watch.start();
-    return .{ .log = try fuzzDrawLog(kind), .watched = true };
+    fuzz_runs_begun.getPtr(kind).* += 1;
+    return .{ .log = try fuzzDrawLog(kind), .watched = true, .number = fuzz_runs_begun.get(kind) };
 }
 
 /// The wall-clock bound on a run, as a clock-free rule: the start of the run under way,
