@@ -1605,22 +1605,37 @@ const Filler = struct {
     }
 
     /// The direction of the line through merged vertices `vertices` (at least two, each
-    /// more than the welding distance from the others), the first and the one farthest from
-    /// it, when every other lies within its reach of that line, else null (`entity` named
-    /// when one is at its reach to rounding).
+    /// more than the welding distance from the others), the two farthest apart, when every
+    /// other lies within its reach of that line, else null: one clearly off it decides,
+    /// whatever the others; else one at its reach to rounding is refused (`entity` named).
+    /// The line is the vertices' own, not their order's: drawn from the first merged vertex,
+    /// which is the first operand's, a box's top bent 1.5e-5 off a line at its middle
+    /// corner, a plate hinged on it at 0.005 rad, put the far corner 3e-5 off the line from
+    /// the middle one (one plane, refused) and the middle one 1.5e-5 off the line between
+    /// the corners with the operands swapped (a line, made).
     fn lineThrough(self: *Filler, vertices: []const u32, entity: diagnostics.EntityRef) Error!?Vec3 {
         const p = self.p;
-        const u = p.point(vertices[0]);
-        var far = vertices[1];
-        for (vertices[2..]) |v| {
-            if (vec.distance(p.point(v), u) > vec.distance(p.point(far), u)) far = v;
+        // The pair farthest apart, a tie to the pair whose points come first (merged
+        // vertices are distinct points, so their order is the points')
+        var span: [2]u32 = undefined;
+        var longest: f64 = -1;
+        for (vertices, 0..) |x, i| for (vertices[i + 1 ..]) |y| {
+            const pair: [2]u32 = if (pointBefore(p.point(y), p.point(x))) .{ y, x } else .{ x, y };
+            const length = vec.lengthSq(vec.sub(p.point(pair[1]), p.point(pair[0])));
+            if (length > longest or (length == longest and pairBefore(p, pair, span))) {
+                span = pair;
+                longest = length;
+            }
+        };
+        const u = p.point(span[0]);
+        const d = vec.normalized(vec.sub(p.point(span[1]), u)).?;
+        var verdict: Verdict = .same;
+        for (vertices) |v| {
+            if (v == span[0] or v == span[1]) continue;
+            verdict = canonical.both(verdict, p.decide.within(vec.length(vec.cross(vec.sub(p.point(v), u), d)), self.reachOf(v)));
+            if (verdict == .apart) return null;
         }
-        const d = vec.normalized(vec.sub(p.point(far), u)).?;
-        for (vertices[1..]) |v| {
-            if (v == far) continue;
-            if (!try self.within(vec.length(vec.cross(vec.sub(p.point(v), u), d)), self.reachOf(v), entity)) return null;
-        }
-        return d;
+        return if (try self.settle(verdict, entity)) d else null;
     }
 
     /// A warning (`nearly_coplanar`, OCCT's BadPositioning) for each face of `a` parallel to
@@ -1936,6 +1951,19 @@ const Filler = struct {
         }
     }
 };
+
+/// Points in lexicographic order (x, then y, then z): an order of the points themselves,
+/// which a choice among merged vertices takes so that it is not the operands' order.
+fn pointBefore(a: Vec3, b: Vec3) bool {
+    for (0..3) |i| if (a[i] != b[i]) return a[i] < b[i];
+    return false;
+}
+
+/// Pairs of merged vertices, each pair's points in order, in lexicographic order of them.
+fn pairBefore(p: *const Paves, x: [2]u32, y: [2]u32) bool {
+    if (x[0] != y[0]) return pointBefore(p.point(x[0]), p.point(y[0]));
+    return pointBefore(p.point(x[1]), p.point(y[1]));
+}
 
 /// The point of the segment from `a` to `b` nearest `q`.
 fn closestOnSegment(a: Vec3, b: Vec3, q: Vec3) Vec3 {

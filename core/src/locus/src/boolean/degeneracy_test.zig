@@ -2440,3 +2440,29 @@ test "degeneracy: OCCT's bug33361, four hexahedra whose corners miss by 1e-4, jo
         current = made;
     }
 }
+
+test "degeneracy: a box's top bent 1.5e-5 off a line at its middle corner, a plate hinged on it, meet along that line either way round" {
+    // Step 1 of closing M4 (order symmetry): two faces parallel within the angle sharing
+    // three merged vertices meet along their line when every vertex lies within its reach
+    // of it. The line ran from the first merged vertex, the first operand's: from the bent
+    // corner the far corner was 3e-5 off it (beyond reach: one plane, then refused
+    // below_feature_size), between the corners the bent one was 1.5e-5 off (a line, made).
+    // The line through the two farthest apart is the vertices' own
+    const d = 1.5e-5;
+    const slope = 0.005;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // The pentagon from the bent corner, so that the box numbers it first
+    var outline = try primitives.polygon(testing.allocator, tol, &.{ .{ 5, d }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 0, 0 } }, &diag);
+    defer outline.deinit();
+    var raised = try @import("../construct/sweep.zig").extrude(testing.allocator, &outline, .{ 0, 0, 1 }, .{}, &diag);
+    defer raised.deinit();
+    var a = try helpers.moved(&raised, .{ 0, 0, -1 });
+    defer a.deinit();
+    // The plate's bottom rises from the box's front edge at the slope, its front leaning out
+    // (upright, it would hold both of the box's front walls in its plane)
+    const corners = [_]Vec3{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 10, 10, 10 * slope }, .{ 0, 10, 10 * slope }, .{ 0, -1, 1 }, .{ 10, -1, 1 }, .{ 10, 10, 1 }, .{ 0, 10, 1 } };
+    var b = try @import("../construct/hull.zig").hull(testing.allocator, tol, &corners, &diag);
+    defer b.deinit();
+    try expectAllSound(&a, &b);
+}
