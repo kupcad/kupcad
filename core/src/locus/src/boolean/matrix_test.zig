@@ -24,6 +24,7 @@ const Body = @import("../topology/body.zig").Body;
 const Affine = @import("../math/mat.zig").Affine;
 const hull_mod = @import("../construct/hull.zig");
 const primitives = @import("../construct/primitives.zig");
+const sweep = @import("../construct/sweep.zig");
 const check = @import("../topology/check.zig");
 const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
@@ -80,6 +81,36 @@ const FAST_CORNER_GAPS = [_]f64{0.9};
 /// Slopes of a face crossing another within the angular tolerance (0.0141 at it).
 const SLOPES = [_]f64{ 1e-3, 0.007, 0.0141 };
 const FAST_SLOPES = [_]f64{0.007};
+
+/// Heights in tolerances of a face over another in one plane with it, and in-plane
+/// offsets in tolerances of an edge from a corner (find ba): together past the tolerance
+/// in 3D and within it in the plane, or within both, or past both.
+const HEIGHTS = [_]f64{ -0.97, -0.5, 0.5, 0.9, 0.97, 1.03 };
+const FAST_HEIGHTS = [_]f64{0.97};
+/// The height in tolerances over the notch's outer corner, the plate turned about y.
+const OUTER = [_]f64{ 0.5, 0.9, 0.97, 1.03 };
+const FAST_OUTER = [_]f64{0.9};
+const OFFSETS = [_]f64{ -0.5, 0.15, 0.3, 0.5, 0.97 };
+const FAST_OFFSETS = [_]f64{ 0.15, 0.3 };
+/// Turns of a face about the line two solids touch along (find bb): along one solid's
+/// face, into each solid's wedge, across the gaps between them.
+const TURNS = [_]f64{ 0, 0.3, std.math.pi / 4.0, std.math.pi / 2.0 - 0.3, std.math.pi / 2.0, 2.0, 3 * std.math.pi / 4.0 };
+const FAST_TURNS = [_]f64{ 0.3, std.math.pi / 4.0 };
+/// Widths in tolerances of a narrow face, and its tilt past the angular tolerance
+/// (step 2's probe, 2026-11-18): coplanar with another by distance, not by angle.
+const NARROW = [_]f64{ 3, 6, 15 };
+const FAST_NARROW = [_]f64{6};
+const TILTS = [_]f64{ 0.003, 0.02, 0.1 };
+const FAST_TILTS = [_]f64{0.02};
+/// Gaps in tolerances between two boxes side by side, their tops merged or not.
+const SIDE_GAPS = [_]f64{ -0.5, 0, 0.5, 1.1 };
+const FAST_SIDE_GAPS = [_]f64{0.5};
+const TOP_STEPS = [_]f64{ -0.9, 0, 0.5, 0.9, 1.1 };
+const FAST_TOP_STEPS = [_]f64{0.9};
+
+fn pick(full: []const f64, fast: []const f64) []const f64 {
+    return if (FULL) full else fast;
+}
 
 fn distances() []const f64 {
     return if (FULL) &DISTANCES else &FAST_DISTANCES;
@@ -446,4 +477,114 @@ fn cornerPyramid(over: f64, off: f64, slope: f64) !Body {
     defer diag.deinit();
     // The bottom's far triangle first, its plane the record the near one shares
     return primitives.polyhedron(testing.allocator, Tolerance.fromZone(ZONE), &points, &.{ .{ 1, 2, 3 }, .{ 0, 2, 1 }, .{ 4, 0, 1 }, .{ 4, 1, 3 }, .{ 4, 3, 2 }, .{ 4, 2, 0 } }, &diag);
+}
+
+test "edge matrix: faces in one plane, an edge within reach of a corner in the plane, past it across" {
+    // An L-shaped slab's top and a plate's bottom h tolerances over the notch's inner
+    // corner and o over its outer one (one plane, the plate turned about y a hair), the
+    // plate's back edge e tolerances inside the slab's notch edge in that plane: each
+    // corner within the tolerance of the edge in the plane and past it in 3D, or within
+    // both, or past both (find ba: the outer corner on the edge, the inner one off it
+    // across and on it in the plane, which the imprint's overlay welded)
+    var tally: Tally = .{ .family = "faces in one plane, a corner across" };
+    for (zones()) |ratio| for (pick(&HEIGHTS, &FAST_HEIGHTS)) |h| for (pick(&OUTER, &FAST_OUTER)) |o| for (pick(&OFFSETS, &FAST_OFFSETS)) |e| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        // Turned about y through the inner corner (3, 2), the outer one 3 along x: a turn
+        // by θ lowers the plane by 3·θ there
+        const angle = (h - o) * x / 3;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {d} tolerances over the inner corner, {d} over the outer, edge {d} tolerances in", .{ ratio, h, o, e }), lSlab(ZONE), tiltedBox(ZONE * ratio, .{ -1, -3, h * x }, .{ 7, 2 - e * x, 1 }, .{ 3, 2, h * x }, vec.Y3, angle), false);
+    };
+    try tally.finish();
+}
+
+/// The L-shaped slab of find ba: its top at z = 0, (0, 0)–(6, 4) less the notch (3, 2)–(6, 4).
+fn lSlab(zone: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outline = try primitives.polygon(testing.allocator, Tolerance.fromZone(zone), &.{ .{ 0, 0 }, .{ 6, 0 }, .{ 6, 2 }, .{ 3, 2 }, .{ 3, 4 }, .{ 0, 4 } }, &diag);
+    defer outline.deinit();
+    var raised = try sweep.extrude(testing.allocator, &outline, .{ 0, 0, 1 }, .{}, &diag);
+    defer raised.deinit();
+    return helpers.moved(&raised, .{ 0, 0, -1 });
+}
+
+test "edge matrix: two solids touching along a line, a face turned about that line" {
+    // Two boxes touching along x = y = 1 (one body, two solids, an edge of each there)
+    // and a box whose face is turned by φ about that line and moved d tolerances off it:
+    // along a box's face, into either box's wedge, across the gaps between them (find bb,
+    // the seams reading one solid's wedge where the operand's material is both's)
+    var tally: Tally = .{ .family = "solids touching along a line" };
+    var buffer: [2 * DISTANCES.len]f64 = undefined;
+    for (zones()) |ratio| for (pick(&TURNS, &FAST_TURNS)) |phi| for (signedLadder(&buffer)) |d| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, turned {d}, {d} tolerances off the line", .{ ratio, phi, d }), touchingPair(ZONE), turnedCutter(ZONE * ratio, phi, d * x), false);
+    };
+    try tally.finish();
+}
+
+/// Two boxes touching along the line x = y = 1, z 0..2, united: one body of two solids.
+fn touchingPair(zone: f64) !Body {
+    var left = try helpers.boxAt(Tolerance.fromZone(zone), .{ 0, 0, 0 }, .{ 1, 1, 2 });
+    defer left.deinit();
+    var right = try helpers.boxAt(Tolerance.fromZone(zone), .{ 1, 1, 0 }, .{ 2, 2, 2 });
+    defer right.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return pipeline.boolean(testing.allocator, &left, &right, .@"union", .{}, &diag, null);
+}
+
+/// A box whose top-in-y face lies on y = 1 + `off` from x = -2 to 4, z -0.5..2.5 (past the
+/// line's ends, so that a union joining the boxes leaves them touching nowhere else, no
+/// pinch to refuse first), turned by `phi` about the line x = y = 1.
+fn turnedCutter(zone: f64, phi: f64, off: f64) !Body {
+    var b = try helpers.boxAt(Tolerance.fromZone(zone), .{ -2, -0.5 + off, -0.5 }, .{ 4, 1 + off, 2.5 });
+    if (phi == 0) return b;
+    defer b.deinit();
+    return helpers.turned(&b, .{ 1, 1, 0 }, vec.Z3, phi);
+}
+
+test "edge matrix: a narrow face tilted past the angle, within reach of a face across its width" {
+    // A prism along x whose top is w tolerances wide, tilted by θ past the angular
+    // tolerance, its low edge d tolerances over a box's top: by distance the narrow top is
+    // in the box's plane, by angle it is not (step 2's inventory: classify asks one plane
+    // by the angle where the paves decided it by distance)
+    var tally: Tally = .{ .family = "narrow face past the angle" };
+    var buffer: [2 * DISTANCES.len]f64 = undefined;
+    for (zones()) |ratio| for (pick(&NARROW, &FAST_NARROW)) |w| for (pick(&TILTS, &FAST_TILTS)) |tilt| for (signedLadder(&buffer)) |d| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {d} tolerances wide, tilted {d}, {d} tolerances over", .{ ratio, w, tilt, d }), narrowPrism(ZONE, w * x, tilt, d * x), helpers.boxAt(Tolerance.fromZone(ZONE * ratio), .{ -1, -1, -1 }, .{ 3, 1, 0 }), false);
+    };
+    try tally.finish();
+}
+
+/// A prism from x = 0 to 2 whose top is `width` wide, rising across y at `tilt` from its
+/// low edge `over` above z = 0, its sides falling 1 to a base wider by 0.5 each side.
+fn narrowPrism(zone: f64, width: f64, tilt: f64, over: f64) !Body {
+    const top_y = width * @cos(tilt);
+    const top_z = over + width * @sin(tilt);
+    var points: [8]Vec3 = undefined;
+    for ([_]f64{ 0, 2 }, 0..) |px, i| {
+        points[4 * i + 0] = .{ px, 0, over };
+        points[4 * i + 1] = .{ px, top_y, top_z };
+        points[4 * i + 2] = .{ px, top_y + 0.5, over - 1 };
+        points[4 * i + 3] = .{ px, -0.5, over - 1 };
+    }
+    return hullOf(zone, &points);
+}
+
+test "edge matrix: two boxes side by side, one's top a step over the other's and tilted" {
+    // Two boxes side by side s tolerances apart (or into each other), the second's top t
+    // tolerances over the first's and turned about x: the union's tops one face where the
+    // paves took them in one plane, which simplify decides again on the result (step 2's
+    // inventory: sameDomain)
+    var tally: Tally = .{ .family = "tops side by side" };
+    for (zones()) |ratio| for (pick(&SIDE_GAPS, &FAST_SIDE_GAPS)) |s| for (pick(&TOP_STEPS, &FAST_TOP_STEPS)) |t| for (angles()) |angle| {
+        const x = xsectOf(ratio);
+        var name: [160]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {d} tolerances apart, top {d} tolerances over, {e} rad", .{ ratio, s, t, angle }), helpers.boxAt(Tolerance.fromZone(ZONE), .{ 0, 0, 0 }, .{ 2, 2, 1 }), tiltedBox(ZONE * ratio, .{ 2 + s * x, 0, 0 }, .{ 4, 2, 1 + t * x }, .{ 3, 1, 1 + t * x }, vec.X3, angle), false);
+    };
+    try tally.finish();
 }
