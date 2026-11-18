@@ -128,8 +128,9 @@ pub fn mevSpur(body: *Body, loop: LoopIndex, after: CoedgeIndex, from: VertexInd
 }
 
 /// Kill edge, vertex, spur form: the inverse of `mevSpur`. `out` is the coedge leaving the
-/// surviving vertex along the spur (its partner follows it in the loop); the far vertex
-/// and the edge go.
+/// surviving vertex along the spur (its partner follows it in the loop); the edge goes, and
+/// the far vertex with it unless another edge uses it (another shell touching the face
+/// there: it stays that shell's, no longer this one's).
 pub fn kevSpur(body: *Body, out: CoedgeIndex) Error!void {
     const o = body.coedge(out);
     const back = o.partner;
@@ -147,8 +148,11 @@ pub fn kevSpur(body: *Body, out: CoedgeIndex) Error!void {
         link(body, after, following);
         if (body.loop(loop).first == out or body.loop(loop).first == back) body.loop(loop).first = following;
     }
-    if (body.vertex(from).coedge == out) body.vertex(from).coedge = if (after == back) .none else following;
-    body.vertex(far).tombstone = true;
+    // A lone spur's loop holds no other coedge at `from`: another may leave it elsewhere
+    if (body.vertex(from).coedge == out) body.vertex(from).coedge = if (after == back) otherLeaving(body, from, o.edge) else following;
+    // A vertex names a coedge leaving it: one of another edge holds it outright
+    const held = if (body.vertex(far).coedge != back) body.vertex(far).coedge else otherLeaving(body, far, o.edge);
+    if (held == .none) body.vertex(far).tombstone = true else body.vertex(far).coedge = held;
     body.edge(o.edge).flags.tombstone = true;
     o.tombstone = true;
     body.coedge(back).tombstone = true;
@@ -561,12 +565,13 @@ pub fn mvh(body: *Body, face: FaceIndex, point: geometry.PointIndex) Error!LoopI
     return loop;
 }
 
-/// Kill vertex, hole: the inverse of `mvh`, for a ring loop of one vertex.
+/// Kill vertex, hole: the inverse of `mvh`, for a ring loop of one vertex. The vertex goes
+/// unless an edge uses it (another shell touching the face there: it stays that shell's).
 pub fn kvh(body: *Body, loop: LoopIndex) Error!void {
     const l = body.loop(loop);
     if (l.first != .none or l.vertex == .none or body.face(l.face).first_loop == loop) return error.Invalid;
     body.removeLoop(l.face, loop);
-    body.vertex(l.vertex).tombstone = true;
+    if (body.vertex(l.vertex).coedge == .none) body.vertex(l.vertex).tombstone = true;
     l.tombstone = true;
     debugCheck(body);
 }
@@ -631,6 +636,18 @@ pub fn mergeVertices(body: *Body, keep: VertexIndex, gone: VertexIndex) Error!vo
 }
 
 // ---------------------------------------------------------------------------------------
+
+/// A coedge leaving `v` of an edge other than `except`; `none` when no other edge uses `v`.
+/// A vertex's fans need not reach one another (a slit's tip in a face's hole, where the
+/// other operand touched the face, has its own), so the coedges are searched, as
+/// `mergeVertices` searches the edges.
+fn otherLeaving(body: *const Body, v: VertexIndex, except: EdgeIndex) CoedgeIndex {
+    for (body.coedges.items, 0..) |c, i| {
+        if (c.tombstone or c.edge == except) continue;
+        if (body.coedgeStart(CoedgeIndex.of(i)) == v) return CoedgeIndex.of(i);
+    }
+    return .none;
+}
 
 fn link(body: *Body, a: CoedgeIndex, b: CoedgeIndex) void {
     body.coedge(a).next = b;

@@ -1245,7 +1245,8 @@ p.459–470):
 
 *Structural*: every index in range; `next/prev` reciprocal; every loop closes with its
 coedge count; coedge.loop agrees; `partner` reciprocal and opposite; an edge has one or two
-coedges (two in a closed shell); a vertex's `coedge` leaves it; first loop of a face is the
+coedges (two in a closed shell); a vertex's `coedge` leaves it, and
+a vertex an edge uses names one; first loop of a face is the
 outer one; each face in exactly one shell; shells connected; `V − E + F − (L − F) = 2(S −
 G)` with `G` a whole number ≥ 0 per shell; flagged degenerate edges have `start == end`,
 no other edge does.

@@ -165,6 +165,7 @@ const MALFORMED = [_]Malformed{
     .{ .name = "degenerate_edge_vertices", .what = "an edge flagged degenerate between two vertices", .breaks = degenerateEdgeVertices, .rule = .degenerate_edge_vertices },
     .{ .name = "edge_range_reversed", .what = "an edge's range the wrong way round", .breaks = edgeRangeReversed, .rule = .edge_range_reversed },
     .{ .name = "vertex_coedge_not_leaving", .what = "a vertex naming a coedge that arrives at it", .breaks = vertexCoedgeNotLeaving, .rule = .vertex_coedge_not_leaving },
+    .{ .name = "vertex_coedge_missing", .what = "a vertex its edges use naming no coedge", .breaks = vertexCoedgeMissing, .rule = .vertex_coedge_missing },
     .{ .name = "face_shell_disagrees", .what = "a face naming a shell whose list it is not in", .breaks = faceShellDisagrees, .rule = .face_shell_disagrees },
     .{ .name = "loop_face_disagrees", .what = "a loop naming another face than the one it bounds", .breaks = loopFaceDisagrees, .rule = .loop_face_disagrees },
     .{ .name = "face_without_loop", .what = "a face with no loop", .breaks = faceWithoutLoop, .rule = .face_without_loop },
@@ -247,6 +248,10 @@ fn edgeRangeReversed(b: *Body) !void {
 fn vertexCoedgeNotLeaving(b: *Body) !void {
     const v = b.vertex(types.VertexIndex.of(0));
     v.coedge = b.coedge(v.coedge).partner;
+}
+
+fn vertexCoedgeMissing(b: *Body) !void {
+    b.vertex(types.VertexIndex.of(0)).coedge = .none;
 }
 
 fn faceShellDisagrees(b: *Body) !void {

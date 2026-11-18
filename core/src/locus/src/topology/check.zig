@@ -201,9 +201,21 @@ const Checker = struct {
             if (e.flags.degenerate and uses == 2) try self.add(.edge_coedge_count, .of(.edge, i), 2, 1);
             if (!(e.t0 < e.t1)) try self.add(.edge_range_reversed, .of(.edge, i), e.t0, e.t1);
         }
-        // A vertex's coedge leaves it
+        // A vertex's coedge leaves it, and a vertex an edge uses names one
+        var edge_ends = std.ArrayList(u8).empty;
+        defer edge_ends.deinit(self.allocator);
+        try edge_ends.appendNTimes(self.allocator, 0, b.vertices.items.len);
+        for (b.edges.items) |e| {
+            if (!live(types.Edge, e)) continue;
+            edge_ends.items[@backingInt(e.start)] = 1;
+            edge_ends.items[@backingInt(e.end)] = 1;
+        }
         for (b.vertices.items, 0..) |v, i| {
-            if (!live(types.Vertex, v) or v.coedge == .none) continue;
+            if (!live(types.Vertex, v)) continue;
+            if (v.coedge == .none) {
+                if (edge_ends.items[i] != 0) try self.add(.vertex_coedge_missing, .of(.vertex, i), 0, 0);
+                continue;
+            }
             if (b.coedgeStart(v.coedge) != VertexIndex.of(i)) try self.add(.vertex_coedge_not_leaving, .of(.vertex, i), 0, 0);
         }
         // Each face's loops name it and the face is in exactly one shell's list

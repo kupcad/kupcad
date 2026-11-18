@@ -25,6 +25,7 @@ pub const NAMES = [_][]const u8{
     "degenerate_edge_vertices",
     "edge_range_reversed",
     "vertex_coedge_not_leaving",
+    "vertex_coedge_missing",
     "face_shell_disagrees",
     "loop_face_disagrees",
     "face_without_loop",

@@ -344,6 +344,42 @@ test "mevSpur and kevSpur: a spur grows from a vertex loop and from a loop's coe
     try expectValidOutward(b);
 }
 
+test "kevSpur and kvh: a vertex another shell uses stays, naming a coedge that leaves it, whether the spur's root or its tip" {
+    // A slit in a face's hole where another shell touches the face (the solids fuzzer,
+    // 2026-11-18: the vertex was left naming no coedge, and the hole's kvh removed it from
+    // under the other shell's edges)
+    var kit = try Kit.init(testing.allocator);
+    defer kit.deinit();
+    const b = &kit.body;
+    try lamina(&kit, .{ 0, 1, 2, 3 }, Kit.BOTTOM, Kit.TOP);
+    const bottom = b.loop(b.coedge(kit.coedgeFromTo(0, 1)).loop).face;
+    const centre = try b.geometry.addPoint(testing.allocator, .{ 0.5, 0.5, 0 });
+    const tip_point = try b.geometry.addPoint(testing.allocator, .{ 0.75, 0.5, 0 });
+    for ([_]bool{ true, false }) |at_root| {
+        const hole = try euler.mvh(b, bottom, centre);
+        const root = b.loop(hole).vertex;
+        const spur = try euler.mevSpur(b, hole, .none, root, tip_point, try kit.line(0, 1));
+        // Another shell's spur from the root or the tip: its own vertex merged into it
+        const shared = if (at_root) root else spur.vertex;
+        const other = try euler.mvfs(b, centre, kit.planes[Kit.TOP], true, .outer);
+        _ = try euler.mevSpur(b, other.loop, .none, other.vertex, kit.points[6], try kit.line(0, 6));
+        try euler.mergeVertices(b, shared, other.vertex);
+        const before = b.counts();
+        try euler.kevSpur(b, spur.out);
+        try euler.kvh(b, hole);
+        try expectValid(b, .structural);
+        // The hole and the slit are gone, the shared vertex with the other shell's edge
+        const after = b.counts();
+        try testing.expectEqual(before.edges - 1, after.edges);
+        try testing.expectEqual(before.loops - 1, after.loops);
+        try testing.expectEqual(before.vertices - 1, after.vertices);
+        try testing.expect(!b.vertex(shared).tombstone);
+        const leaving = b.vertex(shared).coedge;
+        try testing.expect(leaving != CoedgeIndex.none);
+        try testing.expectEqual(shared, b.coedgeStart(leaving));
+    }
+}
+
 test "mef and kef: a loop splits into two faces and merges back; the signature is unchanged" {
     var kit = try Kit.init(testing.allocator);
     defer kit.deinit();
