@@ -2493,3 +2493,28 @@ test "degeneracy: a box over the notch of an L-shaped top, its bottom the inters
     defer b.deinit();
     try expectAllSound(&l, &b);
 }
+
+test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, their union's section edges lie on their faces within the gaps carried onto them" {
+    // The locus fuzzer's find (2026-11-18, 10K session on a5301ce8, au), reduced: a
+    // tetrahedron's edge passes 2.7e-5 from the corner where a box's side and top meet a
+    // second box's side (beyond the intersection tolerance, 2e-5, of the corner, within it
+    // and the gaps of the faces). The merged vertex there lay past the intersection
+    // tolerance off the second box's side, within its gap; the section lines drawn through
+    // it left that plane by as much, and their edges, made with no gap, were off their
+    // face (`edge_off_surface`). Each
+    // edge's gap covers its line's height over its faces' planes, and its ends' gaps cover
+    // its own (`pipeline.coverFaces`, OCCT's CorrectCurveOnSurface and UpdateVertex). The
+    // union is made; the difference, the corner's edge touching the tetrahedron's within
+    // the tolerance, is refused by design (`pinched`)
+    var t = try tetrahedron(.{ 3.5, 3, 5 }, .{ 0.5, 4, 2 }, .{ 1.5, 0, 3 }, .{ 4.5, 0, 1 });
+    defer t.deinit();
+    var a = try box(.{ -tol.xsect, 3, 2.5 }, .{ 2 - tol.xsect, 4, 3.5 });
+    defer a.deinit();
+    var b = try box(.{ 1, 0.5 - tol.xsect, 1 }, .{ 3, 3.5 - tol.xsect, 4 });
+    defer b.deinit();
+    var ta = try sound(&t, &a, .@"union");
+    defer ta.deinit();
+    var both = try sound(&ta, &b, .@"union");
+    defer both.deinit();
+    try expectProbe(&ta, &b);
+}

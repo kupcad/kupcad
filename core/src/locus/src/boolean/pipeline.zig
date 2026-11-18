@@ -697,6 +697,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     made.face_tag = try face_tag.toOwnedSlice(allocator);
     if (faces.items.len > 0) {
         _ = sew.sew(&b.body, faces.items, .outer) catch |e| return b.fail(e);
+        try coverFaces(&b.body, diag);
         // A shell enclosing negative volume bounds a void
         try primitives.markVoids(&b.body, diag);
         // A pinch is refused before simplification, whose Euler operators take a valid
@@ -708,6 +709,32 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     }
     made.body = b.body;
     return made;
+}
+
+/// Each edge's gap grown to cover its line's distance from its faces' planes beyond the
+/// intersection tolerance, and its ends' gaps to cover its own (OCCT's
+/// `BOPTools_AlgoTools::CorrectCurveOnSurface`, then `UpdateVertex`). A section's line runs
+/// through merged vertices the paves put on both faces within the intersection tolerance
+/// and their gaps, and a face takes its own plane or its group's, so the line leaves a
+/// plane by up to its ends' heights; its edge, made with no gap, did not carry them. A
+/// line's height over a plane is linear, so its ends bound it. Past the zone, refused
+/// (`gap_too_large`), as `Provenance.piece` refuses a vertex's.
+fn coverFaces(body: *Body, diag: *Diagnostics) Error!void {
+    const tol = body.tol;
+    for (body.edges.items, 0..) |*edge, i| {
+        if (edge.flags.tombstone) continue;
+        const line = body.geometry.curve(edge.curve).line;
+        var gap = edge.gap;
+        for (traverse.coedgesOfEdge(body, types.EdgeIndex.of(i))) |c| {
+            if (c == .none) continue;
+            const plane = body.geometry.planes.items[body.face(body.loop(body.coedge(c).loop).face).surface.index];
+            for ([_]f64{ edge.t0, edge.t1 }) |t| gap = @max(gap, @abs(plane.height(line.eval(t))) - tol.xsect);
+        }
+        if (gap == edge.gap) continue;
+        if (gap > tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.edge, i), .label = "an edge whose line leaves its faces' planes past the intersection tolerance by", .measured = gap, .threshold = tol.zone });
+        edge.gap = gap;
+        for ([_]types.VertexIndex{ edge.start, edge.end }) |v| body.vertex(v).gap = @max(body.vertex(v).gap, gap);
+    }
 }
 
 /// Fragment `i`'s area: its loops' vector areas (a hole's runs the other way and takes its

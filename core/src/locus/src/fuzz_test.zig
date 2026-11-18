@@ -2097,6 +2097,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // nearly-coplanar warning refusing nothing, edge-edge off a segment unasked,
         // edge-face deciding both ends)
         "solids 0 0 2 1 3 2 4 1 0 1 1 1 3 10 2 9 2 1 1 8 4 2 2 2 2 3 1 4 1 3 4 3 2 2 3 3 1 1 4 1 3 2 4 3 1 3 3 12 -2 4 1 2 2 1 3 0 3 1 4 0 0 1 2 12 3 10 8 0",
+        // The 10K session on a5301ce8 (locus): a hull's edge 2.7e-5 from where two boxes'
+        // faces meet, the union's section lines drawn through a merged vertex past the
+        // tolerance off one's plane, their edges made with no gap (pipeline.coverFaces)
+        "solids 1 8 3 3 4 1 3 1 2 2 2 0 3 1 0 4 1 1 0 2 4 0 0 0 0 2 2 3 1 11 2 8 3 0 -1 0 0 6 8 2 0 0 2 3 4 2 3 2 2 8 8 1 14 0 2 0 1 3 1 4 1 4 3 1 3 -1 5 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
