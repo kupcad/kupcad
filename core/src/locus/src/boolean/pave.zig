@@ -878,12 +878,16 @@ const Filler = struct {
         return false;
     }
 
-    /// Where `q` lies along edge `e` of operand `k`: its parameter from start (0) to end
-    /// (1) and its distance from the edge's segment, when its foot is inside the edge's
-    /// shrunk range (OCCT's `IntTools_ShrunkRange`): beyond the intersection tolerance and
-    /// the end's gap from either end, where the end's ball does not already hold it.
-    /// `splittable` is false for an edge whose shrunk range is shorter than twice the
-    /// tolerance: a pave there would leave a piece too short to be an edge.
+    /// Where `q` lies along edge `e` of operand `k` (null for an edge of no length): its
+    /// parameter from start (0) to end (1), its distance from the edge's line, and whether
+    /// its foot is in an end's strip, outside the edge's shrunk range (OCCT's
+    /// `IntTools_ShrunkRange`): within the intersection tolerance and the end's gap of
+    /// either end, where the end's ball holds it. `short` is whether the shrunk range is
+    /// shorter than twice the tolerance: a pave there would leave a piece too short to be
+    /// an edge. Both are distances decided as every distance here is (D27): a foot at a
+    /// strip's bound to rounding was a pave or the strip's refusal by the rounding a
+    /// placement moved (the 10K session on 6007ab01, 2026-11-18: a hull's corner 1e-17
+    /// from the bound of a box edge's strip).
     fn along(self: *const Filler, k: usize, e: types.EdgeIndex, q: Vec3) ?Along {
         const v = self.ends(k, e);
         const p0 = self.p.point(v[0]);
@@ -895,12 +899,23 @@ const Filler = struct {
         const len = @sqrt(len_sq);
         const xsect = self.p.tol.xsect;
         const lo = xsect + self.p.gaps.items[v[0]];
-        const hi = len - (xsect + self.p.gaps.items[v[1]]);
-        if (s * len <= lo or s * len >= hi) return null;
-        return .{ .s = s, .distance = vec.distance(q, vec.addScaled(p0, d, s)), .splittable = hi - lo >= 2 * xsect };
+        const hi = xsect + self.p.gaps.items[v[1]];
+        return .{
+            .s = s,
+            .distance = vec.distance(q, vec.addScaled(p0, d, s)),
+            .strip = canonical.either(self.p.decide.within(s * len, lo), self.p.decide.within((1 - s) * len, hi)),
+            .short = self.p.decide.within(len - lo - hi, 2 * xsect),
+        };
     }
 
-    const Along = struct { s: f64, distance: f64, splittable: bool };
+    const Along = struct { s: f64, distance: f64, strip: Verdict, short: Verdict };
+
+    /// Whether `at`, a point on edge `e` (within its reach of it), is in an end's strip;
+    /// refused at a strip's bound to rounding, where a pave and the strip's refusal hang on
+    /// the rounding.
+    fn inStrip(self: *Filler, at: Along, e: types.EdgeIndex) Error!bool {
+        return self.settle(at.strip, .of(.edge, @backingInt(e)));
+    }
 
     /// Merged vertex `v`, not an end of edge `e` of operand `k`, within the tolerance and
     /// its gap of the edge with its foot in an end's strip (`along`'s, where the end's ball
@@ -936,7 +951,7 @@ const Filler = struct {
     /// Merged vertex `v` as a pave of edge `e` of operand `k` at `at`; `TooSmallEdge`,
     /// naming the edge, when the edge cannot be split.
     fn addPave(self: *Filler, k: usize, e: types.EdgeIndex, v: u32, at: Along) Error!void {
-        if (!at.splittable) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
+        if (try self.settle(at.short, .of(.edge, @backingInt(e)))) return self.diag.fail(error.TooSmallEdge, .{ .code = .edge_too_short, .entity = .of(.edge, @backingInt(e)), .label = tooSmallLabel(k, self.stage.*), .measured = vec.distance(self.p.point(self.ends(k, e)[0]), self.p.point(self.ends(k, e)[1])), .threshold = 4 * self.p.tol.xsect });
         try self.p.edge_paves[k][@backingInt(e)].append(self.allocator, .{ .vertex = v, .s = at.s });
         self.p.reach.items[v] = @max(self.p.reach.items[v], at.distance);
         self.tally();
@@ -984,12 +999,12 @@ const Filler = struct {
             const e = self.edges[k][item];
             if (skip != null and skip.? == e) continue;
             if (self.hasPave(k, e, v)) continue;
-            const at = self.along(k, e, q) orelse {
-                try self.endStrip(k, e, v);
-                continue;
-            };
-            if (!try self.within(at.distance, self.reachOf(v) + self.edgeGapOf(k, e), .of(.edge, @backingInt(e)))) continue;
-            try self.addPave(k, e, v, at);
+            const at = self.along(k, e, q) orelse continue;
+            // In an end's strip `endStrip` asks whether the vertex is on the edge; elsewhere
+            // it is asked first, so that only a vertex on the edge is refused at a strip's
+            // bound
+            if (at.strip != .same and !try self.within(at.distance, self.reachOf(v) + self.edgeGapOf(k, e), .of(.edge, @backingInt(e)))) continue;
+            if (try self.inStrip(at, e)) try self.endStrip(k, e, v) else try self.addPave(k, e, v, at);
         }
     }
 
@@ -1033,26 +1048,29 @@ const Filler = struct {
             const c1 = vec.addScaled(q0, d1, closest[1]);
             const gap = vec.distance(c0, c1);
             const mid = vec.lerp(c0, c1, 0.5);
-            const along_a = self.along(0, ea, mid);
-            const along_b = self.along(1, eb, mid);
+            const at_a = self.along(0, ea, mid) orelse continue;
+            const at_b = self.along(1, eb, mid) orelse continue;
             const off = closest[0] < 0 or closest[0] > 1 or closest[1] < 0 or closest[1] > 1;
             // Off either segment the lines' crossing is no meeting whatever its gap (where
             // an end is near the other edge, vertex–edge decided it), so its gap is not
             // asked: at the tolerance to rounding 99 units past a box's edge, it refused a
             // union the box's edge lay inside (the 10K session on 0fce3ff4, at)
-            if ((along_a == null or along_b == null) and off) continue;
+            if (canonical.either(at_a.strip, at_b.strip) != .apart and off) continue;
             if (!try self.within(gap, self.p.tol.xsect + self.edgeGapOf(0, ea) + self.edgeGapOf(1, eb), .of(.edge, @backingInt(ea)))) continue;
-            if (along_a == null or along_b == null) {
-                // On both segments, in an end's strip
-                const reach = incidence.reach(self.p.tol, gap / 2);
-                if (along_a == null) try self.stripAt(0, ea, mid, reach);
-                if (along_b == null) try self.stripAt(1, eb, mid, reach);
-                continue;
+            // On both segments: in an end's strip refused
+            const reach = incidence.reach(self.p.tol, gap / 2);
+            var in_strip = false;
+            for ([2]usize{ 0, 1 }, [2]types.EdgeIndex{ ea, eb }, [2]Along{ at_a, at_b }) |k, e, at| {
+                if (!try self.inStrip(at, e)) continue;
+                try self.stripAt(k, e, mid, reach);
+                in_strip = true;
             }
+            if (in_strip) continue;
             const v = try self.weld(mid, gap / 2, .{ .{ .edge = .{ .k = 0, .e = ea } }, .{ .edge = .{ .k = 1, .e = eb } } });
             for ([2]usize{ 0, 1 }, [2]types.EdgeIndex{ ea, eb }) |k, e| {
                 if (self.hasPave(k, e, v)) continue;
                 const at = self.along(k, e, self.p.point(v)) orelse continue;
+                if (try self.inStrip(at, e)) continue;
                 try self.addPave(k, e, v, at);
             }
             try self.onEdges(0, v, ea);
@@ -1457,7 +1475,9 @@ const Filler = struct {
                 const before = self.p.points.items.len;
                 const w = try self.weld(q, 0, .{ .{ .edge = .{ .k = k, .e = e } }, .{ .face = .{ .k = other, .f = f } } });
                 if (!self.hasPave(k, e, w)) {
-                    if (self.along(k, e, self.p.point(w))) |at| try self.addPave(k, e, w, at) else try self.endStrip(k, e, w);
+                    if (self.along(k, e, self.p.point(w))) |at| {
+                        if (try self.inStrip(at, e)) try self.endStrip(k, e, w) else try self.addPave(k, e, w, at);
+                    }
                 }
                 try self.foundOn(other, f, w, place);
                 if (place == .boundary and self.p.points.items.len > before) try self.onEdges(other, w, null);

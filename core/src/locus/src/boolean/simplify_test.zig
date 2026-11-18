@@ -18,6 +18,7 @@ const simplify = @import("simplify.zig");
 const euler = @import("../topology/euler.zig");
 const traverse = @import("../topology/traverse.zig");
 const curves = @import("../geometry/curves.zig");
+const canonical = @import("../geometry/canonical.zig");
 const select = @import("select.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
@@ -213,6 +214,54 @@ test "simplify: an edge the checker finds too short by its chord collapses, thou
     try simplify.run(&body, &diag, null);
     try expectValid(&body);
     try testing.expectEqual(@as(usize, 8), body.counts().vertices);
+}
+
+test "simplify: a short edge collapsed into its start gives the start the gap that holds the lines moved to it" {
+    // The 10K session on 6007ab01 (2026-11-18): an edge the minimum feature size long
+    // collapsed into a box's corner, and an edge moved there ended 2.0138e-5 off its line,
+    // past the tolerance of 2e-5, with no gap; the checker refused the result
+    // (`vertex_off_curve`). A box's corner split off by an edge 1.41e-5 long, the edge up
+    // moved to the new vertex on a line of its own, 7.1e-6 from that vertex and 2.12e-5
+    // from the corner (within the tolerance of both faces about it). Collapsed into the
+    // corner, the edge up starts there: the corner's gap holds it, as the builder gives a
+    // vertex it puts on an edge (`simplify.coverLine`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+    defer body.deinit();
+    const corner = for (body.vertices.items, 0..) |_, i| {
+        if (vec.length(body.point(types.VertexIndex.of(i))) == 0) break types.VertexIndex.of(i);
+    } else unreachable;
+    var up: types.CoedgeIndex = .none;
+    var around = traverse.Umbrella.init(&body, corner);
+    while (try around.next()) |c| {
+        if (body.point(body.coedgeEnd(c))[2] == 1) up = c;
+    }
+    var from_up = traverse.Umbrella.initFrom(&body, up);
+    _ = try from_up.next();
+    const next_around = (try from_up.next()).?;
+    const q: Vec3 = .{ 1e-5, 1e-5, 0 };
+    const point = try body.geometry.addPoint(testing.allocator, q);
+    const short = try body.geometry.addLine(testing.allocator, curves.Line.through(.{ 0, 0, 0 }, q).?);
+    _ = try euler.mevSplitVertex(&body, up, next_around, point, .{ .curve = short, .t0 = 0, .t1 = vec.length(q) });
+    // The edge up on its own line, from 1.5e-5 along x and y at the bottom to the top corner
+    const foot: Vec3 = .{ 1.5e-5, 1.5e-5, 0 };
+    const top: Vec3 = .{ 0, 0, 1 };
+    const from_q = body.edges.items[@backingInt(body.coedge(up).edge)].start == body.coedgeStart(up);
+    const line = if (from_q) curves.Line.through(foot, top).? else curves.Line.through(top, foot).?;
+    const curve = try body.geometry.addLine(testing.allocator, line);
+    const up_edge = &body.edges.items[@backingInt(body.coedge(up).edge)];
+    up_edge.curve = curve;
+    up_edge.t0 = line.project(if (from_q) q else top);
+    up_edge.t1 = line.project(if (from_q) top else q);
+    try testing.expect(canonical.lineOffset(line, q) < tol.xsect and canonical.lineOffset(line, .{ 0, 0, 0 }) > tol.xsect);
+    var before = try check.run(testing.allocator, &body, .geometric);
+    defer before.deinit(testing.allocator);
+    try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
+    try simplify.run(&body, &diag, null);
+    try expectValid(&body);
+    try testing.expectEqual(@as(usize, 8), body.counts().vertices);
+    try testing.expect(body.vertex(corner).gap > 0);
 }
 
 test "simplify: two faces on planes the same within the tolerance, different records, become one" {

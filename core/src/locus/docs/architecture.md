@@ -717,7 +717,9 @@ importing only those before it, which the layering test holds):**
   (`incidence.Decider.onEdge`; the segment lies within them of the edge's curve), its
   foot in the edge's shrunk range:
   beyond `xsect` and the end's gap from either end; an edge whose shrunk range is under
-  `2·xsect` is not split but refused, `TooSmallEdge` naming it);
+  `2·xsect` is not split but refused, `TooSmallEdge` naming it; both lengths decided as
+  every distance is, a foot at a strip's bound to rounding refused `at_tolerance`, D27, as
+  it was a pave or the strip's refusal by the rounding a placement moved, 2026-11-18);
   edge–edge by the closest points of the two lines, within `xsect` and both edges' gaps
   (`edgesMeet`; by `xsect` alone a box's edge between corners with gaps of 3.5e-5, its
   face in another's plane by them, missed that face's edge crossing it, 2026-11-16; a

@@ -1309,6 +1309,31 @@ test "degeneracy: a vertex the tolerance off an edge in its end's strip, not its
     }
 }
 
+test "degeneracy: a vertex on an edge at its end's strip to rounding is refused, wherever the pair is placed" {
+    // A tetrahedron's apex the intersection tolerance up another's edge from its end (the
+    // end's gap none, so at the bound of its strip) and 1.5e-5 off it. In the strip it is
+    // too near the end to split the edge at (refused, as above); beyond it a pave. The
+    // bound was compared raw, so which the apex was hung on the rounding a placement
+    // moved: at the bound to rounding it is refused (D27), as every distance the paves
+    // decide is (the 10K session on 6007ab01, 2026-11-18: a hull's corner 1e-17 from the
+    // bound of a box edge's strip). The edge's bottom face is tilted, so the apex is
+    // clear of its plane (a box's would be the tolerance away from it, at the tolerance
+    // there too), and the apex's edges leave away from the edge's end
+    var a0 = try tetrahedron(.{ 0, 0, 1 }, .{ 0, 0, 0 }, .{ 1, 0, 0.5 }, .{ 0, 1, 0.5 });
+    defer a0.deinit();
+    var b0 = try tetrahedron(.{ -1.5e-5, 0, 2e-5 }, .{ -1, -1, 0.5 }, .{ -1, 0.5, 1 }, .{ -0.5, -1, 1 });
+    defer b0.deinit();
+    for (0..16) |k| {
+        const x: f64 = @floatFromInt(k);
+        const by: Vec3 = .{ 0.37 * x, -1.13 * x, 2.71 * x };
+        var a = try helpers.moved(&a0, by);
+        defer a.deinit();
+        var b = try helpers.moved(&b0, by);
+        defer b.deinit();
+        for ([_]pipeline.Op{ .@"union", .difference }) |op| try expectAtTolerance(&a, &b, op);
+    }
+}
+
 test "degeneracy: two edges at a shallow angle, one's end on the other, meet once: no second crossing where they run within the tolerance" {
     // The solids fuzzer's find (2026-11-16, 10K session on cb4fcdbb), at one tolerance: a
     // box turned 0.007 rad about its front-right corner, that corner 3e-6 inside a plate's
@@ -2588,16 +2613,16 @@ test "degeneracy: a piece's bottom lying in a plate's bottom with another piece'
     try testing.expect(!hasPointLoop(&swapped));
 }
 
-test "degeneracy: a short edge collapsed into a box's corner gives the corner a gap covering the line of the hull's edge moved to it" {
+test "degeneracy: a hull's corner on a box's edge at its end's strip to rounding is refused, not collapsed into the box's corner" {
     // The 10K session's find on 6007ab01 (2026-11-18, locus and locus_solids), as the
     // fuzzer drew it: a turned bar united with a hull, less another hull, has a corner at
     // (3.000005, 4, 1.999995); a box's corner (3, 4.00002, 2) is 2.12e-5 from it, past the
-    // tolerance of 2e-5, and the box's edge from that corner passes 7.1e-6 from it. United,
-    // the paves put the hull's corner on the box's edge 2e-5 from the box's, and the edge
-    // between them, the minimum feature size long, collapsed into the box's corner: the
-    // hull's edge moved there ended 2.0138e-5 off its line with no gap, and the checker
-    // refused the union (`vertex_off_curve`). The corner's gap covers it, as the builder's
-    // pieces do (`simplify.coverLine`)
+    // tolerance of 2e-5, and the box's edge from that corner passes 7.1e-6 from it, its
+    // foot the tolerance along the edge from the box's corner to 1e-17: at the bound of
+    // the corner's strip. Compared raw it was a pave, the edge between the corners, the
+    // minimum feature size long, collapsed into the box's corner and the hull's edge moved
+    // there ended 2.0138e-5 off its line with no gap (`vertex_off_curve`; `coverLine` now
+    // grows the gap, simplify's test). At the bound to rounding it is refused (D27)
     var bar = try helpers.fuzzPlaced(tol, .{ 4, 1, 1 }, .{ 0, 3, 0 }, .{ 1, 2, 3 }, 0.014142253478516982, .{ 1, 0, 0 }, .{ 0, 1e-5, 2e-5 });
     defer bar.deinit();
     var first = try fuzzHull(&.{ .{ 3, 3, 2 }, .{ 1, 1, 2 }, .{ 1, 2, 0 }, .{ 1, 1, 3 }, .{ 3, 0, 3 }, .{ 3, 0, 1 } }, .{ 0, 1, 0 }, .{ 5e-6, 0, -5e-6 });
@@ -2610,6 +2635,5 @@ test "degeneracy: a short edge collapsed into a box's corner gives the corner a 
     defer less.deinit();
     var post = try helpers.fuzzPlaced(tol, .{ 1, 2, 2 }, .{ 3, 2, 2 }, vec.Z3, 0, .{ -1, 0, 0 }, .{ 0, 2e-5, 0 });
     defer post.deinit();
-    var u = try sound(&less, &post, .@"union");
-    defer u.deinit();
+    try expectAtTolerance(&less, &post, .@"union");
 }
