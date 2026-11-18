@@ -1383,11 +1383,7 @@ const Provenance = struct {
         const entry = try self.lines.getOrPut(self.allocator, key);
         if (!entry.found_existing) entry.value_ptr.* = b.body.geometry.addLine(b.allocator, line) catch |e| return b.fail(e);
         for ([_]types.VertexIndex{ u, w }, [_]u32{ x, y }) |v, m| {
-            const vertex = b.body.vertex(v);
-            const gap = canonical.lineOffset(line, b.body.point(v)) - b.body.tol.xsect;
-            if (gap <= vertex.gap) continue;
-            if (gap > b.body.tol.zone) return b.diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.vertex, m), .label = "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", .measured = gap, .threshold = b.body.tol.zone });
-            vertex.gap = gap;
+            try simplify.coverLine(&b.body, v, line, .of(.vertex, m), "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", b.diag);
         }
         const ta = line.project(b.body.point(u));
         const tb = line.project(b.body.point(w));

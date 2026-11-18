@@ -689,7 +689,8 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    (coplanar annihilation and its curved analogue), subject to D7; remove vertices of
    valence two on a single curve, or on two lines the same within the tolerance (the
    later edge given the earlier's line: OCCT's `UnifySameDomain` joining edges, D28);
-   collapse edges below `δ`; `compact()`.
+   collapse edges below `δ`, the vertex kept given the gap that holds the lines moved to it
+   (as the builder gives a vertex it puts on an edge; the 10K session, 2026-11-18); `compact()`.
 8. **Check** (§9): the result must pass every rule or the operation fails with the finding.
 
 Batch unions and differences (KupCAD's chains) run as a sequence; a disjoint union is a

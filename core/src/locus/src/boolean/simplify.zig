@@ -25,7 +25,7 @@
 //! - An edge no longer than the minimum feature size (`check.shortest`, measured as the
 //!   checker measures it, `check.edgeLength`, D27's band beyond) collapses into its start
 //!   (`kevMerge`), the edges at its end moved
-//!   there and their ranges taken to it, when neither of its faces is left with fewer than
+//!   there, their ranges taken to it and its gap grown to hold their lines (`coverLine`), when neither of its faces is left with fewer than
 //!   three edges; a sliver that would be is left for the checker to refuse. (The paves keep
 //!   merged vertices further apart than the intersection tolerance, so this is for what a
 //!   vertex merge moved: two vertices of one operand each moved toward the other.)
@@ -563,7 +563,8 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
             error.Invalid => continue,
             else => return eulerError(diag, err),
         };
-        // The lines at the vertex kept: their ranges reach its point
+        // The lines at the vertex kept: their ranges reach its point, and its gap their
+        // lines (an edge moved over ended at the vertex gone, up to the short edge off it)
         const at = body.point(keep);
         for (body.edges.items) |*other| {
             if (other.flags.tombstone or (other.start != keep and other.end != keep)) continue;
@@ -572,10 +573,32 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
                 else => continue,
             };
             if (other.start == keep) other.t0 = line.project(at) else other.t1 = line.project(at);
+            try coverLine(body, keep, line, .of(.vertex, @backingInt(keep)), "a vertex a short edge collapsed into, off the line of an edge moved to it past the intersection tolerance by", diag);
         }
         changed = true;
     }
     return changed;
+}
+
+/// Vertex `v`'s gap grown to cover its distance from `line` beyond the intersection
+/// tolerance, as the checker holds an edge's ends to its curve (`vertex_off_curve`) and OCCT
+/// grows a vertex's tolerance to the edges it ends (`UpdateVertex`): the one rule for
+/// whatever puts a vertex at the end of an edge off its line, the boolean's builder (a
+/// pave on an edge by the segment between its merged ends, `Provenance.piece`) and the
+/// short-edge collapse (an edge moved from the vertex gone to the one kept; the 10K session
+/// on 6007ab01: a hull's edge moved to a box's corner 2.0138e-5 off its line, at a
+/// tolerance of 2e-5, with no gap). The gap covers the distance's rounding too (D27's
+/// band): the checker measures from the line at the vertex's projection, a rounding from
+/// `lineOffset` at the coordinates' size, and the offset's excess alone fell 9e-17 short
+/// of it in the same find. Past the zone, refused (`gap_too_large`), naming `entity` with
+/// `label`.
+pub fn coverLine(body: *Body, v: types.VertexIndex, line: @import("../geometry/curves.zig").Line, entity: diagnostics.EntityRef, label: []const u8, diag: *Diagnostics) Error!void {
+    const p = body.point(v);
+    const offset = canonical.lineOffset(line, p);
+    const gap = offset - body.tol.xsect + canonical.Comparison.distance(offset, body.tol.xsect, canonical.magnitude(&.{ p, line.o })).band;
+    if (gap <= body.vertex(v).gap) return;
+    if (gap > body.tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = entity, .label = label, .measured = gap, .threshold = body.tol.zone });
+    body.vertex(v).gap = gap;
 }
 
 /// The live edges between each pair of vertices: more than one where solids touch along a

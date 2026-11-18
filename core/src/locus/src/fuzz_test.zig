@@ -2114,6 +2114,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // a corner at (3 - √3, 3 - √3) whose miter reached exactly the limit, capped by a
         // rounding as drawn and mitered turned (offset: a reach within the zone of it)
         "chain 3 6 4 2 5 2 1 4 4 5 4 3 3 6 4 4 4 4 2 3 5 1 6 1 4 4 3 1 1 3 3 3 2 4 2 3 8 5 6 3 5 2 0 0 2 0 6 5 2 3 2 6 2 4 1 3 0 3 1 0 1 2 2 1 2 0 1 0 1 3 3 6 1 5 3 1 2 3 3 4 0",
+        // The 10K session on 6007ab01 (locus and locus_solids): a hull's corner on a box's
+        // edge 2e-5 from the box's corner, the edge between them collapsed into the box's
+        // corner and the hull's edge moved there 2.0138e-5 off its line with no gap
+        // (simplify.coverLine, its rounding too)
+        "solids 0 0 4 3 4 0 1 0 3 6 3 2 5 7 4 3 2 1 6 3 3 2 1 1 2 1 2 0 1 1 3 3 0 3 3 0 1 3 3 3 2 4 3 0 3 1 7 1 4 0 4 2 4 0 1 4 1 2 4 0 2 2 1 1 3 0 0 3 1 1 1 3 1 9 1 1 0 3 4 2 4 2 4 1 2 -2 7 0 6 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

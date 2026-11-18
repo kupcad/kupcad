@@ -2587,3 +2587,29 @@ test "degeneracy: a piece's bottom lying in a plate's bottom with another piece'
     try testing.expect(!hasPointLoop(&forward));
     try testing.expect(!hasPointLoop(&swapped));
 }
+
+test "degeneracy: a short edge collapsed into a box's corner gives the corner a gap covering the line of the hull's edge moved to it" {
+    // The 10K session's find on 6007ab01 (2026-11-18, locus and locus_solids), as the
+    // fuzzer drew it: a turned bar united with a hull, less another hull, has a corner at
+    // (3.000005, 4, 1.999995); a box's corner (3, 4.00002, 2) is 2.12e-5 from it, past the
+    // tolerance of 2e-5, and the box's edge from that corner passes 7.1e-6 from it. United,
+    // the paves put the hull's corner on the box's edge 2e-5 from the box's, and the edge
+    // between them, the minimum feature size long, collapsed into the box's corner: the
+    // hull's edge moved there ended 2.0138e-5 off its line with no gap, and the checker
+    // refused the union (`vertex_off_curve`). The corner's gap covers it, as the builder's
+    // pieces do (`simplify.coverLine`)
+    var bar = try helpers.fuzzPlaced(tol, .{ 4, 1, 1 }, .{ 0, 3, 0 }, .{ 1, 2, 3 }, 0.014142253478516982, .{ 1, 0, 0 }, .{ 0, 1e-5, 2e-5 });
+    defer bar.deinit();
+    var first = try fuzzHull(&.{ .{ 3, 3, 2 }, .{ 1, 1, 2 }, .{ 1, 2, 0 }, .{ 1, 1, 3 }, .{ 3, 0, 3 }, .{ 3, 0, 1 } }, .{ 0, 1, 0 }, .{ 5e-6, 0, -5e-6 });
+    defer first.deinit();
+    var joined = try sound(&bar, &first, .@"union");
+    defer joined.deinit();
+    var second = try fuzzHull(&.{ .{ 1, 4, 0 }, .{ 4, 2, 4 }, .{ 0, 1, 4 }, .{ 1, 2, 4 }, .{ 0, 2, 2 }, .{ 1, 1, 3 }, .{ 0, 0, 3 } }, .{ 0.5, 0, 0.5 }, .{ 0, 5e-6, 0 });
+    defer second.deinit();
+    var less = try sound(&joined, &second, .difference);
+    defer less.deinit();
+    var post = try helpers.fuzzPlaced(tol, .{ 1, 2, 2 }, .{ 3, 2, 2 }, vec.Z3, 0, .{ -1, 0, 0 }, .{ 0, 2e-5, 0 });
+    defer post.deinit();
+    var u = try sound(&less, &post, .@"union");
+    defer u.deinit();
+}

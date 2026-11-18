@@ -243,3 +243,27 @@ test "simplify: two faces on planes the same within the tolerance, different rec
     try expectValid(&body);
     try testing.expectEqual(@as(usize, 6), body.counts().faces);
 }
+
+test "simplify: coverLine's gap holds a vertex to the line as the checker measures it, the line at the vertex's projection" {
+    // The 10K session on 6007ab01 (2026-11-18): a vertex an edge was moved to, 2.0138e-5
+    // off the edge's line at a tolerance of 2e-5. The checker measures from the line at the
+    // vertex's projection, which differs from `canonical.lineOffset` by a rounding at the
+    // coordinates' size, and a gap of the offset's excess alone fell 9e-17 short of it.
+    // Vertices just past the tolerance off that line, all round it and along it
+    var body = Body.init(testing.allocator, tol);
+    defer body.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const line: curves.Line = .{ .o = .{ 1.000005, 3, -0.000005 }, .d = .{ 2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0 } };
+    const across = vec.normalized(vec.cross(line.d, .{ 0, 0, 1 })).?;
+    const up = vec.cross(line.d, across);
+    for (0..400) |i| {
+        const k: f64 = @floatFromInt(i);
+        const round = vec.add(vec.scale(across, @cos(k * 0.37)), vec.scale(up, @sin(k * 0.37)));
+        const p = vec.addScaled(line.eval(0.5 + k * 0.01), round, tol.xsect * (1 + k * 1e-4));
+        const v = try body.addVertex(.{ .point = try body.geometry.addPoint(testing.allocator, p) });
+        try simplify.coverLine(&body, v, line, .of(.vertex, @backingInt(v)), "the test's vertex", &diag);
+        // As `vertex_off_curve` measures and sums it, for an edge with no gap
+        try testing.expect(vec.distance(line.eval(line.project(p)), p) <= tol.xsect + 0 + body.vertex(v).gap);
+    }
+}
