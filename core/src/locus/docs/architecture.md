@@ -967,7 +967,9 @@ never chorded into a polygon (NOTES §8). Sketch booleans are
 the overlay with winding labels; offset is the sheet united with (grown) or less (shrunk)
 the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector, the pies
 about a centre the offset passes) and each opening corner's join (round, miter, bevel,
-square) a simple region the overlay counts as a second input (D25); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
+square) a simple region the overlay counts as a second input (D25), a miter whose reach is
+within the zone of the limit within it (a corner exactly at the limit was mitered or capped
+by a rounding a turn moved; the fuzzer, 2026-11-18); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
 are left out of the hull's boundary; documented, and the driver refuses a sketch with arcs
 as `curved_hull`, D24, until the hull keeps its arcs); `query.contours` outputs closed polylines at a
 `Resolution` (the mesh engine's polygon: lofts, sweeps) and `query.outlines` the same loops with

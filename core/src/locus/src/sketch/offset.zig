@@ -220,9 +220,13 @@ const Band = struct {
             }, forward),
             .bevel => try self.region(&.{ .{ .a = v, .b = end1 }, .{ .a = end1, .b = start2 }, .{ .a = start2, .b = v } }, forward),
             .miter => {
-                // The offset lines' meeting point, when within the limit; a cap otherwise
+                // The offset lines' meeting point, when within the limit; a cap otherwise. A
+                // reach within the zone of the limit is within it, as any two lengths that
+                // close are one: a corner whose miter reaches exactly the limit (a third of a
+                // turn with the limit 2) is otherwise mitered or capped by a rounding, which
+                // a turn of the sheet moves (the fuzzer, 2026-11-18: 124.04 against 124.48)
                 if (linesMeet(end1, t1, start2, t2)) |meet| {
-                    if (vec.distance2(meet, v) <= self.miter_limit * @abs(delta)) {
+                    if (vec.distance2(meet, v) <= self.miter_limit * @abs(delta) + self.zone) {
                         try self.region(&.{ .{ .a = v, .b = end1 }, .{ .a = end1, .b = meet }, .{ .a = meet, .b = start2 }, .{ .a = start2, .b = v } }, forward);
                         return;
                     }

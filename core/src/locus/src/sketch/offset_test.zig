@@ -480,3 +480,28 @@ test "offset: a grown sheet holds the disc about its cusp, turned or not (the fu
     defer gm.deinit();
     try testing.expectApproxEqRel(try areaOf(&g), try areaOf(&gm), 1e-9);
 }
+
+test "offset: a miter reaching the limit is a miter, turned any way (the fuzzer's corner at exactly the limit)" {
+    // The fuzzer's find (nightly 2026-11-18, run 44297393647): a corner whose miter reached
+    // exactly twice the offset, the limit, was squared off on the sheet as drawn (the reach
+    // a rounding past it) and mitered on the sheet turned 0.014 about z (a rounding short),
+    // 124.04 against 124.48. Each corner of an equilateral triangle turns a third of a
+    // turn, so its miter reaches 1 / cos 60° = 2 offsets: grown by 1 with the limit 2, it
+    // is the equilateral triangle of inradius 1 / √3 + 1 whichever way it is turned
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const s3: f64 = @sqrt(3.0);
+    const corners = [_]Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 1, s3 } };
+    var tri = try primitives.polygon(testing.allocator, tol, &corners, &diag);
+    defer tri.deinit();
+    const inradius = 1 / s3 + 1;
+    for (0..64) |k| {
+        const turn = mat.Affine.rotate(vec.Z3, @as(f64, @floatFromInt(k)) * 0.1);
+        var turned = try transform.transform(testing.allocator, &tri, &turn, .{}, &diag);
+        defer turned.deinit();
+        var g = try grown(&turned, 1, .miter, &diag);
+        defer g.deinit();
+        try testing.expectApproxEqRel(3 * s3 * inradius * inradius, try areaOf(&g), 1e-9);
+        try testing.expectEqual(@as(usize, 3), g.counts().edges);
+    }
+}

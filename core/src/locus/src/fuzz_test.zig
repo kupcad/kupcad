@@ -2110,6 +2110,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // a slit left one way round, a loop of the corner the other, whose kvh took the
         // other piece's vertex (simplify: inner edges whole; kevSpur kept a vertex's coedge)
         "solids 1 4 2 4 0 3 1 3 2 3 4 1 4 2 2 1 1 1 0 1 2 10 3 1 0 1 4 2 4 2 3 3 3 2 13 5 9 1 3 1 6 0 4 0 0 0 2 3 1 1 0 3 1 2 0 1 4 1 3 2 2 14 12 6 10 1 1 2 0 4 0 3 3 4 3 2 2 7 5 2 1",
+        // The nightly of 2026-11-18 (locus): a sheet grown 1.5 with miter joins, limit 2,
+        // a corner at (3 - √3, 3 - √3) whose miter reached exactly the limit, capped by a
+        // rounding as drawn and mitered turned (offset: a reach within the zone of it)
+        "chain 3 6 4 2 5 2 1 4 4 5 4 3 3 6 4 4 4 4 2 3 5 1 6 1 4 4 3 1 1 3 3 3 2 4 2 3 8 5 6 3 5 2 0 0 2 0 6 5 2 3 2 6 2 4 1 3 0 3 1 0 1 2 2 1 2 0 1 0 1 3 3 6 1 5 3 1 2 3 3 4 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
