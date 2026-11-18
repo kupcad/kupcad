@@ -983,9 +983,12 @@ test "degeneracy: an edge passing a box's edge within the tolerance and crossing
     // vertex the edges already have on the faces. The exact intersection's top is an edge
     // 6e-5 long that is now that vertex, 5.4e-5 above it: its volume, and the identities,
     // hold to that displacement times the result's area, well within the fuzzer's slab.
-    // The hull as the fuzzer moved it, by the intersection tolerance exactly, puts its face
-    // that far from the box's, to rounding: refused (`at_tolerance`); moved by 1.95e-5 the
-    // crossings are as they were (moved by 1.9e-5, nothing folds even without the rule)
+    // The hull as the fuzzer moved it, by the intersection tolerance exactly, puts an end of
+    // its edge that far from the box's face to rounding; its other end lies on that face's
+    // plane, which settles that the edge does not cross it, so the end at the tolerance
+    // decides nothing: made and sound either way round (refused at_tolerance until the
+    // paves asked both ends first, step 1 of closing M4); moved by 1.95e-5 the crossings
+    // are as they were (moved by 1.9e-5, nothing folds even without the rule)
     var a = try box(.{ 0, 1, 1 }, .{ 0.5, 2, 3 });
     defer a.deinit();
     var diag = Diagnostics.init(testing.allocator);
@@ -995,7 +998,13 @@ test "degeneracy: an edge passing a box's edge within the tolerance and crossing
     defer b0.deinit();
     var at = try helpers.moved(&b0, .{ 2e-5, -0.5, 0 });
     defer at.deinit();
-    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| try expectAtTolerance(&at, &a, op);
+    for ([2][2]*const Body{ .{ &at, &a }, .{ &a, &at } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+    }
+    try helpers.expectIdentitiesAtTolerance(&at, &a);
     var b = try helpers.moved(&b0, .{ 1.95e-5, -0.5, 0 });
     defer b.deinit();
     var u = try sound(&b, &a, .@"union");
