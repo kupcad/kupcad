@@ -771,7 +771,12 @@ importing only those before it, which the layering test holds):**
   face's plane within the tolerance and their gaps (where in it is the imprint's), else
   refused `below_feature_size` (a chain's union top moved 7e-5
   onto a box's plane, D28, took a hull's top 1.8e-4 off within the tolerance of its plane
-  while its edges inside the hull's top were 2.5e-4 off, 2026-11-15); two parallel a hair apart (within
+  while its edges inside the hull's top were 2.5e-4 off, 2026-11-15), and refused
+  `below_feature_size` too where a block comes within the tolerance of the face's own
+  pave blocks in its plane other than at a merged vertex they share (the pair's height
+  apart is dropped there: a plate's edge 2.013e-4 from a corner under a hull's bottom was
+  2e-5 from it in the plane and the overlay welded it on, `imprint_unmatched`, the
+  nightly 2026-11-18; Leo: refused, not decided again in the plane); two parallel a hair apart (within
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
   the result has faces that thin). A section piece lies on a face's boundary only when
   the paves put both its ends there (never by its middle's distance alone), and is then

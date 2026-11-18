@@ -2544,6 +2544,52 @@ test "degeneracy: a box over the notch of an L-shaped top, its bottom the inters
     try expectAllSound(&l, &b);
 }
 
+test "degeneracy: a plate's edge within reach of a slab's corner in their shared plane, past it across, is refused, not welded on by the imprint" {
+    // The nightly's find (2026-11-18, run 44376458944), reduced: an L-shaped slab's top
+    // and a plate's bottom 1.97e-4 to 1.99e-4 above it (the plate turned 3e-7 rad about y),
+    // at a tolerance of 2e-4: one plane. The plate's back edge runs 3e-5 inside the slab's
+    // notch edge in that plane, within the tolerance of the notch's outer corner across
+    // (a pave) and 2.0036e-4 from its inner corner (none). In the slab's plane that corner
+    // is 3e-5 from the plate's edge, and the imprint's overlay welded it onto the edge's
+    // block, a cut the paves did not make (`imprint_unmatched`). Within the tolerance is
+    // not transitive across the dropped height: refused (`below_feature_size`), as placed
+    // and turned
+    const zone_4 = Tolerance.fromZone(1e-4);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outline = try primitives.polygon(testing.allocator, zone_4, &.{ .{ 0, 0 }, .{ 6, 0 }, .{ 6, 2 }, .{ 3, 2 }, .{ 3, 4 }, .{ 0, 4 } }, &diag);
+    defer outline.deinit();
+    var raised = try @import("../construct/sweep.zig").extrude(testing.allocator, &outline, .{ 0, 0, 1 }, .{}, &diag);
+    defer raised.deinit();
+    var slab = try helpers.moved(&raised, .{ 0, 0, -1 });
+    defer slab.deinit();
+    const h0 = 1.99e-4;
+    var flat_plate = try helpers.fuzzPlaced(zone_4, .{ 8, 5 - 3e-5, 1 }, .{ -1, -3, h0 }, vec.Z3, 0, .{ 0, 0, 0 }, .{ 0, 0, 0 });
+    defer flat_plate.deinit();
+    var plate = try turned(&flat_plate, .{ 0, 0, h0 }, vec.Y3, 3e-7);
+    defer plate.deinit();
+    for ([_]f64{ 0, 0.3, 1.1 }) |angle| {
+        var a = try turned(&slab, .{ 1, 2, 3 }, .{ 1, 2, 3 }, angle);
+        defer a.deinit();
+        var b = try turned(&plate, .{ 1, 2, 3 }, .{ 1, 2, 3 }, angle);
+        defer b.deinit();
+        for ([_]pipeline.Op{ .@"union", .difference }) |op| for ([_]bool{ false, true }) |swap| {
+            var refusal = Diagnostics.init(testing.allocator);
+            defer refusal.deinit();
+            errdefer std.debug.print("turned {d}, {s}, swapped {}\n", .{ angle, @tagName(op), swap });
+            const result = if (swap) pipeline.boolean(testing.allocator, &b, &a, op, .{}, &refusal, null) else pipeline.boolean(testing.allocator, &a, &b, op, .{}, &refusal, null);
+            if (result) |made| {
+                var body = made;
+                body.deinit();
+                return error.TestUnexpectedResult;
+            } else |err| {
+                try testing.expectEqual(error.Degenerate, err);
+                try testing.expectEqual(diagnostics.Code.below_feature_size, refusal.first().?.code);
+            }
+        };
+    }
+}
+
 test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, their union's section edges lie on their faces within the gaps carried onto them" {
     // The locus fuzzer's find (2026-11-18, 10K session on a5301ce8, au), reduced: a
     // tetrahedron's edge passes 2.7e-5 from the corner where a box's side and top meet a

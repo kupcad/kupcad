@@ -2125,6 +2125,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // one by the edge a touch (raycast: places the segment stays on the boundary between
         // are one)
         "chain 1 5 4 2 1 6 2 2 5 1 6 2 1 1 1 2 3 3 1 3 0 3 2 0 3 7 6 3 3 5 1 1 0 1 0 1 1 3 2 2 1 0 0 3 3 3 4 3 3 6 2 5 6 4 5 2 1 5 2 1 5 2 4 1 3 0 4 1 0 1 1 0 1 3 8 5 3 5 2 4 5 2 1 0 1 3 2 0 5 4 0 1 1 1 3 4 3 4 3 1 1 1 3 2 3 3",
+        // The nightly of 2026-11-18 (run 44376458944, on 0949c72f): a hull's bottom and a
+        // plate's 1.8e-4 apart, one plane at a tolerance of 2e-4; the plate's edge 2.013e-4
+        // from a corner under the hull's bottom, 2e-5 from it in the plane, welded on by
+        // the imprint (pave.apartInPlane: refused)
+        "solids 1 6 3 0 2 0 2 2 4 0 2 4 4 2 0 3 2 0 0 3 0 2 2 2 4 0 7 2 2 3 2 2 3 2 3 1 2 3 3 2 0 3 4 0 2 2 0 4 1 2 1 2 3 0 2 1 2 12 4 11 10 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -2146,16 +2146,20 @@ const Filler = struct {
     /// onto a box's plane, a hull's top 1.8e-4 from that plane and 2.5e-4 from the top's
     /// edges, at a tolerance of 2e-4: the hull's top split where the paves found no point,
     /// `imprint_unmatched`). Within the tolerance is not transitive there, and no decision
-    /// of it is consistent: refused (`below_feature_size`), naming `f`.
+    /// of it is consistent: refused (`below_feature_size`), naming `f`. So is a block that
+    /// comes within the tolerance of one of `g`'s own pieces in that plane where the paves
+    /// did not join them (`apartInPlane`).
     fn blocksInside(self: *Filler, k: usize, f: types.FaceIndex, other: usize, g: types.FaceIndex) Error!void {
         const p = self.p;
         const body_k = self.body(k);
-        const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other), g).?);
+        const frame = planar_faces.frameOf(self.body(other), g).?;
+        const plane = planar_faces.planeOf(frame);
         var loops = traverse.Loops.init(body_k, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             var it = traverse.Coedges.init(body_k, l);
             while (it.next() catch return corrupt(self.diag)) |c| {
-                const list = p.edge_paves[k][@backingInt(body_k.coedge(c).edge)].items;
+                const e = body_k.coedge(c).edge;
+                const list = p.edge_paves[k][@backingInt(e)].items;
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
@@ -2164,8 +2168,55 @@ const Filler = struct {
                         if (try self.onPlane(plane, v, .of(.face, @backingInt(g)))) continue;
                         return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary inside that face beyond reach of its plane," else "a face of the second operand in one plane with a face of the first, its boundary inside that face beyond reach of its plane,", .measured = @abs(plane.height(p.point(v))), .threshold = p.tol.xsect + p.gaps.items[v] });
                     }
+                    try self.apartInPlane(k, e, .{ x.vertex, y.vertex }, other, g, frame, f);
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
                     self.tally();
+                }
+            }
+        }
+    }
+
+    /// The pave block `block` of edge `e` of operand `k`, a section of face `g` of operand
+    /// `other` in one plane with it (`frame` `g`'s): refused (`below_feature_size`, naming
+    /// face `f`, the block's) where, in that plane, it comes within the tolerance and both
+    /// edges' gaps of one of `g`'s own pave blocks (`edgesMeet`) other than where the paves
+    /// joined them, a merged vertex the two share. Taken for one plane, the pair's distance
+    /// along its normal is dropped (the tolerance at most, each face's vertices on either
+    /// side of it), so a corner of `g` the paves found 2.013e-4 from the block's edge, off
+    /// it at a tolerance of 2e-4, was 2e-5 from it in `g`'s plane, and the imprint's overlay
+    /// welded it onto the block (`imprint_unmatched`; the nightly, 2026-11-18: a hull's
+    /// bottom 1.8e-4 under a plate's, a corner of a plate under the hull 1.5e-5 below it).
+    /// Leo, 2026-11-18: refused, not decided again in the plane. A pair of blocks sharing
+    /// one vertex is measured by their other ends (a crossing is the paves' to find).
+    fn apartInPlane(self: *Filler, k: usize, e: types.EdgeIndex, block: [2]u32, other: usize, g: types.FaceIndex, frame: Frame, f: types.FaceIndex) Error!void {
+        const p = self.p;
+        const a = planar_faces.flat(frame, p.point(block[0]));
+        const b = planar_faces.flat(frame, p.point(block[1]));
+        const body_g = self.body(other);
+        var loops = traverse.Loops.init(body_g, g);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_g, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const eg = body_g.coedge(c).edge;
+                const list = p.edge_paves[other][@backingInt(eg)].items;
+                for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                    const piece = [2]u32{ x.vertex, y.vertex };
+                    const shared_0 = piece[0] == block[0] or piece[0] == block[1];
+                    const shared_1 = piece[1] == block[0] or piece[1] == block[1];
+                    if (shared_0 and shared_1) continue;
+                    const u = planar_faces.flat(frame, p.point(piece[0]));
+                    const w = planar_faces.flat(frame, p.point(piece[1]));
+                    const gap = if (shared_0 or shared_1) gap: {
+                        // The ends the two do not share, each against the other
+                        const own = if (shared_0) w else u;
+                        const theirs = if (block[0] == piece[0] or block[0] == piece[1]) b else a;
+                        break :gap @min(pointGap(own, a, b), pointGap(theirs, u, w));
+                    } else segmentGap(a, b, u, w);
+                    switch (p.decide.edgesMeet(gap, self.edgeGapOf(k, e), self.edgeGapOf(other, eg))) {
+                        .apart => {},
+                        .at_tolerance => |cmp| return self.atTolerance(cmp.measured, cmp.limit, .of(.face, @backingInt(f))),
+                        .same => return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary within reach of that face's boundary in the plane, not where the paves met them, by" else "a face of the second operand in one plane with a face of the first, its boundary within reach of that face's boundary in the plane, not where the paves met them, by", .measured = gap, .threshold = p.tol.xsect + self.edgeGapOf(k, e) + self.edgeGapOf(other, eg) }),
+                    }
                 }
             }
         }
