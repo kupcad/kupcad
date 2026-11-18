@@ -237,6 +237,18 @@ const Convex = struct {
     }
 };
 
+/// `Filler.knifeBlocks`'s scratch: each face's spans of a block's feet inside it, and the
+/// ends of the stretches within both.
+const Stretch = struct {
+    within: [2]std.ArrayList([2]f64) = .{ .empty, .empty },
+    ends: std.ArrayList(f64) = .empty,
+
+    fn deinit(self: *Stretch, allocator: std.mem.Allocator) void {
+        for (&self.within) |*list| list.deinit(allocator);
+        self.ends.deinit(allocator);
+    }
+};
+
 /// The faces of one operand whose grown boxes hold a point, from its face tree: at most
 /// as many as `items` holds, a query that fills it being refused (`limit_exceeded`).
 const NearFaces = struct {
@@ -439,6 +451,7 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     stage.* = .face_face;
     try filler.collectIncidences();
     try filler.featureSize();
+    try filler.knifeBlocks();
     try filler.commonBlocks();
     try filler.faceFace();
     try filler.nearlyCoplanar();
@@ -1164,6 +1177,181 @@ const Filler = struct {
                 };
             }
         }
+    }
+
+    /// Every pave block against the knife pairs of the other operand near it: two faces
+    /// parallel within the angular tolerance and facing apart (`knifePair`, `sandwiched`'s
+    /// pair), the material between them thinner than twice the tolerance over a band as
+    /// wide as their small angle makes it. `featureSize` asks it of merged vertices, and a
+    /// block can pass it with both ends clear while its middle runs inside the band. The
+    /// stretch of the block within its reach of both planes, its feet inside both faces,
+    /// must end within that reach of where the two meet (an edge or a vertex of both):
+    /// beyond it the block lies within the tolerance of both away from where they meet, and
+    /// no decision of the tolerance makes the two consistent (the minimum feature size;
+    /// the 10K session on a5301ce8, 2026-11-18: a hull's bottom edge through a flat
+    /// tetrahedron 2.1 tolerances thick at its middle, its faces meeting at 6e-5 rad, the
+    /// edge within the tolerance of its bottom and, 0.23 from the knife edge, of its top;
+    /// the union's notch in the hull's face between the edge and its section with the top
+    /// as narrow as that, touching the bottom, `pinched`). Two faces at a wider angle are
+    /// not asked: the reaches of their planes meet in a region about their line some
+    /// reaches across at any angle (√2 of the reach at a right angle), which is where they
+    /// meet, not a feature. Nor are two that meet nowhere: two faces of one solid are the
+    /// operand precondition's (`pipeline.featureSize`: twice the tolerance apart), two
+    /// solids of one operand touching face to face hold no material between them, and a
+    /// block's gap must not make a plate past the precondition thin (a hull's edge across
+    /// a plate 2.1 tolerances thick, its reach widened by its ends' gaps, is made). A face
+    /// crossing a knife steeply with no block there is made (its sections leave the knife
+    /// edge within the angle of each other, which the imprint holds: a knife-edge wedge cut
+    /// into a box). Decided over every block of both
+    /// operands before any refusal, so neither order nor the first block asked decides
+    /// which: refused (`below_feature_size`) when any block's stretch ends beyond the
+    /// reach, else at the reach to rounding (`at_tolerance`, D27), each naming the block's
+    /// edge.
+    fn knifeBlocks(self: *Filler) Error!void {
+        const p = self.p;
+        var scratch: Stretch = .{};
+        defer scratch.deinit(self.allocator);
+        var beyond: ?diagnostics.Finding = null;
+        var at: ?diagnostics.Finding = null;
+        for (0..2) |k| {
+            const other = 1 - k;
+            const body_k = self.body(k);
+            for (body_k.edges.items, 0..) |edge, ei| {
+                if (edge.flags.tombstone or edge.flags.degenerate or edge.coedge == .none or edge.curve.kind != .line) continue;
+                const list = p.edge_paves[k][ei].items;
+                if (list.len < 2) continue;
+                for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                    const a = p.point(x.vertex);
+                    const b = p.point(y.vertex);
+                    const gap = incidence.edgeGap(p.gaps.items[x.vertex], p.gaps.items[y.vertex]);
+                    const reach = incidence.reach(p.tol, gap);
+                    var box = Box3.ofPoint(a);
+                    box.grow(b);
+                    var near: NearFaces = .{};
+                    self.face_tree[other].query(box.inflated(gap), &near, NearFaces.visit);
+                    if (near.count == near.items.len) return self.diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "faces near one pave block", .measured = @floatFromInt(near.count) });
+                    const entity: diagnostics.EntityRef = .of(.edge, @as(u32, @intCast(ei)));
+                    for (near.items[0..near.count], 0..) |item1, n| for (near.items[n + 1 .. near.count]) |item2| {
+                        const g1 = self.faces[other][item1];
+                        const g2 = self.faces[other][item2];
+                        if (!self.knifePair(other, g1, g2)) continue;
+                        for (try self.stretchIn(other, .{ g1, g2 }, a, b, reach, &scratch)) |t| {
+                            const q = vec.lerp(a, b, t);
+                            const from = try self.fromMeeting(other, g1, g2, q);
+                            // Meeting nowhere: the operand precondition's pair, or two
+                            // solids of one operand touching face to face
+                            if (from == std.math.inf(f64)) break;
+                            switch (p.decide.within(from, reach)) {
+                                .same => {},
+                                .apart => if (beyond == null) {
+                                    beyond = .{ .code = .below_feature_size, .entity = entity, .label = if (k == 0) "an edge of the first operand within reach of two faces of the second facing apart at an angle within the angular tolerance, away from where they meet," else "an edge of the second operand within reach of two faces of the first facing apart at an angle within the angular tolerance, away from where they meet,", .measured = from, .threshold = reach };
+                                },
+                                .at_tolerance => |c| if (at == null) {
+                                    at = .{ .code = .at_tolerance, .entity = entity, .label = if (k == 0) "an edge of the first operand within reach of two faces of the second facing apart, at the reach of where they meet to rounding" else "an edge of the second operand within reach of two faces of the first facing apart, at the reach of where they meet to rounding", .measured = c.measured, .threshold = c.limit };
+                                },
+                            }
+                        }
+                    };
+                }
+            }
+        }
+        if (beyond) |d| return self.diag.fail(error.Degenerate, d);
+        if (at) |d| return self.diag.fail(error.Degenerate, d);
+    }
+
+    /// Whether faces `g1` and `g2` of operand `k` are a knife pair: faces of one shell (two
+    /// solids touching hold no material between their faces: OCCT's checkerboard of cubes
+    /// meeting at edges, their sides in one plane sharing corners), their planes parallel
+    /// within the angular tolerance and the faces facing apart (material between them, not
+    /// one side's surface in two faces), as `sandwiched` takes them.
+    fn knifePair(self: *Filler, k: usize, g1: types.FaceIndex, g2: types.FaceIndex) bool {
+        const body_k = self.body(k);
+        if (body_k.face(g1).shell != body_k.face(g2).shell) return false;
+        if (!self.p.tol.parallel(planar_faces.frameOf(body_k, g1).?.z, planar_faces.frameOf(body_k, g2).?.z)) return false;
+        return vec.dot(in_face.outwardNormal(body_k, g1, .{ 0, 0 }), in_face.outwardNormal(body_k, g2, .{ 0, 0 })) < 0;
+    }
+
+    /// The ends of the stretches of the segment from `a` to `b` (as parameters in [0, 1])
+    /// within `reach` of the planes of both faces `g` of operand `k`, their feet inside both
+    /// (each face's triangles over its merged vertices, boundary included).
+    fn stretchIn(self: *Filler, k: usize, g: [2]types.FaceIndex, a: Vec3, b: Vec3, reach: f64, scratch: *Stretch) Error![]const f64 {
+        var band: [2]f64 = .{ 0, 1 };
+        for (g) |face| {
+            const frame = planar_faces.frameOf(self.body(k), face).?;
+            const ha = vec.dot(vec.sub(a, frame.origin), frame.z);
+            const hb = vec.dot(vec.sub(b, frame.origin), frame.z);
+            // reach − h(t) ≥ 0 and reach + h(t) ≥ 0, h affine in t
+            band = clip(band, reach - ha, ha - hb);
+            band = clip(band, reach + ha, hb - ha);
+        }
+        scratch.ends.clearRetainingCapacity();
+        if (!(band[0] <= band[1])) return scratch.ends.items;
+        for (g, &scratch.within) |face, *spans| try self.feetIn(k, face, a, b, band, spans);
+        // The spans of both, pairwise (each merged, sorted)
+        for (scratch.within[0].items) |s1| for (scratch.within[1].items) |s2| {
+            const lo = @max(s1[0], s2[0]);
+            const hi = @min(s1[1], s2[1]);
+            if (!(lo <= hi)) continue;
+            try scratch.ends.appendSlice(self.allocator, &.{ lo, hi });
+        };
+        return scratch.ends.items;
+    }
+
+    /// The parameters in `band` of the segment from `a` to `b` whose feet on face `g`'s
+    /// plane lie in one of its triangles, as merged sorted spans, into `out`.
+    fn feetIn(self: *Filler, k: usize, g: types.FaceIndex, a: Vec3, b: Vec3, band: [2]f64, out: *std.ArrayList([2]f64)) Error!void {
+        const p = self.p;
+        out.clearRetainingCapacity();
+        const n = planar_faces.frameOf(self.body(k), g).?.z;
+        const corners = try overlap.FaceTriangles.ofFace(self.allocator, self.body(k), g, self.diag);
+        defer self.allocator.free(corners);
+        for (corners) |t| {
+            var q: [3]Vec3 = undefined;
+            for (t, &q) |v, *point| point.* = p.point(p.vertex_of[k][@backingInt(v)]);
+            const turn = vec.dot(vec.cross(vec.sub(q[1], q[0]), vec.sub(q[2], q[0])), n);
+            if (turn == 0) continue;
+            const sense: f64 = if (turn > 0) 1 else -1;
+            var span = band;
+            for (0..3) |i| {
+                const from = q[i];
+                const side = vec.sub(q[(i + 1) % 3], from);
+                // The foot's side of the triangle's edge, affine in t: the normal's part of
+                // side × (point − from), the point's height dropping out
+                const at_a = sense * vec.dot(vec.cross(side, vec.sub(a, from)), n);
+                const at_b = sense * vec.dot(vec.cross(side, vec.sub(b, from)), n);
+                span = clip(span, at_a, at_b - at_a);
+            }
+            if (span[0] <= span[1]) try out.append(self.allocator, span);
+        }
+        std.mem.sort([2]f64, out.items, {}, lessSpan);
+        var merged: usize = 0;
+        for (out.items) |s| {
+            if (merged > 0 and s[0] <= out.items[merged - 1][1]) {
+                out.items[merged - 1][1] = @max(out.items[merged - 1][1], s[1]);
+            } else {
+                out.items[merged] = s;
+                merged += 1;
+            }
+        }
+        out.shrinkRetainingCapacity(merged);
+    }
+
+    /// The distance from `q` to where faces `g1` and `g2` of operand `k` meet: an edge of
+    /// both, or a vertex of both; infinite when they meet nowhere.
+    fn fromMeeting(self: *Filler, k: usize, g1: types.FaceIndex, g2: types.FaceIndex, q: Vec3) Error!f64 {
+        const body_k = self.body(k);
+        var nearest = std.math.inf(f64);
+        var loops = traverse.Loops.init(body_k, g1);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const coedge = body_k.coedge(c);
+                if (coedge.partner != .none and body_k.loop(body_k.coedge(coedge.partner).loop).face == g2) nearest = @min(nearest, in_face.edgeDistance(body_k, coedge.edge, q));
+                const corner = body_k.coedgeStart(c);
+                if (try self.faceHasVertex(k, g2, corner)) nearest = @min(nearest, vec.distance(body_k.point(corner), q));
+            }
+        }
+        return nearest;
     }
 
     /// Whether faces `a` and `b` of operand `k` meet at merged vertex `m`, as the paves
@@ -1994,6 +2182,18 @@ fn segmentGap(a: Vec2, b: Vec2, c: Vec2, d: Vec2) f64 {
     const o4 = predicates.orient2d(c, d, b);
     if (((o1 > 0 and o2 < 0) or (o1 < 0 and o2 > 0)) and ((o3 > 0 and o4 < 0) or (o3 < 0 and o4 > 0))) return 0;
     return @min(@min(pointGap(c, a, b), pointGap(d, a, b)), @min(pointGap(a, c, d), pointGap(b, c, d)));
+}
+
+/// The part of parameter span `span` where `at0 + t·slope ≥ 0`; empty (its low end past its
+/// high one) when none is.
+fn clip(span: [2]f64, at0: f64, slope: f64) [2]f64 {
+    if (slope == 0) return if (at0 >= 0) span else .{ 1, 0 };
+    const t = -at0 / slope;
+    return if (slope > 0) .{ @max(span[0], t), span[1] } else .{ span[0], @min(span[1], t) };
+}
+
+fn lessSpan(_: void, x: [2]f64, y: [2]f64) bool {
+    return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
 }
 
 /// The distance from `q` to the segment from `a` to `b` in a plane.

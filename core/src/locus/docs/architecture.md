@@ -495,7 +495,13 @@ edge at an angle within the angular tolerance (a knife edge) are not, and a hull
 along a flat tetrahedron 2.1 tolerances thick lay within the zone of its upper and lower
 faces at once, unclassified (Leo, 2026-11-16: the rule back, whether the two meet or
 not). A face crossing a thin feature steeply reaches both sides too, along sections the
-paves keep apart: made. An operand built at a finer tolerance than the boolean takes (the
+paves keep apart: made. The vertex question is asked of edges too: a pave block within
+reach of two faces of one shell of the other operand, parallel within the angular
+tolerance and facing apart, away from where they meet (its stretch within reach of both
+ending beyond that reach of their shared edge or vertex), is refused `below_feature_size`
+(`pave.knifeBlocks`; Leo, 2026-11-18: a hull's edge through a flat tetrahedron 2.1
+tolerances thick within the tolerance of its top and bottom 0.23 from its knife edge, no
+merged vertex there, the union pinched; find av). An operand built at a finer tolerance than the boolean takes (the
 larger of the two, §6) must be valid at the boolean's, or the result is not
 (`mixed_tolerance`).
 

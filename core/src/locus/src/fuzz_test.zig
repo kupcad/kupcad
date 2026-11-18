@@ -2101,6 +2101,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // faces meet, the union's section lines drawn through a merged vertex past the
         // tolerance off one's plane, their edges made with no gap (pipeline.coverFaces)
         "solids 1 8 3 3 4 1 3 1 2 2 2 0 3 1 0 4 1 1 0 2 4 0 0 0 0 2 2 3 1 11 2 8 3 0 -1 0 0 6 8 2 0 0 2 3 4 2 3 2 2 8 8 1 14 0 2 0 1 3 1 4 1 4 3 1 3 -1 5 3 1",
+        // The 10K session on a5301ce8 (locus_solids): a hull's edge through a flat
+        // tetrahedron within the tolerance of its top and bottom away from its knife edge,
+        // no merged vertex there, the union pinched (pave.knifeBlocks)
+        "solids 3 2 3 1 3 4 3 1 4 1 3 4 3 12 3 11 9 3 0 0 0 -1 11 2 1 1 8 2 3 4 1 0 2 1 3 4 0 4 1 3 3 4 0 2 3 1 3 4 2 1 1 3 3 1 4 3 3 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

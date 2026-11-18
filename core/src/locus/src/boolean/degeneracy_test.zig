@@ -1924,6 +1924,31 @@ test "degeneracy: a face along a flat tetrahedron's knife edges, past its thick 
     try expectRefused(&top, &knife, .below_feature_size);
 }
 
+test "degeneracy: a hull's edge through a flat tetrahedron's knife, within the tolerance of its top and bottom 0.23 from the knife edge, is refused" {
+    // The 10K session's find on a5301ce8 (2026-11-18, locus_solids), its operands as the
+    // chain left them: a tetrahedron 2.1 tolerances thick at its middle, its faces meeting
+    // at 6e-5 rad, and a hull whose bottom edge runs through it 2e-6 to 7.5e-6 off its
+    // bottom, its faces crossing the top steeply. No merged vertex lies within reach of
+    // both the top and the bottom, but the edge between two does, from the knife edge to
+    // 0.23 from it; the union kept the notch in the hull's face between the edge and its
+    // section with the top as narrow as the tetrahedron there, touching the bottom
+    // (`pinched` by the overlap rules). A pave block within reach of two faces facing
+    // apart at an angle within the angular tolerance, away from where they meet, is below
+    // the minimum feature size, as a merged vertex there is: refused, every operation
+    // either way round
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const flat_points = [_]Vec3{ .{ -2.000000005684342e-5, 3.000005, 0.9999990000000568 }, .{ 1.9999799999999432, 3.000005, 0.9999990000000568 }, .{ 0.9999799999999431, 2.000005, 1.0000410000000568 }, .{ 0.9999799999999431, 4.000005, 1.0000410000000568 } };
+    const hull_points = [_]Vec3{ .{ 1.5, 2.999995, 4.000005 }, .{ 3.5, 2.999995, 4.000005 }, .{ 0.5, 3.999995, 1.000005 }, .{ 1.5, -0.000005, 2.000005 }, .{ 2.5, 0.999995, 1.000005 }, .{ 0.5, 1.999995, 3.000005 } };
+    const hull = @import("../construct/hull.zig");
+    var flat = try hull.hull(testing.allocator, tol, &flat_points, &diag);
+    defer flat.deinit();
+    var steep = try hull.hull(testing.allocator, tol, &hull_points, &diag);
+    defer steep.deinit();
+    try expectRefused(&flat, &steep, .below_feature_size);
+    try expectRefused(&steep, &flat, .below_feature_size);
+}
+
 test "degeneracy: a flat tetrahedron 1.5 tolerances thick, its face 3e-4 rad off a plate's top: below the minimum feature size, refused" {
     // The gap draws' first find (2026-11-14), at a zone of 1e-4: the tetrahedron's upper
     // edge 5e-5 over the plate's top and its lower 2.5e-4 under it, so its upper faces
