@@ -2119,6 +2119,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // corner and the hull's edge moved there 2.0138e-5 off its line with no gap
         // (simplify.coverLine, its rounding too)
         "solids 0 0 4 3 4 0 1 0 3 6 3 2 5 7 4 3 2 1 6 3 3 2 1 1 2 1 2 0 1 1 3 3 0 3 3 0 1 3 3 3 2 4 3 0 3 1 7 1 4 0 4 2 4 0 1 4 1 2 4 0 2 2 1 1 3 0 0 3 1 1 1 3 1 9 1 1 0 3 4 2 4 2 4 1 2 -2 7 0 6 0",
+        // The 10K session on 0949c72f (locus): a ray 3.3e-6 from the vertical edge where an
+        // intersection's two regions touch, at 13° to one's face there, met that face 1.4e-5
+        // along from the others; two places, the side between them on the boundary, and the
+        // one by the edge a touch (raycast: places the segment stays on the boundary between
+        // are one)
+        "chain 1 5 4 2 1 6 2 2 5 1 6 2 1 1 1 2 3 3 1 3 0 3 2 0 3 7 6 3 3 5 1 1 0 1 0 1 1 3 2 2 1 0 0 3 3 3 4 3 3 6 2 5 6 4 5 2 1 5 2 1 5 2 4 1 3 0 4 1 0 1 1 0 1 3 8 5 3 5 2 4 5 2 1 0 1 3 2 0 5 4 0 1 1 1 3 4 3 4 3 1 1 1 3 2 3 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

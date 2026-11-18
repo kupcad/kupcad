@@ -181,6 +181,41 @@ test "ray cast: through the line two solids touch along, out of one before into 
     try prisms.expectConsistent(.{ -1, 1, 1.5 }, .{ 3, 1, 1.5 });
 }
 
+test "ray cast: past the line two solids touch along, within the zone, at a shallow angle to a face there: out of one and into the other" {
+    // The bow tie's prisms again, a ray a few millionths from x = y = 1 at 5° to 15° from
+    // a diagonal: it meets the face along that diagonal, near the line, more than the zone
+    // from the other faces there, so two places, the side sampled halfway between them
+    // within the zone of the faces (on the boundary, so in). The one beside the line was
+    // taken for a touch from outside, the count went above one, and below nothing at the
+    // second solid's far side (the locus fuzzer, 2026-11-18: a ray 3.3e-6 from where an
+    // intersection's two regions touched, at 13° to one's edge). Where the segment stays on
+    // the boundary between places they are one place: out of one solid and into the other
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var bow = try primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 2, 2 }, .{ 2, 0 }, .{ 0, 2 } }, &diag);
+    defer bow.deinit();
+    var prisms = try Indexed.of(try sweep.extrude(testing.allocator, &bow, .{ 0, 0, 3 }, .{}, &diag));
+    defer prisms.deinit();
+    for ([_]f64{ 30, 35, 40 }) |degrees| for ([_]f64{ -7e-6, -4e-6, -2e-6, 2e-6, 4e-6, 7e-6 }) |offset| {
+        const a = degrees * PI / 180;
+        const u: Vec3 = .{ @cos(a), @sin(a), 0 };
+        const p: Vec3 = .{ 1 - offset * @sin(a), 1 + offset * @cos(a), 1.5 };
+        const o = vec.addScaled(p, u, -2);
+        const e = vec.addScaled(p, u, 2);
+        const hits = try prisms.cast(o, e);
+        defer testing.allocator.free(hits);
+        errdefer std.debug.print("at {d}°, {d} off the line\n", .{ degrees, offset });
+        var count: i32 = 0;
+        for (hits) |h| {
+            count += h.crossing;
+            try testing.expect(count == 0 or count == 1);
+        }
+        try testing.expectEqual(@as(usize, 4), hits.len);
+        for (hits, [_]i32{ 1, -1, 1, -1 }) |h, c| try testing.expectEqual(c, h.crossing);
+        try prisms.expectConsistent(o, e);
+    };
+}
+
 test "ray cast and containment: a cylinder across, along its axis, tangent; a cone; a sphere; a torus through its hole" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();

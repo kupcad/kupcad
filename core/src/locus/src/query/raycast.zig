@@ -14,7 +14,10 @@
 //! missed: the free-form kinds are sampled, the analytic ones are not); each meeting kept
 //! when it lies in the face or on its boundary (`in_face.zig`).
 //!
-//! The crossings: candidates within the zone of one another are one place. A place that
+//! The crossings: candidates within the zone of one another are one place, and so are
+//! places the segment stays on the boundary between (halfway between them within the zone
+//! of it: at a shallow angle to a face, the segment passing within the zone of an edge
+//! meets that face more than the zone along from the edge's other faces). A place that
 //! is one candidate strictly inside its face, the segment not tangent there, crosses by
 //! the sign of its normal against the segment. Any other (an edge, a vertex, a tangency)
 //! is decided by what is on either side: the points halfway to the neighbouring places
@@ -99,24 +102,35 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
     try candidates(allocator, body, index, origin, dir, -zone, length + zone, &found, diag);
     std.mem.sort(Candidate, found.items, {}, Candidate.lessThan);
 
-    // The places: runs of candidates within the zone of one another
-    var places: std.ArrayList([]const Candidate) = .empty;
-    defer places.deinit(allocator);
+    // The runs: candidates within the zone of one another, as `[first, end)` into `found`
+    var runs: std.ArrayList([2]usize) = .empty;
+    defer runs.deinit(allocator);
     var start: usize = 0;
     for (found.items, 0..) |c, i| {
         if (i > start and c.t - found.items[i - 1].t > zone) {
-            try places.append(allocator, found.items[start..i]);
+            try runs.append(allocator, .{ start, i });
             start = i;
         }
     }
-    if (start < found.items.len) try places.append(allocator, found.items[start..]);
+    if (start < found.items.len) try runs.append(allocator, .{ start, found.items.len });
+    var sides: Sides = try .init(allocator, body, index, origin, dir, found.items, runs.items, options, diag);
+    defer sides.deinit();
 
     var hits: std.ArrayList(Hit) = .empty;
     errdefer hits.deinit(allocator);
-    for (places.items, 0..) |place, k| {
+    var k: usize = 0;
+    while (k < runs.items.len) {
+        // The place: the run and every one after it the segment stays on the boundary to,
+        // asked where a run beside the gap is decided by its sides (two crossings clean
+        // are each where the segment leaves the boundary)
+        var last = k;
+        while (last + 1 < runs.items.len and !(sides.clean(last) and sides.clean(last + 1)) and try sides.between(last) == .boundary) last += 1;
+        const place = found.items[runs.items[k][0]..runs.items[last][1]];
         const t = std.math.clamp(place[0].t, 0, length);
         const point = vec.addScaled(origin, dir, t);
-        if (place.len == 1 and place[0].isClean()) {
+        const first = k;
+        k = last + 1;
+        if (last == first and sides.clean(first)) {
             try hits.append(allocator, .{ .t = t, .point = point, .normal = place[0].normal, .crossing = if (place[0].cosine < 0) 1 else -1, .face = place[0].face });
             continue;
         }
@@ -126,10 +140,9 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
         // alone: along a tangent the segment stays within the zone of a curved face for
         // √(2·r·zone), and a side sampled there is on the boundary (the locus fuzzer's
         // find, the nightly of 2026-11-16: a touch 16 zones from its side was an exit)
-        const before_t = if (k > 0) (places.items[k - 1][0].t + place[0].t) / 2 else @min(place[0].t / 2, place[0].t - SIDE_STEP_ZONES * zone);
-        const after_t = if (k + 1 < places.items.len) (place[0].t + places.items[k + 1][0].t) / 2 else @max((place[0].t + length) / 2, place[0].t + SIDE_STEP_ZONES * zone);
-        const before_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, before_t), options, diag);
-        const after_place = try point_in_body.classify(allocator, body, index, vec.addScaled(origin, dir, after_t), options, diag);
+        const before_place = if (first > 0) try sides.between(first - 1) else try sides.at(@min(place[0].t / 2, place[0].t - SIDE_STEP_ZONES * zone));
+        const end_t = found.items[runs.items[last][0]].t;
+        const after_place = if (last + 1 < runs.items.len) try sides.between(last) else try sides.at(@max((end_t + length) / 2, end_t + SIDE_STEP_ZONES * zone));
         // In the solid or on its boundary, within the zone, is 1
         const before: i32 = @intFromBool(before_place != .outside);
         const after: i32 = @intFromBool(after_place != .outside);
@@ -159,6 +172,51 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
     }
     return hits.toOwnedSlice(allocator);
 }
+
+/// What the segment is at its points between runs of candidates (`cast`'s), each classified
+/// once: halfway between two runs, it is the side of both.
+const Sides = struct {
+    allocator: std.mem.Allocator,
+    body: *const Body,
+    index: *const FaceIndex,
+    origin: Vec3,
+    dir: Vec3,
+    found: []const Candidate,
+    runs: []const [2]usize,
+    options: diagnostics.Options,
+    diag: *Diagnostics,
+    /// Halfway between run `k` and run `k + 1`, once asked.
+    gaps: []?in_face.Place,
+
+    fn init(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, origin: Vec3, dir: Vec3, found: []const Candidate, runs: []const [2]usize, options: diagnostics.Options, diag: *Diagnostics) Error!Sides {
+        const gaps = try allocator.alloc(?in_face.Place, runs.len -| 1);
+        @memset(gaps, null);
+        return .{ .allocator = allocator, .body = body, .index = index, .origin = origin, .dir = dir, .found = found, .runs = runs, .options = options, .diag = diag, .gaps = gaps };
+    }
+
+    fn deinit(self: *Sides) void {
+        self.allocator.free(self.gaps);
+    }
+
+    /// Whether run `k` is one candidate crossing cleanly.
+    fn clean(self: *const Sides, k: usize) bool {
+        const run = self.runs[k];
+        return run[1] - run[0] == 1 and self.found[run[0]].isClean();
+    }
+
+    /// Halfway between run `k` and run `k + 1` (their first candidates).
+    fn between(self: *Sides, k: usize) Error!in_face.Place {
+        if (self.gaps[k]) |place| return place;
+        const place = try self.at((self.found[self.runs[k][0]].t + self.found[self.runs[k + 1][0]].t) / 2);
+        self.gaps[k] = place;
+        return place;
+    }
+
+    /// At `t` along the segment.
+    fn at(self: *const Sides, t: f64) Error!in_face.Place {
+        return point_in_body.classify(self.allocator, self.body, self.index, vec.addScaled(self.origin, self.dir, t), self.options, self.diag);
+    }
+};
 
 /// Appends to `out` every meeting of the line `origin + t·dir` (`dir` unit), `t` in
 /// `[lo, hi]`, with a face of `body` (in the face or on its boundary), in no order.

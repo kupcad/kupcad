@@ -1020,9 +1020,12 @@ don't cancel; a critical point within the zone of the surface is a tangency), by
 Levenberg–Marquardt and then Newton on `S(u, v) = O + t·d` from a 16 × 16 grid of seeds for
 extrusion, revolution and NURBS surfaces (sampled: a grazing pair between seeds may be
 missed); kept when in the face or on its boundary. Candidates within the zone of one
-another are one place; a place that is one candidate strictly inside its face, not
-tangent, crosses by the sign of its normal; any other (edge, vertex, tangency) is decided
-by classifying the points halfway to its neighbours (the segment's ends the neighbours of
+another are one place, and so are places the segment stays on the boundary between (the
+point halfway between them within the zone of it: at 13° to a face, a segment 3.3e-6 from
+the edge two regions touched at met that face 1.4e-5 along from the others, and the place
+by the edge, its side on the boundary, was a touch, the fuzzer, 2026-11-18); a place
+that is one candidate strictly inside its face, not tangent, crosses by the sign of its
+normal; any other (edge, vertex, tangency) is decided by classifying the points halfway to its neighbours (the segment's ends the neighbours of
 the first and the last: along a tangent the segment stays within the zone of a curved
 face for √(2·r·zone), and a side 16 zones off was on the boundary, a touch counted as an
 exit, 2026-11-16), the difference being the crossing, no
