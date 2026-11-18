@@ -823,7 +823,10 @@ importing only those before it, which the layering test holds):**
   beyond the edge, and an edge across the fragment's plane, on its face by reach alone,
   bounds no region of it and reads nothing (its faces cut the plane along their own lines:
   a hull's edge across a plate's side 2.1 tolerances tall at 15.5° read the side's piece
-  inside the hull outside, 2026-11-17); a tetrahedron's tip 2.45e-5 through a face leaves
+  inside the hull outside, 2026-11-17; where solids of the other touch along the edge, each
+  with its edge there, in the material of any of them: a box's back face holding the line
+  a hull's edge touched it along, read alone, put a piece inside the hull outside, the
+  nightly 2026-11-18); a tetrahedron's tip 2.45e-5 through a face leaves
   a section 8.7e-6 in inradius, a plate's front inside a notch 1.25 tolerances deep a
   triangle 2.5e-5 a side),
   `unclassified` only when no piece decides or two disagree. Since

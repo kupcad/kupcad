@@ -2590,6 +2590,49 @@ test "degeneracy: a plate's edge within reach of a slab's corner in their shared
     }
 }
 
+test "degeneracy: a face through the line two solids of the other operand touch along takes its side from both solids' wedges there" {
+    // The nightly's find (2026-11-18, run 44393151795), reduced: two boxes touching along
+    // x = y = 1, one body, and a turned box whose face lies in the plane x = y through that
+    // line, cut by it into a piece in each box. The other operand has an edge of each box
+    // over the line (the warning `touching_along_line`), and the seams read the first:
+    // one piece left that box's wedge, outside, while its sections had it inside the
+    // other box (`unclassified`). The operand's material about the line is both boxes'
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var left = try box(.{ 0, 0, 0 }, .{ 1, 1, 2 });
+    defer left.deinit();
+    var right = try box(.{ 1, 1, 0 }, .{ 2, 2, 2 });
+    defer right.deinit();
+    var pair = try pipeline.boolean(testing.allocator, &left, &right, .@"union", .{}, &diag, null);
+    defer pair.deinit();
+    try testing.expectEqual(@as(usize, 2), pair.counts().shells);
+    var flat_cutter = try box(.{ 0, -1.5, 0.5 }, .{ 3, 0, 1.5 });
+    defer flat_cutter.deinit();
+    var cutter = try turned(&flat_cutter, .{ 0, 0, 0 }, vec.Z3, std.math.pi / 4.0);
+    defer cutter.deinit();
+    for ([_]pipeline.Op{ .intersection, .difference }) |op| {
+        var forward = try sound(&pair, &cutter, op);
+        defer forward.deinit();
+        var swapped = try sound(&cutter, &pair, op);
+        defer swapped.deinit();
+    }
+    // United, the cutter joins the boxes into one solid that still touches itself along
+    // the line above and below it: refused by design (`pinched`), not unclassified
+    for ([2]bool{ false, true }) |swap| {
+        var refusal = Diagnostics.init(testing.allocator);
+        defer refusal.deinit();
+        const result = if (swap) pipeline.boolean(testing.allocator, &cutter, &pair, .@"union", .{}, &refusal, null) else pipeline.boolean(testing.allocator, &pair, &cutter, .@"union", .{}, &refusal, null);
+        if (result) |made| {
+            var body = made;
+            body.deinit();
+            return error.TestUnexpectedResult;
+        } else |err| {
+            try testing.expectEqual(error.Degenerate, err);
+            try testing.expectEqual(diagnostics.Code.pinched, refusal.first().?.code);
+        }
+    }
+}
+
 test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, their union's section edges lie on their faces within the gaps carried onto them" {
     // The locus fuzzer's find (2026-11-18, 10K session on a5301ce8, au), reduced: a
     // tetrahedron's edge passes 2.7e-5 from the corner where a box's side and top meet a

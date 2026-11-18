@@ -278,28 +278,60 @@ fn operandsOn(allocator: std.mem.Allocator, paves: *const Paves) Error![]u2 {
 /// The pieces of each operand the paves made (consecutive paves of an edge, and section
 /// segments), by their merged vertices: where a fragment's boundary lies on the other
 /// operand, found without a scan of its edges. A section along an edge is the edge's piece.
+/// A piece of edges is every edge of the operand over it: solids of one operand touching
+/// along a line have an edge each there (`pipeline.pairTouching`), and the operand's
+/// material about the piece is all of theirs.
 const Seams = struct {
-    const Piece = union(enum) { edge: types.EdgeIndex, section: types.FaceIndex };
+    /// `edges`: `Seams.edges[start..][0..count]`.
+    const Piece = union(enum) { edges: [2]u32, section: types.FaceIndex };
     const Key = struct { operand: u1, lo: u32, hi: u32 };
     const FaceKey = struct { operand: u1, face: u32 };
     pieces: std.AutoHashMapUnmanaged(Key, Piece) = .empty,
+    /// The edges of the pieces of edges, each piece's together.
+    edges: std.ArrayList(types.EdgeIndex) = .empty,
     /// Each face's edges in trees, built the first time a section on a face with many
     /// (`face_edges.INDEXED_AT_LEAST`) is placed, as the paves keep them; null for a face
     /// scanned edge by edge.
-    edges: std.AutoHashMapUnmanaged(FaceKey, ?face_edges.FaceEdges) = .empty,
+    indexed: std.AutoHashMapUnmanaged(FaceKey, ?face_edges.FaceEdges) = .empty,
+
+    const Block = struct {
+        key: Key,
+        edge: u32,
+        fn lessThan(_: void, a: Block, b: Block) bool {
+            if (a.key.operand != b.key.operand) return a.key.operand < b.key.operand;
+            if (a.key.lo != b.key.lo) return a.key.lo < b.key.lo;
+            if (a.key.hi != b.key.hi) return a.key.hi < b.key.hi;
+            return a.edge < b.edge;
+        }
+    };
 
     fn build(allocator: std.mem.Allocator, paves: *const Paves) Error!Seams {
         var self: Seams = .{};
         errdefer self.deinit(allocator);
+        // Every pave block, then each piece's edges together
+        var blocks: std.ArrayList(Block) = .empty;
+        defer blocks.deinit(allocator);
         for (0..2) |k| {
             const operand: u1 = @intCast(k);
             for (paves.edge_paves[k], 0..) |list, e| {
                 if (list.items.len < 2) continue;
                 for (list.items[0 .. list.items.len - 1], list.items[1..]) |u, w| {
-                    const entry = try self.pieces.getOrPut(allocator, .{ .operand = operand, .lo = @min(u.vertex, w.vertex), .hi = @max(u.vertex, w.vertex) });
-                    if (!entry.found_existing) entry.value_ptr.* = .{ .edge = types.EdgeIndex.of(e) };
+                    try blocks.append(allocator, .{ .key = .{ .operand = operand, .lo = @min(u.vertex, w.vertex), .hi = @max(u.vertex, w.vertex) }, .edge = @intCast(e) });
                 }
             }
+        }
+        std.mem.sort(Block, blocks.items, {}, Block.lessThan);
+        var start: usize = 0;
+        while (start < blocks.items.len) {
+            var end = start + 1;
+            while (end < blocks.items.len and std.meta.eql(blocks.items[end].key, blocks.items[start].key)) end += 1;
+            const first: u32 = @intCast(self.edges.items.len);
+            for (blocks.items[start..end]) |block| try self.edges.append(allocator, types.EdgeIndex.of(block.edge));
+            try self.pieces.put(allocator, blocks.items[start].key, .{ .edges = .{ first, @intCast(end - start) } });
+            start = end;
+        }
+        for (0..2) |k| {
+            const operand: u1 = @intCast(k);
             for (paves.sections[k], 0..) |list, g| for (list.items) |segment| {
                 const entry = try self.pieces.getOrPut(allocator, .{ .operand = operand, .lo = segment[0], .hi = segment[1] });
                 if (!entry.found_existing) entry.value_ptr.* = .{ .section = types.FaceIndex.of(g) };
@@ -310,15 +342,20 @@ const Seams = struct {
 
     fn deinit(self: *Seams, allocator: std.mem.Allocator) void {
         self.pieces.deinit(allocator);
-        var it = self.edges.valueIterator();
-        while (it.next()) |entry| if (entry.*) |*index| index.deinit(allocator);
         self.edges.deinit(allocator);
+        var it = self.indexed.valueIterator();
+        while (it.next()) |entry| if (entry.*) |*index| index.deinit(allocator);
+        self.indexed.deinit(allocator);
+    }
+
+    fn edgesOfPiece(self: *const Seams, range: [2]u32) []const types.EdgeIndex {
+        return self.edges.items[range[0]..][0..range[1]];
     }
 
     /// Face `g` of operand `k`'s edges in trees when it has many, reaching as far as a
     /// placement asks (the tolerance, a gap of the zone at most, D27's band).
     fn edgesOf(self: *Seams, allocator: std.mem.Allocator, paves: *const Paves, k: u1, g: types.FaceIndex, diag: *Diagnostics) Error!?*const face_edges.FaceEdges {
-        const entry = try self.edges.getOrPut(allocator, .{ .operand = k, .face = @backingInt(g) });
+        const entry = try self.indexed.getOrPut(allocator, .{ .operand = k, .face = @backingInt(g) });
         if (!entry.found_existing) {
             entry.value_ptr.* = null;
             const body = paves.operands[k];
@@ -389,14 +426,27 @@ const Side = struct { class: Class, clear: bool };
 
 /// The side of operand `other` that direction `into` leaves `piece` (from merged vertex
 /// `x` to `y`) towards, in a face of normal `normal`: by the material between the two faces
-/// of `other`'s edge the piece is a piece of (`wedgeSide`, clear), else behind the face `g`
+/// of `other`'s edges the piece is a piece of (`wedgeSide`, clear; inside any solid's
+/// wedge where solids touch along it), else behind the face `g`
 /// of `other` it is a section with (clear when its middle lies in `g` beyond reach of
 /// `g`'s boundary, `in_face.placeWithin`, the paves' decision). Null for a face there in
 /// one plane with the fragment's.
 fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, other: u1, piece: Seams.Piece, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
     const body = paves.operands[other];
     switch (piece) {
-        .edge => |e| return .{ .class = (try wedgeSide(paves, body, e, normal, into, diag)) orelse return null, .clear = true },
+        .edges => |range| {
+            // In the material of any solid whose edge it is (the operand's solids do not
+            // overlap): a box's back face holding the line a hull's edge touched it along
+            // read the fragment in front of it, outside, though inside the hull's wedge (the
+            // nightly, 2026-11-18)
+            var class: ?Class = null;
+            for (seams.edgesOfPiece(range)) |e| {
+                const side = (try wedgeSide(paves, body, e, normal, into, diag)) orelse continue;
+                if (side == .inside) return .{ .class = .inside, .clear = true };
+                class = side;
+            }
+            return .{ .class = class orelse return null, .clear = true };
+        },
         .section => |g| {
             const n_g = in_face.outwardNormal(body, g, .{ 0, 0 });
             if (paves.tol.parallel(normal, n_g)) return null;

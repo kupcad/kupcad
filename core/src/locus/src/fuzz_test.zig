@@ -2130,6 +2130,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // from a corner under the hull's bottom, 2e-5 from it in the plane, welded on by
         // the imprint (pave.apartInPlane: refused)
         "solids 1 6 3 0 2 0 2 2 4 0 2 4 4 2 0 3 2 0 0 3 0 2 2 2 4 0 7 2 2 3 2 2 3 2 3 1 2 3 3 2 0 3 4 0 2 2 0 4 1 2 1 2 3 0 2 1 2 12 4 11 10 0",
+        // The nightly of 2026-11-18 (run 44393151795, on 1847b212): a hull's edge touching a
+        // box's back face along a line, an edge of each there; a face through that line
+        // read the box's alone, outside, its sections inside the hull (classify: the
+        // seams read every solid's wedge)
+        "solids 0 0 2 1 2 1 4 0 1 3 1 1 -1 -1 8 3 3 1 5 1 2 0 1 1 2 4 2 0 2 3 2 1 1 0 1 1 6 1 0 7 0 1 2 3 4 0 2 0 1 3 3 2 0 1 2 0 3 1 8 0 0 0 0 0 0 4 1 3 2 2 2 0 0 3 2 3 3 3 3 2 4 0 4 0 0 8 0 2 2 1 10 3 10 12 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
