@@ -9,8 +9,8 @@
 //!   with a copy, where another solid touches the face along the line (merged, the line
 //!   would lie inside the face: the overlap rules' find, 2026-11-12).
 //! - An edge whose two coedges a merge left in one loop goes: a spur (`kevSpur`, its far
-//!   vertex with it; a hole that was a lone slit, then a loop of one vertex nothing else
-//!   uses, with `kvh`) or a bridge between an outer boundary and a hole (`kemr`, the loop
+//!   vertex with it unless another shell touches the face there; a hole that was a lone
+//!   slit, then a loop of one vertex, with `kvh`) or a bridge between an outer boundary and a hole (`kemr`, the loop
 //!   with the larger area about the outward normal kept first, as the outer).
 //! - A chain of edges through vertices with two line edges each becomes one edge
 //!   (`kevJoin` at each vertex inside it; OCCT's `UnifySameDomain` merging a chain of
@@ -175,15 +175,16 @@ fn mergeFaces(body: *Body, diag: *Diagnostics, log: ?*Log) Error!bool {
     return changed;
 }
 
-/// Edges with both coedges in one loop, left by merges: spurs and bridges. A spur goes
-/// with its far vertex only when nothing else uses the vertex (a slit where the other
-/// operand touched the face, whose tip is a corner of a face kept, stays); an edge with a
-/// copy, where another solid touches the face along it, stays (a chain of such slits from
-/// the boundary, its first edge taken for a bridge, left the contact inside the face: the
-/// solids fuzzer, 2026-11-13).
+/// Edges with both coedges in one loop, left by merges: spurs and bridges, each going
+/// whole. A vertex goes with them only when no edge uses it any more: where another shell
+/// touches the face at a point, the face needs no record of it (one shell's boundary holds
+/// the point), and kept as a slit's tip it hung on the order the edges went in, the
+/// operands' (the 10K session on 8db70212, 2026-11-18: a quad lying in a plate's bottom
+/// with another shell's corner on it left a slit one way round and a loop of that one
+/// vertex the other). An edge with a copy, where another solid touches the face along it,
+/// stays (a chain of such slits from the boundary, its first edge taken for a bridge, left
+/// the contact inside the face: the solids fuzzer, 2026-11-13).
 fn removeInnerEdges(body: *Body, diag: *Diagnostics) Error!bool {
-    const uses = try edgeCounts(body);
-    defer body.allocator.free(uses);
     var copies = try Copies.of(body);
     defer copies.deinit(body.allocator);
     var changed = false;
@@ -196,18 +197,13 @@ fn removeInnerEdges(body: *Body, diag: *Diagnostics) Error!bool {
         if (p == .none or body.coedge(c).loop != body.coedge(p).loop) continue;
         const out: ?types.CoedgeIndex = if (body.coedge(c).next == p) c else if (body.coedge(p).next == c) p else null;
         if (out) |spur| {
-            const far = body.coedgeEnd(spur);
-            if (uses[@backingInt(far)] != 1) continue;
-            const near = body.coedgeStart(spur);
             const loop = body.coedge(spur).loop;
-            uses[@backingInt(near)] -= 1;
-            uses[@backingInt(far)] = 0;
             euler.kevSpur(body, spur) catch |err| return eulerError(diag, err);
-            // A hole that was a lone slit is now a point; when no edge leaves it any more (the
-            // body's own record: the pass's counts are stale once a bridge has gone), it goes
-            // too. A loop of one vertex in a face was left for the next boolean, whose
-            // containment table sewed the face from its loops (the solids fuzzer, 2026-11-13)
-            if (body.loop(loop).first == .none and body.vertex(near).coedge == .none and body.face(body.loop(loop).face).first_loop != loop) {
+            // A hole that was a lone slit is now a point, and goes too: a loop of one vertex
+            // in a face was left for the next boolean, whose containment table sewed the face
+            // from its loops (the solids fuzzer, 2026-11-13). Its vertex stays when another
+            // shell touches the face there
+            if (body.loop(loop).first == .none and body.face(body.loop(loop).face).first_loop != loop) {
                 euler.kvh(body, loop) catch |err| return eulerError(diag, err);
             }
         } else {

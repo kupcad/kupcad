@@ -2543,3 +2543,47 @@ test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, 
     defer both.deinit();
     try expectProbe(&ta, &b);
 }
+
+/// The hull of `points` at the tolerance `tol`, moved by `move` and then by `nudge`, as the
+/// solids fuzzer composes a placement (one rounding of each, in its order).
+fn fuzzHull(points: []const Vec3, move: Vec3, nudge: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var shape = try @import("../construct/hull.zig").hull(testing.allocator, tol, points, &diag);
+    defer shape.deinit();
+    var place = mat.Affine.translate(.{ 0, 0, 0 });
+    place = mat.Affine.translate(move).compose(&place);
+    place = mat.Affine.translate(nudge).compose(&place);
+    return @import("../construct/transform.zig").transform(testing.allocator, &shape, &place, .{}, &diag);
+}
+
+test "degeneracy: a piece's bottom lying in a plate's bottom with another piece's corner on it unites the same either way round, the corner its own shell's alone" {
+    // The 10K session's find on 8db70212 (2026-11-18, locus_solids), as the fuzzer drew it:
+    // a hull less a box, less another hull, is two pieces sharing a corner, one's bottom quad
+    // 9e-5 under a plate's bottom (zone 1e-4). United with the plate, the quad's edges inside
+    // the plate's bottom went one by one in the order of their numbers, the operands': one
+    // way round a slit stayed with the other piece's corner at its tip, the other way a loop
+    // of that corner alone, which `kvh` took from under the other piece's edges. Inner edges
+    // go whole; the corner stays its own shell's (a point of two shells' faces needs only
+    // one's boundary)
+    var hull = try fuzzHull(&.{ .{ 2, 4, 0 }, .{ 3, 1, 3 }, .{ 2, 3, 4 }, .{ 1, 4, 2 } }, .{ 0.5, 0.5, 2e-5 }, .{ 0, 0, 0 });
+    defer hull.deinit();
+    var cut = try helpers.fuzzPlaced(tol, .{ 3, 2, 1 }, .{ 1, 2, 2 }, vec.Z3, 0, .{ 1, 0, 0 }, .{ 0, 2e-3, 1e-5 });
+    defer cut.deinit();
+    var once = try sound(&hull, &cut, .difference);
+    defer once.deinit();
+    var other = try fuzzHull(&.{ .{ 0, 4, 0 }, .{ 0, 0, 2 }, .{ 3, 1, 1 }, .{ 0, 3, 1 }, .{ 2, 0, 1 }, .{ 4, 1, 3 } }, .{ 0, 0, 0 }, .{ -2e-3, -2.000000005684342e-5, -1e-5 });
+    defer other.deinit();
+    var pieces = try sound(&once, &other, .difference);
+    defer pieces.deinit();
+    try testing.expectEqual(@as(usize, 2), pieces.counts().shells);
+    var plate = try helpers.fuzzPlaced(Tolerance.fromSize(200), .{ 200, 150, 1 }, .{ -98, -98, 3 }, vec.Z3, 0, .{ 1, 0, 0 }, .{ 0, 2e-4, 1e-4 });
+    defer plate.deinit();
+    var forward = try sound(&pieces, &plate, .@"union");
+    defer forward.deinit();
+    var swapped = try sound(&plate, &pieces, .@"union");
+    defer swapped.deinit();
+    try testing.expectEqual(forward.counts(), swapped.counts());
+    try testing.expect(!hasPointLoop(&forward));
+    try testing.expect(!hasPointLoop(&swapped));
+}

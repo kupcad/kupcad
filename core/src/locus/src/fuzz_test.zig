@@ -2105,6 +2105,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // tetrahedron within the tolerance of its top and bottom away from its knife edge,
         // no merged vertex there, the union pinched (pave.knifeBlocks)
         "solids 3 2 3 1 3 4 3 1 4 1 3 4 3 12 3 11 9 3 0 0 0 -1 11 2 1 1 8 2 3 4 1 0 2 1 3 4 0 4 1 3 3 4 0 2 3 1 3 4 2 1 1 3 3 1 4 3 3 2",
+        // The 10K session on 8db70212 (locus_solids): two pieces sharing a corner, one's
+        // bottom in a plate's bottom; the union's inner edges went in the operands' order,
+        // a slit left one way round, a loop of the corner the other, whose kvh took the
+        // other piece's vertex (simplify: inner edges whole; kevSpur kept a vertex's coedge)
+        "solids 1 4 2 4 0 3 1 3 2 3 4 1 4 2 2 1 1 1 0 1 2 10 3 1 0 1 4 2 4 2 3 3 3 2 13 5 9 1 3 1 6 0 4 0 0 0 2 3 1 1 0 3 1 2 0 1 4 1 3 2 2 14 12 6 10 1 1 2 0 4 0 3 3 4 3 2 2 7 5 2 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

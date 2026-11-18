@@ -860,8 +860,10 @@ importing only those before it, which the layering test holds):**
   checker's structural level on the assembled body, so no Euler operator runs on a body it
   fails (a fuzz find: a pinch the paves missed tripped `kef`'s debug check). Then `simplify.zig` (`kef` across edges between faces on one plane record of one
   sense and attribute, never across an edge with a copy, whose line the touching solid
-  needs; spurs whose far vertex nothing else uses, a hole that was a lone slit then a
-  point that goes too (`kvh`, when the vertex's own record has no edge leaving it), bridges
+  needs; spurs, each whole, its far vertex with it unless another shell's edges use it, a
+  hole that was a lone slit then a point that goes too (`kvh`, its vertex kept likewise:
+  a point of two shells' faces needs only one's boundary, and a slit kept to another
+  shell's corner hung on the order the edges went in, 2026-11-18), bridges
   by `kemr` (never an edge with a copy either); `kevJoin` along
   chains of edges through vertices of two line edges, counted over the whole body, each
   chain decided whole (one edge on a line of its own edges holding all its vertices, else

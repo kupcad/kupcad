@@ -1081,7 +1081,7 @@ test "boolean: the report's largest gap covers a vertex paved onto an edge from 
 /// A box of `size` from `lo` at the tolerance `t`, placed by `turn` about `axis` through
 /// the solids fuzzer's grid middle, then moved by `move` and by `nudge`, as the fuzzer
 /// composes a placement (one rounding of each, in its order).
-fn fuzzPlaced(t: Tolerance, size: Vec3, lo: Vec3, axis: Vec3, turn: f64, move: Vec3, nudge: Vec3) !Body {
+pub fn fuzzPlaced(t: Tolerance, size: Vec3, lo: Vec3, axis: Vec3, turn: f64, move: Vec3, nudge: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var unit = try primitives.box(testing.allocator, t, size[0], size[1], size[2], false, &diag);
