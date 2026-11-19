@@ -2176,6 +2176,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // an edge through that corner, a vertex of the same loop (sketch boolean's
         // mergePieces: every vertex a merged edge passes within the zone of it)
         "chain 1 3 3 6 1 6 1 5 4 4 2 4 1 1 10 2 3 3 4 0 3 4 5 3 5 1 3 0 3 1 1 3 0 1 0 1 4 4 6 3 2 2 6 6 1 1 6 1 3 5 0 3 2 1 0 0 2 3 1 2 1 3 6 2 4 0 1 6 1 2 1 4 4 0 0 2 8 1 5 1 2 4 3 0 3 1 6 4 3 5 2 6 4 1 2 0 2 3 3 3 1 2 1 4 3 8 0 6 3 3 5 3 2 2 1 4 1 0 2 1 6 4 3 4 1 0 1 1 1 1 2 4 2 1 0 1 2",
+        // The nightly dispatched 2026-11-19 (run 44568960243, on 7ab7aaf2, bj), the overlay
+        // target: an island's ray through a circle's lowest point, the circle's vertex a
+        // rounding west of it; the piece 4.4e-16 wide between them read on the east half by
+        // its middle's angle and nested the island in the circle (overlay.ArcPieces: a
+        // piece's side by its ends)
+        "overlay 3 2 0 1 0 3 0 0 0 0 10 7 3 4 0 1 1 0 13 9 7 5 1 1 2 0 19 1 3 5 0 0 0 4 21 6 5 1 1 0 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

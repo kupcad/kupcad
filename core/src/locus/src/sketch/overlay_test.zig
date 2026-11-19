@@ -5,6 +5,7 @@
 const std = @import("std");
 const testing = std.testing;
 const vec = @import("../math/vec.zig");
+const trig = @import("../math/trig.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const overlay = @import("overlay.zig");
 const Overlay = overlay.Overlay;
@@ -12,6 +13,60 @@ const Vec2 = vec.Vec2;
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
+
+/// The island family (the test of an island beside a circle in each quarter turn): the
+/// circle, the islands' radius, and the shift after the turn, the numbers of the find it
+/// was built around (the overlay fuzz target, 2026-11-19, bj).
+const FAMILY_CIRCLE_CENTRE: Vec2 = .{ 3.25, 2.25 };
+const FAMILY_CIRCLE_RADIUS: f64 = 3;
+const FAMILY_ISLAND_RADIUS: f64 = 0.25;
+const FAMILY_SHIFT: Vec2 = .{ 0.5, -1 };
+/// The quarter turns of a whole turn, and the inputs of the family (the islands, the circle).
+const QUARTER_TURNS: usize = 4;
+const FAMILY_INPUTS: usize = 2;
+/// How far inside a face its probe point is taken (`probeOf`), and the share of that
+/// every circle must keep from it for the point to be in the face.
+const PROBE_INSET: f64 = 1e-3;
+const PROBE_CLEAR: f64 = 0.999;
+/// How near the areas of a face in two turns of one arrangement are.
+const TURNED_AREA_CLOSE: f64 = 1e-9;
+/// Where a circle's four arcs end, as directions from its centre: its extremes, or its
+/// lattice points (3, 4, 5), which no quarter turn brings to an extreme.
+const EXTREME_ENDS = [QUARTER_TURNS]Vec2{ .{ 1, 0 }, .{ 0, 1 }, .{ -1, 0 }, .{ 0, -1 } };
+const LATTICE_ENDS = [QUARTER_TURNS]Vec2{ .{ 4, -3 }, .{ 3, 4 }, .{ -4, 3 }, .{ -3, -4 } };
+const LATTICE_HYPOTENUSE: f64 = 5;
+
+/// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
+/// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
+/// angles draw an arc, an end a rounding to one side of the extreme, 3.25 − 5.5e-16 for
+/// 3.25); or at its lattice points.
+const Ends = enum { extremes, angled, lattice };
+
+/// A case of the island family: what the island's line passes through (the ray from its
+/// leftmost point to −x, which `nestCycles` places it by), where the circle's arcs end,
+/// and the island's centre from the circle's as the overlay is given them.
+const IslandLineCase = struct {
+    name: []const u8,
+    ends: Ends,
+    island: Vec2,
+};
+
+const ISLAND_LINE_CASES = [_]IslandLineCase{
+    .{ .name = "the circle's lowest point, no arc's end there", .ends = .lattice, .island = .{ 2.25, -FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "the circle's lowest point, two arcs' end", .ends = .extremes, .island = .{ 2.25, -FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "the circle's lowest point, two arcs' end a rounding off it", .ends = .angled, .island = .{ 2.25, -FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "the circle's highest point, no arc's end there", .ends = .lattice, .island = .{ 2.25, FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "the circle's highest point, two arcs' end", .ends = .extremes, .island = .{ 2.25, FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "the circle's highest point, two arcs' end a rounding off it", .ends = .angled, .island = .{ 2.25, FAMILY_CIRCLE_RADIUS } },
+    .{ .name = "an arc's end where the circle crosses the line, the island outside", .ends = .lattice, .island = .{ 3.5, endOf(.lattice, 0, FAMILY_CIRCLE_RADIUS)[1] } },
+    .{ .name = "an arc's end where the circle crosses the line, the island inside", .ends = .lattice, .island = .{ 0, endOf(.lattice, 2, FAMILY_CIRCLE_RADIUS)[1] } },
+    .{ .name = "the circle's east and west points, arcs' ends, the island outside", .ends = .extremes, .island = .{ 3.5, 0 } },
+    .{ .name = "the circle's east and west points, arcs' ends, the island inside", .ends = .extremes, .island = .{ 1, 0 } },
+    .{ .name = "the circle's east and west points, arcs' ends a rounding off them, the island outside", .ends = .angled, .island = .{ 3.5, 0 } },
+    .{ .name = "the circle's east and west points, arcs' ends a rounding off them, the island inside", .ends = .angled, .island = .{ 1, 0 } },
+    .{ .name = "the circle between its arcs' ends, the island outside", .ends = .lattice, .island = .{ 3.5, 0.5 } },
+    .{ .name = "the circle between its arcs' ends, the island inside", .ends = .lattice, .island = .{ 1, 0.5 } },
+};
 
 /// A closed polygon as one input's edges, in the order given (counter-clockwise for a
 /// region, clockwise for a hole).
@@ -85,6 +140,116 @@ fn areaWhere(o: *const Overlay, w0: i32, w1: ?i32) struct { faces: usize, area: 
         for (o.holesOf(@intCast(i))) |h| area += o.cycles.items[h].area;
     }
     return .{ .faces = faces, .area = area };
+}
+
+/// End `k` of a circle of radius `r` about the origin whose four arcs end at `ends`.
+fn endOf(ends: Ends, k: usize, r: f64) Vec2 {
+    return switch (ends) {
+        .extremes => vec.scale2(EXTREME_ENDS[k], r),
+        .angled => .{ r * @cos(@as(f64, @floatFromInt(k)) * PI / 2.0), r * @sin(@as(f64, @floatFromInt(k)) * PI / 2.0) },
+        .lattice => vec.scale2(LATTICE_ENDS[k], r / LATTICE_HYPOTENUSE),
+    };
+}
+
+/// A counter-clockwise circle as four arcs between its `ends`.
+fn fourArcs(c: Vec2, r: f64, ends: Ends) [QUARTER_TURNS]overlay.InputEdge {
+    var arcs: [QUARTER_TURNS]overlay.InputEdge = undefined;
+    for (&arcs, 0..) |*arc, k| arc.* = .{ .a = vec.add2(c, endOf(ends, k, r)), .b = vec.add2(c, endOf(ends, (k + 1) % QUARTER_TURNS, r)), .arc = .{ .c = c, .r = r, .ccw = true } };
+    return arcs;
+}
+
+/// `p` turned about the origin by the angle whose cosine and sine are `turn`, then
+/// shifted: as the fuzzer moves a whole arrangement, the turn's rounding with it (the
+/// cosine of a quarter turn is 6.1e-17, not 0).
+fn movedPoint(p: Vec2, turn: Vec2, shift: Vec2) Vec2 {
+    return .{ turn[0] * p[0] - turn[1] * p[1] + shift[0], turn[1] * p[0] + turn[0] * p[1] + shift[1] };
+}
+
+/// Edge `e` moved as `movedPoint` moves its ends and its arc's centre.
+fn movedEdge(e: overlay.InputEdge, turn: Vec2, shift: Vec2) overlay.InputEdge {
+    var moved: overlay.InputEdge = .{ .a = movedPoint(e.a, turn, shift), .b = movedPoint(e.b, turn, shift) };
+    if (e.arc) |arc| moved.arc = .{ .c = movedPoint(arc.c, turn, shift), .r = arc.r, .ccw = arc.ccw };
+    return moved;
+}
+
+/// A whole circle of an input, for the count `expectDiscWindings` makes of its own.
+const Disc = struct {
+    input: u32,
+    c: Vec2,
+    r: f64,
+    ccw: bool = true,
+};
+
+/// A point `PROBE_INSET` inside face `f`: left of the middle of its outer cycle's longest
+/// half-edge.
+fn probeOf(o: *const Overlay, f: overlay.Face) Vec2 {
+    var probe: Vec2 = undefined;
+    var longest: f64 = -1;
+    for (o.halvesOf(f.outer)) |h| {
+        const a = o.point(o.origin(h));
+        const b = o.point(o.target(h));
+        if (o.arcOf(h)) |arc| {
+            const sweep = overlay.arcSweep(a, b, arc);
+            if (arc.r * sweep <= longest) continue;
+            longest = arc.r * sweep;
+            const start = trig.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
+            const angle = if (arc.ccw) start + sweep / 2 else start - sweep / 2;
+            // Left of a counter-clockwise arc is toward its centre
+            const r = if (arc.ccw) arc.r - PROBE_INSET else arc.r + PROBE_INSET;
+            probe = .{ arc.c[0] + r * @cos(angle), arc.c[1] + r * @sin(angle) };
+            continue;
+        }
+        const length = vec.distance2(a, b);
+        if (length <= longest) continue;
+        longest = length;
+        const along = vec.scale2(vec.sub2(b, a), 1 / length);
+        probe = vec.add2(vec.scale2(vec.add2(a, b), 0.5), vec.scale2(vec.perp2(along), PROBE_INSET));
+    }
+    return probe;
+}
+
+/// Every face's winding of every input against a count of its own, for an arrangement of
+/// whole circles: at a point just inside the face (`probeOf`, every circle further from
+/// it than the way it was stepped in by, so it is in the face), an input winds once for
+/// each of its counter-clockwise circles the point is inside, once back for each
+/// clockwise one, told by the point's distance from their centres: no ray, no arc piece,
+/// nothing the overlay nests or labels by.
+fn expectDiscWindings(o: *const Overlay, discs: []const Disc) !void {
+    for (o.faces.items, 0..) |f, fi| {
+        const p = probeOf(o, f);
+        for (discs) |d| try testing.expect(@abs(vec.distance2(p, d.c) - d.r) > PROBE_CLEAR * PROBE_INSET);
+        for (0..o.inputs) |k| {
+            var want: i32 = 0;
+            for (discs) |d| {
+                if (d.input == k and vec.distance2(p, d.c) < d.r) want += if (d.ccw) 1 else -1;
+            }
+            errdefer std.debug.print("face {d} at ({d}, {d}): input {d}\n", .{ fi, p[0], p[1], k });
+            try testing.expectEqual(want, o.windingOf(@intCast(fi), @intCast(k)));
+        }
+    }
+}
+
+/// A face of the island family by what a turn leaves it: its windings and its area.
+const TurnedFace = struct {
+    windings: [FAMILY_INPUTS]i32,
+    area: f64,
+
+    fn lessThan(_: void, x: TurnedFace, y: TurnedFace) bool {
+        for (x.windings, y.windings) |wx, wy| if (wx != wy) return wx < wy;
+        return x.area < y.area;
+    }
+};
+
+/// The faces of `o` as `TurnedFace`s, in an order no turn changes.
+fn turnedFaces(o: *const Overlay, faces: *std.ArrayList(TurnedFace)) !void {
+    faces.clearRetainingCapacity();
+    for (o.faces.items, 0..) |f, fi| {
+        var face: TurnedFace = .{ .windings = undefined, .area = o.cycles.items[f.outer].area };
+        for (&face.windings, 0..) |*w, k| w.* = o.windingOf(@intCast(fi), @intCast(k));
+        for (o.holesOf(@intCast(fi))) |h| face.area += o.cycles.items[h].area;
+        try faces.append(testing.allocator, face);
+    }
+    std.mem.sort(TurnedFace, faces.items, {}, TurnedFace.lessThan);
 }
 
 test "overlay: two squares overlapping at a corner: four faces, the right windings and areas" {
@@ -491,6 +656,123 @@ test "overlay: a hole's ray through an arc's lowest point, the arc's west piece 
     try testing.expectEqual(@as(usize, 1), disc.faces);
     try testing.expectApproxEqAbs(PI * 0.25 * 0.25, disc.area, 1e-9);
     try testing.expectEqual(@as(usize, 0), areaWhere(&o, 1, 1).faces + areaWhere(&o, -1, 1).faces);
+}
+
+test "overlay: an island's ray through a circle's lowest point, the circle's vertex a rounding west of it, passes the circle by" {
+    // The overlay fuzz target's find (the nightly of 2026-11-19, run 44568960243, bj), as
+    // the fuzzer drew it and moved it whole, a quarter turn and (0.5, -1): a small circle
+    // about (0.5, -0.75), an island touching nothing, and to its west a circle of radius 3
+    // about (-1.75, 2.25) whose lowest point (-1.75, -0.75) is on the island's ray, with
+    // the vertex its two lower arcs end at turned to (-1.7500000000000004,
+    // -0.7499999999999999), a rounding west of that point and above. The arc leaving the
+    // vertex has a piece 4.4e-16 wide down to the lowest point, on the west half; its
+    // side was told by the cosine of its middle's angle, a rounding of straight down, and
+    // read east (its twin half-edge read it west): the piece tied the true east piece on
+    // the ray, level and now the same way, and the bend chose it, nesting the island
+    // inside the circle with its labels offset by the circle's winding
+    const quarter: Vec2 = .{ @cos(PI / 2.0), @sin(PI / 2.0) };
+    const shift: Vec2 = .{ 0.5, -1 };
+    const drawn = [_][]const overlay.InputEdge{
+        &.{
+            .{ .a = .{ 0.5, 0 }, .b = .{ 0, 0.00000000000000003061616997868383 }, .arc = .{ .c = .{ 0.25, 0 }, .r = 0.25, .ccw = false } },
+            .{ .a = .{ 0, 0.00000000000000003061616997868383 }, .b = .{ 0.5, 0 }, .arc = .{ .c = .{ 0.25, 0 }, .r = 0.25, .ccw = false } },
+            .{ .a = .{ 4.5, 1.75 }, .b = .{ 0.5, 1.7500000000000002 }, .arc = .{ .c = .{ 2.5, 1.75 }, .r = 2, .ccw = true } },
+            .{ .a = .{ 0.5, 1.7500000000000002 }, .b = .{ 4.5, 1.75 }, .arc = .{ .c = .{ 2.5, 1.75 }, .r = 2, .ccw = true } },
+        },
+        &.{
+            .{ .a = .{ 6.25, 2.25 }, .b = .{ 3.25, 5.25 }, .arc = .{ .c = .{ 3.25, 2.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ 3.25, 5.25 }, .b = .{ 0.25, 2.2500000000000004 }, .arc = .{ .c = .{ 3.25, 2.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ 0.25, 2.2500000000000004 }, .b = .{ 3.2499999999999996, -0.75 }, .arc = .{ .c = .{ 3.25, 2.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ 3.2499999999999996, -0.75 }, .b = .{ 6.25, 2.25 }, .arc = .{ .c = .{ 3.25, 2.25 }, .r = 3, .ccw = true } },
+        },
+        &.{
+            .{ .a = .{ 7.75, 0.25 }, .b = .{ 1.75, 0.2500000000000004 }, .arc = .{ .c = .{ 4.75, 0.25 }, .r = 3, .ccw = false } },
+            .{ .a = .{ 1.75, 0.2500000000000004 }, .b = .{ 7.75, 0.25 }, .arc = .{ .c = .{ 4.75, 0.25 }, .r = 3, .ccw = false } },
+            .{ .a = .{ 4, 5.25 }, .b = .{ 1.0000000000000002, 8.25 }, .arc = .{ .c = .{ 1, 5.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ 1.0000000000000002, 8.25 }, .b = .{ -2, 5.25 }, .arc = .{ .c = .{ 1, 5.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ -2, 5.25 }, .b = .{ 0.9999999999999994, 2.25 }, .arc = .{ .c = .{ 1, 5.25 }, .r = 3, .ccw = true } },
+            .{ .a = .{ 0.9999999999999994, 2.25 }, .b = .{ 4, 5.25 }, .arc = .{ .c = .{ 1, 5.25 }, .r = 3, .ccw = true } },
+        },
+    };
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    for (drawn) |edges| {
+        _ = try o.addInput();
+        for (edges) |e| try o.addEdge(movedEdge(e, quarter, shift));
+    }
+    try o.run();
+    try expectPlanar(&o);
+    // The island is the one clockwise circle of the first input and outside every other
+    // circle: one face wound -1 by its own input, and by no other
+    var islands: usize = 0;
+    for (o.faces.items, 0..) |f, fi| {
+        if (o.windingOf(@intCast(fi), 0) != -1) continue;
+        islands += 1;
+        try testing.expectApproxEqAbs(PI * 0.25 * 0.25, o.cycles.items[f.outer].area, 1e-9);
+        try testing.expectEqual(@as(i32, 0), o.windingOf(@intCast(fi), 1));
+        try testing.expectEqual(@as(i32, 0), o.windingOf(@intCast(fi), 2));
+    }
+    try testing.expectEqual(@as(usize, 1), islands);
+}
+
+test "overlay: an island beside a circle, its line through the circle's lowest or highest point, an arc's end or between, is labelled alike in each quarter turn" {
+    // The cases about the find above (Leo, 2026-11-19: a line through a circle's lowest or
+    // highest point or an arc's end, across the quarter turns, is where angle sorting,
+    // tangent splitting and interval ordering turn over, and a matrix of them around a
+    // confirmed find costs no refusal elsewhere). An island is placed by the ray from its
+    // leftmost point to −x (`nestCycles`): each case names what of the circle is on that
+    // line, with the island east of the circle or inside it. Four islands stand about the
+    // circle, each a quarter turn on from the last, so that every quarter turn of the
+    // whole arrangement (turned as the fuzzer turns one, by the rounded cosine and sine,
+    // then shifted) brings one of them onto the line named and leaves the others north,
+    // west and south of it, their rays clear of the circle or across it elsewhere. The
+    // islands' own arcs end each way the circle's may (`Ends`: the leftmost point a vertex
+    // at the extreme, one a rounding off it, or an arc's west extreme between its ends).
+    // Every face's winding of both inputs is held against a count of its
+    // own (`expectDiscWindings`), and the faces of the four turns are the same faces
+    for (ISLAND_LINE_CASES) |case| for (std.enums.values(Ends)) |island_ends| {
+        errdefer std.debug.print("on the island's line: {s}; the islands' arcs end at their {s}\n", .{ case.name, @tagName(island_ends) });
+        try expectTurnsAlike(case, island_ends);
+    };
+}
+
+/// One case of the island family with the islands' arcs ending at `island_ends`, in each
+/// quarter turn: planar, every face's windings as `expectDiscWindings` counts them, and
+/// the faces those of the arrangement unturned.
+fn expectTurnsAlike(case: IslandLineCase, island_ends: Ends) !void {
+    var first: std.ArrayList(TurnedFace) = .empty;
+    defer first.deinit(testing.allocator);
+    var faces: std.ArrayList(TurnedFace) = .empty;
+    defer faces.deinit(testing.allocator);
+    for (0..QUARTER_TURNS) |q| {
+        errdefer std.debug.print("quarter turn {d}\n", .{q});
+        const angle = @as(f64, @floatFromInt(q)) * PI / 2.0;
+        const turn: Vec2 = .{ @cos(angle), @sin(angle) };
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        var discs: [QUARTER_TURNS + 1]Disc = undefined;
+        _ = try o.addInput();
+        var from_circle = case.island;
+        for (discs[0..QUARTER_TURNS]) |*disc| {
+            const c = vec.add2(FAMILY_CIRCLE_CENTRE, from_circle);
+            for (fourArcs(c, FAMILY_ISLAND_RADIUS, island_ends)) |e| try o.addEdge(movedEdge(e, turn, FAMILY_SHIFT));
+            disc.* = .{ .input = 0, .c = movedPoint(c, turn, FAMILY_SHIFT), .r = FAMILY_ISLAND_RADIUS };
+            from_circle = vec.perp2(from_circle);
+        }
+        _ = try o.addInput();
+        for (fourArcs(FAMILY_CIRCLE_CENTRE, FAMILY_CIRCLE_RADIUS, case.ends)) |e| try o.addEdge(movedEdge(e, turn, FAMILY_SHIFT));
+        discs[QUARTER_TURNS] = .{ .input = 1, .c = movedPoint(FAMILY_CIRCLE_CENTRE, turn, FAMILY_SHIFT), .r = FAMILY_CIRCLE_RADIUS };
+        try o.run();
+        try expectPlanar(&o);
+        try expectDiscWindings(&o, &discs);
+        try turnedFaces(&o, if (q == 0) &first else &faces);
+        if (q == 0) continue;
+        try testing.expectEqual(first.items.len, faces.items.len);
+        for (first.items, faces.items) |want, found| {
+            try testing.expectEqual(want.windings, found.windings);
+            try testing.expectApproxEqAbs(want.area, found.area, TURNED_AREA_CLOSE);
+        }
+    }
 }
 
 test "overlay: a cycle that runs each of its edges both ways bounds nothing, whatever its area's rounding" {

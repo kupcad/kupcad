@@ -1190,9 +1190,19 @@ fn arcParam(a: Vec2, b: Vec2, arc: Arc, p: Vec2) f64 {
 /// may differ by a rounding (2 − 1.2e-16 is the double below 2) while the edge beyond the
 /// vertex counts the vertex by its point; the circle's top and bottom at the extremes
 /// between. Pieces that short are kept: the half-open rule then agrees at every vertex.
+/// A piece's side of the centre is told by its ends, exactly (D26): an end is a vertex or
+/// an extreme, the extremes at the centre's x, and `onArcStrictly` cuts at an extreme just
+/// when the arc's ends lie strictly either side of it in x, so a piece's ends are never on
+/// opposite sides and the first of them off the centre's x tells the side; a piece between
+/// the two extremes, both at that x, is a half circle and lies where its arc runs that way
+/// (a counter-clockwise arc goes down its west half). Never by the angle of its middle: a
+/// piece 4.4e-16 wide between a vertex and the lowest point has its middle within a
+/// rounding of straight below the centre, whose cosine is of either sign, and its two
+/// half-edges read it on opposite sides (the overlay fuzz target, 2026-11-19, bj).
 const ArcPieces = struct {
-    span: Span,
-    sign: f64,
+    /// The centre's x and the arc's sense: what a piece's side is told by.
+    centre_x: f64,
+    ccw: bool,
     cuts: [4]Cut,
     n: usize,
     at: usize = 0,
@@ -1230,7 +1240,7 @@ const ArcPieces = struct {
                 return x.t < y.t;
             }
         }.lessThan);
-        return .{ .span = span, .sign = if (arc.ccw) 1 else -1, .cuts = cuts, .n = n };
+        return .{ .centre_x = arc.c[0], .ccw = arc.ccw, .cuts = cuts, .n = n };
     }
 
     fn next(self: *ArcPieces) ?Piece {
@@ -1238,8 +1248,15 @@ const ArcPieces = struct {
         const c0 = self.cuts[self.at];
         const c1 = self.cuts[self.at + 1];
         self.at += 1;
-        const mid = self.span.start + self.sign * (c0.t + c1.t) / 2.0;
-        return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .side = if (@cos(mid) >= 0) .east else .west };
+        return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .side = self.sideOf(c0, c1) };
+    }
+
+    fn sideOf(self: *const ArcPieces, c0: Cut, c1: Cut) predicates.Side {
+        for ([_]f64{ c0.x, c1.x }) |x| {
+            if (x != self.centre_x) return if (x > self.centre_x) .east else .west;
+        }
+        const descending = c0.y > c1.y;
+        return if (descending == self.ccw) .west else .east;
     }
 };
 

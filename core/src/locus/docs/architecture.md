@@ -542,7 +542,13 @@ target: a ray one ulp above a vertex found an arc west of the line it leaves the
 east of; earlier the same day re-deriving the order from tangents got a vertex a rounding
 above the ray and two level opposite tangents wrong). A tie at no vertex (an arc's two pieces at its lowest point on the ray) takes the
 ray a hair above: the piece leaning east going up, level and opposite the east one, then
-the one bending east. The ray starts at the cycle's leftmost point, an arc's west extreme
+the one bending east. Which half of its circle a piece of an arc lies on (which crossing
+it is at a height, and which way it leaves a level tangency) is told by its ends, exactly:
+the first of them off the centre's x, and for the half circle between the two extremes the
+way its arc runs; never by its middle's angle (2026-11-19, the overlay target, bj: an
+arc's piece 4.4e-16 wide, from a vertex a rounding west of the circle's lowest point down
+to it, read east by the cosine of its middle and west by its twin's, tied the east piece
+on an island's ray and nested the island in the circle). The ray starts at the cycle's leftmost point, an arc's west extreme
 when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
 end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
 vertex crossed the ray a rounding to either side, and a component's outer boundary was
