@@ -2633,6 +2633,44 @@ test "degeneracy: a face through the line two solids of the other operand touch 
     }
 }
 
+test "degeneracy: a difference keeping a spike thinner than the tolerance at its root is refused as pinched, not made" {
+    // The 10K session's find on d5d78c4b (2026-11-19, locus and locus_solids, bc), as the
+    // fuzzer drew it: a box cut by a plate (zone 1e-4) united with a hull, less a second
+    // hull whose face passes 1.7 to 3.3 tolerances inside the first hull's ridge for 0.8
+    // units under the plate. The difference keeps the ridge's sliver outside that face as
+    // a spike whose root under the plate's bottom is a triangle 2·xsect a side: a wall
+    // thinner than the tolerance, the second hull's face within it of the plate bottom's
+    // notch. The assembly's pinch test reads topology only and made it; the overlap rules,
+    // run on a result whose features come nearer than its minimum feature size, refuse it
+    var box_part = try helpers.fuzzPlaced(tol, .{ 1, 3, 2 }, .{ 2, 1, 2 }, vec.Z3, 0, .{ 0, 0, -0.5 }, .{ -2e-3, 2e-3, 0 });
+    defer box_part.deinit();
+    var plate = try helpers.fuzzPlaced(Tolerance.fromZone(1e-4), .{ 100, 100, 1 }, .{ -48, 2, 3 }, vec.Z3, 0, .{ 0, 0, 0 }, .{ -1.9999999855049283e-4, 2e-4, -2.000000014495072e-4 });
+    defer plate.deinit();
+    var cut = try sound(&box_part, &plate, .intersection);
+    defer cut.deinit();
+    var ridge = try fuzzHull(&.{ .{ 1, 4, 1 }, .{ 3, 2, 4 }, .{ 3, 3, 0 }, .{ 1, 4, 1 }, .{ 3, 0, 1 }, .{ 3, 1, 2 }, .{ 3, 1, 0 } }, .{ 0, 0, 0.5 }, .{ 0, 2.0000000006394886e-4, 0 });
+    defer ridge.deinit();
+    var joined = try sound(&cut, &ridge, .@"union");
+    defer joined.deinit();
+    var cutter = try fuzzHull(&.{ .{ 2, 4, 2 }, .{ 3, 4, 3 }, .{ 1, 1, 3 }, .{ 4, 0, 1 }, .{ 3, 3, 1 }, .{ 3, 3, 1 }, .{ 2, 2, 4 }, .{ 3, 3, 4 } }, .{ 0, 0, 1 }, .{ 0, 5e-5, 0 });
+    defer cutter.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (pipeline.boolean(testing.allocator, &joined, &cutter, .difference, .{}, &diag, null)) |made| {
+        var body = made;
+        body.deinit();
+        return error.TestUnexpectedResult;
+    } else |err| {
+        try testing.expectEqual(error.Degenerate, err);
+        try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    }
+    // The union and the intersection keep no such wall: made and sound
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var made = try sound(&joined, &cutter, op);
+        defer made.deinit();
+    }
+}
+
 test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, their union's section edges lie on their faces within the gaps carried onto them" {
     // The locus fuzzer's find (2026-11-18, 10K session on a5301ce8, au), reduced: a
     // tetrahedron's edge passes 2.7e-5 from the corner where a box's side and top meet a

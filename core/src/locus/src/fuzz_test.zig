@@ -2135,6 +2135,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // read the box's alone, outside, its sections inside the hull (classify: the
         // seams read every solid's wedge)
         "solids 0 0 2 1 2 1 4 0 1 3 1 1 -1 -1 8 3 3 1 5 1 2 0 1 1 2 4 2 0 2 3 2 1 1 0 1 1 6 1 0 7 0 1 2 3 4 0 2 0 1 3 3 2 0 1 2 0 3 1 8 0 0 0 0 0 0 4 1 3 2 2 2 0 0 3 2 3 3 3 3 2 4 0 4 0 0 8 0 2 2 1 10 3 10 12 0",
+        // The 10K session on d5d78c4b (locus and locus_solids, bc): a difference kept a
+        // spike whose root was a triangle 2·xsect a side under a plate, a wall thinner than
+        // the tolerance, which the topological pinch test made (pipeline: the overlap rules
+        // on a result nearer than its minimum feature size)
+        "solids 0 2 3 1 4 2 4 2 2 14 13 -1 12 3 3 2 1 3 2 4 3 4 2 1 10 7 12 14 2 2 1 7 1 4 1 3 2 4 3 3 0 1 4 1 3 0 1 3 1 4 3 1 0 3 3 0 11 1 3 0 2 1 8 2 4 2 3 4 3 1 1 3 4 0 1 3 3 1 3 3 1 0 2 4 3 3 2 2 3 3 -1 8 5 2",
+        "solids 0 2 3 1 4 2 4 2 2 14 13 -1 12 3 3 2 1 3 2 4 3 4 2 1 10 7 12 14 2 2 1 7 1 4 1 3 2 4 3 3 0 1 4 1 3 0 1 3 1 2 3 1 0 3 3 0 11 1 3 0 2 1 8 2 4 2 3 4 3 1 1 3 4 0 1 3 3 1 3 3 1 2 2 4 3 3 4 2 3 0 3 2 5 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

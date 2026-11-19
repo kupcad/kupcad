@@ -470,7 +470,13 @@ below its resolution; Leo, 2026-11-15, in place of refusals the paves added find
 where the other operand reached such a pair, and costing about 3% of a boolean). A body
 may be nearer: an operation's result is one (the overlap rules warn, `features_near`, and
 a boolean's report keeps its result's nearest pair), which the next boolean refuses
-(research/consistent-tolerances.md). The paves' own refusals below are what an operand
+(research/consistent-tolerances.md). Such a result may also touch itself within the
+tolerance away from where its features meet, which the assembly's topological pinch test
+cannot see: the boolean runs the overlap rules on a result whose nearest pair is under
+the minimum, refusing what they find (a difference kept a spike whose root was a
+triangle 2·xsect a side, a wall thinner than the tolerance; the 10K session on d5d78c4b,
+2026-11-19; Leo: gated on the nearest pair, so a result keeping the minimum costs
+nothing more). The paves' own refusals below are what an operand
 past the minimum can still bring about, the two operands together: properties of the pair
 and its merged vertices (whose gaps reach up to the zone beyond the tolerance), kept in the
 paves where that state lives (Leo, 2026-11-15: the precondition stays at `2·xsect`; at

@@ -70,11 +70,20 @@ pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnosti
     const tol = options.tolerance orelse body.tol;
     var index = try index_mod.FaceIndex.build(allocator, body, diag);
     defer index.deinit(allocator);
+    try rules(allocator, body, &index, options, diag);
+    if (try nearest(allocator, body, &index, tol, 0, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = near.limit });
+}
+
+/// `check`'s rules on a solid body whose faces `index` holds: its faces met pairwise
+/// (`faces_intersect`, `pinched`) and its shells counted (`shell_overlaps`). The boolean
+/// runs them on a result whose features come nearer than its minimum feature size
+/// (`pipeline.boolean`'s last step), with the index it built for `nearest`.
+pub fn rules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+    const tol = options.tolerance orelse body.tol;
     var solids = try Solids.init(allocator, body, options, diag);
     defer solids.deinit(allocator);
-    try facePairs(allocator, body, &index, &solids, tol, options, diag);
+    try facePairs(allocator, body, index, &solids, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
-    if (try nearest(allocator, body, &index, tol, 0, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = near.limit });
 }
 
 /// Two features of a body that do not meet, the distance between them, and the least

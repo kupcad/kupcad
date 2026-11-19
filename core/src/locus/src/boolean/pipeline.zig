@@ -319,6 +319,14 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     var index = try index_mod.FaceIndex.build(allocator, &result, diag);
     defer index.deinit(allocator);
     r.near = try overlap.nearest(allocator, &result, &index, tol, 0, diag);
+    // A result whose features keep the minimum feature size touches itself only where they
+    // meet, which the assembly's pinch test reads from the topology (`refusePinched`); one
+    // with a pair nearer may touch itself within the tolerance away from them, where only
+    // the overlap rules see it: they decide it there, as for any body (the 10K session on
+    // d5d78c4b, 2026-11-19: a difference kept a spike whose root was a triangle 2·xsect a
+    // side under a plate, a wall thinner than the tolerance, made pinched; Leo: the rules
+    // gated on the result's nearest pair, results with near features still made)
+    if (r.near != null) try overlap.rules(allocator, &result, &index, common, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
 }
