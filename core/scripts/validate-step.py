@@ -26,6 +26,7 @@ from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GeomAbs import GeomAbs_Plane
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
+from OCP.Precision import Precision
 from OCP.STEPControl import STEPControl_Reader
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
@@ -76,8 +77,10 @@ VOLUME_TOLERANCE = 1e-6
 # The chordal deflection a shape is triangulated to when its volume is measured on its
 # triangles (`problems`' `triangulated`), relative to its box's diagonal; the triangles lie
 # off a curved face by at most that, so the volume is off by at most it times the curved
-# faces' area (a plane's triangles are the face). The angle each chord may turn by, in
-# radians.
+# faces' area (a plane's triangles are the face). OpenCascade's mesher refuses a deflection
+# under its confusion (1e-7), which a shape under a hundredth across would ask for (an
+# intersection 3.7e-3 across, 2026-11-19): such a shape is meshed to the confusion, and the
+# volume allowed that deflection. The angle each chord may turn by, in radians.
 DEFLECTION = 1e-5
 ANGULAR_DEFLECTION = 0.1
 
@@ -152,7 +155,8 @@ def problems(path, faces, solids, volume, slack=None, triangulated=False):
     if triangulated:
         box = Bnd_Box()
         BRepBndLib.Add_s(shape, box)
-        deflection = DEFLECTION * box.CornerMin().Distance(box.CornerMax())
+        diagonal = box.CornerMin().Distance(box.CornerMax())
+        deflection = max(DEFLECTION * diagonal, Precision.Confusion_s())
         BRepMesh_IncrementalMesh(shape, deflection, False, ANGULAR_DEFLECTION, False)
         allowed += deflection * curved_area(shape)
         BRepGProp.VolumeProperties_s(shape, props, False, False, True)
