@@ -2182,6 +2182,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // its middle's angle and nested the island in the circle (overlay.ArcPieces: a
         // piece's side by its ends)
         "overlay 3 2 0 1 0 3 0 0 0 0 10 7 3 4 0 1 1 0 13 9 7 5 1 1 2 0 19 1 3 5 0 0 0 4 21 6 5 1 1 0 0",
+        // The sessions on ab354a0a (locus_solids, bf): a hull's edge laid in a box's bottom
+        // along its edge at 1e-6 rad, one corner on that edge and the other 2.06e-5 from
+        // its line, off it, 7.3e-6 from the edge's piece between merged vertices in the
+        // bottom's plane, welded on by the imprint (pave.sectionsApart: a piece left on
+        // a face against the face's own blocks too, refused)
+        "solids 0 0 4 0 3 0 4 0 1 1 2 0 0 0 7 3 0 1 0 -1 16 -2 3 1 5 3 0 0 0 2 3 4 3 2 2 0 0 3 0 0 0 1 7 0 1 2 1 14 3 11 16 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -496,7 +496,16 @@ R3): two faces of one operand both in a face's plane must be in one plane or sha
 (a wall 1.5 tolerances thick with a face inside it), and the pieces one operand leaves on a
 face must keep the tolerance apart in its plane where they share no merged vertex (a flat
 tetrahedron's opposite edges both in the face's plane, crossing there); both refused
-`below_feature_size`. So too a face within the tolerance of two faces of the other
+`below_feature_size`. A piece left on a face keeps the tolerance from the face's own
+boundary too, in its plane, other than where the paves joined them (`pave.sectionsApart`,
+the one rule for what is laid in a face; two sharing one merged vertex measured by their
+other ends): the paves decide a vertex against an edge's line in space, and the imprint's
+overlay cuts the edge between its merged vertices' points in the plane, up to their reach
+off that line. A hull's edge laid in a box's bottom along the bottom's edge at 1e-6 rad,
+its first corner 1.965e-5 from that edge, on it, its second 2.06e-5 from the edge's line,
+off it, lay 7.3e-6 from the edge's piece between the first corner and the box's, and the
+overlay welded it on (`imprint_unmatched`, every operation either way round; the
+sessions on ab354a0a, bf). So too a face within the tolerance of two faces of the other
 operand at one point, the three parallel within the angular tolerance and the two facing
 apart (`pave.sandwiched`, over the faces' triangles in its plane): a flat tetrahedron's
 face 3.8e-5 rad off a plate 2.5e-5 thick (the operands' order chose the result). Two

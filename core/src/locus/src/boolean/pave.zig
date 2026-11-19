@@ -32,7 +32,8 @@
 //! within reach of two faces that meet nowhere near it (`featureSize`); and at a face, two
 //! faces of the other operand in its plane but not in one (`coplanarTogether`), two
 //! pieces they leave on it within the tolerance of each other in its plane where they share
-//! no merged vertex (`sectionsApart`), and two faces of the other facing apart and parallel
+//! no merged vertex, or one within it of the face's own boundary where the paves did not
+//! join them (`sectionsApart`), and two faces of the other facing apart and parallel
 //! to it, both within the tolerance of one point of it, whether they meet or not (a thin
 //! feature or a knife edge it lies along, `sandwiched`). Two features of one operand nearer
 //! than twice the tolerance where they do not meet are refused before the paves
@@ -1979,45 +1980,81 @@ const Filler = struct {
         return false;
     }
 
-    /// Each face's section segments (what the other operand leaves on it), pairwise, those
-    /// sharing no merged vertex further apart in the face's plane than the intersection
-    /// tolerance: nearer, the imprint's overlay welds or cuts them where the paves found no
-    /// point (within the zone), or leaves a strip between them whose every point is within
-    /// the zone of both, which no sample classifies (twice the zone is the tolerance). Two of
-    /// the other operand's features within the tolerance of each other here, away from where
-    /// they meet (a flat tetrahedron's opposite edges 1.5e-5 apart, both in the plane of a
-    /// face between them, crossing there; Segal and Séquin 1988's R3). Two sharing a vertex
-    /// are the minimum feature size's: the other end of one within reach of the other is a
-    /// merged vertex within reach of two of that operand's faces away from where they meet
-    /// (`featureSize`). Refused (`below_feature_size`), naming the face.
+    /// Each face's section segments (what the other operand leaves on it), pairwise and
+    /// against the face's own pave blocks, further apart in the face's plane than the
+    /// intersection tolerance where the paves did not join them: nearer, the imprint's
+    /// overlay welds or cuts them where the paves found no point (within the zone), or
+    /// leaves a strip between them whose every point is within the zone of both, which no
+    /// sample classifies (twice the zone is the tolerance).
+    ///
+    /// Two segments are two of the other operand's features within the tolerance of each
+    /// other here, away from where they meet (a flat tetrahedron's opposite edges 1.5e-5
+    /// apart, both in the plane of a face between them, crossing there; Segal and Séquin
+    /// 1988's R3). Two sharing a vertex are the minimum feature size's: the other end of
+    /// one within reach of the other is a merged vertex within reach of two of that
+    /// operand's faces away from where they meet (`featureSize`).
+    ///
+    /// A segment and a block are a feature of each operand, which no rule of one operand
+    /// holds apart, and the paves decide a vertex against an edge's line in space while the
+    /// overlay cuts the block between its merged vertices' points in the plane: a hull's
+    /// edge laid in a box's bottom 5e-6 over it, along the bottom's edge at 1e-6 rad, its
+    /// first corner 1.965e-5 from that edge, on it, its second 2.06e-5 from the edge's
+    /// line, off it, lay 7.3e-6 from the edge's piece between the first corner and the
+    /// box's, and the overlay welded it on (`imprint_unmatched`, every operation either way
+    /// round; the sessions on ab354a0a, bf). Two sharing one vertex, where the paves joined
+    /// them, are measured by their other ends (`hingedGap`), and a segment along a block,
+    /// sharing both, is that block. Refused (`below_feature_size`), naming the face.
     fn sectionsApart(self: *Filler) Error!void {
         const p = self.p;
-        const Flat = struct { a: Vec2, b: Vec2, ends: [2]u32, lo: f64, hi: f64 };
+        // A section segment, or one of the face's own pave blocks (`own`)
+        const Flat = struct { ends: [2]u32, at: [2]Vec2, lo: f64, hi: f64, own: bool };
         var flat: std.ArrayList(Flat) = .empty;
         defer flat.deinit(self.allocator);
         for (0..2) |k| for (self.faces[k]) |f| {
             const list = p.sections[k][@backingInt(f)].items;
-            if (list.len < 2) continue;
-            const frame = planar_faces.frameOf(self.body(k), f).?;
+            if (list.len == 0) continue;
+            const operand = self.body(k);
+            const frame = planar_faces.frameOf(operand, f).?;
             flat.clearRetainingCapacity();
             for (list) |segment| {
                 const a = planar_faces.flat(frame, p.point(segment[0]));
                 const b = planar_faces.flat(frame, p.point(segment[1]));
-                try flat.append(self.allocator, .{ .a = a, .b = b, .ends = segment, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]) });
+                try flat.append(self.allocator, .{ .ends = segment, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = false });
+            }
+            var loops = traverse.Loops.init(operand, f);
+            while (loops.next() catch return corrupt(self.diag)) |l| {
+                var it = traverse.Coedges.init(operand, l);
+                while (it.next() catch return corrupt(self.diag)) |c| {
+                    const blocks = p.edge_paves[k][@backingInt(operand.coedge(c).edge)].items;
+                    for (blocks[0 .. blocks.len - 1], blocks[1..]) |x, y| {
+                        const block: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
+                        const a = planar_faces.flat(frame, p.point(block[0]));
+                        const b = planar_faces.flat(frame, p.point(block[1]));
+                        try flat.append(self.allocator, .{ .ends = block, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = true });
+                    }
+                }
             }
             const Order = struct {
                 fn lessThan(_: void, x: Flat, y: Flat) bool {
-                    return x.lo < y.lo or (x.lo == y.lo and lessPair({}, x.ends, y.ends));
+                    if (x.lo != y.lo) return x.lo < y.lo;
+                    if (x.own != y.own) return y.own;
+                    return lessPair({}, x.ends, y.ends);
                 }
             };
             std.mem.sort(Flat, flat.items, {}, Order.lessThan);
             for (flat.items, 0..) |x, i| for (flat.items[i + 1 ..]) |y| {
                 // Sorted by their least x: none further on comes within reach
                 if (y.lo > x.hi + p.tol.xsect) break;
-                if (x.ends[0] == y.ends[0] or x.ends[0] == y.ends[1] or x.ends[1] == y.ends[0] or x.ends[1] == y.ends[1]) continue;
-                const gap = segmentGap(x.a, x.b, y.a, y.b);
+                if (x.own and y.own) continue;
+                const x_shared: [2]bool = .{ x.ends[0] == y.ends[0] or x.ends[0] == y.ends[1], x.ends[1] == y.ends[0] or x.ends[1] == y.ends[1] };
+                const hinged = x_shared[0] or x_shared[1];
+                const with_own = x.own or y.own;
+                // Two segments sharing a vertex are `featureSize`'s; a segment along a block
+                // is that block
+                if (hinged and (!with_own or (x_shared[0] and x_shared[1]))) continue;
+                const gap = if (hinged) hingedGap(x.at, @intFromBool(x_shared[0]), y.at, @intFromBool(y.ends[0] == x.ends[0] or y.ends[0] == x.ends[1])) else segmentGap(x.at[0], x.at[1], y.at[0], y.at[1]);
                 if (!try self.within(gap, p.tol.xsect, .of(.face, @backingInt(f)))) continue;
-                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "two of the pieces the second operand leaves on a face of the first, nearer each other in its plane than the reach where they do not meet," else "two of the pieces the first operand leaves on a face of the second, nearer each other in its plane than the reach where they do not meet,", .measured = gap, .threshold = p.tol.xsect });
+                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = apartLabel(k, with_own), .measured = gap, .threshold = p.tol.xsect });
             };
         };
     }
@@ -2213,12 +2250,8 @@ const Filler = struct {
                     if (shared_0 and shared_1) continue;
                     const u = planar_faces.flat(frame, p.point(piece[0]));
                     const w = planar_faces.flat(frame, p.point(piece[1]));
-                    const gap = if (shared_0 or shared_1) gap: {
-                        // The ends the two do not share, each against the other
-                        const own = if (shared_0) w else u;
-                        const theirs = if (block[0] == piece[0] or block[0] == piece[1]) b else a;
-                        break :gap @min(pointGap(own, a, b), pointGap(theirs, u, w));
-                    } else segmentGap(a, b, u, w);
+                    // Sharing one: the ends the two do not share, each against the other
+                    const gap = if (shared_0 or shared_1) hingedGap(.{ u, w }, @intFromBool(shared_0), .{ a, b }, @intFromBool(block[0] == piece[0] or block[0] == piece[1])) else segmentGap(a, b, u, w);
                     switch (p.decide.edgesMeet(gap, self.edgeGapOf(k, e), self.edgeGapOf(other, eg))) {
                         .apart => {},
                         .at_tolerance => |cmp| return self.atTolerance(cmp.measured, cmp.limit, .of(.face, @backingInt(f))),
@@ -2242,6 +2275,21 @@ fn closestOnSegment(a: Vec3, b: Vec3, q: Vec3) Vec3 {
     const len2 = vec.dot(d, d);
     if (len2 == 0) return a;
     return vec.addScaled(a, d, std.math.clamp(vec.dot(vec.sub(q, a), d) / len2, 0, 1));
+}
+
+/// What `Filler.sectionsApart` says of two pieces on a face of operand `k` too near each
+/// other: two the other operand leaves on it, or one and a piece of the face's own
+/// boundary (`with_own`).
+fn apartLabel(k: usize, with_own: bool) []const u8 {
+    if (with_own) return if (k == 0) "a piece the second operand leaves on a face of the first, nearer the face's own boundary in its plane than the reach where the paves did not join them," else "a piece the first operand leaves on a face of the second, nearer the face's own boundary in its plane than the reach where the paves did not join them,";
+    return if (k == 0) "two of the pieces the second operand leaves on a face of the first, nearer each other in its plane than the reach where they do not meet," else "two of the pieces the first operand leaves on a face of the second, nearer each other in its plane than the reach where they do not meet,";
+}
+
+/// The distance in a plane between two segments sharing one end, `x`'s other end its
+/// `x_other`-th and `y`'s its `y_other`-th: the least of each other end's from the other
+/// segment (a crossing is the paves' to find).
+fn hingedGap(x: [2]Vec2, x_other: usize, y: [2]Vec2, y_other: usize) f64 {
+    return @min(pointGap(x[x_other], y[0], y[1]), pointGap(y[y_other], x[0], x[1]));
 }
 
 /// The distance between the segments from `a` to `b` and from `c` to `d` in a plane: 0 when

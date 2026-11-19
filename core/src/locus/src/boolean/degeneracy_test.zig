@@ -40,6 +40,8 @@ const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
+/// The middle of the solids fuzzer's grid, which it turns a placement about.
+const FUZZ_GRID_MIDDLE: Vec3 = .{ 2, 2, 2 };
 /// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
 /// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
 /// numbers, as the case gives them.
@@ -2730,11 +2732,20 @@ test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, 
 /// The hull of `points` at the tolerance `tol`, moved by `move` and then by `nudge`, as the
 /// solids fuzzer composes a placement (one rounding of each, in its order).
 fn fuzzHull(points: []const Vec3, move: Vec3, nudge: Vec3) !Body {
+    return fuzzHullPlaced(points, vec.Z3, 0, null, move, nudge);
+}
+
+/// The hull of `points` at the tolerance `tol`, turned by `turn` about `axis` through the
+/// solids fuzzer's grid middle, scaled by `scale`, then moved by `move` and by `nudge`, as
+/// the fuzzer composes a placement (one rounding of each, in its order).
+fn fuzzHullPlaced(points: []const Vec3, axis: Vec3, turn: f64, scale: ?Vec3, move: Vec3, nudge: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var shape = try @import("../construct/hull.zig").hull(testing.allocator, tol, points, &diag);
     defer shape.deinit();
     var place = mat.Affine.translate(.{ 0, 0, 0 });
+    if (turn != 0) place = mat.Affine.rotateAbout(FUZZ_GRID_MIDDLE, vec.normalized(axis).?, turn).compose(&place);
+    if (scale) |by| place = mat.Affine.scaleBy(by).compose(&place);
     place = mat.Affine.translate(move).compose(&place);
     place = mat.Affine.translate(nudge).compose(&place);
     return @import("../construct/transform.zig").transform(testing.allocator, &shape, &place, .{}, &diag);
@@ -2769,6 +2780,38 @@ test "degeneracy: a hull's side piece with one corner the tolerance over its bot
         var swapped = try sound(&hull, &plate, op);
         defer swapped.deinit();
         try testing.expectEqual(forward.counts(), swapped.counts());
+    }
+}
+
+test "degeneracy: a hull's edge laid in a box's bottom along its edge, one end on that edge and the other a hair off it, is refused below the feature size, not split by the imprint" {
+    // The solids fuzzer's find (2026-11-19, the sessions on ab354a0a, bf), as it drew it: a
+    // tetrahedron's bottom edge 5e-6 over a box's bottom, along the bottom's edge at 1e-6
+    // rad and 1.9e-5 to 2e-5 inside it. Its first corner is 1.965e-5 from that edge, on it
+    // (the tolerance 2e-5), and its second 2.06e-5, off it: the paves split the box's edge
+    // at the first and laid the hull's edge in the bottom as a section from there. The
+    // box's edge then runs from that corner, 1.9e-5 off its line, to the box's own, and the
+    // second corner lies 7.3e-6 from it in the bottom's plane: the imprint's overlay welded
+    // it onto the piece the paves kept it off (`imprint_unmatched`), every operation, either
+    // way round. A piece left on a face within the tolerance of the face's own boundary in
+    // its plane, other than where the paves joined them, is refused, as two pieces that
+    // near are (`pave.sectionsApart`)
+    var whole = try helpers.fuzzPlaced(tol, .{ 4, 3, 4 }, .{ 0, 0, 0 }, vec.Y3, std.math.pi, .{ 0, 0, 0 }, .{ 0, 0, 0 });
+    defer whole.deinit();
+    var hull = try fuzzHullPlaced(&.{ .{ 3, 0, 0 }, .{ 0, 2, 3 }, .{ 4, 3, 2 }, .{ 2, 0, 0 }, .{ 3, 0, 0 } }, vec.Y3, 1e-6, .{ 1, 2, 1 }, .{ 0, 0, 0 }, .{ -2e-3, 5e-6, 2.000000008526513e-5 });
+    defer hull.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        for ([_][2]*const Body{ .{ &whole, &hull }, .{ &hull, &whole } }) |pair| {
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            if (pipeline.boolean(testing.allocator, pair[0], pair[1], op, .{}, &diag, null)) |made| {
+                var body = made;
+                body.deinit();
+                return error.TestUnexpectedResult;
+            } else |err| {
+                try testing.expectEqual(error.Degenerate, err);
+                try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+            }
+        }
     }
 }
 
