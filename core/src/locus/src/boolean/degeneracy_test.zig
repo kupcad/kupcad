@@ -2738,6 +2738,38 @@ fn fuzzHull(points: []const Vec3, move: Vec3, nudge: Vec3) !Body {
     return @import("../construct/transform.zig").transform(testing.allocator, &shape, &place, .{}, &diag);
 }
 
+test "degeneracy: a hull's side piece with one corner the tolerance over its bottom and another well clear of it intersects a plate the same either way round" {
+    // The locus fuzzer's find (2026-11-19, the sessions on ab354a0a, bh), as it drew it: a
+    // hull's back corner 4e-4 inside a plate's side (zone 1e-4, an intersection tolerance
+    // of 2e-4), its bottom 1e-4 over the plate's. Their intersection keeps a triangle of
+    // the hull's side there, one corner on the hull's bottom, one 2e-4 and 7e-13 over it,
+    // the tolerance to rounding, and one 1.6e-3 over it. The piece does not lie on the
+    // bottom, its third corner eight tolerances off; the fragment rule refused it at the
+    // second corner (`at_tolerance`) when its loop began there, the hull first, and made
+    // it the plate first, where the bottom's piece kept is the plate's
+    const Affine = mat.Affine;
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var p0 = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ -48, 2, 1 }, .{ 102, 52, 4 });
+    defer p0.deinit();
+    // The generator's placement, composed as it composes it
+    var place = Affine.translate(vec.ZERO3);
+    place = Affine.scaleBy(.{ 0.5, 2, 1 }).compose(&place);
+    place = Affine.translate(.{ -1, 0, -1 }).compose(&place);
+    place = Affine.translate(.{ 0, -2.000000014779289e-4, 0 }).compose(&place);
+    var plate = try @import("../construct/transform.zig").transform(testing.allocator, &p0, &place, .{}, &diag);
+    defer plate.deinit();
+    var hull = try fuzzHull(&.{ .{ 3, 4, 0 }, .{ 4, 0, 2 }, .{ 1, 3, 0 }, .{ 1, 1, 0 }, .{ 2, 3, 4 }, .{ 4, 4, 0 }, .{ 1, 1, 3 } }, .{ 0, 0, 0 }, .{ 1e-4, 1.999999999431566e-4, 1e-4 });
+    defer hull.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var forward = try sound(&plate, &hull, op);
+        defer forward.deinit();
+        var swapped = try sound(&hull, &plate, op);
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+    }
+}
+
 test "degeneracy: a hull's bottom edge on a box's bottom face, the box's edge on the hull's side, unite and intersect the same either way round" {
     // The locus fuzzer's find (2026-11-19, the sessions on 3681979b, be), reduced from its
     // wall to a box: a hull's bottom edge lies 1e-5 under a box's bottom face and the box's

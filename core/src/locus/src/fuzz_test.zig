@@ -2158,6 +2158,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // minimum feature size, and faces the overlap rules found meeting away from their
         // boundaries (bd, pipeline.nearRules: refused below the feature size)
         "solids 0 0 2 3 4 1 3 1 2 -1 0 4 4 2 3 0 1 4 0 3 3 4 1 2 -1 0 1 10 0 2 3 2 3 2 3 4 1 2 3 4 0 4 0 1 2 3 1 2 16 1",
+        // The sessions on ab354a0a (locus, bh): a hull's side piece, one corner the
+        // tolerance to rounding over the hull's bottom and another eight tolerances over
+        // it, refused at the first in the hull's intersection with a plate and made in the
+        // plate's with the hull (pipeline.lyingOn: the corners one decision, a corner
+        // clearly off the plane deciding it)
+        "solids 2 1 4 2 3 1 4 3 0 0 2 1 -2 12 -2 3 3 3 1 7 3 4 0 4 0 2 1 3 0 1 1 0 2 3 4 4 4 0 1 1 3 1 2 5 9 5 6 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -869,6 +869,11 @@ importing only those before it, which the layering test holds):**
   the fragment rule): the cut left a piece of a band of the operand thinner than the
   tolerance (a ridge under a flat tetrahedron's corner cut off a triangle of its bottom
   within the tolerance of its top), and the result's shell would lie on itself there.
+  The corners are one decision, as a face's are in the paves (`canonical.both` over
+  `Paves.onPlane`): one clearly off the plane decides it, and only with none off is a
+  corner at its reach to rounding refused (D27; refused at the first such corner, a
+  hull's side piece with another corner eight tolerances off was refused or made by
+  where its loop began, which the operands' order changes: the sessions on ab354a0a, bh).
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of

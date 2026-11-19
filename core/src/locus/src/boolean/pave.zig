@@ -368,6 +368,14 @@ pub const Paves = struct {
         return self.points.items[v];
     }
 
+    /// Whether merged vertex `v` is on `plane`, within its reach of it (the tolerance and
+    /// its gap): the verdict, not yet taken. A decision over several vertices combines
+    /// theirs first (`canonical.both`: one clearly off the plane decides, whatever the
+    /// others) and refuses once, so it does not hang on which vertex was asked first.
+    pub fn onPlane(self: *const Paves, plane: Plane, v: u32) Verdict {
+        return self.decide.onPlane(plane.height(self.point(v)), self.gaps.items[v]);
+    }
+
     /// The merged vertices on face `face` of `operand`, in increasing order.
     pub fn verticesOn(self: *const Paves, operand: u1, face: u32, out: *std.ArrayList(u32)) Error!void {
         out.clearRetainingCapacity();
@@ -651,7 +659,7 @@ const Filler = struct {
 
     /// `onPlane`'s verdict, not yet taken.
     fn planeVerdict(self: *const Filler, plane: Plane, v: u32) Verdict {
-        return self.p.decide.within(@abs(plane.height(self.p.point(v))), self.reachOf(v));
+        return self.p.onPlane(plane, v);
     }
 
     /// Merged vertex `v`'s reach: the intersection tolerance and its gap.

@@ -909,21 +909,31 @@ fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
 }
 
 /// Whether fragment `i` lies in the plane of fragment `j`'s face, every corner within its
-/// reach of it (D27: at that reach to rounding, refused), over a point strictly inside `j`
-/// and beyond the reach of its face's boundary: `i`'s sample farthest from its edges.
+/// reach of it, over a point strictly inside `j` and beyond the reach of its face's
+/// boundary: `i`'s sample farthest from its edges. The corners are one decision, as a
+/// face's are in the paves (`Filler.liesIn`): a corner clearly off the plane decides it,
+/// whatever the others, and only with none off is a corner at its reach to rounding
+/// refused (D27). Refusing at the first such corner hung on which corner a loop starts
+/// at, which the operands' order changes: a hull's side piece, one corner the tolerance
+/// to rounding over the hull's bottom and another eight tolerances over it, was refused
+/// in a hull's intersection with a plate and made in the plate's with the hull (the
+/// sessions on ab354a0a, bh).
 fn lyingOn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, i: u32, j: u32, samples: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
     const fj = fragments.items.items[j];
     const body = paves.operands[fj.operand];
     const g = types.FaceIndex.of(fj.face);
     const frame = planar_faces.frameOf(body, g).?;
     const plane = planar_faces.planeOf(frame);
+    var corners: canonical.Verdict = .same;
     for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
-        switch (paves.decide.onPlane(plane.height(paves.point(m)), paves.gaps.items[m])) {
-            .same => {},
-            .apart => return false,
-            .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, fj.face), .label = "a piece of a face lying on another face of its operand or not, a corner at the reach of its plane to rounding", .measured = c.measured, .threshold = c.limit }),
-        }
+        corners = canonical.both(corners, paves.onPlane(plane, m));
+        if (corners == .apart) return false;
     };
+    switch (corners) {
+        .same => {},
+        .apart => return false,
+        .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, fj.face), .label = "a piece of a face lying on another face of its operand or not, a corner at the reach of its plane to rounding", .measured = c.measured, .threshold = c.limit }),
+    }
     samples.clearRetainingCapacity();
     try classify.sample(allocator, paves, fragments, i, samples);
     if (samples.items.len == 0) return false;
