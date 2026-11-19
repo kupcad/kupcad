@@ -2153,6 +2153,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // swapped (planar_faces.alongBefore: two at one position along the faces' line by
         // the points themselves)
         "solids 1 5 3 1 4 3 3 2 0 3 0 4 4 1 1 3 0 3 2 12 6 10 8 3 0 1 0 -1 14 6 2 3 1 5 0 2 3 1 2 3 1 0 1 2 13 7 6 11 1",
+        // The nightly of 2026-11-19 (run 44517115658, on 3681979b): two boxes' union less a
+        // tetrahedron kept a vertex 3.7e-5 from a feature it does not meet, under the
+        // minimum feature size, and faces the overlap rules found meeting away from their
+        // boundaries (bd, pipeline.nearRules: refused below the feature size)
+        "solids 0 0 2 3 4 1 3 1 2 -1 0 4 4 2 3 0 1 4 0 3 3 4 1 2 -1 0 1 10 0 2 3 2 3 2 3 4 1 2 3 4 0 4 0 1 2 3 1 2 16 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
