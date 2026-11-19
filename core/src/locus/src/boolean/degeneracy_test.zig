@@ -22,6 +22,8 @@ const mass = @import("../measure/mass.zig");
 const decompose = @import("../construct/decompose.zig");
 const check = @import("../topology/check.zig");
 const pipeline = @import("pipeline.zig");
+const point_in_body = @import("../query/point_in_body.zig");
+const FaceIndex = @import("../query/index.zig").FaceIndex;
 const trim = @import("trim.zig");
 const helpers = @import("pipeline_test.zig");
 const box = helpers.box;
@@ -2847,4 +2849,37 @@ test "degeneracy: a hull's corner on a box's edge at its end's strip to rounding
     var post = try helpers.fuzzPlaced(tol, .{ 1, 2, 2 }, .{ 3, 2, 2 }, vec.Z3, 0, .{ -1, 0, 0 }, .{ 0, 2e-5, 0 });
     defer post.deinit();
     try expectAtTolerance(&less, &post, .@"union");
+}
+
+test "degeneracy: a plate's top 0.8° off a box's top, its edge the tolerance under it, a point under where the two pass through each other is outside the difference" {
+    // The locus fuzzer's find (2026-11-19, the sessions on ab354a0a, bg), as it drew it: a
+    // plate (zone 1e-4) turned by the angular tolerance about x, less a box whose top lies
+    // 2e-4, the intersection tolerance, over the plate's front top edge. The edge is on
+    // the box's top within the tolerance, so the pocket's roof, between the box's top and
+    // the plate's, starts at that edge (D28: the edge keeps its line), while the two
+    // planes' true line lies 0.014 on: in that band the plate's top is under the box's,
+    // up to 2e-4, more than the zone. A ray up from the pocket met the plate's top first
+    // there, leaving, and the point read inside the difference, which the membership
+    // oracle found. Two meetings within the faces' reach of each other are one place,
+    // whose order says nothing: another ray decides
+    var plate = try helpers.fuzzPlaced(Tolerance.fromZone(1e-4), .{ 100, 100, 4 }, .{ 2, 2, 0 }, vec.X3, 0.014142253476507214, .{ 0, 0, 0 }, .{ 2.0000000144976702e-4, -2.0000000144976702e-4, 2.0000000144976702e-4 });
+    defer plate.deinit();
+    var cutter = try helpers.fuzzPlaced(tol, .{ 3, 3, 2 }, .{ 0, 1, 1 }, vec.X3, 1.5707963267948966, .{ 0, -0.5, 0 }, .{ 2.0000000005684343e-4, 0, 1.999999999431566e-4 });
+    defer cutter.deinit();
+    var pocketed = try sound(&plate, &cutter, .difference);
+    defer pocketed.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var index = try FaceIndex.build(testing.allocator, &pocketed, &diag);
+    defer index.deinit(testing.allocator);
+    // Under the band, in the pocket (the first the fuzzer's point) and before the plate, and over it
+    for ([_]Vec3{ .{ 2.334200000000986, 1.9746873372535072, 3.8747999999999427 }, .{ 2.9, 1.98, 2.5 }, .{ 2.1, 1.975, 3.99 }, .{ 2.5, 1.978, 4.1 } }) |p| {
+        errdefer std.debug.print("at ({d}, {d}, {d})\n", .{ p[0], p[1], p[2] });
+        try testing.expectEqual(point_in_body.Place.outside, try point_in_body.classify(testing.allocator, &pocketed, &index, p, .{}, &diag));
+    }
+    // In the plate beside the pocket, and in the roof where it has grown past the tolerance
+    for ([_]Vec3{ .{ 3.5, 2.2, 3 }, .{ 2.5, 2.4, 4.0035 } }) |p| {
+        errdefer std.debug.print("at ({d}, {d}, {d})\n", .{ p[0], p[1], p[2] });
+        try testing.expectEqual(point_in_body.Place.inside, try point_in_body.classify(testing.allocator, &pocketed, &index, p, .{}, &diag));
+    }
 }

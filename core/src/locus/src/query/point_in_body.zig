@@ -5,8 +5,9 @@
 //! nearby face, where that foot is strictly inside the face, so the first meeting is
 //! usually that very face, met squarely; then along the directions of a fixed table,
 //! skewed off the axes. The nearest meeting decides when it is clean (one face, strictly
-//! inside it, not tangent): the ray leaves the solid there (the face's normal along the
-//! ray) exactly when the point is inside. A ray that meets nothing leaves from outside. A
+//! inside it, not tangent, no other meeting at its place: `raycast.onePlace`): the ray
+//! leaves the solid there (the face's normal along the ray) exactly when the point is
+//! inside. A ray that meets nothing leaves from outside. A
 //! ray whose nearest meeting is an edge, a vertex or a tangency is retried; when every
 //! one is, the classification is refused with a finding, never guessed.
 
@@ -101,9 +102,10 @@ fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceInd
         if (c.t < found.items[nearest].t) nearest = i;
     }
     const first = found.items[nearest];
-    // Another meeting at the same place makes it an edge or a vertex
+    // Another meeting at the same place makes it an edge, a vertex, or two faces within
+    // their reach of each other, whose order along the ray says nothing
     for (found.items, 0..) |c, i| {
-        if (i != nearest and c.t - first.t <= body.tol.zone) return null;
+        if (i != nearest and try raycast.onePlace(body, p, dir, first, c, diag)) return null;
     }
     if (first.place != .inside or @abs(first.cosine) <= raycast.CLEAN_COSINE) return null;
     return if (first.cosine > 0) .inside else .outside;

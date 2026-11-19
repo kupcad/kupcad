@@ -14,7 +14,8 @@
 //! missed: the free-form kinds are sampled, the analytic ones are not); each meeting kept
 //! when it lies in the face or on its boundary (`in_face.zig`).
 //!
-//! The crossings: candidates within the zone of one another are one place, and so are
+//! The crossings: candidates within the zone of one another are one place, and so is one
+//! on the face of the one before within the two faces' reach (`onePlace`), and so are
 //! places the segment stays on the boundary between (halfway between them within the zone
 //! of it: at a shallow angle to a face, the segment passing within the zone of an edge
 //! meets that face more than the zone along from the edge's other faces). A place that
@@ -32,6 +33,7 @@ const vec = @import("../math/vec.zig");
 const poly = @import("../math/poly.zig");
 const solve = @import("../math/solve.zig");
 const geometry = @import("../geometry/types.zig");
+const incidence = @import("../geometry/incidence.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
@@ -90,6 +92,28 @@ pub const Candidate = struct {
     }
 };
 
+/// Whether two meetings of the line `origin + t·dir` with `body`, `first` the nearer, are
+/// one place, not a crossing each: within the zone of each other along the line (an edge
+/// or a vertex), or `other`'s point on `first`'s face within their reach, the intersection
+/// tolerance and the larger gap of the two faces' vertices (`incidence.reach`, as a
+/// boolean holds an edge on a face). Two faces a boolean joined along an edge at a
+/// shallow angle stay within that of each other from the edge to their surfaces' true
+/// line, `reach / sin` of the angle on, and which is met first there is not the body's to
+/// say (D28: the edge keeps its source's line, off the other's surface by up to the
+/// reach). A meeting farther off `first`'s tangent plane than the reach of the largest
+/// gap a body may hold, the zone, is another place without asking the faces.
+pub fn onePlace(body: *const Body, origin: Vec3, dir: Vec3, first: Candidate, other: Candidate, diag: *Diagnostics) Error!bool {
+    const along = other.t - first.t;
+    if (along <= body.tol.zone) return true;
+    if (along * @abs(first.cosine) > incidence.reach(body.tol, body.tol.zone)) return false;
+    const reach = incidence.reach(body.tol, @max(try in_face.reachGap(body, first.face, diag), try in_face.reachGap(body, other.face, diag)));
+    const p = vec.addScaled(origin, dir, other.t);
+    const uv = in_face.uvOf(body, first.face, p);
+    const foot = body.geometry.surface(body.face(first.face).surface).eval(uv[0], uv[1]);
+    if (vec.distance(foot, p) > reach) return false;
+    return try in_face.classify(body, first.face, foot, uv, body.tol.zone, diag) != .outside;
+}
+
 /// The crossings of the segment from `origin` to `end` with `body`'s boundary, nearest
 /// first. Owned by `allocator`.
 pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, origin: Vec3, end: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error![]Hit {
@@ -102,12 +126,13 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
     try candidates(allocator, body, index, origin, dir, -zone, length + zone, &found, diag);
     std.mem.sort(Candidate, found.items, {}, Candidate.lessThan);
 
-    // The runs: candidates within the zone of one another, as `[first, end)` into `found`
+    // The runs: candidates each one place with the one before (`onePlace`), as
+    // `[first, end)` into `found`
     var runs: std.ArrayList([2]usize) = .empty;
     defer runs.deinit(allocator);
     var start: usize = 0;
     for (found.items, 0..) |c, i| {
-        if (i > start and c.t - found.items[i - 1].t > zone) {
+        if (i > start and !try onePlace(body, origin, dir, found.items[i - 1], c, diag)) {
             try runs.append(allocator, .{ start, i });
             start = i;
         }

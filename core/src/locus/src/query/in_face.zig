@@ -127,6 +127,20 @@ pub fn nearEdge(body: *const Body, f: types.FaceIndex, p: Vec3, within: f64, dia
     return false;
 }
 
+/// How far beyond the tolerance face `f` reaches: the largest gap of its vertices, within
+/// which its edges may lie off its surface (a boolean keeps an edge on its source's line,
+/// D28).
+pub fn reachGap(body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error!f64 {
+    var gap: f64 = 0;
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        if (body.loop(l).vertex != .none) gap = @max(gap, body.vertex(body.loop(l).vertex).gap);
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| gap = @max(gap, body.vertex(body.coedgeStart(c)).gap);
+    }
+    return gap;
+}
+
 /// The distance from `p` to face `f`'s boundary: its nearest edge's, or a loop's vertex.
 pub fn boundaryDistance(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!f64 {
     var nearest = std.math.inf(f64);

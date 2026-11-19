@@ -2164,6 +2164,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // plate's with the hull (pipeline.lyingOn: the corners one decision, a corner
         // clearly off the plane deciding it)
         "solids 2 1 4 2 3 1 4 3 0 0 2 1 -2 12 -2 3 3 3 1 7 3 4 0 4 0 2 1 3 0 1 1 0 2 3 4 4 4 0 1 1 3 1 2 5 9 5 6 1",
+        // The sessions on ab354a0a (locus, bg): a plate turned by the angular tolerance less
+        // a box whose top lay the tolerance over the plate's edge; in the band from that
+        // edge to the two tops' true line the plate's top is under the box's, and a ray
+        // from the pocket read the nearer, a point outside the difference inside
+        // (raycast.onePlace: two meetings within the faces' reach are one place)
+        "solids 2 2 4 2 4 0 4 0 0 5 1 11 12 11 10 2 1 0 0 3 1 4 1 3 0 0 0 1 11 -1 9 4 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
