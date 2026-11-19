@@ -2148,6 +2148,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 3 0 4 2 2 4 2 2 4 3 3 4 1 10 7 6 15 3 2 1 7 1 0 3 1 0 1 4 3 3 3 4 1 3 2 2 1 2 1 0 0 1 3 3 7 10 11 1 0 7 0",
         "solids 1 8 1 4 3 4 3 3 2 2 3 3 4 0 1 0 1 1 3 1 1 3 4 4 2 1 2 0 1 2 1 2 13 4 15 2 1 2 1 4 1 2 1 3 0 2 0 1 4 8 5 13 1 1 0 1 4 0 1 1 3 1 1 7 10 9 2 0",
         "solids 1 4 1 2 4 2 2 0 0 0 2 1 4 2 1 2 3 -1 2 11 2 1 2 2 4 1 4 0 1 1 2 12 12 13 6 1",
+        // The sessions on 3681979b (locus, be): a hull's bottom edge on a wall's bottom face,
+        // the wall's edge on the hull's side, the union's faces differing with the operands
+        // swapped (planar_faces.alongBefore: two at one position along the faces' line by
+        // the points themselves)
+        "solids 1 5 3 1 4 3 3 2 0 3 0 4 4 1 1 3 0 3 2 12 6 10 8 3 0 1 0 -1 14 6 2 3 1 5 0 2 3 1 2 3 1 0 1 2 13 7 6 11 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

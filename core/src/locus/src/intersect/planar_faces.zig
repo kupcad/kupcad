@@ -81,6 +81,37 @@ pub fn planeOf(frame: Frame) Plane {
     return .{ .n = frame.z, .d = vec.dot(frame.z, frame.origin) };
 }
 
+/// The direction `d` of a line given its sign by the line alone, its largest component
+/// positive: two planes' normals crossed the other way round give the exact negation (each
+/// component's products subtracted the other way), so a pair of faces taken in either order
+/// orders its points along one direction (`alongBefore`).
+pub fn lineDirection(d: Vec3) Vec3 {
+    return if (d[vec.maxAxis(d)] < 0) vec.scale(d, -1) else d;
+}
+
+/// Points in lexicographic order (x, then y, then z): an order of the points themselves,
+/// which a choice among points takes so that it is not the order they were made in, which
+/// follows the operands'.
+pub fn pointBefore(p: Vec3, q: Vec3) bool {
+    for (0..3) |i| if (p[i] != q[i]) return p[i] < q[i];
+    return false;
+}
+
+/// Whether point `p` comes before `q` along a line of direction `line` (`lineDirection`'s):
+/// by their positions along it, two at one position by the points themselves
+/// (`pointBefore`). Points on two faces lie within the tolerance of the faces' line, not on
+/// it, so two can be at one position and apart across it, and their order decides which
+/// gaps are pieces: by their numbering, a hull's bottom edge on a box's bottom face and the
+/// box's edge on the hull's side, their ends at the box's side 3.2e-5 apart, were joined
+/// one way and not the other with the operands swapped, the union's faces differing (the
+/// locus fuzzer's sessions on 3681979b, 2026-11-19, be).
+pub fn alongBefore(line: Vec3, p: Vec3, q: Vec3) bool {
+    const sp = vec.dot(p, line);
+    const sq = vec.dot(q, line);
+    if (sp != sq) return sp < sq;
+    return pointBefore(p, q);
+}
+
 /// What planar faces `fa` of `a` and `fb` of `b` share, the pieces appended to `pieces`
 /// in order along the line. Both faces must be planar.
 pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, tol: Tolerance, pieces: *std.ArrayList(Piece), diag: *Diagnostics) Error!Relation {
@@ -93,13 +124,13 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     const in_a = try crossings(allocator, b, fb, planeOf(frame_a), tol, &marks, diag);
     if (in_b or in_a) return .coplanar;
     if (marks.items.len == 0) return .apart;
-    const along = vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse return .apart;
+    const along = lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse return .apart);
 
     // Along the line, a mark within the zone of the one before it being that one
     const Order = struct {
         along: Vec3,
         fn lessThan(self: @This(), p: Mark, q: Mark) bool {
-            return vec.dot(p.p, self.along) < vec.dot(q.p, self.along);
+            return alongBefore(self.along, p.p, q.p);
         }
     };
     std.mem.sort(Mark, marks.items, Order{ .along = along }, Order.lessThan);

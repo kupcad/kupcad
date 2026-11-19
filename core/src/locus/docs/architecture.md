@@ -753,7 +753,10 @@ importing only those before it, which the layering test holds):**
   the computed point can be several `xsect` from where edge–edge met the face's edge);
   then each face's merged vertices (its edges' paves and what the face stages found), and
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
-  line, each gap whose middle is in both a section segment of each face it is inside of
+  line (pointed by the line alone, its largest component positive, and two at one position
+  by the points themselves, not their numbers, so the operands' order changes neither, as
+  the overlap rules' `planar_faces.meet` sorts; a union's faces differed with the operands
+  swapped, the sessions on 3681979b, be), each gap whose middle is in both a section segment of each face it is inside of
   (a gap along a face's boundary is the run of its pave blocks there, OCCT's
   `IsExistingPaveBlock`, and that run's edges go into the result with their lines, D28:
   each line must lie on the other face's plane within `xsect` and the edge's gap at the

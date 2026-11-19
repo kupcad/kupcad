@@ -56,6 +56,7 @@ const bbox = @import("../topology/bbox.zig");
 const in_face = @import("../query/in_face.zig");
 const face_edges = @import("../query/face_edges.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
+const pointBefore = planar_faces.pointBefore;
 const overlap = @import("../query/overlap.zig");
 const incidence = @import("../geometry/incidence.zig");
 const curve_surface = @import("../intersect/curve_surface.zig");
@@ -1774,9 +1775,7 @@ const Filler = struct {
                 points: []const Vec3,
                 line: Vec3,
                 fn lessThan(o: @This(), x: u32, y: u32) bool {
-                    const sx = vec.dot(o.points[x], o.line);
-                    const sy = vec.dot(o.points[y], o.line);
-                    return sx < sy or (sx == sy and x < y);
+                    return planar_faces.alongBefore(o.line, o.points[x], o.points[y]);
                 }
             };
             std.mem.sort(u32, both.items, Order{ .points = p.points.items, .line = line }, Order.lessThan);
@@ -1818,9 +1817,9 @@ const Filler = struct {
     fn meetingLine(self: *Filler, n_a: Vec3, n_b: Vec3, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
         const cos = @abs(vec.dot(n_a, n_b));
         switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - cos, self.p.tol.angle)})) {
-            .apart => return .{ .line = vec.normalized(vec.cross(n_a, n_b)).? },
+            .apart => return .{ .line = planar_faces.lineDirection(vec.normalized(vec.cross(n_a, n_b)).?) },
             .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two faces of the operands sharing merged vertices, parallel or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
-            .same => return if (try self.lineThrough(vertices, entity)) |d| .{ .line = d } else .one_plane,
+            .same => return if (try self.lineThrough(vertices, entity)) |d| .{ .line = planar_faces.lineDirection(d) } else .one_plane,
         }
     }
 
@@ -2222,13 +2221,6 @@ const Filler = struct {
         }
     }
 };
-
-/// Points in lexicographic order (x, then y, then z): an order of the points themselves,
-/// which a choice among merged vertices takes so that it is not the operands' order.
-fn pointBefore(a: Vec3, b: Vec3) bool {
-    for (0..3) |i| if (a[i] != b[i]) return a[i] < b[i];
-    return false;
-}
 
 /// Pairs of merged vertices, each pair's points in order, in lexicographic order of them.
 fn pairBefore(p: *const Paves, x: [2]u32, y: [2]u32) bool {

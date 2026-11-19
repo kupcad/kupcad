@@ -2738,6 +2738,29 @@ fn fuzzHull(points: []const Vec3, move: Vec3, nudge: Vec3) !Body {
     return @import("../construct/transform.zig").transform(testing.allocator, &shape, &place, .{}, &diag);
 }
 
+test "degeneracy: a hull's bottom edge on a box's bottom face, the box's edge on the hull's side, unite and intersect the same either way round" {
+    // The locus fuzzer's find (2026-11-19, the sessions on 3681979b, be), reduced from its
+    // wall to a box: a hull's bottom edge lies 1e-5 under a box's bottom face and the box's
+    // bottom edge 1.4e-5 off the hull's side, the two edges 3.2e-5 apart. The merged
+    // vertices on both faces, sorted along the faces' line, had two at the box's side at one
+    // position there, 3.2e-5 apart across it, ordered by their numbers, which follow the
+    // operands': one way round the gap from the section's start to the hull's edge was a
+    // piece of the section, the other way the gap to the box's corner, and the union and
+    // the intersection differed in faces. Two at one position go by the points themselves,
+    // along a direction the line alone gives
+    var hull = try fuzzHull(&.{ .{ 3, 1, 4 }, .{ 3, 3, 2 }, .{ 0, 3, 0 }, .{ 4, 4, 1 }, .{ 1, 3, 0 } }, .{ 0, 0, 0 }, .{ -2.000000005684342e-5, -1e-5, -1.9999999943156583e-5 });
+    defer hull.deinit();
+    var wall = try box(.{ -1.748, 2.00002, -1e-5 }, .{ 0.0020299999999999745, 3.00002, 0.99999 });
+    defer wall.deinit();
+    for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+        var forward = try sound(&hull, &wall, op);
+        defer forward.deinit();
+        var swapped = try sound(&wall, &hull, op);
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+    }
+}
+
 test "degeneracy: a piece's bottom lying in a plate's bottom with another piece's corner on it unites the same either way round, the corner its own shell's alone" {
     // The 10K session's find on 8db70212 (2026-11-18, locus_solids), as the fuzzer drew it:
     // a hull less a box, less another hull, is two pieces sharing a corner, one's bottom quad
