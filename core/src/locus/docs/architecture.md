@@ -994,7 +994,13 @@ A sketch is a body of planar faces on `z = 0`, bounded by lines and circular arc
 in M5, beside the intersector that makes them, then NURBS), so it reuses the topology, the
 overlay engine and the checker. Until then a section whose trace is a conic is refused,
 never chorded into a polygon (NOTES §8). Sketch booleans are
-the overlay with winding labels; offset is the sheet united with (grown) or less (shrunk)
+the overlay with winding labels, the kept region's boundary pieces along one line or one
+circle one edge of the result: straight pieces merge while every vertex the edge passes
+stays within the zone of it, so the pieces lie within the zone of the edge and no vertex of
+the map is left on its other side (held at the last vertex alone, a run of pieces 2e-5 long
+about an offset's bevel drifted into an edge an earlier vertex was 1.4 zones off, through
+another vertex of its loop; the nightly of 2026-11-19); offset is the sheet united with
+(grown) or less (shrunk)
 the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector, the pies
 about a centre the offset passes) and each opening corner's join (round, miter, bevel,
 square) a simple region the overlay counts as a second input (D25), a miter whose reach is

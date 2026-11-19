@@ -257,8 +257,15 @@ pub fn build(allocator: std.mem.Allocator, tol: Tolerance, o: *const Overlay, ke
 /// A piece of a cycle's boundary: from vertex `a` to `b` of the overlay, straight or an
 /// arc the way the cycle runs it; what consecutive half-edges on one curve merge into.
 /// A run of boundary half-edges on one curve from vertex `a` to `b`: the first leaves `a`,
-/// the last arrives at `b`.
-const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc, first: u32, last: u32 };
+/// the last arrives at `b`. The run is `count` of its cycle's half-edges from the one at
+/// `at`, round the cycle's end to its start; `passed` bounds where the vertices a straight
+/// run passes between its ends lie.
+const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc, first: u32, last: u32, at: u32, count: u32 = 1, passed: Passed = .{} };
+
+/// Where the vertices a straight run passes between its ends lie, each a bound: none
+/// farther than `off` from the line through the run's ends, nor than `far` from its first
+/// end.
+const Passed = struct { off: f64 = 0, far: f64 = 0 };
 
 /// The cycle's half-edges as pieces, consecutive ones on one line (collinear, the same
 /// way) or on one circle (the same centre, radius and sense) merged where the boundary
@@ -266,44 +273,85 @@ const Piece = struct { a: u32, b: u32, arc: ?overlay_mod.Arc, first: u32, last: 
 /// round the cycle's start. Returns how many pieces `out` got.
 fn mergePieces(o: *const Overlay, halves: []const u32, out: []Piece, uses: []const u32, tol: Tolerance) u32 {
     var n: u32 = 0;
-    for (halves) |h| {
-        const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h), .first = h, .last = h };
-        if (n > 0 and uses[piece.a] == 1 and continues(o, out[n - 1], piece, tol)) {
+    for (halves, 0..) |h, i| {
+        const piece = Piece{ .a = o.origin(h), .b = o.target(h), .arc = o.arcOf(h), .first = h, .last = h, .at = @intCast(i) };
+        const passed = if (n > 0 and uses[piece.a] == 1) continues(o, halves, out[n - 1], piece, tol) else null;
+        if (passed) |merged| {
             out[n - 1].b = piece.b;
             out[n - 1].last = h;
+            out[n - 1].count += 1;
+            out[n - 1].passed = merged;
         } else {
             out[n] = piece;
             n += 1;
         }
     }
     // The last and the first
-    while (n > 1 and uses[out[0].a] == 1 and continues(o, out[n - 1], out[0], tol)) {
+    while (n > 1 and uses[out[0].a] == 1) {
+        const merged = continues(o, halves, out[n - 1], out[0], tol) orelse break;
         out[0].a = out[n - 1].a;
         out[0].first = out[n - 1].first;
+        out[0].at = out[n - 1].at;
+        out[0].count += out[n - 1].count;
+        out[0].passed = merged;
         n -= 1;
     }
     return n;
 }
 
-/// Whether `next` carries on `prev`'s curve: the same line the same way, or the same
-/// circle the same way round, short of closing it (a full circle stays two arcs, D7).
-fn continues(o: *const Overlay, prev: Piece, next: Piece, tol: Tolerance) bool {
+/// Whether `next` carries on `prev`'s curve, the two pieces of their cycle's `halves`:
+/// the same line the same way, or the same circle the same way round, short of closing
+/// it (a full circle stays two arcs, D7). Null when it does not, else the merged piece's
+/// `passed`.
+///
+/// On a line, the same way at the shared vertex, and every vertex the merged piece
+/// passes, the shared one and those the two runs passed already, within the zone of the
+/// line from the first end to the last (the turn is twice the triangle's area, that
+/// distance times the line's length): not the angle tolerance, which merged pieces a
+/// fraction of a degree apart into a line the vertex was far off; and not the shared
+/// vertex alone, which let a run of short pieces of several lines, each vertex within
+/// the zone of the line to the next, drift into a line an earlier vertex was 1.4 zones
+/// off, through another vertex of its cycle (the nightly of 2026-11-19, bi: an offset's
+/// bevel 2e-5 across, cut by a line through the corner it bevelled). The pieces between
+/// lie within the zone of the merged line then, so no vertex of the map, more than the
+/// zone from them, is left on its other side.
+fn continues(o: *const Overlay, halves: []const u32, prev: Piece, next: Piece, tol: Tolerance) ?Passed {
     if (prev.arc) |pa| {
-        const na = next.arc orelse return false;
-        if (prev.a == next.b) return false;
-        return pa.ccw == na.ccw and @abs(pa.r - na.r) <= tol.zone and vec.distance2(pa.c, na.c) <= tol.zone;
+        const na = next.arc orelse return null;
+        if (prev.a == next.b) return null;
+        return if (pa.ccw == na.ccw and @abs(pa.r - na.r) <= tol.zone and vec.distance2(pa.c, na.c) <= tol.zone) .{} else null;
     }
-    if (next.arc != null) return false;
+    if (next.arc != null) return null;
     const a = o.point(prev.a);
     const b = o.point(prev.b);
     const c = o.point(next.b);
-    // The shared vertex within the zone of the line from the first end to the last (the
-    // turn is twice the triangle's area, that distance times the line's length), and
-    // the same way: not the angle tolerance, which merged pieces a fraction of a degree
-    // apart into a line the vertex was far off
-    const turn = predicates.orient2d(a, b, c);
-    if (@abs(turn) > tol.zone * vec.distance2(a, c)) return false;
-    return vec.dot2(vec.sub2(b, a), vec.sub2(c, b)) > 0;
+    if (vec.dot2(vec.sub2(b, a), vec.sub2(c, b)) <= 0) return null;
+    const length = vec.distance2(a, c);
+    const reach = tol.zone * length;
+    const turn = @abs(predicates.orient2d(a, b, c));
+    if (turn > reach) return null;
+    const shared = vec.distance2(a, b);
+    var passed: Passed = .{ .off = turn / length, .far = @max(prev.passed.far, shared) };
+    // The line turns about its first end from the shared vertex onto the last end, by an
+    // angle whose sine is the turn over the two lengths. A point `r` from that end and `d`
+    // from the line before is within `d + r·sine` of the line after, wherever it lies: the
+    // first run's vertices are within the zone still when its bounds say so, and a run of
+    // collinear pieces, however long, is measured once a piece. Past that, each vertex is
+    // measured
+    if (next.count == 1) {
+        const bound = @max(passed.off, prev.passed.off + prev.passed.far * turn / (shared * length));
+        if (bound <= tol.zone) return .{ .off = bound, .far = passed.far };
+    }
+    for ([2]Piece{ prev, next }) |run| {
+        for (1..run.count) |step| {
+            const q = o.point(o.origin(halves[(run.at + step) % halves.len]));
+            const area = @abs(predicates.orient2d(a, q, c));
+            if (area > reach) return null;
+            passed.off = @max(passed.off, area / length);
+            passed.far = @max(passed.far, vec.distance2(a, q));
+        }
+    }
+    return passed;
 }
 
 /// A piece as edge specifications of the new sheet, into `out`: a line through its ends,

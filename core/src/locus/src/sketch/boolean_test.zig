@@ -14,10 +14,17 @@ const mass = @import("../measure/mass.zig");
 const boolean = @import("boolean.zig");
 const offset_mod = @import("offset.zig");
 const test_bodies = @import("../construct/test_bodies.zig");
+const check = @import("../topology/check.zig");
+const tessellate = @import("../mesh/tessellate.zig");
 const Vec2 = vec.Vec2;
 
 const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
+/// The last of the points along the curved side of the shallow-curve test.
+const LAST_ALONG: usize = 40;
+/// The most rings and points `drawnSheet` takes.
+const MOST_RINGS: usize = 4;
+const MOST_DRAWN: usize = 32;
 
 fn areaOf(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
@@ -274,4 +281,113 @@ test "even-odd fill: a sliver far from the origin is a face of its area, and the
         if (report.first()) |f| std.debug.print("checker: {f}\n", .{f});
         try testing.expect(report.ok());
     }
+}
+
+test "even-odd fill: a side of points along a shallow curve keeps every point within the zone of the sheet's edges" {
+    // A side drawn as 40 points 0.01 apart along y = -x²/230, each 4.3e-7 off the line
+    // through its neighbours: each within the zone of the line from the side's start to
+    // the next point for the first 23, so the pieces merged, a point at a time, into one
+    // edge the twelfth point was 6.3 zones off. Merged while every point passed stays
+    // within the zone, an edge spans nine pieces (its middle points 0.87 zones off; a
+    // tenth would leave them 1.09 off): five edges along the side
+    var outline: [LAST_ALONG + 3]Vec2 = undefined;
+    for (0..LAST_ALONG + 1) |k| {
+        const x = @as(f64, @floatFromInt(k)) * 0.01;
+        outline[k] = .{ x, -x * x / 230 };
+    }
+    outline[LAST_ALONG + 1] = .{ 0.4, 1 };
+    outline[LAST_ALONG + 2] = .{ 0, 1 };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = try boolean.evenOdd(testing.allocator, tol, &.{&outline}, &diag);
+    defer sheet.deinit();
+    for (outline) |p| {
+        var nearest = std.math.inf(f64);
+        for (sheet.edges.items) |e| {
+            const a = sheet.point(e.start);
+            const b = sheet.point(e.end);
+            const d: Vec2 = .{ b[0] - a[0], b[1] - a[1] };
+            const s = std.math.clamp(vec.dot2(vec.sub2(p, .{ a[0], a[1] }), d) / vec.dot2(d, d), 0, 1);
+            nearest = @min(nearest, vec.distance2(p, vec.addScaled2(.{ a[0], a[1] }, d, s)));
+        }
+        try testing.expect(nearest <= tol.zone);
+    }
+    try expectCounts(&sheet, 8, 8, 1, 1);
+}
+
+test "sketch booleans: an offset's bevel 2e-5 across cut by a line through the corner it bevelled, the pieces do not merge into a line through another vertex" {
+    // The locus fuzzer's find (the nightly of 2026-11-19, run 44568960243, bi), as it drew
+    // it: a triangle grown by 2e-5 with bevel joins, united with a sheet, then met with a
+    // sheet whose line from (0, 6) to (3, 3) passes through the triangle's corner (1, 5),
+    // itself a vertex of that sheet. About the corner the intersection's boundary runs
+    // along the grown side, the bevel and that line, by pieces 2e-5, 1.8e-5 and 1.6e-5
+    // long: each vertex between them within the zone of the line from the run's start to
+    // the next, so they merged into one edge along the line through the corner, a vertex
+    // the boundary passes twice, the bevel's own corner 1.4 zones off it; the face's
+    // polygon was not simple and did not tessellate. Each vertex passed held within the
+    // zone, the edge stops at the bevel
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    errdefer std.debug.print("{f}\n", .{&diag});
+    var triangle = try drawnSheet(&.{&.{ .{ .p = .{ 3, 6 } }, .{ .p = .{ 1, 6 } }, .{ .p = .{ 1, 5 } } }}, &diag);
+    defer triangle.deinit();
+    var grown = try offset_mod.offset(testing.allocator, &triangle, 2e-5, .bevel, std.math.floatMax(f64), .{}, &diag);
+    defer grown.deinit();
+    var second = try drawnSheet(&.{
+        &.{ .{ .p = .{ 5, 3 }, .bulge = 1, .ccw = false }, .{ .p = .{ 5, 1 }, .bulge = -1 }, .{ .p = .{ 3, 0 } }, .{ .p = .{ 3, 1 } } },
+        &.{ .{ .p = .{ 3, 2 } }, .{ .p = .{ 2, 6 } }, .{ .p = .{ 6, 1 }, .bulge = -1, .ccw = false }, .{ .p = .{ 1, 6 } }, .{ .p = .{ 1, 3 } }, .{ .p = .{ 5, 0 }, .bulge = 0.5 } },
+        &.{ .{ .p = .{ 6, 2 }, .bulge = 0.5 }, .{ .p = .{ 4, 0 } }, .{ .p = .{ 1, 6 } } },
+    }, &diag);
+    defer second.deinit();
+    var joined = try boolean.boolean(testing.allocator, &.{ &grown, &second }, .@"union", .{}, &diag);
+    defer joined.deinit();
+    var third = try drawnSheet(&.{
+        &.{ .{ .p = .{ 1, 5 }, .bulge = 0.5, .ccw = false }, .{ .p = .{ 1, 2 } }, .{ .p = .{ 4, 3 } }, .{ .p = .{ 0, 3 } }, .{ .p = .{ 1, 6 } }, .{ .p = .{ 4, 3 }, .bulge = 0.5 }, .{ .p = .{ 5, 2 } }, .{ .p = .{ 6, 4 } } },
+        &.{ .{ .p = .{ 0, 6 } }, .{ .p = .{ 3, 3 } }, .{ .p = .{ 5, 3 }, .bulge = -1 }, .{ .p = .{ 2, 2 }, .bulge = -0.5 }, .{ .p = .{ 1, 4 } }, .{ .p = .{ 1, 0 } }, .{ .p = .{ 2, 1 } }, .{ .p = .{ 6, 4 }, .bulge = -1 } },
+    }, &diag);
+    defer third.deinit();
+    var met = try boolean.boolean(testing.allocator, &.{ &joined, &third }, .intersection, .{}, &diag);
+    defer met.deinit();
+    var report = try check.run(testing.allocator, &met, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    var mesh = try tessellate.tessellate(testing.allocator, &met, .{}, .{}, &diag);
+    defer mesh.deinit(testing.allocator);
+    for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+    // The corner, and the bevel's cut 1.06e-5 from it, where the edge along the line ends
+    var corner = false;
+    var cut = false;
+    for (met.vertices.items) |v| {
+        const p = met.geometry.point(v.point);
+        corner = corner or (p[0] == 1 and p[1] == 5);
+        cut = cut or (vec.distance2(.{ p[0], p[1] }, .{ 1, 5 }) > 1e-5 and vec.distance2(.{ p[0], p[1] }, .{ 1, 5 }) < 1.1e-5);
+    }
+    try testing.expect(corner and cut);
+}
+
+/// A point of a ring as the fuzzer draws it (fuzz_test.zig's `sheet`): the edge leaving
+/// it straight, or with a `bulge` an arc about the point that share of the half-chord off
+/// the chord's middle, to its left when positive, run counter-clockwise or not.
+const Drawn = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = true };
+
+/// The sheet the rings fill by the even-odd rule, each ring's last point joined to its
+/// first.
+fn drawnSheet(rings: []const []const Drawn, diag: *Diagnostics) !Body {
+    var edges: [MOST_DRAWN]primitives.OutlineEdge = undefined;
+    var outlines: [MOST_RINGS][]const primitives.OutlineEdge = undefined;
+    var used: usize = 0;
+    for (rings, 0..) |ring, r| {
+        for (ring, 0..) |from, k| {
+            const b = ring[(k + 1) % ring.len].p;
+            edges[used + k] = .{ .a = from.p, .b = b };
+            if (from.bulge) |bulge| {
+                const half = vec.scale2(vec.sub2(b, from.p), 0.5);
+                const c = vec.add2(vec.add2(from.p, half), vec.scale2(vec.perp2(half), bulge));
+                edges[used + k].arc = .{ .c = c, .r = vec.distance2(from.p, c), .ccw = from.ccw };
+            }
+        }
+        outlines[r] = edges[used .. used + ring.len];
+        used += ring.len;
+    }
+    return primitives.outlines(testing.allocator, tol, outlines[0..rings.len], diag);
 }
