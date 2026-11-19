@@ -326,7 +326,7 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
     // d5d78c4b, 2026-11-19: a difference kept a spike whose root was a triangle 2·xsect a
     // side under a plate, a wall thinner than the tolerance, made pinched; Leo: the rules
     // gated on the result's nearest pair, results with near features still made)
-    if (r.near != null) try overlap.rules(allocator, &result, &index, common, diag);
+    if (r.near) |near| try nearRules(allocator, &result, &index, near, common, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
 }
@@ -462,6 +462,28 @@ fn featureSize(allocator: std.mem.Allocator, operand: *const Body, decide: incid
         .apart => {},
         .same => diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = near.a, .label = label, .measured = near.distance, .threshold = near.limit }),
         .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = near.a, .label = label, .measured = c.measured, .threshold = c.limit }),
+    };
+}
+
+/// The overlap rules on a result whose nearest features `near` come closer than its minimum
+/// feature size. A pinch there is the rules' own refusal (`pinched`); faces they find
+/// meeting away from their boundaries lie within the tolerance of each other's planes by
+/// that pair's nearness, which no decision of the tolerance keeps apart, so the result is
+/// refused as the operand precondition refuses such a pair (`below_feature_size`, naming
+/// the face the rules found), not called invalid: the locus fuzzer's sessions on 3681979b
+/// (2026-11-19, bd) found a hull's tip cut by a plate a tetrahedron 2.05e-4 high at an
+/// intersection tolerance of 2e-4, every face of it within the tolerance of another's
+/// plane; a hull's face 2.05e-4 under a box's bottom; a hull's vertex 1.8e-5 from a plate's
+/// corner at 2e-5.
+fn nearRules(allocator: std.mem.Allocator, result: *const Body, index: *const index_mod.FaceIndex, near: overlap.Near, common: diagnostics.Options, diag: *Diagnostics) Error!void {
+    var scratch = Diagnostics.init(allocator);
+    defer scratch.deinit();
+    overlap.rules(allocator, result, index, common, &scratch) catch |e| switch (e) {
+        error.NotValid => return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = scratch.first().?.entity, .label = "faces of the result, within its features nearer than the minimum feature size,", .measured = near.distance, .threshold = near.limit }),
+        else => {
+            for (scratch.findings.items) |f| try diag.add(f);
+            return e;
+        },
     };
 }
 

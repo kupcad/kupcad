@@ -2141,6 +2141,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // on a result nearer than its minimum feature size)
         "solids 0 2 3 1 4 2 4 2 2 14 13 -1 12 3 3 2 1 3 2 4 3 4 2 1 10 7 12 14 2 2 1 7 1 4 1 3 2 4 3 3 0 1 4 1 3 0 1 3 1 4 3 1 0 3 3 0 11 1 3 0 2 1 8 2 4 2 3 4 3 1 1 3 4 0 1 3 3 1 3 3 1 0 2 4 3 3 2 2 3 3 -1 8 5 2",
         "solids 0 2 3 1 4 2 4 2 2 14 13 -1 12 3 3 2 1 3 2 4 3 4 2 1 10 7 12 14 2 2 1 7 1 4 1 3 2 4 3 3 0 1 4 1 3 0 1 3 1 2 3 1 0 3 3 0 11 1 3 0 2 1 8 2 4 2 3 4 3 1 1 3 4 0 1 3 3 1 3 3 1 2 2 4 3 3 4 2 3 0 3 2 5 2",
+        // The sessions on 3681979b (locus, bd): results keeping features nearer than their
+        // minimum size, a hull's tip a plate cut off as a tetrahedron as high as the
+        // tolerance among them, whose faces the overlap rules found meeting away from their
+        // boundaries (pipeline.nearRules: refused below the feature size, not invalid)
+        "solids 3 0 4 2 2 4 2 2 4 3 3 4 1 10 7 6 15 3 2 1 7 1 0 3 1 0 1 4 3 3 3 4 1 3 2 2 1 2 1 0 0 1 3 3 7 10 11 1 0 7 0",
+        "solids 1 8 1 4 3 4 3 3 2 2 3 3 4 0 1 0 1 1 3 1 1 3 4 4 2 1 2 0 1 2 1 2 13 4 15 2 1 2 1 4 1 2 1 3 0 2 0 1 4 8 5 13 1 1 0 1 4 0 1 1 3 1 1 7 10 9 2 0",
+        "solids 1 4 1 2 4 2 2 0 0 0 2 1 4 2 1 2 3 -1 2 11 2 1 2 2 4 1 4 0 1 1 2 12 12 13 6 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

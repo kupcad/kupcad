@@ -476,7 +476,12 @@ cannot see: the boolean runs the overlap rules on a result whose nearest pair is
 the minimum, refusing what they find (a difference kept a spike whose root was a
 triangle 2·xsect a side, a wall thinner than the tolerance; the 10K session on d5d78c4b,
 2026-11-19; Leo: gated on the nearest pair, so a result keeping the minimum costs
-nothing more). The paves' own refusals below are what an operand
+nothing more). What they find there is refused as below the feature size, not called
+invalid: a feature under the minimum may lie within the tolerance of every plane about
+it, as a hull's tip a plate cut off, a tetrahedron as high as the tolerance, whose faces
+all read coplanar, which no decision of the tolerance keeps apart (`pipeline.nearRules`;
+a pinch stays `pinched`; the sessions on 3681979b, bd; Leo, 2026-11-19). The paves' own
+refusals below are what an operand
 past the minimum can still bring about, the two operands together: properties of the pair
 and its merged vertices (whose gaps reach up to the zone beyond the tolerance), kept in the
 paves where that state lives (Leo, 2026-11-15: the precondition stays at `2·xsect`; at

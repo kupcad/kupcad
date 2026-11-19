@@ -2671,6 +2671,35 @@ test "degeneracy: a difference keeping a spike thinner than the tolerance at its
     }
 }
 
+test "degeneracy: a hull's tip a plate cuts off, a tetrahedron as high as the tolerance, is refused below the feature size, not called invalid" {
+    // The locus fuzzer's find (2026-11-19, the sessions on 3681979b, bd), as it drew it: a
+    // hull's lowest corner 2.05e-4 inside a plate's side (zone 1e-4, an intersection
+    // tolerance of 2e-4). Their intersection is the tip, a tetrahedron 2.05e-4 high: every
+    // face of it within the tolerance of another's plane, which the overlap rules, run on a
+    // result nearer than its minimum feature size, find meeting away from their boundaries.
+    // No decision of the tolerance keeps such faces apart: refused as the operands'
+    // precondition refuses features that near (`below_feature_size`), not called invalid
+    var hull = try fuzzHull(&.{ .{ 1, 2, 4 }, .{ 2, 2, 0 }, .{ 0, 0, 2 }, .{ 1, 4, 2 } }, .{ 0, -0.5, 1 }, .{ 5e-6, 0, 0 });
+    defer hull.deinit();
+    var plate = try helpers.fuzzPlaced(Tolerance.fromZone(1e-4), .{ 100, 150, 1 }, .{ 2, -48, 0 }, vec.Z3, 0, .{ 0, 0, 0 }, .{ -2.000000014495072e-4, -2.000000014495072e-4, 2e-2 });
+    defer plate.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (pipeline.boolean(testing.allocator, &hull, &plate, .intersection, .{}, &diag, null)) |made| {
+        var body = made;
+        body.deinit();
+        return error.TestUnexpectedResult;
+    } else |err| {
+        try testing.expectEqual(error.Degenerate, err);
+        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+    }
+    // The union and the difference keep the tip's corner apart from the rest: made and sound
+    for ([_]pipeline.Op{ .@"union", .difference }) |op| {
+        var made = try sound(&hull, &plate, op);
+        defer made.deinit();
+    }
+}
+
 test "degeneracy: a tetrahedron's edge 2.7e-5 from where two boxes' faces meet, their union's section edges lie on their faces within the gaps carried onto them" {
     // The locus fuzzer's find (2026-11-18, 10K session on a5301ce8, au), reduced: a
     // tetrahedron's edge passes 2.7e-5 from the corner where a box's side and top meet a
