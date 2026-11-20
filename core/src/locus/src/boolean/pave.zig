@@ -1851,20 +1851,27 @@ const Filler = struct {
 
     /// Two faces' planes (`frame_a`, `frame_b`), parallel within the angular tolerance and
     /// not in one plane, meeting along the line of the merged vertices `vertices` both
-    /// faces hold: within the tolerance and each vertex's gap of each other there, the
-    /// difference of the vertex's heights over the two (the planes' gap at it, their
-    /// normals parallel). A merged vertex is on a face within its reach of the face's
-    /// plane, a corner of a boolean's result as far off its own face's (D28: an edge keeps
-    /// its source's line), so two planes can each hold the vertices and lie farther than
-    /// the tolerance from each other: one face's edge touches the other face, the faces
-    /// themselves apart all along it, a hair from parallel, and being within the tolerance
-    /// is not transitive there. No side of the one face's plane is the other's at such a
-    /// line: read by the turn between them, noise, the classification put a slab's top
-    /// 2.5e-4 under a plate's bottom (a tolerance of 2e-4) inside the plate, its edge
-    /// 1.8e-4 over the top's plane and 7e-5 under the bottom's, the planes 2.7e-7 rad
-    /// apart (`unclassified`; left to a ray, the solids touching along the edge had its
-    /// faces ordered about it by the same noise, `edge_coedge_count`: the locus session on
+    /// faces hold: within the tolerance of each other there, the difference of the
+    /// vertex's heights over the two (the planes' gap at it, their normals parallel). A
+    /// merged vertex is on a face within its reach of the face's plane, a corner of a
+    /// boolean's result as far off its own face's (D28: an edge keeps its source's line),
+    /// so two planes can each hold the vertices and lie farther than the tolerance from
+    /// each other: one face's edge touches the other face, the faces themselves apart all
+    /// along it, a hair from parallel, and being within the tolerance is not transitive
+    /// there. No side of the one face's plane is the other's at such a line: read by the
+    /// turn between them, noise, the classification put a slab's top 2.5e-4 under a
+    /// plate's bottom (a tolerance of 2e-4) inside the plate, its edge 1.8e-4 over the
+    /// top's plane and 7e-5 under the bottom's, the planes 2.7e-7 rad apart
+    /// (`unclassified`; left to a ray, the solids touching along the edge had its faces
+    /// ordered about it by the same noise, `edge_coedge_count`: the locus session on
     /// 8a0a4a2c, bn). Refused (`below_feature_size`), naming `entity`.
+    ///
+    /// The vertex's own gap is no part of the measure: it is how far the vertex may lie
+    /// from what was merged into it, and planes this near parallel are as far apart at any
+    /// of those places. Held to the vertex's reach, a box's bottom 2.1e-4 over a slab's
+    /// top hinged on the top's lifted edge at two crossings of gap 1.5e-5, where the
+    /// faces' corners (`liesIn`) had the two apart, and the union came out by the same
+    /// noise (the targeted review of 2026-11-20, lead 1).
     fn hingedWithin(self: *Filler, frame_a: Frame, frame_b: Frame, vertices: []const u32, entity: diagnostics.EntityRef) Error!void {
         const p = self.p;
         const plane_a = planar_faces.planeOf(frame_a);
@@ -1875,7 +1882,7 @@ const Filler = struct {
         for (vertices) |v| {
             const gap = @abs(plane_a.height(p.point(v)) - facing * plane_b.height(p.point(v)));
             apart = @max(apart, gap);
-            verdict = canonical.both(verdict, p.decide.within(gap, self.reachOf(v)));
+            verdict = canonical.both(verdict, p.decide.within(gap, p.tol.xsect));
         }
         if (try self.settle(verdict, entity)) return;
         return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = entity, .label = "two faces of the operands parallel within the angular tolerance, an edge of one on the other, their planes farther apart along it than the tolerance,", .measured = apart, .threshold = p.tol.xsect });

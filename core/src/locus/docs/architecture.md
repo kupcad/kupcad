@@ -525,7 +525,10 @@ merged vertex there, the union pinched; find av). Two faces of the two operands 
 within the angular tolerance and not in one plane meet along the line of the merged
 vertices both hold (their planes have no line of their own), which they do only within the
 tolerance of each other there (`pave.hingedWithin`, the difference of each vertex's heights
-over the two planes against its reach): a merged vertex is on a face within its reach of
+over the two planes against the intersection tolerance alone, as the faces' corners are
+held to it; the vertex's own gap is no part of a gap between planes, and with it a box's
+bottom 2.1e-4 over a slab's top, a tolerance of 2e-4, hinged on the top's lifted edge at two
+crossings of gap 1.5e-5): a merged vertex is on a face within its reach of
 the face's plane, and a corner of a boolean's result lies as far off its own face's (D28),
 so a line can be within the tolerance of two parallel planes that are not within it of each
 other, an edge of one face on the other face and the faces apart all along it. No side of

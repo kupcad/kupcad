@@ -103,6 +103,10 @@ const FOOT_COVER = [2][2]f64{ .{ -1, -1.5 }, .{ 4.5, 4.5 } };
 const FOOT_INSIDE = [2][2]f64{ .{ 1.5, 1.5 }, .{ 2.2, 2.2 } };
 const FOOT_ACROSS = [2][2]f64{ .{ 1, -1 }, .{ 2, 1.5 } };
 const BOTTOM_CORNER = [2]f64{ 1 + LIP_NUDGE[0], 3 + LIP_NUDGE[1] };
+/// The lifted edge's height over its top's plane and a box's bottom's over the edge, the
+/// bottom within the tolerance (2e-4) of the edge and past it of the plane, by 1e-5 to
+/// 7e-5.
+const LIP_HINGE_WINDOW = [_][2]f64{ .{ LIP_OVER, 3e-5 }, .{ 1.5e-4, 8e-5 }, .{ 1e-4, 1.2e-4 }, .{ 1e-4, 1.7e-4 } };
 /// How two solids of those tests meet: joined into one solid with nothing in common,
 /// two solids (apart, or touching along an edge or at a point), overlapping (one solid
 /// joined, a solid in common), or refused below the minimum feature size either way round.
@@ -3704,5 +3708,26 @@ test "degeneracy: a slab whose edge lies off its top's plane measures, meshes an
         try testing.expectEqual(.inside, try point_in_body.classify(testing.allocator, &slab, &index, inside, .{}, &diag));
         try testing.expectEqual(.outside, try point_in_body.classify(testing.allocator, &slab, &index, over, .{}, &diag));
         try testing.expectEqual(.outside, try point_in_body.classify(testing.allocator, &slab, &index, beside, .{}, &diag));
+    };
+}
+
+test "degeneracy: a box across a slab's lifted edge, its bottom within the tolerance of the edge and past it of the top's plane, the two faces sharing only where its sides cross the edge, is refused below the feature size either way round, mirrored or not" {
+    // The targeted review's find (2026-11-20, lead 1), in bn's rule: the slab's edge over
+    // its top's plane and a box whose sides cross the edge (no corner of the slab under
+    // its bottom), its bottom within the tolerance over the edge and past it over the
+    // top's plane, parallel to it. The two faces share only the two crossings, merged
+    // vertices of gap 1.5e-5, and `pave.hingedWithin` held the planes' gap there (2.1e-4
+    // for the first) to each vertex's reach (2e-4 and that gap), so the hinge stood and
+    // the side was read from the turn between the planes: `edge_coedge_count`, or two
+    // solids the other way round. The planes' gap is held to the tolerance alone, as the
+    // faces' corners are (`liesIn`). With the bottom at the edge's height the box is
+    // joined, and clear of the edge it is apart (`LIP_ON_TOP`)
+    for (LIP_HINGE_WINDOW) |case| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("edge {e} over the plane, bottom {e} over the edge, mirrored {}\n", .{ case[0], case[1], mirrored });
+        var slab = try lippedSlabAt(case[0], mirrored);
+        defer slab.deinit();
+        var other = try lipOperand(.{ .on_top = .{ .foot = FOOT_ACROSS, .lift = case[0] + case[1] } }, case[0], mirrored);
+        defer other.deinit();
+        try expectMeeting(&slab, &other, .refused);
     };
 }
