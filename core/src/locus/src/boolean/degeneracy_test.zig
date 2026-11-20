@@ -85,6 +85,112 @@ const LIPPED_TURNS = [_]f64{ 0.000001, 0, -0.000001 };
 const LIPPED_LIFTS_IN_PLANE = [_]f64{ -1.5e-4, -5e-5, -1e-5 };
 const LIPPED_LIFTS_APART = [_]f64{ 1e-5, 5e-5, 1e-4, 1.5e-4 };
 const LIPPED_LIFTS_CLEAR = [_]f64{ 1.9e-4, 2.5e-4 };
+/// The slab of the tests of corners off their own face's plane (D28: a boolean keeps an
+/// edge on its source's line), made as the solids fuzzer made the slab above, at any
+/// height of the edge: the hull's nudge, the cutting plate's tolerance, the height of the
+/// hull's edge between its corners (0, 1, 2) and (3, 0, 2), and how far over the top's
+/// plane the edge lies, within the tolerance (2e-4) over it and under it. The slab's
+/// bottom has one corner as far off its plane the same way, the hull's (1, 3, 1).
+const LIP_NUDGE: Vec3 = .{ 2.000000005684342e-5, -2e-3, -2e-5 };
+const LIP_TOLERANCE = Tolerance.fromZone(1e-4);
+const LIP_Z: f64 = 2 + LIP_NUDGE[2];
+const LIP_OVER: f64 = 1.8e-4;
+const LIP_UNDER: f64 = -1.8e-4;
+/// Rectangles in x and y against that slab's top and bottom: past both all round, inside
+/// the top clear of the edge, and across the edge (two sides crossing it, a third inside
+/// the top); and the bottom's corner off its plane, where the hull's (1, 3, 1) is.
+const FOOT_COVER = [2][2]f64{ .{ -1, -1.5 }, .{ 4.5, 4.5 } };
+const FOOT_INSIDE = [2][2]f64{ .{ 1.5, 1.5 }, .{ 2.2, 2.2 } };
+const FOOT_ACROSS = [2][2]f64{ .{ 1, -1 }, .{ 2, 1.5 } };
+const BOTTOM_CORNER = [2]f64{ 1 + LIP_NUDGE[0], 3 + LIP_NUDGE[1] };
+/// How two solids of those tests meet: joined into one solid with nothing in common,
+/// two solids (apart, or touching along an edge or at a point), overlapping (one solid
+/// joined, a solid in common), or refused below the minimum feature size either way round.
+const Meeting = enum { one_solid, two_solids, overlap, refused };
+/// The other operand of such a test: a box over a rectangle of the top, its bottom `lift`
+/// over the top's plane; a box under a rectangle of the bottom, its top `lift` over the
+/// bottom's plane (into the slab); a box as it stands; a box in the frame of the lifted
+/// edge (x along it from its middle, y across it into the top, z the height) or of its
+/// end at the hull's corner (0, 1, 2); the hull of points in the edge's frame.
+const LipShape = union(enum) {
+    on_top: struct { foot: [2][2]f64, lift: f64 },
+    under: struct { foot: [2][2]f64, lift: f64 },
+    box: [2]Vec3,
+    by_edge: [2]Vec3,
+    by_end: [2]Vec3,
+    wedge: [6]Vec3,
+};
+const LipCase = struct { lip: f64, shape: LipShape, want: Meeting };
+/// A box sitting on the top (the paves' `liesIn`, `blocksInside` and `hingedWithin`, the
+/// pipeline's one plane for a group, `Provenance.representative`): its bottom between the
+/// top's plane and the edge, under the plane, at the edge's height, over the edge within
+/// the tolerance of it and past that.
+const LIP_ON_TOP = [_]LipCase{
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_COVER, .lift = 1e-4 } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_COVER, .lift = -1e-4 } }, .want = .refused },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_COVER, .lift = LIP_OVER + 1e-4 } }, .want = .refused },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_INSIDE, .lift = -1e-4 } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_INSIDE, .lift = LIP_OVER + 1e-4 } }, .want = .two_solids },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_ACROSS, .lift = LIP_OVER } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .on_top = .{ .foot = FOOT_ACROSS, .lift = LIP_OVER + 2.5e-4 } }, .want = .two_solids },
+    .{ .lip = LIP_UNDER, .shape = .{ .on_top = .{ .foot = FOOT_COVER, .lift = LIP_UNDER } }, .want = .one_solid },
+    .{ .lip = LIP_UNDER, .shape = .{ .on_top = .{ .foot = FOOT_COVER, .lift = 1e-4 } }, .want = .refused },
+    .{ .lip = LIP_UNDER, .shape = .{ .on_top = .{ .foot = FOOT_INSIDE, .lift = LIP_UNDER - 1e-4 } }, .want = .overlap },
+    .{ .lip = LIP_UNDER, .shape = .{ .on_top = .{ .foot = FOOT_ACROSS, .lift = -1e-4 } }, .want = .one_solid },
+    .{ .lip = LIP_UNDER, .shape = .{ .on_top = .{ .foot = FOOT_ACROSS, .lift = LIP_UNDER - 1e-4 } }, .want = .refused },
+};
+/// A box through the top at right angles (edge–edge against the edge's own line,
+/// edge–face beside it, `in_face.placeWithin`, a section along the face's boundary,
+/// `alongBoundary` and `runOnPlane`): sides across the edge; a side along it, on it and
+/// 1e-4 inside it, the box inside or outside; an upright edge through it 1.5e-4 either
+/// side; and a side 3e-4 inside it, where the slab's top and the face under the edge are
+/// 9e-5 apart with the edge over the plane and 4.5e-4 with it under.
+const LIP_THROUGH = [_]LipCase{
+    .{ .lip = LIP_OVER, .shape = .{ .box = .{ .{ 1, -1, 1.5 }, .{ 2, 1.5, 3 } } }, .want = .overlap },
+    .{ .lip = LIP_UNDER, .shape = .{ .box = .{ .{ 1, -1, 1.5 }, .{ 2, 1.5, 3 } } }, .want = .overlap },
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ -0.5, 0, 1.5 }, .{ 0.5, 1, 3 } } }, .want = .overlap },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_edge = .{ .{ -0.5, 1e-4, 1.5 }, .{ 0.5, 1 + 1e-4, 3 } } }, .want = .overlap },
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ -0.5, -1 - 1e-4, 1.5 }, .{ 0.5, -1e-4, 3 } } }, .want = .two_solids },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_edge = .{ .{ 0, 1.5e-4, 1.5 }, .{ 1, 1 + 1.5e-4, 3 } } }, .want = .overlap },
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ 0, -1 - 1.5e-4, 1.5 }, .{ 1, -1.5e-4, 3 } } }, .want = .two_solids },
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ -0.5, 3e-4, 1.5 }, .{ 0.5, 1 + 3e-4, 3 } } }, .want = .refused },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_edge = .{ .{ -0.5, 3e-4, 1.5 }, .{ 0.5, 1 + 3e-4, 3 } } }, .want = .overlap },
+};
+/// An edge, a corner or a wedge's edge on the lifted edge (vertex–vertex and vertex–edge
+/// with a corner off its face's plane, common blocks, `hingedWithin`): a box's bottom edge
+/// along it, the box over the top or beside it, and 1e-4 over it; a box's corner at its
+/// end, beside the slab, over the top, and 1.5e-4 over it; a wedge's edge down onto it, on
+/// it and 1e-4 past it (2.8e-4 from the top's plane), and a wedge's edge against it from
+/// the side.
+const LIP_ALONG = [_]LipCase{
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ -0.5, 0, LIP_Z }, .{ 0.5, 1, 3 } } }, .want = .one_solid },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_edge = .{ .{ -0.5, 0, LIP_Z }, .{ 0.5, 1, 3 } } }, .want = .one_solid },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_edge = .{ .{ -0.5, -1, LIP_Z }, .{ 0.5, 0, 3 } } }, .want = .two_solids },
+    .{ .lip = LIP_OVER, .shape = .{ .by_edge = .{ .{ -0.5, 0, LIP_Z + 1e-4 }, .{ 0.5, 1, 3 } } }, .want = .refused },
+    .{ .lip = LIP_OVER, .shape = .{ .by_end = .{ .{ -1, -1, LIP_Z }, .{ 0, 0, 3 } } }, .want = .two_solids },
+    .{ .lip = LIP_UNDER, .shape = .{ .by_end = .{ .{ 0, 0, LIP_Z }, .{ 1, 1, 3 } } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .by_end = .{ .{ 0, 0, LIP_Z + 1.5e-4 }, .{ 1, 1, 3 } } }, .want = .refused },
+    .{ .lip = LIP_OVER, .shape = .{ .wedge = wedgeOver(0) }, .want = .two_solids },
+    .{ .lip = LIP_OVER, .shape = .{ .wedge = wedgeOver(1e-4) }, .want = .refused },
+    .{ .lip = LIP_UNDER, .shape = .{ .wedge = wedgeOver(-1e-4) }, .want = .refused },
+    .{ .lip = LIP_UNDER, .shape = .{ .wedge = .{ .{ -0.5, -1e-4, LIP_Z }, .{ 0.5, -1e-4, LIP_Z }, .{ -0.5, -0.5, LIP_Z + 0.3 }, .{ 0.5, -0.5, LIP_Z + 0.3 }, .{ -0.5, -0.5, LIP_Z - 0.3 }, .{ 0.5, -0.5, LIP_Z - 0.3 } } }, .want = .two_solids },
+};
+/// A box against the bottom's one corner off its plane (vertex–face and vertex–vertex,
+/// `blocksInside`): under the whole bottom, its top between the bottom's plane and the
+/// corner, past the plane the other way, and 1e-4 past the corner; its own corner at
+/// that corner in the bottom's plane, under the slab or beside it; and through the
+/// bottom there, an upright edge on the corner.
+const LIP_UNDER_BOTTOM = [_]LipCase{
+    .{ .lip = LIP_OVER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = 1e-4 } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = -1e-4 } }, .want = .refused },
+    .{ .lip = LIP_OVER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = LIP_OVER + 1e-4 } }, .want = .overlap },
+    .{ .lip = LIP_OVER, .shape = .{ .under = .{ .foot = .{ .{ BOTTOM_CORNER[0], BOTTOM_CORNER[1] - 1 }, .{ BOTTOM_CORNER[0] + 1, BOTTOM_CORNER[1] } }, .lift = 0 } }, .want = .one_solid },
+    .{ .lip = LIP_OVER, .shape = .{ .under = .{ .foot = .{ .{ BOTTOM_CORNER[0] - 1, BOTTOM_CORNER[1] }, .{ BOTTOM_CORNER[0], BOTTOM_CORNER[1] + 1 } }, .lift = 0 } }, .want = .two_solids },
+    .{ .lip = LIP_OVER, .shape = .{ .box = .{ .{ BOTTOM_CORNER[0], BOTTOM_CORNER[1] - 1, 0 }, .{ BOTTOM_CORNER[0] + 1, BOTTOM_CORNER[1], 1.5 } } }, .want = .overlap },
+    .{ .lip = LIP_UNDER, .shape = .{ .box = .{ .{ BOTTOM_CORNER[0] - 1, BOTTOM_CORNER[1], 0 }, .{ BOTTOM_CORNER[0], BOTTOM_CORNER[1] + 1, 1.5 } } }, .want = .overlap },
+    .{ .lip = LIP_UNDER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = -1e-4 } }, .want = .one_solid },
+    .{ .lip = LIP_UNDER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = 1e-4 } }, .want = .refused },
+};
 /// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
 /// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
 /// numbers, as the case gives them.
@@ -3324,5 +3430,279 @@ test "degeneracy: a plate over a slab's top with an edge over its plane, the top
             defer apart.deinit();
             try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&apart));
         }
+    };
+}
+
+/// The slab of the tests of corners off their own face's plane: `LIPPED_HULL` (mirrored
+/// in y or not) under a level plate (zone 1e-4) whose top is `lip` under the hull's edge
+/// between its corners at z = 2 (over it when `lip` is negative). The edge is within the
+/// tolerance of the plate's top, on it, and bounds the slab's top where it is (D28),
+/// `lip` over the top's plane; the slab's bottom has the hull's corner (1, 3, 1) the same
+/// way, `lip` over the bottom's plane.
+fn lippedSlabAt(lip: f64, mirrored: bool) !Body {
+    var points = LIPPED_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = 4 - p[1];
+    };
+    var hull = try fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ LIP_NUDGE[0], if (mirrored) -LIP_NUDGE[1] else LIP_NUDGE[1], LIP_NUDGE[2] });
+    defer hull.deinit();
+    var cutter = try fuzzBoxPlaced(LIP_TOLERANCE, .{ -98, -48, 2 }, .{ 52, 102, 4 }, vec.Z3, 0, .{ 2, 0.5, 0.5 }, .{ -2e-2, -5e-5, LIP_NUDGE[2] - lip });
+    defer cutter.deinit();
+    return sound(&hull, &cutter, .intersection);
+}
+
+/// A wedge in the lifted edge's frame, its edge along that edge `dz` over it, its faces
+/// rising at 45° to either side.
+fn wedgeOver(dz: f64) [6]Vec3 {
+    const z = LIP_Z + dz;
+    return .{ .{ -0.5, 0, z }, .{ 0.5, 0, z }, .{ -0.5, 0.5, z + 0.5 }, .{ 0.5, 0.5, z + 0.5 }, .{ -0.5, -0.5, z + 0.5 }, .{ 0.5, -0.5, z + 0.5 } };
+}
+
+/// The frame of that slab's lifted edge, in x and y: its origin the edge's middle, or its
+/// end at the hull's corner (0, 1, 2) (`at_end`); `along` runs to the hull's corner
+/// (3, 0, 2), `inward` across the edge into the top. Mirrored as the slab is.
+fn lipFrame(mirrored: bool, at_end: bool) struct { origin: Vec3, along: Vec3, inward: Vec3 } {
+    const nudge_y = if (mirrored) -LIP_NUDGE[1] else LIP_NUDGE[1];
+    const from: Vec3 = .{ LIP_NUDGE[0], (if (mirrored) @as(f64, 3) else 1) + nudge_y, 0 };
+    const to: Vec3 = .{ 3 + LIP_NUDGE[0], (if (mirrored) @as(f64, 4) else 0) + nudge_y, 0 };
+    const along = vec.normalized(vec.sub(to, from)).?;
+    const left: Vec3 = .{ -along[1], along[0], 0 };
+    return .{ .origin = if (at_end) from else vec.lerp(from, to, 0.5), .along = along, .inward = if (mirrored) vec.neg(left) else left };
+}
+
+/// The other operand `shape` of a test against the slab whose edge lies `lip` over its
+/// top's plane (zone 1e-4), mirrored in y as the slab is.
+fn lipOperand(shape: LipShape, lip: f64, mirrored: bool) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const world: ?[2]Vec3 = switch (shape) {
+        .on_top => |s| .{ .{ s.foot[0][0], s.foot[0][1], LIP_Z - lip + s.lift }, .{ s.foot[1][0], s.foot[1][1], 3 } },
+        .under => |s| .{ .{ s.foot[0][0], s.foot[0][1], 0 }, .{ s.foot[1][0], s.foot[1][1], LIP_Z - 1 - lip + s.lift } },
+        .box => |b| b,
+        else => null,
+    };
+    if (world) |b| {
+        if (!mirrored) return helpers.boxAt(LIP_TOLERANCE, b[0], b[1]);
+        return helpers.boxAt(LIP_TOLERANCE, .{ b[0][0], 4 - b[1][1], b[0][2] }, .{ b[1][0], 4 - b[0][1], b[1][2] });
+    }
+    switch (shape) {
+        .by_edge, .by_end => |b| {
+            const frame = lipFrame(mirrored, shape == .by_end);
+            // The box in the right-handed frame of `along` and its left: across the edge
+            // the other way when mirrored
+            var drawn = try helpers.boxAt(LIP_TOLERANCE, if (mirrored) .{ b[0][0], -b[1][1], b[0][2] } else b[0], if (mirrored) .{ b[1][0], -b[0][1], b[1][2] } else b[1]);
+            defer drawn.deinit();
+            const place = mat.Affine.translate(frame.origin).compose(&mat.Affine.rotate(vec.Z3, std.math.atan2(frame.along[1], frame.along[0])));
+            return @import("../construct/transform.zig").transform(testing.allocator, &drawn, &place, .{}, &diag);
+        },
+        .wedge => |points| {
+            const frame = lipFrame(mirrored, false);
+            var placed: [6]Vec3 = undefined;
+            for (points, &placed) |q, *p| p.* = vec.add(vec.addScaled(vec.addScaled(frame.origin, frame.along, q[0]), frame.inward, q[1]), .{ 0, 0, q[2] });
+            return @import("../construct/hull.zig").hull(testing.allocator, LIP_TOLERANCE, &placed, &diag);
+        },
+        else => unreachable,
+    }
+}
+
+/// `a` and `b` meet as `want`: refused below the minimum feature size either way round;
+/// or each operation made and sound, the union the solids `want` names and the
+/// intersection a solid or none, the volume identities to the slab the tolerance may
+/// count either way and the reports' shifts (`pipeline_test.expectIdentitiesAtTolerance`'s
+/// measure), and the union and the intersection the same the other way round.
+fn expectMeeting(a: *const Body, b: *const Body, want: Meeting) !void {
+    if (want == .refused) {
+        try expectRefused(a, b, .below_feature_size);
+        return expectRefused(b, a, .below_feature_size);
+    }
+    var reports: [3]pipeline.Report = .{ .init(testing.allocator), .init(testing.allocator), .init(testing.allocator) };
+    defer for (&reports) |*r| r.deinit();
+    var u = try helpers.soundReported(a, b, .@"union", &reports[0]);
+    defer u.deinit();
+    var i = try helpers.soundReported(a, b, .intersection, &reports[1]);
+    defer i.deinit();
+    var d = try helpers.soundReported(a, b, .difference, &reports[2]);
+    defer d.deinit();
+    try testing.expectEqual([2]usize{ if (want == .two_solids) 2 else 1, 0 }, shellKinds(&u));
+    try testing.expectEqual([2]usize{ if (want == .overlap) 1 else 0, 0 }, shellKinds(&i));
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const ma = try mass.mass(a, .{}, &diag);
+    const mb = try mass.mass(b, .{}, &diag);
+    const slab = CLOSE * @max(ma.volume + mb.volume, 1) + Tolerance.merge(a.tol, b.tol).xsect * @min(ma.area, mb.area);
+    const vi = try volume(&i);
+    try testing.expectApproxEqAbs(ma.volume + mb.volume, try volume(&u) + vi, slab + reports[0].shift + reports[1].shift);
+    try testing.expectApproxEqAbs(ma.volume - vi, try volume(&d), slab + reports[1].shift + reports[2].shift);
+    for ([_]pipeline.Op{ .@"union", .intersection }, [_]*const Body{ &u, &i }) |op, forward| {
+        var swapped = try sound(b, a, op);
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+        try testing.expectEqual(shellKinds(forward), shellKinds(&swapped));
+    }
+}
+
+/// Each of `cases` against its slab, mirrored in y and not.
+fn expectLipCases(cases: []const LipCase) !void {
+    for ([_]f64{ LIP_OVER, LIP_UNDER }) |lip| for ([_]bool{ false, true }) |mirrored| {
+        var slab = try lippedSlabAt(lip, mirrored);
+        defer slab.deinit();
+        for (cases, 0..) |case, i| {
+            if (case.lip != lip) continue;
+            errdefer std.debug.print("case {d}: the edge {e} over the top's plane, mirrored {}\n", .{ i, lip, mirrored });
+            var other = try lipOperand(case.shape, lip, mirrored);
+            defer other.deinit();
+            try expectMeeting(&slab, &other, case.want);
+        }
+    };
+}
+
+test "degeneracy: a box on the top of a slab whose edge lies off the top's plane, over it or under it, is joined in the top's plane, refused where the plane or the edge alone holds it, and apart past both" {
+    // The targeted review after bn (2026-11-20): a boolean's result has corners up to the
+    // tolerance off their own face's plane (D28), and every decision that takes a face's
+    // corner for a point of its plane is asked here with one that is not. The top's
+    // plane holds the box's bottom or the pair is not in one plane (`liesIn` by either
+    // face's corners; one plane for the group, `Provenance.representative`): between the
+    // plane and the edge, or at the edge's height, joined. A bottom within the tolerance
+    // of the plane with the edge inside it past the tolerance of the bottom, or within it
+    // of the edge and past it of the plane, holds one of the two alone: refused
+    // (`blocksInside`, `hingedWithin`). Clear of the edge's reach the box is apart or
+    // overlaps as the plane alone has it
+    try expectLipCases(&LIP_ON_TOP);
+}
+
+test "degeneracy: a box through the top of a slab whose edge lies off the top's plane, across the edge, along it and beside it, cuts the slab as the edge's own line has it" {
+    // The edge's line, not its foot in the top's plane, is what an edge of the box
+    // passes within the tolerance of (edge–edge), and what a point of the top is on the
+    // boundary by (`in_face.placeWithin`, measured in space); the section along it keeps
+    // its line (`alongBoundary`, `runOnPlane`). A side 3e-4 inside the edge cuts the top
+    // and the face under the edge 9e-5 apart where the edge is over the plane (the slab
+    // is thinner than the tolerance there: refused) and 4.5e-4 apart where it is under
+    try expectLipCases(&LIP_THROUGH);
+}
+
+test "degeneracy: an edge, a corner and a wedge on the edge of a slab that lies off its top's plane touch the slab along it, join it, or are refused where they are on the edge and off the plane" {
+    // A box's edge or a wedge's within the tolerance of the lifted edge is on it
+    // (vertex–edge, a common block), and its corner at the edge's end is that corner
+    // (vertex–vertex), whatever the top's plane: beside the slab two solids touching, over
+    // the top joined with it where its bottom is within the tolerance of the top's plane.
+    // Within the tolerance of the edge and past it of the plane, a bottom parallel to
+    // the top meets it along no line (`hingedWithin`), and a wedge's faces at 45° end
+    // within the tolerance of a top they do not reach: refused
+    try expectLipCases(&LIP_ALONG);
+}
+
+test "degeneracy: a box against the one corner of a slab's bottom that lies off the bottom's plane is joined, overlaps or touches at the corner as the bottom's plane has it, and is refused where the corner is past the tolerance inside it" {
+    // One corner off the plane, not an edge: no line of merged vertices for two parallel
+    // faces to meet along, so a box's top 1e-4 past the corner and 2.8e-4 past the
+    // bottom's plane overlaps the slab by that; a top the tolerance from the plane with
+    // the corner 2.8e-4 inside it is refused (`blocksInside`: the bottom's boundary
+    // inside the box's top beyond reach of its plane)
+    try expectLipCases(&LIP_UNDER_BOTTOM);
+}
+
+test "degeneracy: a slab whose edge lies off its top's plane is cut by planes at the top, along the edge and across it into parts that make it up" {
+    // `trim.trimByPlane` on the same slabs: nothing in front of the top's plane, and the
+    // whole behind it; a plane 5e-4 under the top, one along the edge 0.5 inside it and
+    // one across the edge at its middle each cut it in two sound parts
+    const oracle = @import("oracle_test.zig");
+    for ([_]f64{ LIP_OVER, LIP_UNDER }) |lip| {
+        errdefer std.debug.print("the edge {e} over the top's plane\n", .{lip});
+        var slab = try lippedSlabAt(lip, false);
+        defer slab.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const whole = try mass.mass(&slab, .{}, &diag);
+        const close = CLOSE * @max(whole.volume, 1) + slab.tol.xsect * whole.area;
+        const frame = lipFrame(false, false);
+        const middle: Vec3 = .{ frame.origin[0], frame.origin[1], LIP_Z };
+        var front = try trim.trimByPlane(testing.allocator, &slab, vec.Z3, LIP_Z - lip, .{}, &diag, null);
+        defer front.deinit();
+        try testing.expect(front.isEmpty());
+        var back = try trim.trimByPlane(testing.allocator, &slab, vec.neg(vec.Z3), -(LIP_Z - lip), .{}, &diag, null);
+        defer back.deinit();
+        try oracle.expectSolid(&back, &diag);
+        try testing.expectEqual(slab.counts(), back.counts());
+        try testing.expectApproxEqAbs(whole.volume, try volume(&back), close);
+        for ([_]struct { n: Vec3, at: f64 }{
+            .{ .n = vec.Z3, .at = LIP_Z - lip - 5e-4 },
+            .{ .n = frame.inward, .at = vec.dot(frame.inward, middle) + 0.5 },
+            .{ .n = frame.along, .at = vec.dot(frame.along, middle) },
+        }) |plane| {
+            var parts = try trim.splitByPlane(testing.allocator, &slab, plane.n, plane.at, .{}, &diag);
+            defer for (&parts) |*part| part.deinit();
+            for (&parts) |*part| {
+                try oracle.expectSolid(part, &diag);
+                try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(part));
+            }
+            try testing.expectApproxEqAbs(whole.volume, try volume(&parts[0]) + try volume(&parts[1]), close);
+        }
+    }
+}
+
+test "degeneracy: what a boolean made of a slab whose edge lies off its top's plane is an operand of the next: cut across the edge, joined along it and joined under its bottom, then crossed by a bar" {
+    // A chain's third step: the lifted edge cut in two by a box through it, kept whole
+    // under a box joined along it, and the bottom's corner under a box joined to the
+    // bottom; then a bar across the whole of each, through the top and at the edge's
+    // height. Each made and sound, the identities at the tolerance, the union the same
+    // the other way round
+    const bar = [2]Vec3{ .{ 2.2, -1, 0.5 }, .{ 2.7, 4.5, 3.5 } };
+    const bar_at_edge = [2]Vec3{ .{ 1.2, -1, LIP_Z }, .{ 1.7, 4.5, 3.5 } };
+    const steps = [_]struct { shape: LipShape, op: pipeline.Op, then: [2]Vec3 }{
+        .{ .shape = .{ .box = .{ .{ 1, -1, 1.5 }, .{ 2, 1.5, 3 } } }, .op = .difference, .then = bar },
+        .{ .shape = .{ .box = .{ .{ 1, -1, 1.5 }, .{ 2, 1.5, 3 } } }, .op = .difference, .then = bar_at_edge },
+        .{ .shape = .{ .by_edge = .{ .{ -0.5, 0, LIP_Z }, .{ 0.5, 1, 3 } } }, .op = .@"union", .then = bar_at_edge },
+        .{ .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = 0 } }, .op = .@"union", .then = bar },
+    };
+    for ([_]f64{ LIP_OVER, LIP_UNDER }) |lip| {
+        var slab = try lippedSlabAt(lip, false);
+        defer slab.deinit();
+        for (steps, 0..) |step, i| {
+            errdefer std.debug.print("step {d}: the edge {e} over the top's plane\n", .{ i, lip });
+            var other = try lipOperand(step.shape, lip, false);
+            defer other.deinit();
+            var kept = try sound(&slab, &other, step.op);
+            defer kept.deinit();
+            var then = try helpers.boxAt(LIP_TOLERANCE, step.then[0], step.then[1]);
+            defer then.deinit();
+            try helpers.expectIdentitiesAtTolerance(&kept, &then);
+            var forward = try sound(&kept, &then, .@"union");
+            defer forward.deinit();
+            var swapped = try sound(&then, &kept, .@"union");
+            defer swapped.deinit();
+            try testing.expectEqual(forward.counts(), swapped.counts());
+        }
+    }
+}
+
+test "degeneracy: a slab whose edge lies off its top's plane measures, meshes and holds points as its faces' planes and that edge have it" {
+    // The readers of a result: the mesh closed and manifold through the corners off
+    // their planes, its volume the solid's to the slab the tolerance allows; points clear
+    // of the boundary by the lifted edge inside and outside as the wedge there has them
+    const tessellate = @import("../mesh/tessellate.zig");
+    const validate = @import("../mesh/validate.zig");
+    for ([_]f64{ LIP_OVER, LIP_UNDER }) |lip| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the edge {e} over the top's plane, mirrored {}\n", .{ lip, mirrored });
+        var slab = try lippedSlabAt(lip, mirrored);
+        defer slab.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const measured = try mass.mass(&slab, .{}, &diag);
+        var mesh = try tessellate.tessellate(testing.allocator, &slab, .{}, .{}, &diag);
+        defer mesh.deinit(testing.allocator);
+        try testing.expect((try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len)).isManifoldClosed());
+        var six: f64 = 0;
+        for (mesh.triangles) |t| six += vec.dot(mesh.positions[t[0]], vec.cross(mesh.positions[t[1]], mesh.positions[t[2]]));
+        try testing.expectApproxEqAbs(measured.volume, six / 6, slab.tol.xsect * measured.area);
+        var index = try FaceIndex.build(testing.allocator, &slab, &diag);
+        defer index.deinit(testing.allocator);
+        const frame = lipFrame(mirrored, false);
+        const top = LIP_Z - lip;
+        // 0.01 inside the edge the slab is 0.009 thick under its top
+        const inside = vec.add(vec.addScaled(frame.origin, frame.inward, 0.01), .{ 0, 0, top - 3e-3 });
+        const over = vec.add(vec.addScaled(frame.origin, frame.inward, 0.01), .{ 0, 0, top + 1e-3 });
+        const beside = vec.add(vec.addScaled(frame.origin, frame.inward, -1e-3), .{ 0, 0, LIP_Z });
+        try testing.expectEqual(.inside, try point_in_body.classify(testing.allocator, &slab, &index, inside, .{}, &diag));
+        try testing.expectEqual(.outside, try point_in_body.classify(testing.allocator, &slab, &index, over, .{}, &diag));
+        try testing.expectEqual(.outside, try point_in_body.classify(testing.allocator, &slab, &index, beside, .{}, &diag));
     };
 }
