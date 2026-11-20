@@ -521,7 +521,22 @@ tolerance and facing apart, away from where they meet (its stretch within reach 
 ending beyond that reach of their shared edge or vertex), is refused `below_feature_size`
 (`pave.knifeBlocks`; Leo, 2026-11-18: a hull's edge through a flat tetrahedron 2.1
 tolerances thick within the tolerance of its top and bottom 0.23 from its knife edge, no
-merged vertex there, the union pinched; find av). An operand built at a finer tolerance than the boolean takes (the
+merged vertex there, the union pinched; find av). Two faces of the two operands parallel
+within the angular tolerance and not in one plane meet along the line of the merged
+vertices both hold (their planes have no line of their own), which they do only within the
+tolerance of each other there (`pave.hingedWithin`, the difference of each vertex's heights
+over the two planes against its reach): a merged vertex is on a face within its reach of
+the face's plane, and a corner of a boolean's result lies as far off its own face's (D28),
+so a line can be within the tolerance of two parallel planes that are not within it of each
+other, an edge of one face on the other face and the faces apart all along it. No side of
+the one plane is the other's there: read from the turn between them, noise, a slab's top
+2.5e-4 under a plate's bottom (a tolerance of 2e-4, its edge 1.8e-4 over its own plane and
+7e-5 under the bottom's, 2.7e-7 rad off parallel) was put inside the plate
+(`unclassified`), and left to a ray, the four faces about the edge were ordered by the same
+turn (`edge_coedge_count`), or the two solids were made, touching along the edge, where the
+noise fell the other way: a result any later boolean refuses as an operand, its two faces
+nearer than the minimum feature size. Refused `below_feature_size` (the locus session on
+8a0a4a2c, 2026-11-20, bn). An operand built at a finer tolerance than the boolean takes (the
 larger of the two, §6) must be valid at the boolean's, or the result is not
 (`mixed_tolerance`).
 

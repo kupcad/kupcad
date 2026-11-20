@@ -438,8 +438,10 @@ const Side = struct { class: Class, clear: bool };
 /// A face parallel to the fragment's within the angular tolerance and not in one plane
 /// with it shows its side as any other, by the sign of the turn however small (OCCT's
 /// `IsInternalFace` reads the dihedral to its angular precision): the paves made a section
-/// of the two along the line through the merged vertices on both, and the fragment beside
-/// it is on the side the face turns from it, wherever the planes' own line runs. Passed
+/// of the two along the line through the merged vertices on both, their planes within the
+/// tolerance of each other there (`pave.hingedWithin`: farther apart they do not meet, and
+/// the turn tells no side), and the fragment beside it is on the side the face turns from
+/// it, wherever the planes' own line runs. Passed
 /// over as parallel, a strip of a plate's top beside the line through two corners of a
 /// hull's top, 0.8° off it and 1.8e-4 under it there, was left to a ray: the planes' own
 /// line ran through the strip 0.0127 from the corners', its points lay either side of

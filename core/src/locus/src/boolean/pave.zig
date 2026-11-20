@@ -35,11 +35,14 @@
 //! no merged vertex, or one within it of the face's own boundary where the paves did not
 //! join them (`sectionsApart`), and two faces of the other facing apart and parallel
 //! to it, both within the tolerance of one point of it, whether they meet or not (a thin
-//! feature or a knife edge it lies along, `sandwiched`). Two features of one operand nearer
-//! than twice the tolerance where they do not meet are refused before the paves
-//! (`pipeline.featureSize`); these are what the operands bring about together past that: a
-//! merged vertex reaches by its gap too (up to the zone), and a face of one operand probes
-//! the other's pair, two faces meeting at an edge among them.
+//! feature or a knife edge it lies along, `sandwiched`); and at two faces of the operands
+//! parallel within the angular tolerance and not in one plane, the line of the merged
+//! vertices both hold, within the tolerance of both planes where they are farther than it
+//! from each other (`hingedWithin`). Two features of one operand nearer than twice the
+//! tolerance where they do not meet are refused before the paves (`pipeline.featureSize`);
+//! these are what the operands bring about together past that: a merged vertex reaches by
+//! its gap too (up to the zone), and a face of one operand probes the other's pair, two
+//! faces meeting at an edge among them.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -1780,7 +1783,7 @@ const Filler = struct {
                 continue;
             }
             if (both.items.len < 2) continue;
-            const line = switch (try self.meetingLine(frame_a.z, frame_b.z, both.items, .of(.face, @backingInt(fb)))) {
+            const line = switch (try self.meetingLine(frame_a, frame_b, both.items, .of(.face, @backingInt(fb)))) {
                 .line => |d| d,
                 .one_plane => {
                     try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
@@ -1831,14 +1834,51 @@ const Filler = struct {
     /// imprints disagreeing (the 10K session on 415e356d). Planes parallel within the
     /// angular tolerance have no line of their own, so the vertices' (`lineThrough`), or
     /// one plane when they are off one line; at that tolerance to rounding, refused
-    /// (`at_tolerance`, D27).
-    fn meetingLine(self: *Filler, n_a: Vec3, n_b: Vec3, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
-        const cos = @abs(vec.dot(n_a, n_b));
+    /// (`at_tolerance`, D27). Along the vertices' line the two planes hinge, which they do
+    /// only within the tolerance of each other there (`hingedWithin`).
+    fn meetingLine(self: *Filler, frame_a: Frame, frame_b: Frame, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
+        const cos = @abs(vec.dot(frame_a.z, frame_b.z));
         switch (canonical.verdict(&.{canonical.Comparison.angle(1.0 - cos, self.p.tol.angle)})) {
-            .apart => return .{ .line = planar_faces.lineDirection(vec.normalized(vec.cross(n_a, n_b)).?) },
+            .apart => return .{ .line = planar_faces.lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)).?) },
             .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two faces of the operands sharing merged vertices, parallel or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
-            .same => return if (try self.lineThrough(vertices, entity)) |d| .{ .line = planar_faces.lineDirection(d) } else .one_plane,
+            .same => {
+                const d = (try self.lineThrough(vertices, entity)) orelse return .one_plane;
+                try self.hingedWithin(frame_a, frame_b, vertices, entity);
+                return .{ .line = planar_faces.lineDirection(d) };
+            },
         }
+    }
+
+    /// Two faces' planes (`frame_a`, `frame_b`), parallel within the angular tolerance and
+    /// not in one plane, meeting along the line of the merged vertices `vertices` both
+    /// faces hold: within the tolerance and each vertex's gap of each other there, the
+    /// difference of the vertex's heights over the two (the planes' gap at it, their
+    /// normals parallel). A merged vertex is on a face within its reach of the face's
+    /// plane, a corner of a boolean's result as far off its own face's (D28: an edge keeps
+    /// its source's line), so two planes can each hold the vertices and lie farther than
+    /// the tolerance from each other: one face's edge touches the other face, the faces
+    /// themselves apart all along it, a hair from parallel, and being within the tolerance
+    /// is not transitive there. No side of the one face's plane is the other's at such a
+    /// line: read by the turn between them, noise, the classification put a slab's top
+    /// 2.5e-4 under a plate's bottom (a tolerance of 2e-4) inside the plate, its edge
+    /// 1.8e-4 over the top's plane and 7e-5 under the bottom's, the planes 2.7e-7 rad
+    /// apart (`unclassified`; left to a ray, the solids touching along the edge had its
+    /// faces ordered about it by the same noise, `edge_coedge_count`: the locus session on
+    /// 8a0a4a2c, bn). Refused (`below_feature_size`), naming `entity`.
+    fn hingedWithin(self: *Filler, frame_a: Frame, frame_b: Frame, vertices: []const u32, entity: diagnostics.EntityRef) Error!void {
+        const p = self.p;
+        const plane_a = planar_faces.planeOf(frame_a);
+        const plane_b = planar_faces.planeOf(frame_b);
+        const facing: f64 = if (vec.dot(frame_a.z, frame_b.z) < 0) -1 else 1;
+        var verdict: Verdict = .same;
+        var apart: f64 = 0;
+        for (vertices) |v| {
+            const gap = @abs(plane_a.height(p.point(v)) - facing * plane_b.height(p.point(v)));
+            apart = @max(apart, gap);
+            verdict = canonical.both(verdict, p.decide.within(gap, self.reachOf(v)));
+        }
+        if (try self.settle(verdict, entity)) return;
+        return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = entity, .label = "two faces of the operands parallel within the angular tolerance, an edge of one on the other, their planes farther apart along it than the tolerance,", .measured = apart, .threshold = p.tol.xsect });
     }
 
     /// The direction of the line through merged vertices `vertices` (at least two, each

@@ -2202,6 +2202,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // faces are parallel, and a ray kept the strip (classify.pieceSide: a section shows
         // no side only of a face in one plane with the fragment's, as the paves have it)
         "solids 2 2 4 1 2 3 4 1 0 0 1 0 10 3 -1 16 3 1 1 7 0 3 1 4 3 4 2 3 4 0 1 1 1 4 1 2 0 4 0 1 4 0 1 5 2 7 1 11 13 0 3 2 2 3 1 3 1 3 1 3 0 3 2 2 0",
+        // The session on 8a0a4a2c (locus, 2026-11-20, bn): a slab a plate cut from a hull,
+        // an edge of its top the hull's, 1.8e-4 over the top's plane, under a second plate
+        // whose bottom is 7e-5 over that edge and 2.5e-4 over the plane, 2.7e-7 rad off
+        // parallel; the paves took the two faces to meet along the edge and the top's side
+        // of the bottom was read from the turn between them, into the plate
+        // (`unclassified`; pave.hingedWithin: parallel faces meet along their merged
+        // vertices' line only within the tolerance of each other there)
+        "solids 1 7 1 3 1 1 4 4 2 3 4 3 0 2 2 2 4 4 2 0 0 1 2 3 3 11 14 8 9 3 2 2 0 3 1 4 2 4 0 3 7 0 2 0 0 14 4 10 8 2 2 2 2 3 1 3 2 4 1 1 6 12 3 15 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -51,6 +51,18 @@ const TURN_PAST_ANGLE: f64 = 0.02;
 const SHALLOW_LIFTS = [_]f64{ 2.0000000063948848e-5, 6e-5, 1e-4, 1.5e-4, 2.5e-4 };
 /// The hull of those tests, as the fuzzer drew it: its top the four points at z = 4.
 const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
+/// The hull of the tests of a slab's top with an edge over its plane, as the solids fuzzer
+/// drew it (its corners at z = 2 the ends of that edge); the turns of the plate that cuts
+/// the slab from it, the find's and its neighbours (a top 2.7e-7 rad off level either
+/// way, and level); and how far the plate over the slab is lifted: its bottom within the
+/// tolerance of the top's plane (2e-4; the top 2e-4 under z = 2, the edge 1.8e-4 over
+/// it), past that of the plane and within it of the edge (the find's 5e-5 among them),
+/// and past it of the edge too.
+const LIPPED_HULL = [_]Vec3{ .{ 1, 3, 1 }, .{ 1, 4, 4 }, .{ 2, 3, 4 }, .{ 3, 0, 2 }, .{ 2, 2, 4 }, .{ 4, 2, 0 }, .{ 0, 1, 2 } };
+const LIPPED_TURNS = [_]f64{ 0.000001, 0, -0.000001 };
+const LIPPED_LIFTS_IN_PLANE = [_]f64{ -1.5e-4, -5e-5, -1e-5 };
+const LIPPED_LIFTS_APART = [_]f64{ 1e-5, 5e-5, 1e-4, 1.5e-4 };
+const LIPPED_LIFTS_CLEAR = [_]f64{ 1.9e-4, 2.5e-4 };
 /// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
 /// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
 /// numbers, as the case gives them.
@@ -2991,5 +3003,102 @@ test "degeneracy: a hull's top at the angular tolerance to a plate's or past it,
         var hull = try fuzzHullPlaced(&points, vec.Y3, turn, null, .{ 0, 0.5, 0 }, .{ 2e-5, 0, lift });
         defer hull.deinit();
         try expectAllSound(&hull, &plate);
+    };
+}
+
+/// A box from `lo` to `hi` at the tolerance `t`, turned by `turn` about `axis` through the
+/// solids fuzzer's grid middle, scaled by `scale`, then moved by `nudge`, as the fuzzer
+/// composes a placement (one rounding of each, in its order).
+fn fuzzBoxPlaced(t: Tolerance, lo: Vec3, hi: Vec3, axis: Vec3, turn: f64, scale: ?Vec3, nudge: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var drawn = try helpers.boxAt(t, lo, hi);
+    defer drawn.deinit();
+    var place = mat.Affine.translate(vec.ZERO3);
+    if (turn != 0) place = mat.Affine.rotateAbout(FUZZ_GRID_MIDDLE, vec.normalized(axis).?, turn).compose(&place);
+    if (scale) |by| place = mat.Affine.scaleBy(by).compose(&place);
+    place = mat.Affine.translate(nudge).compose(&place);
+    return @import("../construct/transform.zig").transform(testing.allocator, &drawn, &place, .{}, &diag);
+}
+
+/// The slab of the tests of a top with an edge over its plane, as the solids fuzzer made
+/// it: `LIPPED_HULL` (mirrored in y or not) under a plate (zone 1e-4) turned by `turn`,
+/// its top 2e-4 under z = 2. The hull's edge between its corners at z = 2 less 2e-5 is
+/// within the tolerance over the plate's top, on it, and bounds the slab's top where it
+/// is (D28), 1.8e-4 over the top's plane.
+fn lippedSlab(turn: f64, mirrored: bool) !Body {
+    var points = LIPPED_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = 4 - p[1];
+    };
+    var hull = try fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ 2.000000005684342e-5, if (mirrored) 2e-3 else -2e-3, -2e-5 });
+    defer hull.deinit();
+    var cutter = try fuzzBoxPlaced(Tolerance.fromZone(1e-4), .{ -98, -48, 2 }, .{ 52, 102, 4 }, .{ 1, 2, 3 }, turn, .{ 2, 0.5, 0.5 }, .{ -2e-2, -5e-5, -1.999999972146702e-4 });
+    defer cutter.deinit();
+    return sound(&hull, &cutter, .intersection);
+}
+
+/// The plate over that slab (zone 1e-4), its side at x = 2 across the slab's edge, its
+/// bottom `lift` over z = 2.
+fn plateOverSlab(lift: f64) !Body {
+    return fuzzBoxPlaced(Tolerance.fromZone(1e-4), .{ 2, -48, 2 }, .{ 52, 52, 4 }, vec.Z3, 0, null, .{ -1e-4, -2.0000000073896445e-4, lift });
+}
+
+test "degeneracy: a plate's bottom within the tolerance of an edge of a slab's top and past it of the top's plane, parallel to it, is refused below the feature size either way round" {
+    // The locus fuzzer's find (2026-11-20, the session on 8a0a4a2c, bn), as it drew it: a
+    // slab a plate cut from a hull, its top 2.7e-7 rad off level at z = 2 less 2e-4, one
+    // edge of that top the hull's, 1.8e-4 over the top's plane (zone 1e-4, an intersection
+    // tolerance of 2e-4), under a second plate whose bottom is 7e-5 over the edge and
+    // 2.5e-4 over the top's plane. The edge lies on the bottom and the two faces do not
+    // lie in one plane, parallel within the angular tolerance: the paves took them to meet
+    // along the edge, and the top's side of the bottom there was read from the turn
+    // between them, 2.1e-7, into the plate (`unclassified`, the seams of the slab
+    // disagreeing; before the seam was read, a ray had it outside and the four faces
+    // about the edge were ordered by that turn, `edge_coedge_count`). Two planes farther
+    // apart than the tolerance do not meet along a line within it of both
+    var slab = try lippedSlab(LIPPED_TURNS[0], false);
+    defer slab.deinit();
+    var plate = try plateOverSlab(LIPPED_LIFTS_APART[1]);
+    defer plate.deinit();
+    try expectRefused(&slab, &plate, .below_feature_size);
+    try expectRefused(&plate, &slab, .below_feature_size);
+}
+
+test "degeneracy: a plate over a slab's top with an edge over its plane, the top a hair off level either way or level, mirrored or not: in the top's plane joined, past it and on the edge refused, clear of the edge two solids" {
+    // The cases about the find above: the plate's bottom within the tolerance of the top's
+    // plane (one plane with it: joined), past it of the plane and within it of the edge
+    // (refused, whichever way the turn's noise falls: the unmirrored slab under a top
+    // turned 1e-6 and the mirrored one under −1e-6 were `unclassified`, the level top
+    // unmirrored `edge_coedge_count`, and the rest were made, two solids along the edge,
+    // by the same noise), and past it of the edge (two solids apart)
+    for (LIPPED_TURNS) |turn| for ([_]bool{ false, true }) |mirrored| {
+        var slab = try lippedSlab(turn, mirrored);
+        defer slab.deinit();
+        for (LIPPED_LIFTS_IN_PLANE) |lift| {
+            errdefer std.debug.print("turned {d}, mirrored {}, lifted {e}\n", .{ turn, mirrored, lift });
+            var plate = try plateOverSlab(lift);
+            defer plate.deinit();
+            try helpers.expectIdentitiesAtTolerance(&slab, &plate);
+            try helpers.expectIdentitiesAtTolerance(&plate, &slab);
+            var joined = try sound(&slab, &plate, .@"union");
+            defer joined.deinit();
+            try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+        }
+        for (LIPPED_LIFTS_APART) |lift| {
+            errdefer std.debug.print("turned {d}, mirrored {}, lifted {e}\n", .{ turn, mirrored, lift });
+            var plate = try plateOverSlab(lift);
+            defer plate.deinit();
+            try expectRefused(&slab, &plate, .below_feature_size);
+            try expectRefused(&plate, &slab, .below_feature_size);
+        }
+        for (LIPPED_LIFTS_CLEAR) |lift| {
+            errdefer std.debug.print("turned {d}, mirrored {}, lifted {e}\n", .{ turn, mirrored, lift });
+            var plate = try plateOverSlab(lift);
+            defer plate.deinit();
+            try expectAllSound(&slab, &plate);
+            var apart = try sound(&slab, &plate, .@"union");
+            defer apart.deinit();
+            try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&apart));
+        }
     };
 }
