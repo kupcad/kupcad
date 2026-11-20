@@ -51,6 +51,28 @@ const TURN_PAST_ANGLE: f64 = 0.02;
 const SHALLOW_LIFTS = [_]f64{ 2.0000000063948848e-5, 6e-5, 1e-4, 1.5e-4, 2.5e-4 };
 /// The hull of those tests, as the fuzzer drew it: its top the four points at z = 4.
 const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
+/// The turns of the tests of a prism's face shallow to the face of the other operand its
+/// edge lies in (the ridge): parallel to that face within the angular tolerance and not in
+/// one plane with it (the second the solids fuzzer's turn at the tolerance), and past it.
+const RIDGE_TURNS = [_]f64{ 0.005, TURN_AT_ANGLE, TURN_PAST_ANGLE };
+/// How far such a prism is lifted off the face its ridge lies in: within the intersection
+/// tolerance (2e-5) over it and under it.
+const RIDGE_LIFTS = [_]f64{ 1e-5, -1e-5 };
+/// Those prisms' cross-sections in x and y (`ridgePrism` extrudes them along z), the ridge
+/// through the origin and the face from it along +x the shallow one once the prism is
+/// turned about the ridge: a wedge over y = 0, a wedge under it, a wedge whose shallow face
+/// is a strip `RIDGE_STRIP` wide, and a block notched down to the ridge, its edge there
+/// concave.
+const RIDGE_WEDGE = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 0 }, .{ -1, 1 } };
+const RIDGE_WEDGE_UNDER = [_]vec.Vec2{ .{ 0, 0 }, .{ -1, -1 }, .{ 3, 0 } };
+const RIDGE_STRIP: f64 = 1e-3;
+const RIDGE_STRIPPED = [_]vec.Vec2{ .{ 0, 0 }, .{ RIDGE_STRIP, 0 }, .{ 1, 1 }, .{ -1, 1 } };
+const RIDGE_NOTCHED = [_]vec.Vec2{ .{ -4, -3 }, .{ 3, -3 }, .{ 3, 0 }, .{ 0, 0 }, .{ -1, 1 }, .{ -4, 1 } };
+/// The strip's turns, both past the angular tolerance: its far edge within the tolerance
+/// of the face the ridge lies in (1.8e-5 off it, the strip in that face's plane as the
+/// paves hold it) and past it (2.1e-5).
+const RIDGE_STRIP_TURN_ON: f64 = 0.018;
+const RIDGE_STRIP_TURN_OFF: f64 = 0.021;
 /// The hull of the tests of a slab's top with an edge over its plane, as the solids fuzzer
 /// drew it (its corners at z = 2 the ends of that edge); the turns of the plate that cuts
 /// the slab from it, the find's and its neighbours (a top 2.7e-7 rad off level either
@@ -3004,6 +3026,208 @@ test "degeneracy: a hull's top at the angular tolerance to a plate's or past it,
         defer hull.deinit();
         try expectAllSound(&hull, &plate);
     };
+}
+
+/// The prism of cross-section `profile` (x and y, `RIDGE_*`) along z from 0 to 2, turned by
+/// `turn` about its ridge (the z axis: positive lifts the face along +x off y = 0, negative
+/// dips it under), mirrored in x or not, then lifted by `lift` in y.
+fn ridgePrism(profile: []const vec.Vec2, turn: f64, mirrored: bool, lift: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = try primitives.polygon(testing.allocator, tol, profile, &diag);
+    defer sheet.deinit();
+    var drawn = try @import("../construct/sweep.zig").extrude(testing.allocator, &sheet, .{ 0, 0, 2 }, .{}, &diag);
+    defer drawn.deinit();
+    var place = mat.Affine.rotateAbout(vec.ZERO3, vec.Z3, turn);
+    if (mirrored) place = mat.Affine.mirror(vec.X3).compose(&place);
+    place = mat.Affine.translate(.{ 0, lift, 0 }).compose(&place);
+    return @import("../construct/transform.zig").transform(testing.allocator, &drawn, &place, .{}, &diag);
+}
+
+/// Each operation of `a` and `b`, either way round, made and sound, the identities to the
+/// tolerance; their union `solids` solids, the same with a ray cast from every fragment no
+/// seam tells the side of (no contagion: the fragments `classify.wedgeSide` passes over
+/// are a ray's each), and their intersection `common` solids (none where they only touch).
+fn expectSolidCounts(a: *const Body, b: *const Body, solids: usize, common: usize) !void {
+    try helpers.expectIdentitiesAtTolerance(a, b);
+    try helpers.expectIdentitiesAtTolerance(b, a);
+    var joined = try sound(a, b, .@"union");
+    defer joined.deinit();
+    try testing.expectEqual([2]usize{ solids, 0 }, shellKinds(&joined));
+    var report = pipeline.Report.init(testing.allocator);
+    defer report.deinit();
+    var by_rays = try helpers.reported(a, b, .@"union", .{ .contagion = false }, &report);
+    defer by_rays.deinit();
+    try testing.expectEqual(joined.counts(), by_rays.counts());
+    try testing.expectEqual(shellKinds(&joined), shellKinds(&by_rays));
+    try testing.expectApproxEqAbs(try volume(&joined), try volume(&by_rays), CLOSE);
+    var shared = try sound(a, b, .intersection);
+    defer shared.deinit();
+    try testing.expectEqual([2]usize{ common, 0 }, shellKinds(&shared));
+}
+
+test "degeneracy: a wedge resting on its ridge in a plate's face, its face beside the plate's shallow to it within the angular tolerance or past it, touches the plate along the ridge where that face rises and cuts into it where it dips, mirrored or not, the ridge within the tolerance of the face or on it" {
+    // The targeted review of the places that take "in one plane" from the normals' angle
+    // (2026-11-20, after bl): `classify.wedgeSide` reads the plate's face beside the
+    // ridge, an edge of the wedge, with the wedge's shallow face "in the fragment's plane"
+    // by the angle (`tol.parallel`) where the paves hold the two in no one plane (they
+    // hinge at the ridge): toward the shallow face it tells no side (a ray's or another
+    // seam's to tell), away from it the wedge's other face tells it alone; past the angle
+    // both faces tell it. `pipeline.pairByWedges` then orders the four faces about the
+    // ridge where the solids only touch, the shallow face the turn from the plate's. The
+    // outcome is the geometry's whichever branch reads it: two solids touching along the
+    // ridge where the face rises from the plate's, the wedge cut into the plate where it
+    // dips under it, a ridge within the tolerance of the face on it
+    var plate = try box(.{ -5, -2, -1 }, .{ 5, 0, 3 });
+    defer plate.deinit();
+    for (RIDGE_TURNS) |turn| for ([_]f64{ 1, -1 }) |sign| for ([_]bool{ false, true }) |mirrored| {
+        // Mirrored at the angular tolerance only: the other turns' mirrors add no branch
+        if (mirrored and turn != TURN_AT_ANGLE) continue;
+        errdefer std.debug.print("turned {d}, mirrored {}\n", .{ sign * turn, mirrored });
+        var wedge = try ridgePrism(&RIDGE_WEDGE, sign * turn, mirrored, 0);
+        defer wedge.deinit();
+        try expectSolidCounts(&plate, &wedge, if (sign > 0) 2 else 1, @intFromBool(sign < 0));
+    };
+    // Lifted: the rising face's ridge under the plate's face, the dipping one's over it
+    for ([_]f64{ 1, -1 }, [_]f64{ RIDGE_LIFTS[1], RIDGE_LIFTS[0] }) |sign, lift| {
+        errdefer std.debug.print("turned {d}, lifted {e}\n", .{ sign * TURN_AT_ANGLE, lift });
+        var wedge = try ridgePrism(&RIDGE_WEDGE, sign * TURN_AT_ANGLE, false, lift);
+        defer wedge.deinit();
+        try expectSolidCounts(&plate, &wedge, if (sign > 0) 2 else 1, @intFromBool(sign < 0));
+    }
+}
+
+test "degeneracy: a box's edge along a wedge's ridge, the wedge's face over the box's shallow to it within the angular tolerance or past it, or the box beside the ridge: they touch along the edge, or the wedge cuts into the box where its face dips" {
+    // The same review: both operands' edges on the ridge, so each one's faces are read
+    // about the other's edge (`classify.wedgeSide`: the box's face under the wedge's
+    // shallow one runs onto it, no side; the box's side and the wedge's steep face are
+    // read by both faces of the other's edge) and the four faces about the one line are
+    // ordered with the shallow pair the turn apart (`pipeline.pairByWedges`). A box
+    // beside the ridge, the shallow face away from it, touches the wedge along the edge
+    var under = try box(.{ 0, -2, -1 }, .{ 5, 0, 3 });
+    defer under.deinit();
+    for (RIDGE_TURNS) |turn| for ([_]f64{ 1, -1 }) |sign| {
+        errdefer std.debug.print("under the shallow face, turned {d}\n", .{sign * turn});
+        var wedge = try ridgePrism(&RIDGE_WEDGE, sign * turn, false, 0);
+        defer wedge.deinit();
+        try expectSolidCounts(&under, &wedge, if (sign > 0) 2 else 1, @intFromBool(sign < 0));
+    };
+    var beside = try box(.{ -5, -2, -1 }, .{ 0, 0, 3 });
+    defer beside.deinit();
+    var wedge = try ridgePrism(&RIDGE_WEDGE, TURN_AT_ANGLE, false, 0);
+    defer wedge.deinit();
+    try expectSolidCounts(&beside, &wedge, 2, 0);
+}
+
+test "degeneracy: two wedges ridge to ridge, their facing faces shallow to each other within the angular tolerance or past it, touch along the ridge with a gap between the faces, join where the faces are one plane, and cut into each other where they cross" {
+    // The same review: a wedge under y = 0 and one over it share the ridge, the lower's
+    // top turned by the first angle and the upper's bottom by the second. The upper's
+    // bottom the steeper, the two touch along the ridge, the faces the difference apart
+    // about it (0.006 to 0.028: `pipeline.pairByWedges` orders them; within the angular
+    // tolerance `classify.wedgeSide` reads each face as in the other's plane, which the
+    // paves do not hold); the same turn, the faces are one plane and the wedges join; the
+    // lower's top the steeper, they cut into each other
+    const cases = [_]struct { under: f64, over: f64, solids: usize, common: usize }{
+        .{ .under = 0, .over = TURN_AT_ANGLE, .solids = 2, .common = 0 },
+        .{ .under = TURN_AT_ANGLE, .over = TURN_PAST_ANGLE, .solids = 2, .common = 0 },
+        .{ .under = -TURN_AT_ANGLE, .over = TURN_AT_ANGLE, .solids = 2, .common = 0 },
+        .{ .under = TURN_AT_ANGLE, .over = TURN_AT_ANGLE, .solids = 1, .common = 0 },
+        .{ .under = 0, .over = -TURN_AT_ANGLE, .solids = 1, .common = 1 },
+        .{ .under = TURN_AT_ANGLE, .over = RIDGE_TURNS[0], .solids = 1, .common = 1 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("the lower turned {d}, the upper {d}\n", .{ case.under, case.over });
+        var lower = try ridgePrism(&RIDGE_WEDGE_UNDER, case.under, false, 0);
+        defer lower.deinit();
+        var upper = try ridgePrism(&RIDGE_WEDGE, case.over, false, 0);
+        defer upper.deinit();
+        try expectSolidCounts(&lower, &upper, case.solids, case.common);
+    }
+}
+
+test "degeneracy: a wedge's strip past the angular tolerance to a plate's face, its far edge within the tolerance of the face, is joined to the plate along the strip; its far edge past the tolerance, the wedge touches the plate along its ridge or cuts into it" {
+    // The same review, the two decisions the other way round: a strip 1e-3 wide from the
+    // ridge, turned 0.018 (past the angular tolerance, 0.01414), has its far edge 1.8e-5
+    // off the plate's face, within the tolerance, so the paves hold strip and face in one
+    // plane (`liesIn`, by the strip's corners, whatever the angle) where
+    // `classify.wedgeSide` reads the strip as across the face's plane by the angle. The
+    // twins decide the strip and the seams the rest alike: one solid, joined along the
+    // strip, rising or dipping, the plate through under it or a box ending at the ridge.
+    // Turned 0.021, the far edge 2.1e-5 off, the strip is no part of the face: the wedge
+    // touches the plate along the ridge, or cuts 2.1e-5 into it
+    var plate = try box(.{ -5, -2, -1 }, .{ 5, 0, 3 });
+    defer plate.deinit();
+    var under = try box(.{ 0, -2, -1 }, .{ 5, 0, 3 });
+    defer under.deinit();
+    for ([_]f64{ 1, -1 }) |sign| {
+        errdefer std.debug.print("turned {d} or {d}\n", .{ sign * RIDGE_STRIP_TURN_ON, sign * RIDGE_STRIP_TURN_OFF });
+        var on = try ridgePrism(&RIDGE_STRIPPED, sign * RIDGE_STRIP_TURN_ON, false, 0);
+        defer on.deinit();
+        try expectSolidCounts(&plate, &on, 1, 0);
+        try expectSolidCounts(&under, &on, 1, 0);
+        var off = try ridgePrism(&RIDGE_STRIPPED, sign * RIDGE_STRIP_TURN_OFF, false, 0);
+        defer off.deinit();
+        try expectSolidCounts(&plate, &off, if (sign > 0) 2 else 1, @intFromBool(sign < 0));
+    }
+}
+
+test "degeneracy: a block notched down to an edge in a plate's face, the notch's floor shallow to the face within the angular tolerance or past it, is joined and cut with the floor over the face or under it" {
+    // The same review, a concave edge: the block holds the plate's face about the ridge
+    // but for the notch over it, whose floor leaves the ridge the turn over the face (a
+    // sliver of the block between them, which the block less the plate keeps as a solid of
+    // its own, with the block's parts over and under the plate) or under it (the plate's
+    // face shows in the notch). `classify.wedgeSide` reads the plate's face about the
+    // ridge with the floor in its plane by the angle: toward the floor no side, away from
+    // it behind the notch's wall, inside the block
+    var plate = try box(.{ -5, -2, -1 }, .{ 5, 0, 3 });
+    defer plate.deinit();
+    for (RIDGE_TURNS) |turn| for ([_]f64{ 1, -1 }) |sign| {
+        errdefer std.debug.print("turned {d}\n", .{sign * turn});
+        var notched = try ridgePrism(&RIDGE_NOTCHED, sign * turn, false, 0);
+        defer notched.deinit();
+        try expectSolidCounts(&plate, &notched, 1, 1);
+        var rest = try sound(&notched, &plate, .difference);
+        defer rest.deinit();
+        try testing.expectEqual([2]usize{ if (sign > 0) 3 else 2, 0 }, shellKinds(&rest));
+    };
+}
+
+test "degeneracy: a keel in a plate's face, both faces of it shallow to the plate's within the angular tolerance or one past it, touches the plate where both rise, cuts into it either side where both dip, and through it where one does; a knife of two such faces lying on the plate is refused" {
+    // The same review, both faces of the edge "in the fragment's plane" by the angle: a
+    // block's bottom creased along the ridge, each side leaving it at its own angle to the
+    // plate's face (`classify.wedgeSide` tells no side of the plate's face either way
+    // along it where both are within the angular tolerance, and by one face where the
+    // other is past it; `pipeline.pairByWedges` orders the four faces about the ridge,
+    // each of the block's its angle from the plate's). Both rising, the block touches the
+    // plate along the ridge, on the face or within the tolerance of it; both dipping, it
+    // cuts into the plate either side of the ridge, the two cuts meeting along it; one
+    // of each, it cuts in on one side only
+    const cases = [_]struct { left: f64, right: f64, lift: f64, solids: usize, common: usize }{
+        .{ .left = RIDGE_TURNS[0], .right = RIDGE_TURNS[0], .lift = 0, .solids = 2, .common = 0 },
+        .{ .left = TURN_AT_ANGLE, .right = TURN_AT_ANGLE, .lift = 0, .solids = 2, .common = 0 },
+        .{ .left = TURN_AT_ANGLE, .right = TURN_AT_ANGLE, .lift = RIDGE_LIFTS[1], .solids = 2, .common = 0 },
+        .{ .left = RIDGE_TURNS[0], .right = TURN_PAST_ANGLE, .lift = 0, .solids = 2, .common = 0 },
+        .{ .left = -RIDGE_TURNS[0], .right = -RIDGE_TURNS[0], .lift = 0, .solids = 1, .common = 2 },
+        .{ .left = -TURN_AT_ANGLE, .right = -TURN_AT_ANGLE, .lift = 0, .solids = 1, .common = 2 },
+        .{ .left = TURN_AT_ANGLE, .right = -TURN_AT_ANGLE, .lift = 0, .solids = 1, .common = 1 },
+    };
+    var plate = try box(.{ -5, -2, -1 }, .{ 5, 0, 3 });
+    defer plate.deinit();
+    for (cases) |case| {
+        errdefer std.debug.print("left {d}, right {d}, lifted {e}\n", .{ case.left, case.right, case.lift });
+        const profile = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 3 * @tan(case.right) }, .{ 3, 1 }, .{ -3, 1 }, .{ -3, 3 * @tan(case.left) } };
+        var keel = try ridgePrism(&profile, 0, false, case.lift);
+        defer keel.deinit();
+        try expectSolidCounts(&plate, &keel, case.solids, case.common);
+    }
+    // A knife: both faces of the ridge to one side of it, within the angular tolerance of
+    // each other and of the plate's face, which is within the tolerance of both by the
+    // ridge (`pave.sandwiched`, the same angle deciding "parallel" there)
+    const blade = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 3 * @tan(0.004) }, .{ 3, 3 * @tan(0.012) } };
+    var knife = try ridgePrism(&blade, 0, false, 0);
+    defer knife.deinit();
+    try expectRefused(&plate, &knife, .below_feature_size);
+    try expectRefused(&knife, &plate, .below_feature_size);
 }
 
 /// A box from `lo` to `hi` at the tolerance `t`, turned by `turn` about `axis` through the
