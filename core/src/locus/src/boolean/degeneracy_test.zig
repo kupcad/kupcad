@@ -46,11 +46,11 @@ const FUZZ_GRID_MIDDLE: Vec3 = .{ 2, 2, 2 };
 /// 1.4e-14) and one clear of it, and how far the hull of the tests of a top that shallow to
 /// a plate's is lifted: the find's (two of its top's corners 1.8e-4 under the plate's top,
 /// the intersection tolerance 2e-4) and its neighbours, down to 5e-5 over it.
-const TURN_AT_ANGLE: f64 = 0.014142253476507214;
+pub const TURN_AT_ANGLE: f64 = 0.014142253476507214;
 const TURN_PAST_ANGLE: f64 = 0.02;
 const SHALLOW_LIFTS = [_]f64{ 2.0000000063948848e-5, 6e-5, 1e-4, 1.5e-4, 2.5e-4 };
 /// The hull of those tests, as the fuzzer drew it: its top the four points at z = 4.
-const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
+pub const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
 /// The turns of the tests of a prism's face shallow to the face of the other operand its
 /// edge lies in (the ridge): parallel to that face within the angular tolerance and not in
 /// one plane with it (the second the solids fuzzer's turn at the tolerance), and past it.
@@ -63,11 +63,11 @@ const RIDGE_LIFTS = [_]f64{ 1e-5, -1e-5 };
 /// turned about the ridge: a wedge over y = 0, a wedge under it, a wedge whose shallow face
 /// is a strip `RIDGE_STRIP` wide, and a block notched down to the ridge, its edge there
 /// concave.
-const RIDGE_WEDGE = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 0 }, .{ -1, 1 } };
-const RIDGE_WEDGE_UNDER = [_]vec.Vec2{ .{ 0, 0 }, .{ -1, -1 }, .{ 3, 0 } };
+pub const RIDGE_WEDGE = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 0 }, .{ -1, 1 } };
+pub const RIDGE_WEDGE_UNDER = [_]vec.Vec2{ .{ 0, 0 }, .{ -1, -1 }, .{ 3, 0 } };
 const RIDGE_STRIP: f64 = 1e-3;
-const RIDGE_STRIPPED = [_]vec.Vec2{ .{ 0, 0 }, .{ RIDGE_STRIP, 0 }, .{ 1, 1 }, .{ -1, 1 } };
-const RIDGE_NOTCHED = [_]vec.Vec2{ .{ -4, -3 }, .{ 3, -3 }, .{ 3, 0 }, .{ 0, 0 }, .{ -1, 1 }, .{ -4, 1 } };
+pub const RIDGE_STRIPPED = [_]vec.Vec2{ .{ 0, 0 }, .{ RIDGE_STRIP, 0 }, .{ 1, 1 }, .{ -1, 1 } };
+pub const RIDGE_NOTCHED = [_]vec.Vec2{ .{ -4, -3 }, .{ 3, -3 }, .{ 3, 0 }, .{ 0, 0 }, .{ -1, 1 }, .{ -4, 1 } };
 /// The strip's turns, both past the angular tolerance: its far edge within the tolerance
 /// of the face the ridge lies in (1.8e-5 off it, the strip in that face's plane as the
 /// paves hold it) and past it (2.1e-5).
@@ -91,18 +91,18 @@ const LIPPED_LIFTS_CLEAR = [_]f64{ 1.9e-4, 2.5e-4 };
 /// hull's edge between its corners (0, 1, 2) and (3, 0, 2), and how far over the top's
 /// plane the edge lies, within the tolerance (2e-4) over it and under it. The slab's
 /// bottom has one corner as far off its plane the same way, the hull's (1, 3, 1).
-const LIP_NUDGE: Vec3 = .{ 2.000000005684342e-5, -2e-3, -2e-5 };
-const LIP_TOLERANCE = Tolerance.fromZone(1e-4);
-const LIP_Z: f64 = 2 + LIP_NUDGE[2];
+pub const LIP_NUDGE: Vec3 = .{ 2.000000005684342e-5, -2e-3, -2e-5 };
+pub const LIP_TOLERANCE = Tolerance.fromZone(1e-4);
+pub const LIP_Z: f64 = 2 + LIP_NUDGE[2];
 const LIP_OVER: f64 = 1.8e-4;
 const LIP_UNDER: f64 = -1.8e-4;
 /// Rectangles in x and y against that slab's top and bottom: past both all round, inside
 /// the top clear of the edge, and across the edge (two sides crossing it, a third inside
 /// the top); and the bottom's corner off its plane, where the hull's (1, 3, 1) is.
-const FOOT_COVER = [2][2]f64{ .{ -1, -1.5 }, .{ 4.5, 4.5 } };
-const FOOT_INSIDE = [2][2]f64{ .{ 1.5, 1.5 }, .{ 2.2, 2.2 } };
-const FOOT_ACROSS = [2][2]f64{ .{ 1, -1 }, .{ 2, 1.5 } };
-const BOTTOM_CORNER = [2]f64{ 1 + LIP_NUDGE[0], 3 + LIP_NUDGE[1] };
+pub const FOOT_COVER = [2][2]f64{ .{ -1, -1.5 }, .{ 4.5, 4.5 } };
+pub const FOOT_INSIDE = [2][2]f64{ .{ 1.5, 1.5 }, .{ 2.2, 2.2 } };
+pub const FOOT_ACROSS = [2][2]f64{ .{ 1, -1 }, .{ 2, 1.5 } };
+pub const BOTTOM_CORNER = [2]f64{ 1 + LIP_NUDGE[0], 3 + LIP_NUDGE[1] };
 /// The lifted edge's height over its top's plane and a box's bottom's over the edge, the
 /// bottom within the tolerance (2e-4) of the edge and past it of the plane, by 1e-5 to
 /// 7e-5.
@@ -116,7 +116,7 @@ const Meeting = enum { one_solid, two_solids, overlap, refused };
 /// bottom's plane (into the slab); a box as it stands; a box in the frame of the lifted
 /// edge (x along it from its middle, y across it into the top, z the height) or of its
 /// end at the hull's corner (0, 1, 2); the hull of points in the edge's frame.
-const LipShape = union(enum) {
+pub const LipShape = union(enum) {
     on_top: struct { foot: [2][2]f64, lift: f64 },
     under: struct { foot: [2][2]f64, lift: f64 },
     box: [2]Vec3,
@@ -2891,7 +2891,7 @@ fn fuzzHull(points: []const Vec3, move: Vec3, nudge: Vec3) !Body {
 /// The hull of `points` at the tolerance `tol`, turned by `turn` about `axis` through the
 /// solids fuzzer's grid middle, scaled by `scale`, then moved by `move` and by `nudge`, as
 /// the fuzzer composes a placement (one rounding of each, in its order).
-fn fuzzHullPlaced(points: []const Vec3, axis: Vec3, turn: f64, scale: ?Vec3, move: Vec3, nudge: Vec3) !Body {
+pub fn fuzzHullPlaced(points: []const Vec3, axis: Vec3, turn: f64, scale: ?Vec3, move: Vec3, nudge: Vec3) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var shape = try @import("../construct/hull.zig").hull(testing.allocator, tol, points, &diag);
@@ -3082,7 +3082,7 @@ test "degeneracy: a plate's top 0.8° off a box's top, its edge the tolerance un
 
 /// The plate of the tests of a hull's top shallow to it, as the solids fuzzer placed it:
 /// x from 2, its top at z = 4, at a zone of 1e-4.
-fn shallowPlate() !Body {
+pub fn shallowPlate() !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var drawn = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ 2, -48, 1 }, .{ 52, 52, 3 });
@@ -3141,7 +3141,7 @@ test "degeneracy: a hull's top at the angular tolerance to a plate's or past it,
 /// The prism of cross-section `profile` (x and y, `RIDGE_*`) along z from 0 to 2, turned by
 /// `turn` about its ridge (the z axis: positive lifts the face along +x off y = 0, negative
 /// dips it under), mirrored in x or not, then lifted by `lift` in y.
-fn ridgePrism(profile: []const vec.Vec2, turn: f64, mirrored: bool, lift: f64) !Body {
+pub fn ridgePrism(profile: []const vec.Vec2, turn: f64, mirrored: bool, lift: f64) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var sheet = try primitives.polygon(testing.allocator, tol, profile, &diag);
@@ -3444,20 +3444,37 @@ test "degeneracy: a plate over a slab's top with an edge over its plane, the top
 /// `lip` over the top's plane; the slab's bottom has the hull's corner (1, 3, 1) the same
 /// way, `lip` over the bottom's plane.
 fn lippedSlabAt(lip: f64, mirrored: bool) !Body {
-    var points = LIPPED_HULL;
-    if (mirrored) for (&points) |*p| {
-        p[1] = 4 - p[1];
-    };
-    var hull = try fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ LIP_NUDGE[0], if (mirrored) -LIP_NUDGE[1] else LIP_NUDGE[1], LIP_NUDGE[2] });
+    return lippedSlabTurned(lip, 0, mirrored);
+}
+
+/// That slab cut by a plate turned by `turn` as the solids fuzzer turned bn's (about
+/// (1, 2, 3) through its grid's middle): its top that far off level.
+pub fn lippedSlabTurned(lip: f64, turn: f64, mirrored: bool) !Body {
+    var hull = try lippedHull(mirrored);
     defer hull.deinit();
-    var cutter = try fuzzBoxPlaced(LIP_TOLERANCE, .{ -98, -48, 2 }, .{ 52, 102, 4 }, vec.Z3, 0, .{ 2, 0.5, 0.5 }, .{ -2e-2, -5e-5, LIP_NUDGE[2] - lip });
+    var cutter = try lipCutter(lip, turn);
     defer cutter.deinit();
     return sound(&hull, &cutter, .intersection);
 }
 
+/// The hull that slab is cut from, mirrored in y or not.
+pub fn lippedHull(mirrored: bool) !Body {
+    var points = LIPPED_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = 4 - p[1];
+    };
+    return fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ LIP_NUDGE[0], if (mirrored) -LIP_NUDGE[1] else LIP_NUDGE[1], LIP_NUDGE[2] });
+}
+
+/// The plate that cuts the slab from that hull: its top `lip` under the hull's edge,
+/// turned by `turn`.
+pub fn lipCutter(lip: f64, turn: f64) !Body {
+    return fuzzBoxPlaced(LIP_TOLERANCE, .{ -98, -48, 2 }, .{ 52, 102, 4 }, .{ 1, 2, 3 }, turn, .{ 2, 0.5, 0.5 }, .{ -2e-2, -5e-5, LIP_NUDGE[2] - lip });
+}
+
 /// A wedge in the lifted edge's frame, its edge along that edge `dz` over it, its faces
 /// rising at 45° to either side.
-fn wedgeOver(dz: f64) [6]Vec3 {
+pub fn wedgeOver(dz: f64) [6]Vec3 {
     const z = LIP_Z + dz;
     return .{ .{ -0.5, 0, z }, .{ 0.5, 0, z }, .{ -0.5, 0.5, z + 0.5 }, .{ 0.5, 0.5, z + 0.5 }, .{ -0.5, -0.5, z + 0.5 }, .{ 0.5, -0.5, z + 0.5 } };
 }
@@ -3476,7 +3493,7 @@ fn lipFrame(mirrored: bool, at_end: bool) struct { origin: Vec3, along: Vec3, in
 
 /// The other operand `shape` of a test against the slab whose edge lies `lip` over its
 /// top's plane (zone 1e-4), mirrored in y as the slab is.
-fn lipOperand(shape: LipShape, lip: f64, mirrored: bool) !Body {
+pub fn lipOperand(shape: LipShape, lip: f64, mirrored: bool) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const world: ?[2]Vec3 = switch (shape) {

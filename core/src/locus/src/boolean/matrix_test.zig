@@ -29,10 +29,11 @@ const check = @import("../topology/check.zig");
 const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
 const oracle = @import("oracle_test.zig");
+const drawn = @import("degeneracy_test.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
-/// Every value of every ladder, not the fast tier's (`-Dedge-matrix=full`).
+/// Every value of every ladder, not the fast tier's (`-Dedge-matrix=true`).
 const FULL: bool = @import("test_paths").edge_matrix_full;
 /// The first operand's zone; the second's is it or ten times it (`ZONES`).
 const ZONE = 1e-5;
@@ -107,6 +108,92 @@ const SIDE_GAPS = [_]f64{ -0.5, 0, 0.5, 1.1 };
 const FAST_SIDE_GAPS = [_]f64{0.5};
 const TOP_STEPS = [_]f64{ -0.9, 0, 0.5, 0.9, 1.1 };
 const FAST_TOP_STEPS = [_]f64{0.9};
+/// Mirrored or not; the fast tier's as drawn.
+const BOTH = [_]bool{ false, true };
+const FAST_BOTH = [_]bool{false};
+/// Turns of a hull's top from a plate's top about a line in both (find bl), either way: a
+/// hair, plain shallow ones, the angular tolerance straddled with the solids fuzzer's own
+/// turn at it (1 − cos of it the tolerance less 1.4e-14), and past it.
+const SHALLOW_TURNS = [_]f64{ 1e-6, 1e-3, 0.005, 0.0141, drawn.TURN_AT_ANGLE, 0.0143, 0.02 };
+const FAST_SHALLOW_TURNS = [_]f64{drawn.TURN_AT_ANGLE};
+/// The fast tier's heights in tolerances of that top's corners over the plate's top: the
+/// find's (under it, within reach) and past the reach.
+const FAST_SHALLOW_OVER = [_]f64{ -0.9, -1.1 };
+/// How far in tolerances those corners lie inside the plate's side: as the fuzzer drew
+/// them (null: 0.028 inside at the tolerance turn), on the side's edge, and within reach
+/// of it and past it either way.
+const SHALLOW_INSIDE = [_]?f64{ null, -1.1, -0.5, 0, 0.5, 1.1 };
+const FAST_SHALLOW_INSIDE = [_]?f64{null};
+/// The zone of the slab whose edge lies off its top's plane (finds bn and the hinge
+/// window, the targeted review's lead 1: `degeneracy_test.lippedSlabTurned`), the solids
+/// fuzzer's plates', and of what meets it.
+const LIP_ZONE = 1e-4;
+/// How far that edge lies over its top's plane, in intersection tolerances (under it when
+/// negative), and the turns of the plate that cut the slab (bn's, either way, and none:
+/// the top 2.7e-7 rad off level).
+const LIPS = [_]f64{ 0.9, 0.5, -0.5, -0.9 };
+const FAST_LIPS = [_]f64{0.9};
+const LIP_TURNS = [_]f64{ 0, 1e-6, -1e-6 };
+const FAST_LIP_TURNS = [_]f64{0};
+/// Heights in tolerances of a face over that slab's top's plane (or its bottom's): under
+/// it, in it, within the tolerance of it, between the tolerance and a merged vertex's
+/// reach (the hinge window: 1.05), and past both; and heights over the edge itself, which
+/// with the edge's own reach the same marks one plane further (0.15 over an edge 0.9 over
+/// the plane is the window again).
+const LIP_LIFTS = [_]f64{ -1.1, -0.5, 0, 0.5, 0.9, 1.05, 1.1, 1.5 };
+const FAST_LIP_LIFTS = [_]f64{ 0.9, 1.1 };
+const LIP_OVER_EDGE = [_]f64{ -0.5, 0, 0.15, 0.6, 0.85, 1.1, 1.25 };
+const FAST_LIP_OVER_EDGE = [_]f64{0.15};
+/// Offsets in tolerances across that edge, in the top's plane, of a box's side along it or
+/// an upright edge through it, and of a box's corner from its end.
+const LIP_ACROSS = [_]f64{ -1.5, -1.1, -0.5, 0, 0.5, 1.1, 1.5 };
+const FAST_LIP_ACROSS = [_]f64{0.5};
+/// Those offsets for a box's bottom edge along the edge and over it: within reach of the
+/// edge either way and past it. 1.5, the next of `LIP_ACROSS`, waits for the find it
+/// showed (2026-11-21: a box 1.5 in and 0.85 over an edge 0.9 over its plane, clear of the
+/// slab, taken into it under the far, turned move).
+const LIP_EDGE_IN = [_]f64{ -1.1, -0.5, 0, 0.5, 1.1 };
+const LIP_FROM_END = [_]f64{ -0.5, 0, 0.5 };
+const FAST_LIP_FROM_END = [_]f64{0};
+/// Turns of a prism's face about its ridge from the face of the other solid the ridge
+/// lies in (the targeted review's lead 2, `classify.wedgeSide` and `pipeline.pairByWedges`),
+/// either way: a hair, plain shallow ones, the angular tolerance straddled with the
+/// fuzzer's turn at it, and past it; the turns two prisms take together; and a strip's,
+/// 1e-3 wide, its far edge within the tolerance of the face (0.018 at a tolerance of
+/// 2e-5) or past it.
+const RIDGE_TURNS = [_]f64{ 1e-5, 1e-3, 0.005, 0.0141, drawn.TURN_AT_ANGLE, 0.0143, 0.02 };
+const FAST_RIDGE_TURNS = [_]f64{drawn.TURN_AT_ANGLE};
+const RIDGE_PAIR_TURNS = [_]f64{ 0, 0.005, -0.005, drawn.TURN_AT_ANGLE, -drawn.TURN_AT_ANGLE, 0.02, -0.02 };
+const FAST_RIDGE_PAIR_TURNS = [_]f64{ drawn.TURN_AT_ANGLE, -drawn.TURN_AT_ANGLE };
+const STRIP_TURNS = [_]f64{ 0.015, 0.018, 0.021, 0.03 };
+const FAST_STRIP_TURNS = [_]f64{0.018};
+/// How far the ridge is lifted off that face, in tolerances: on it, within reach either
+/// way, and past it.
+const RIDGE_LIFTS = [_]f64{ -1.1, -0.9, -0.5, 0, 0.5, 0.9, 1.1 };
+const FAST_RIDGE_LIFTS = [_]f64{0.5};
+/// The wall of find bp, the solids fuzzer's (`fuzz_test.GapShape`): a box from y and z 1
+/// to 4 less a cavity `WALL_INSET` in from its faces and `WALL_DEPTH` deep, which leaves a
+/// wall about the plane x = `WALL_AT`; its thicknesses in tolerances (past the minimum
+/// feature size, bp's 3 among them), and its zone and the plate's.
+const WALL_AT = 2;
+const WALL_DEPTH = 1.5;
+const WALL_INSET = 0.25;
+const WALL_ZONE = 1e-4;
+const WALL_GAPS = [_]f64{ 2.1, 2.5, 3, 4 };
+const FAST_WALL_GAPS = [_]f64{3};
+/// Where the side of the plate joined to that wall lies from the wall's middle plane, in
+/// tolerances (bp's 1: inside a wall 3 thick, half a tolerance from its outer face); and
+/// how far the hull that meets the two is nudged along x and z, within the tolerance and
+/// clear of it (bp's -1 up; its 0.25 along waits for bp's fix: with it the walls 3 and 4
+/// thick fail as bp does, `unclassified`).
+const WALL_PLATE_SIDES = [_]f64{ -2.5, -1.6, -1.1, -0.5, 0, 0.5, 1, 1.1, 1.6, 2.5 };
+const FAST_WALL_PLATE_SIDES = [_]f64{1.1};
+const WALL_HULL_ALONG = [_]f64{ 0, 1.1, 5 };
+const FAST_WALL_HULL_ALONG = [_]f64{1.1};
+const WALL_HULL_UP = [_]f64{ -1.1, -1, -0.5, 0, 0.5, 1.1, 5 };
+const FAST_WALL_HULL_UP = [_]f64{-1.1};
+/// bp's hull, as the fuzzer drew it.
+const WALL_HULL = [_]Vec3{ .{ 3, 4, 2 }, .{ 2, 2, 4 }, .{ 0, 4, 4 }, .{ 3, 4, 3 }, .{ 0, 3, 0 }, .{ 1, 4, 3 }, .{ 3, 1, 2 } };
 
 fn pick(full: []const f64, fast: []const f64) []const f64 {
     return if (FULL) full else fast;
@@ -138,6 +225,9 @@ fn slopes() []const f64 {
 }
 fn thicknesses() []const f64 {
     return if (FULL) &THICKNESSES else &FAST_THICKNESSES;
+}
+fn both() []const bool {
+    return if (FULL) &BOTH else &FAST_BOTH;
 }
 
 /// The cases of one family: how many ran, and how each ended.
@@ -172,6 +262,11 @@ const Outcome = union(enum) { made, refused: diagnostics.Code };
 fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin: bool) !void {
     tally.cases += 1;
     var first = a catch |err| {
+        // The second was built already
+        if (b) |built| {
+            var second = built;
+            second.deinit();
+        } else |_| {}
         if (err == error.OutOfMemory) return err;
         tally.unbuilt += 1;
         return;
@@ -587,4 +682,284 @@ test "edge matrix: two boxes side by side, one's top a step over the other's and
         try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {d} tolerances apart, top {d} tolerances over, {e} rad", .{ ratio, s, t, angle }), helpers.boxAt(Tolerance.fromZone(ZONE), .{ 0, 0, 0 }, .{ 2, 2, 1 }), tiltedBox(ZONE * ratio, .{ 2 + s * x, 0, 0 }, .{ 4, 2, 1 + t * x }, .{ 3, 1, 1 + t * x }, vec.X3, angle), false);
     };
     try tally.finish();
+}
+
+test "edge matrix: a hull's top shallow to a plate's top, its corners about the plate's top" {
+    // The solids fuzzer's hull turned about y, its top's corners on the line x = 2 lifted d
+    // tolerances over a plate's top (under it when negative), 0.028 inside the plate's side
+    // at the tolerance turn or s tolerances inside it: the two tops parallel within the angular
+    // tolerance and not in one plane meet along the corners' line, the planes' own line
+    // somewhere beside it; past the angle, along their own (find bl: the seam there passed
+    // over as parallel, a ray's sample either side of the top)
+    var tally: Tally = .{ .family = "top shallow to a top", .reach = PLATE_REACH };
+    var buffer: [2 * DISTANCES.len]f64 = undefined;
+    const x = xsectOf(10);
+    for (pick(&SHALLOW_TURNS, &FAST_SHALLOW_TURNS)) |turn| for ([_]f64{ 1, -1 }) |sign| for (if (FULL) signedLadder(&buffer) else &FAST_SHALLOW_OVER) |d| for (both()) |mirrored| for (if (FULL) &SHALLOW_INSIDE else &FAST_SHALLOW_INSIDE) |inside| {
+        if (!FULL and sign < 0) continue;
+        var buffer_name: [200]u8 = undefined;
+        var name: std.Io.Writer = .fixed(&buffer_name);
+        try name.print("turned {e}, corners {d} tolerances over{s}", .{ sign * turn, d, if (mirrored) ", mirrored" else "" });
+        if (inside) |s| try name.print(", {d} tolerances inside the plate's side", .{s});
+        try run(&tally, name.buffered(), shallowHull(sign * turn, d * x, mirrored, if (inside) |s| s * x else null), drawn.shallowPlate(), false);
+    };
+    try tally.finish();
+}
+
+/// Find bl's hull turned by `turn` about y through the fuzzer's grid middle, its top's
+/// corners on the line x = 2 (which the turn lowers by 2 (1 − cos) and takes 2 sin along
+/// x) `over` above z = 4, the plate's top, and `inside` past x = 2, the plate's side (as
+/// the fuzzer nudged them when null). Mirrored in y or not.
+fn shallowHull(turn: f64, over: f64, mirrored: bool, inside: ?f64) !Body {
+    var points = drawn.SHALLOW_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = 3 - p[1];
+    };
+    return drawn.fuzzHullPlaced(&points, vec.Y3, turn, null, .{ 0, 0.5, 0 }, .{ if (inside) |s| s - 2 * @sin(turn) else 2e-5, 0, over + 2 * (1 - @cos(turn)) });
+}
+
+/// A slab whose edge lies off its top's plane: how far in tolerances, the turn of the
+/// plate that cut it, mirrored in y or not.
+const Slab = struct {
+    lip: f64,
+    turn: f64,
+    mirrored: bool,
+
+    /// The tolerance of the slab and of what meets it.
+    const X = Tolerance.fromZone(LIP_ZONE).xsect;
+
+    /// One case: the slab and `shape` against it, named by `what`.
+    fn run(self: Slab, tally: *Tally, shape: drawn.LipShape, comptime what: []const u8, args: anytype) !void {
+        var buffer: [240]u8 = undefined;
+        var name: std.Io.Writer = .fixed(&buffer);
+        try name.print("edge {d} tolerances over, cut at {e}{s}: ", .{ self.lip, self.turn, if (self.mirrored) ", mirrored" else "" });
+        try name.print(what, args);
+        try matrixRun(tally, name.buffered(), drawn.lippedSlabTurned(self.lip * X, self.turn, self.mirrored), drawn.lipOperand(shape, self.lip * X, self.mirrored), false);
+    }
+};
+
+const matrixRun = run;
+
+/// Every slab of the tier, each first cut from its hull as a case of its own (`tally`'s:
+/// the hull and the plate under the oracle, where a slab only failing to be made would
+/// count as not built), into `buffer`.
+fn slabs(tally: *Tally, buffer: *[LIPS.len * LIP_TURNS.len * BOTH.len]Slab) ![]const Slab {
+    var n: usize = 0;
+    for (pick(&LIPS, &FAST_LIPS)) |lip| for (pick(&LIP_TURNS, &FAST_LIP_TURNS)) |turn| for (both()) |mirrored| {
+        buffer[n] = .{ .lip = lip, .turn = turn, .mirrored = mirrored };
+        n += 1;
+        var name: [200]u8 = undefined;
+        try run(tally, try std.fmt.bufPrint(&name, "edge {d} tolerances over, cut at {e}{s}: the hull under the plate", .{ lip, turn, if (mirrored) ", mirrored" else "" }), drawn.lippedHull(mirrored), drawn.lipCutter(lip * Slab.X, turn), false);
+    };
+    return buffer[0..n];
+}
+
+/// The heights in tolerances over a plane of the faces met with a slab whose edge is
+/// `lip` over that plane: `LIP_LIFTS`, and `LIP_OVER_EDGE` over the edge, each once.
+fn lipLifts(lip: f64, buffer: *[LIP_LIFTS.len + LIP_OVER_EDGE.len]f64) []const f64 {
+    var n: usize = 0;
+    for (pick(&LIP_LIFTS, &FAST_LIP_LIFTS)) |l| {
+        buffer[n] = l;
+        n += 1;
+    }
+    over: for (pick(&LIP_OVER_EDGE, &FAST_LIP_OVER_EDGE)) |l| {
+        for (buffer[0..n]) |had| if (@abs(had - (lip + l)) < 1e-9) continue :over;
+        buffer[n] = lip + l;
+        n += 1;
+    }
+    return buffer[0..n];
+}
+
+test "edge matrix: a box on the top of a slab whose edge lies off the top's plane" {
+    // A slab cut from a hull by a plate whose top came within the tolerance of one of the
+    // hull's edges: the edge kept on its own line (D28), l tolerances off the top's plane.
+    // A box over the whole top, inside it clear of the edge, or across the edge (its sides
+    // crossing it, no corner of the slab under it), its bottom h tolerances over the
+    // plane: in the top's plane, on the edge and past the plane (parallel faces that share
+    // only the edge: finds bn and the hinge window), or clear of both
+    var tally: Tally = .{ .family = "box on a top with an edge off its plane" };
+    var slab_buffer: [LIPS.len * LIP_TURNS.len * BOTH.len]Slab = undefined;
+    var lift_buffer: [LIP_LIFTS.len + LIP_OVER_EDGE.len]f64 = undefined;
+    const feet = [_]struct { name: []const u8, foot: [2][2]f64 }{ .{ .name = "across the edge", .foot = drawn.FOOT_ACROSS }, .{ .name = "over the top", .foot = drawn.FOOT_COVER }, .{ .name = "inside the top", .foot = drawn.FOOT_INSIDE } };
+    for (try slabs(&tally, &slab_buffer)) |slab| for (if (FULL) &feet else feet[0..1]) |foot| for (lipLifts(slab.lip, &lift_buffer)) |h| {
+        try slab.run(&tally, .{ .on_top = .{ .foot = foot.foot, .lift = h * Slab.X } }, "a box {s}, its bottom {d} tolerances over the plane", .{ foot.name, h });
+    };
+    try tally.finish();
+}
+
+test "edge matrix: a box through, along or at the end of a slab's edge that lies off its top's plane" {
+    // The same slabs and a box through the top (a side along the edge or an upright edge
+    // through it, o tolerances inside it or outside, the box either side), a box's bottom
+    // edge along the edge h tolerances over it, a box's corner at the edge's end, and a
+    // wedge's edge down onto the edge or against it from beside: edge–edge and
+    // vertex–edge against the edge's own line, a section along the top's boundary
+    // (the targeted review's lead 1: `pave.alongBoundary`, `in_face.placeWithin`)
+    var tally: Tally = .{ .family = "box at an edge off its top's plane" };
+    var slab_buffer: [LIPS.len * LIP_TURNS.len * BOTH.len]Slab = undefined;
+    const z = drawn.LIP_Z;
+    const x = Slab.X;
+    for (try slabs(&tally, &slab_buffer)) |slab| {
+        for (pick(&LIP_ACROSS, &FAST_LIP_ACROSS)) |o| for (both()) |outside| {
+            const lo: f64 = if (outside) o * x - 1 else o * x;
+            const side: []const u8 = if (outside) "outside" else "inside";
+            try slab.run(&tally, .{ .by_edge = .{ .{ -0.5, lo, 1.5 }, .{ 0.5, lo + 1, 3 } } }, "a box through the top {s}, its side {d} tolerances in from the edge", .{ side, o });
+            if (FULL) try slab.run(&tally, .{ .by_edge = .{ .{ 0, lo, 1.5 }, .{ 1, lo + 1, 3 } } }, "a box through the top {s}, its upright edge {d} tolerances in from the edge", .{ side, o });
+        };
+        if (!FULL) continue;
+        for (LIP_EDGE_IN) |o| for (BOTH) |outside| for (LIP_OVER_EDGE) |h| {
+            const lo: f64 = if (outside) o * x - 1 else o * x;
+            try slab.run(&tally, .{ .by_edge = .{ .{ -0.5, lo, z + h * x }, .{ 0.5, lo + 1, 3 } } }, "a box {s}, its bottom edge {d} tolerances in from the edge and {d} over it", .{ if (outside) "outside" else "inside", o, h });
+        };
+        try slab.run(&tally, .{ .box = .{ .{ 1, -1, 1.5 }, .{ 2, 1.5, 3 } } }, "a box through the top across the edge", .{});
+        for (LIP_FROM_END) |o| {
+            try slab.run(&tally, .{ .by_end = .{ .{ -1, -1, 1.5 }, .{ o * x, o * x, 3 } } }, "a box through the slab, its upright edge {d} tolerances past the edge's end", .{o});
+            for (LIP_OVER_EDGE) |h| {
+                try slab.run(&tally, .{ .by_end = .{ .{ -1, -1, z + h * x }, .{ o * x, o * x, 3 } } }, "a box beside the slab, its corner {d} tolerances past the edge's end and {d} over it", .{ o, h });
+                try slab.run(&tally, .{ .by_end = .{ .{ o * x, o * x, z + h * x }, .{ 1, 1, 3 } } }, "a box over the top, its corner {d} tolerances past the edge's end and {d} over it", .{ o, h });
+            }
+        }
+        for (LIP_ACROSS) |h| try slab.run(&tally, .{ .wedge = drawn.wedgeOver(h * x) }, "a wedge's edge {d} tolerances over the edge", .{h});
+        for (LIP_FROM_END) |o| {
+            const d = o * x;
+            try slab.run(&tally, .{ .wedge = .{ .{ -0.5, d, z }, .{ 0.5, d, z }, .{ -0.5, d - 0.5, z + 0.3 }, .{ 0.5, d - 0.5, z + 0.3 }, .{ -0.5, d - 0.5, z - 0.3 }, .{ 0.5, d - 0.5, z - 0.3 } } }, "a wedge's edge against the edge from beside, {d} tolerances in", .{o});
+        }
+    }
+    try tally.finish();
+}
+
+test "edge matrix: a box against the one corner of a slab's bottom that lies off the bottom's plane" {
+    // The same slabs' bottoms, one corner of each l tolerances off the bottom's plane: a
+    // box under the whole bottom, or with a corner of its own at that corner under the
+    // slab or beside it, its top h tolerances over the plane (into the slab); and a box
+    // through the bottom there, an upright edge o tolerances from the corner (vertex–face
+    // and vertex–vertex with a single corner off its plane, `pave.blocksInside`)
+    var tally: Tally = .{ .family = "box at a corner off its bottom's plane" };
+    var slab_buffer: [LIPS.len * LIP_TURNS.len * BOTH.len]Slab = undefined;
+    var lift_buffer: [LIP_LIFTS.len + LIP_OVER_EDGE.len]f64 = undefined;
+    const c = drawn.BOTTOM_CORNER;
+    const feet = [_]struct { name: []const u8, foot: [2][2]f64 }{ .{ .name = "under the whole bottom", .foot = drawn.FOOT_COVER }, .{ .name = "under the slab, a corner at the corner", .foot = .{ .{ c[0], c[1] - 1 }, .{ c[0] + 1, c[1] } } }, .{ .name = "beside the slab, a corner at the corner", .foot = .{ .{ c[0] - 1, c[1] }, .{ c[0], c[1] + 1 } } } };
+    for (try slabs(&tally, &slab_buffer)) |slab| {
+        for (if (FULL) &feet else feet[0..1]) |foot| for (lipLifts(slab.lip, &lift_buffer)) |h| {
+            try slab.run(&tally, .{ .under = .{ .foot = foot.foot, .lift = h * Slab.X } }, "a box {s}, its top {d} tolerances over the plane", .{ foot.name, h });
+        };
+        if (!FULL) continue;
+        for (LIP_ACROSS) |o| {
+            const d = o * Slab.X;
+            try slab.run(&tally, .{ .box = .{ .{ c[0] + d, c[1] - 1, 0 }, .{ c[0] + 1, c[1] + d, 1.5 } } }, "a box through the bottom under the slab, its upright edge {d} tolerances from the corner", .{o});
+            try slab.run(&tally, .{ .box = .{ .{ c[0] - 1, c[1] + d, 0 }, .{ c[0] + d, c[1] + 1, 1.5 } } }, "a box through the bottom beside the slab, its upright edge {d} tolerances from the corner", .{o});
+        }
+    }
+    try tally.finish();
+}
+
+test "edge matrix: a prism's ridge in a face, its face beside shallow to that face" {
+    // A prism whose ridge lies along z in the face y = 0 of a plate, of a box whose edge
+    // runs along the ridge (under the shallow face) or of a box beside it, lifted l
+    // tolerances off that face, its face from the ridge turned by θ from the plate's:
+    // rising from it (the solids touch along the ridge) or dipping into it, within the
+    // angular tolerance (parallel by angle, hinged at the ridge) or past it. A wedge, a
+    // block notched down to the ridge (a concave edge there), and a wedge whose shallow
+    // face is a strip 1e-3 wide, in the plate's plane by its far edge's distance or not
+    // (the targeted review's lead 2: `classify.wedgeSide` takes "in one plane" from the
+    // angle, `pipeline.pairByWedges` orders the faces about the ridge)
+    var tally: Tally = .{ .family = "ridge in a face, shallow to it" };
+    const others = [_]struct { name: []const u8, lo: Vec3, hi: Vec3 }{ .{ .name = "a plate", .lo = .{ -5, -2, -1 }, .hi = .{ 5, 0, 3 } }, .{ .name = "a box under the shallow face", .lo = .{ 0, -2, -1 }, .hi = .{ 5, 0, 3 } }, .{ .name = "a box beside the ridge", .lo = .{ -5, -2, -1 }, .hi = .{ 0, 0, 3 } } };
+    const prisms = [_]struct { name: []const u8, profile: []const vec.Vec2, turns: []const f64 }{ .{ .name = "wedge", .profile = &drawn.RIDGE_WEDGE, .turns = pick(&RIDGE_TURNS, &FAST_RIDGE_TURNS) }, .{ .name = "notched block", .profile = &drawn.RIDGE_NOTCHED, .turns = pick(&RIDGE_TURNS, &FAST_RIDGE_TURNS) }, .{ .name = "strip", .profile = &drawn.RIDGE_STRIPPED, .turns = pick(&STRIP_TURNS, &FAST_STRIP_TURNS) } };
+    for (zones()) |ratio| for (if (FULL) &others else others[0..1]) |other| for (if (FULL) &prisms else prisms[0..1]) |prism| for (prism.turns) |turn| for ([_]f64{ 1, -1 }) |sign| for (pick(&RIDGE_LIFTS, &FAST_RIDGE_LIFTS)) |l| for (both()) |mirrored| {
+        const x = xsectOf(ratio);
+        var name: [240]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {s}, a {s} turned {e}, its ridge {d} tolerances off{s}", .{ ratio, other.name, prism.name, sign * turn, l, if (mirrored) ", mirrored" else "" }), helpers.boxAt(Tolerance.fromZone(ZONE * ratio), other.lo, other.hi), drawn.ridgePrism(prism.profile, sign * turn, mirrored, l * x), false);
+    };
+    try tally.finish();
+}
+
+test "edge matrix: two wedges ridge to ridge, their facing faces shallow to each other" {
+    // A wedge under y = 0 and one over it, their ridges along z, the upper lifted l
+    // tolerances, each turned about its ridge: the facing faces apart with a gap between
+    // (touching along the ridge), in one plane, or crossing, within the angular tolerance
+    // of each other or past it (lead 2: both faces of an edge parallel by angle)
+    var tally: Tally = .{ .family = "wedges ridge to ridge" };
+    const x = xsectOf(1);
+    for (pick(&RIDGE_PAIR_TURNS, &FAST_RIDGE_PAIR_TURNS)) |under| for (pick(&RIDGE_PAIR_TURNS, &FAST_RIDGE_PAIR_TURNS)) |over| for (pick(&RIDGE_LIFTS, &FAST_RIDGE_LIFTS)) |l| {
+        var name: [200]u8 = undefined;
+        try run(&tally, try std.fmt.bufPrint(&name, "the lower turned {e}, the upper {e}, {d} tolerances over", .{ under, over, l }), drawn.ridgePrism(&drawn.RIDGE_WEDGE_UNDER, under, false, 0), drawn.ridgePrism(&drawn.RIDGE_WEDGE, over, false, l * x), false);
+    };
+    try tally.finish();
+}
+
+test "edge matrix: a keel in a face, both its faces shallow to that face" {
+    // A prism whose two lower faces meet at a ridge in a plate's face y = 0, lifted l
+    // tolerances, each rising from the plate's or dipping into it by its own turn: both
+    // faces of the edge parallel to the plate's by angle, or one, or neither (lead 2:
+    // `classify.wedgeSide` with both faces "in the fragment's plane")
+    var tally: Tally = .{ .family = "keel in a face" };
+    for (zones()) |ratio| for (pick(&RIDGE_PAIR_TURNS, &FAST_RIDGE_PAIR_TURNS)) |left| for (pick(&RIDGE_PAIR_TURNS, &FAST_RIDGE_PAIR_TURNS)) |right| for (pick(&RIDGE_LIFTS, &FAST_RIDGE_LIFTS)) |l| {
+        // Level on either side the ridge is no corner of the profile
+        if (left == 0 or right == 0) continue;
+        const x = xsectOf(ratio);
+        var name: [200]u8 = undefined;
+        const profile = [_]vec.Vec2{ .{ 0, 0 }, .{ 3, 3 * @tan(right) }, .{ 3, 1 }, .{ -3, 1 }, .{ -3, 3 * @tan(left) } };
+        try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, left {e}, right {e}, {d} tolerances over", .{ ratio, left, right, l }), helpers.boxAt(Tolerance.fromZone(ZONE * ratio), .{ -5, -2, -1 }, .{ 5, 0, 3 }), drawn.ridgePrism(&profile, 0, false, l * x), false);
+    };
+    try tally.finish();
+}
+
+test "edge matrix: a plate joined to a thin wall, its side inside the wall, met by a hull" {
+    // The solids fuzzer's wall g tolerances thick (a box less a cavity) and a plate through
+    // the cavity whose side lies p tolerances from the wall's middle plane: inside the
+    // wall, in its outer face's plane, or past it. The two under the oracle, then their
+    // union met by a hull nudged along x and z (find bp: the plate's side half a tolerance
+    // inside the outer face of a wall 3 thick, 2.5 from the cavity's; a fragment of the
+    // hull's with seams on both sides)
+    var tally: Tally = .{ .family = "plate joined to a thin wall", .reach = PLATE_REACH };
+    const x = Tolerance.fromZone(WALL_ZONE).xsect;
+    for (pick(&WALL_GAPS, &FAST_WALL_GAPS)) |g| for (pick(&WALL_PLATE_SIDES, &FAST_WALL_PLATE_SIDES)) |p| for (both()) |mirrored| {
+        var name: [240]u8 = undefined;
+        const flipped: []const u8 = if (mirrored) ", mirrored" else "";
+        try run(&tally, try std.fmt.bufPrint(&name, "wall {d} tolerances, plate's side {d} from its middle{s}: the plate and the wall", .{ g, p, flipped }), wallPlate(p * x, mirrored), thinWall(g * x, mirrored), false);
+        for (pick(&WALL_HULL_ALONG, &FAST_WALL_HULL_ALONG)) |along| for (pick(&WALL_HULL_UP, &FAST_WALL_HULL_UP)) |up| {
+            try run(&tally, try std.fmt.bufPrint(&name, "wall {d} tolerances, plate's side {d} from its middle{s}: a hull nudged {d} along and {d} up", .{ g, p, flipped, along, up }), plateOnWall(g * x, p * x, mirrored), wallHull(along * x, up * x, mirrored), false);
+        };
+    };
+    try tally.finish();
+}
+
+/// Find bp's wall, `gap` thick about the plane x = `WALL_AT` (the fuzzer's
+/// `fuzz_test.GapShape`, nudged as bp's), mirrored in y about the wall's middle or not.
+fn thinWall(gap: f64, mirrored: bool) !Body {
+    const t = Tolerance.fromZone(WALL_ZONE);
+    var outer = try helpers.boxAt(t, .{ WALL_AT - WALL_DEPTH - WALL_INSET, 1, 1 }, .{ WALL_AT + gap / 2, 4, 4 });
+    defer outer.deinit();
+    var cavity = try helpers.boxAt(t, .{ WALL_AT - WALL_DEPTH, 1 + WALL_INSET, 1 + WALL_INSET }, .{ WALL_AT - gap / 2, 4 - WALL_INSET, 4 - WALL_INSET });
+    defer cavity.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var wall = try pipeline.boolean(testing.allocator, &outer, &cavity, .difference, .{}, &diag, null);
+    defer wall.deinit();
+    return helpers.moved(&wall, .{ 0, 0, if (mirrored) 5e-5 else -5e-5 });
+}
+
+/// Find bp's plate, its side `side` past the plane x = `WALL_AT`, placed as the fuzzer
+/// placed it; mirrored in y about the wall's middle (y = 2.5) or not.
+fn wallPlate(side: f64, mirrored: bool) !Body {
+    return helpers.fuzzPlaced(Tolerance.fromZone(WALL_ZONE), .{ 50, 100, 1 }, .{ -48, if (mirrored) -97 else 2, 1 }, vec.Z3, 0, .{ 0, 0, 0.5 }, .{ side, if (mirrored) -5e-5 else 5e-5, 0 });
+}
+
+/// The union of that plate and that wall, the first operand of find bp's failing step.
+fn plateOnWall(gap: f64, side: f64, mirrored: bool) !Body {
+    var plate = try wallPlate(side, mirrored);
+    defer plate.deinit();
+    var wall = try thinWall(gap, mirrored);
+    defer wall.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return pipeline.boolean(testing.allocator, &plate, &wall, .@"union", .{}, &diag, null);
+}
+
+/// Find bp's hull, nudged by `along` in x and `up` in z, mirrored as the wall is.
+fn wallHull(along: f64, up: f64, mirrored: bool) !Body {
+    var points = WALL_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = 5 - p[1];
+    };
+    return drawn.fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, if (mirrored) 1 else -1, 0 }, .{ along, 0, up });
 }
