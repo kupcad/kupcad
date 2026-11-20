@@ -2,14 +2,15 @@
 //! classification): on its boundary when within the zone of a face (the foot of the point
 //! on the face's surface in the face, or an edge of the face within the zone), else inside
 //! or outside by a ray. The ray goes first along a normal: from the point to its foot on a
-//! nearby face, where that foot is strictly inside the face, so the first meeting is
-//! usually that very face, met squarely; then along the directions of a fixed table,
-//! skewed off the axes. The nearest meeting decides when it is clean (one face, strictly
-//! inside it, not tangent, no other meeting at its place: `raycast.onePlace`): the ray
-//! leaves the solid there (the face's normal along the ray) exactly when the point is
-//! inside. A ray that meets nothing leaves from outside. A
-//! ray whose nearest meeting is an edge, a vertex or a tangency is retried; when every
-//! one is, the classification is refused with a finding, never guessed.
+//! nearby face, where that foot is strictly inside the face (off its edges and their
+//! slivers, `in_face.meeting`), so the first meeting is usually that very face, met
+//! squarely; then along the directions of a fixed table, skewed off the axes. The nearest
+//! meeting decides when it is clean (one face, strictly inside it, not tangent, no other
+//! meeting at its place: `raycast.onePlace`): the ray leaves the solid there (the face's
+//! normal along the ray) exactly when the point is inside. A ray that meets nothing leaves
+//! from outside. A ray whose nearest meeting is an edge, an edge's sliver, a vertex or a
+//! tangency is retried; when every one is, the classification is refused with a finding,
+//! never guessed.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -74,7 +75,7 @@ pub fn classify(allocator: std.mem.Allocator, body: *const Body, index: *const F
         const uv = in_face.uvOf(body, f, p);
         const foot = body.geometry.surface(body.face(f).surface).eval(uv[0], uv[1]);
         if (vec.distance(foot, p) <= zone) continue;
-        if (try in_face.classify(body, f, foot, uv, zone, diag) != .inside) continue;
+        if (try in_face.meeting(body, f, foot, uv, diag) != .inside) continue;
         const dir = vec.normalized(vec.sub(foot, p)) orelse continue;
         if (try decide(allocator, body, index, p, dir, reach, &found, diag)) |place| return place;
     }

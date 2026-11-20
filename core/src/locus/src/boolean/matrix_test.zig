@@ -148,11 +148,6 @@ const FAST_LIP_OVER_EDGE = [_]f64{0.15};
 /// an upright edge through it, and of a box's corner from its end.
 const LIP_ACROSS = [_]f64{ -1.5, -1.1, -0.5, 0, 0.5, 1.1, 1.5 };
 const FAST_LIP_ACROSS = [_]f64{0.5};
-/// Those offsets for a box's bottom edge along the edge and over it: within reach of the
-/// edge either way and past it. 1.5, the next of `LIP_ACROSS`, waits for the find it
-/// showed (2026-11-21: a box 1.5 in and 0.85 over an edge 0.9 over its plane, clear of the
-/// slab, taken into it under the far, turned move).
-const LIP_EDGE_IN = [_]f64{ -1.1, -0.5, 0, 0.5, 1.1 };
 const LIP_FROM_END = [_]f64{ -0.5, 0, 0.5 };
 const FAST_LIP_FROM_END = [_]f64{0};
 /// Turns of a prism's face about its ridge from the face of the other solid the ridge
@@ -804,7 +799,7 @@ test "edge matrix: a box through, along or at the end of a slab's edge that lies
             if (FULL) try slab.run(&tally, .{ .by_edge = .{ .{ 0, lo, 1.5 }, .{ 1, lo + 1, 3 } } }, "a box through the top {s}, its upright edge {d} tolerances in from the edge", .{ side, o });
         };
         if (!FULL) continue;
-        for (LIP_EDGE_IN) |o| for (BOTH) |outside| for (LIP_OVER_EDGE) |h| {
+        for (LIP_ACROSS) |o| for (BOTH) |outside| for (LIP_OVER_EDGE) |h| {
             const lo: f64 = if (outside) o * x - 1 else o * x;
             try slab.run(&tally, .{ .by_edge = .{ .{ -0.5, lo, z + h * x }, .{ 0.5, lo + 1, 3 } } }, "a box {s}, its bottom edge {d} tolerances in from the edge and {d} over it", .{ if (outside) "outside" else "inside", o, h });
         };

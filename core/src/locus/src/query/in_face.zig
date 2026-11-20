@@ -7,6 +7,10 @@
 //! it subtends is small and its midpoint agrees, so no polyline of the boundary is ever
 //! taken for it: a point away from the boundary is classified on the exact curves, and the
 //! one test covers lines, circles, ellipses and NURBS alike. Used by every solid query.
+//!
+//! A ray's meeting with a face's surface is also at the face's boundary in the sliver of
+//! an edge (`meeting`, `inSliver`): between the edge, which a boolean keeps on its source's
+//! line (D28), and the line the surfaces of its two faces meet along.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -45,6 +49,96 @@ pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within
     if (try nearEdge(body, f, p, within, diag)) return .boundary;
     const inside = try windsPlanar(body, f, uv, diag) orelse try winds(body, f, uv, diag);
     return if (inside) .inside else .outside;
+}
+
+/// Where a ray's meeting `p` with face `f`'s surface (at `uv`) lies against the face, as
+/// the ray queries take it: on its boundary within the zone of an edge (`classify`) or in
+/// an edge's sliver (`inSliver`), in the face's loops or not; else inside or outside by
+/// the loops.
+pub fn meeting(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, diag: *Diagnostics) Error!Place {
+    const place = try classify(body, f, p, uv, body.tol.zone, diag);
+    if (place == .boundary) return .boundary;
+    return if (try inSliver(body, f, p, diag)) .boundary else place;
+}
+
+/// Whether `p`, a point of face `f`'s surface (in the face's loops or not), lies in the
+/// sliver of one of the face's edges: between the edge, where the face's boundary is, and
+/// the line the face's surface meets the surface of the face across the edge along, where
+/// the two faces would end. A boolean keeps an edge on its source's line (D28), off the
+/// surface of one of its faces by up to the reach, and the two surfaces' own line then
+/// runs that far over the sine of the angle between them from the edge. Between the two
+/// the faces do not close: the one whose surface holds the edge runs past the other's
+/// surface (in its loops, and no boundary of the solid), or stops short of it (boundary,
+/// and outside its loops), and a ray through there meets one face with no other to answer
+/// it. A meeting there is at the edge, whichever (`meeting`).
+///
+/// Measured by the height over the other face's surface: the edge's foot on this face's
+/// surface stands the edge's lift over it, the surfaces' line stands at none, and the
+/// sliver is what stands between, abreast of the edge; past an end of the edge, what the
+/// next edge's sliver holds too (the corner the two lines cut off). An edge on both
+/// surfaces to rounding has none.
+pub fn inSliver(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!bool {
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        // Whether the coedge before holds `p` past its end, and the loop's first past its
+        // start: a corner is held by both its edges
+        var past_end_before = false;
+        var past_start_first = false;
+        var first = true;
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| {
+            const held = sliverOf(body, f, c, p);
+            if (held == .abreast) return true;
+            const past_start = held == .past_start;
+            if (past_start and past_end_before) return true;
+            if (first) past_start_first = past_start;
+            first = false;
+            past_end_before = held == .past_end;
+        }
+        if (past_end_before and past_start_first) return true;
+    }
+    return false;
+}
+
+/// How an edge's sliver holds a point: not, abreast of the edge, or past the coedge's
+/// start or end (nearest that vertex).
+const Held = enum { no, abreast, past_start, past_end };
+
+/// How the sliver of coedge `c`'s edge on face `f` holds `p` (`inSliver`).
+fn sliverOf(body: *const Body, f: types.FaceIndex, c: types.CoedgeIndex, p: Vec3) Held {
+    const coedge = body.coedge(c);
+    if (coedge.partner == .none) return .no;
+    const g = body.loop(body.coedge(coedge.partner).loop).face;
+    if (g == f) return .no;
+    const near = nearestAlongEdge(body, coedge.edge, p);
+    const on_face = footOn(body, f, near.point);
+    const lift = heightOver(body, g, on_face);
+    if (canonical.sameToRounding(lift, 0, canonical.magnitude(&.{ p, near.point }))) return .no;
+    const h = heightOver(body, g, p);
+    if (if (lift > 0) h < 0 or h > lift else h > 0 or h < lift) return .no;
+    return switch (near.end) {
+        .none => .abreast,
+        .start => if (coedge.same_sense) .past_start else .past_end,
+        .end => if (coedge.same_sense) .past_end else .past_start,
+    };
+}
+
+/// The foot of `p` on face `f`'s surface.
+fn footOn(body: *const Body, f: types.FaceIndex, p: Vec3) Vec3 {
+    const uv = uvOf(body, f, p);
+    return body.geometry.surface(body.face(f).surface).eval(uv[0], uv[1]);
+}
+
+/// How far `p` stands over face `g`'s surface, along the surface's normal at its foot.
+fn heightOver(body: *const Body, g: types.FaceIndex, p: Vec3) f64 {
+    const surface = body.geometry.surface(body.face(g).surface);
+    switch (surface) {
+        .plane => |plane| return plane.height(p),
+        else => {
+            const uv = uvOf(body, g, p);
+            return vec.dot(vec.sub(p, surface.eval(uv[0], uv[1])), surface.normal(uv[0], uv[1]));
+        },
+    }
 }
 
 /// Where a point lies against a face as the tolerance decides it (`placeWithin`): `Place`,
@@ -162,9 +256,15 @@ pub fn edgeDistance(body: *const Body, e: types.EdgeIndex, p: Vec3) f64 {
 
 /// The nearest point to `p` on edge `e` (`edgeDistance`'s).
 pub fn nearestOnEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) Vec3 {
+    return nearestAlongEdge(body, e, p).point;
+}
+
+/// The nearest point to `p` on edge `e`, and the end of the edge it is when `p` lies past
+/// that end (none within the edge's range).
+fn nearestAlongEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) struct { point: Vec3, end: enum { none, start, end } } {
     const edge = body.edge(e);
     const curve = body.geometry.curve(edge.curve);
-    if (edge.flags.degenerate) return curve.eval(edge.t0);
+    if (edge.flags.degenerate) return .{ .point = curve.eval(edge.t0), .end = .start };
     var t = curve.project(p, body.tol.approx, NEWTON_STEPS);
     const domain = curve.domain();
     if (domain.periodic and (t < edge.t0 or t > edge.t1)) {
@@ -176,10 +276,10 @@ pub fn nearestOnEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) Vec3 {
             }
         }
     }
-    if (t >= edge.t0 and t <= edge.t1) return curve.eval(t);
+    if (t >= edge.t0 and t <= edge.t1) return .{ .point = curve.eval(t), .end = .none };
     const a = curve.eval(edge.t0);
     const b = curve.eval(edge.t1);
-    return if (vec.distance(a, p) <= vec.distance(b, p)) a else b;
+    return if (vec.distance(a, p) <= vec.distance(b, p)) .{ .point = a, .end = .start } else .{ .point = b, .end = .end };
 }
 
 /// Whether the loops of face `f` wind about `uv`: the angle they sweep about it, a whole

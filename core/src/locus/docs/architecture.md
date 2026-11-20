@@ -1131,7 +1131,29 @@ measured from the line's point nearest the centre, axis or apex so the coefficie
 don't cancel; a critical point within the zone of the surface is a tangency), by
 Levenberg–Marquardt and then Newton on `S(u, v) = O + t·d` from a 16 × 16 grid of seeds for
 extrusion, revolution and NURBS surfaces (sampled: a grazing pair between seeds may be
-missed); kept when in the face or on its boundary. Candidates within the zone of one
+missed); kept when in the face or on its boundary. A meeting is on the boundary within
+the zone of an edge, and in an edge's sliver (`in_face.meeting`, `inSliver`): an edge a
+boolean kept on its source's line (D28) lies off the surface of one of its faces by its
+lift, up to the reach, and the two surfaces' own line runs the lift over the sine of the
+angle between them from it. Between the edge and that line the faces do not close: one
+runs past the other's surface, in its loops and no boundary of the solid, or stops short
+of it, boundary and outside its loops, and beside the edge is a gap its lift high between
+the edge and the other face's boundary in its plane. A ray through there met one face
+with nothing to answer it, a clean crossing that was none, or the solid's boundary
+nowhere. The sliver is measured by the height over the other face's surface, from the
+lift at the edge's foot to none at the line, abreast of the edge (past an end, where the
+next edge's sliver holds the point too); an edge on both surfaces to rounding has none,
+so a solid no boolean made is met as before. A slab's edge 1.8e-4 over its top's plane
+(a tolerance of 2e-4), its side face at 42° to the top: a box 3.4e-4 clear of the slab,
+over the top by the edge, was inside it (its corner's foot on the side face 1.09e-4
+along from the edge, past the zone; the ray to it left by the gap), the union the slab
+alone, where a turn brought that face's foot first; and with the edge under the top's
+plane points two to three tolerances outside were inside in place (the edge matrix,
+2026-11-20, bq). OCCT's classifier takes a meeting within the edges' tolerances of a
+face's boundary as on it and casts another line (`IntCurvesFace_Intersector`,
+`BRepClass3d_SClassifier`); its tolerance is a tube about the edge, not the sliver, which
+runs past the tube where the faces meet at a sharp angle. A point's own place, on the
+boundary within the zone, is by the faces' loops as before. Candidates within the zone of one
 another are one place, and so is one on the face of the one before within the two faces'
 reach, the intersection tolerance and the larger gap of their vertices
 (`raycast.onePlace`, the paves' `incidence.reach`: two faces a boolean joined along an

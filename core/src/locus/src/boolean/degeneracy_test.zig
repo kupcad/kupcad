@@ -107,6 +107,26 @@ pub const BOTTOM_CORNER = [2]f64{ 1 + LIP_NUDGE[0], 3 + LIP_NUDGE[1] };
 /// bottom within the tolerance (2e-4) of the edge and past it of the plane, by 1e-5 to
 /// 7e-5.
 const LIP_HINGE_WINDOW = [_][2]f64{ .{ LIP_OVER, 3e-5 }, .{ 1.5e-4, 8e-5 }, .{ 1e-4, 1.2e-4 }, .{ 1e-4, 1.7e-4 } };
+/// The tests of what lies by that edge without touching the slab (the edge's sliver: what
+/// lies between the edge and the line its two faces' planes meet along, the edge 1.8e-4
+/// off the top's plane and the planes at 42°, so 2.7e-4 from the edge). Turns of the slab
+/// and what meets it, whole: none, and four about skew axes (a point's first rays go to
+/// the faces nearest it by their boxes, which a turn reorders), the first shifted far out
+/// as the edge matrix's move is.
+const SLIVER_TURNS = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
+    .{ .axis = vec.Z3, .angle = 0, .shift = vec.ZERO3 },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 1e3, -2e3, 500 } },
+    .{ .axis = .{ 3, -1, 2 }, .angle = 1.1, .shift = vec.ZERO3 },
+    .{ .axis = .{ 0, 1, 0 }, .angle = 2.0, .shift = vec.ZERO3 },
+    .{ .axis = .{ -2, 1, 1 }, .angle = 0.7, .shift = vec.ZERO3 },
+};
+/// How far the points about the edge reach across it and over it either way, in half
+/// tolerances.
+const SLIVER_HALVES: i32 = 6;
+/// Where a box's bottom edge lies along the lifted edge, in tolerances in from it and
+/// over it: its foot on the slab's side face 1.1e-4 to 1.2e-4 along that face from the
+/// edge, past the zone (1e-4), the first the edge matrix's find.
+const SLIVER_BOXES = [_][2]f64{ .{ 1.5, 0.85 }, .{ 1.25, 0.6 }, .{ 1.9, 1.25 }, .{ 2.1, 1.5 }, .{ 2.5, 1.9 }, .{ 3, 2.5 } };
 /// How two solids of those tests meet: joined into one solid with nothing in common,
 /// two solids (apart, or touching along an edge or at a point), overlapping (one solid
 /// joined, a solid in common), or refused below the minimum feature size either way round.
@@ -3771,6 +3791,108 @@ test "degeneracy: a box across a slab's lifted edge, its bottom within the toler
         var other = try lipOperand(.{ .on_top = .{ .foot = FOOT_ACROSS, .lift = case[0] + case[1] } }, case[0], mirrored);
         defer other.deinit();
         try expectMeeting(&slab, &other, .refused);
+    };
+}
+
+/// `body` turned and shifted as `turn` has it (`SLIVER_TURNS`).
+fn sliverMoved(body: *const Body, turn: @TypeOf(SLIVER_TURNS[0])) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return @import("../construct/transform.zig").transform(testing.allocator, body, &sliverMove(turn), .{}, &diag);
+}
+
+fn sliverMove(turn: @TypeOf(SLIVER_TURNS[0])) mat.Affine {
+    return mat.Affine.translate(turn.shift).compose(&mat.Affine.rotate(vec.normalized(turn.axis).?, turn.angle));
+}
+
+test "degeneracy: a box over a slab's top by its lifted edge, clear of the slab, is apart from it however the two are turned" {
+    // The edge matrix's find (2026-11-20, bq), as it drew it: the slab's edge 1.8e-4 over
+    // its top's plane (a tolerance of 2e-4), the slab's side face through the edge at 42°
+    // to the top, so the side runs on past the top's plane for 2.7e-4 from the edge (in
+    // its loops, and no boundary of the solid); a box over the top, its bottom edge 3e-4
+    // in from the edge and 1.7e-4 over it, 3.5e-4 over the top's plane. The paves find the
+    // two apart and one corner of the box classifies its shell: its foot on the side face
+    // lay 1.09e-4 along it from the edge, past the zone and so strictly in the face, the
+    // ray to it met that face first from behind, and went on between the edge and the
+    // top's boundary in its plane, meeting nothing: inside, the union the slab alone and
+    // the intersection the whole box. In place another face's foot came first; turned,
+    // the side's did. A meeting in an edge's sliver is at the edge (`in_face.inSliver`)
+    for (SLIVER_BOXES) |at| for ([_]bool{ false, true }) |mirrored| {
+        const x = LIP_TOLERANCE.xsect;
+        var slab = try lippedSlabAt(LIP_OVER, mirrored);
+        defer slab.deinit();
+        var over = try lipOperand(.{ .by_edge = .{ .{ -0.5, at[0] * x, LIP_Z + at[1] * x }, .{ 0.5, at[0] * x + 1, 3 } } }, LIP_OVER, mirrored);
+        defer over.deinit();
+        for (SLIVER_TURNS, 0..) |turn, k| {
+            errdefer std.debug.print("the box {d} tolerances in from the edge and {d} over it, mirrored {}, turn {d}\n", .{ at[0], at[1], mirrored, k });
+            var moved_slab = try sliverMoved(&slab, turn);
+            defer moved_slab.deinit();
+            var moved_box = try sliverMoved(&over, turn);
+            defer moved_box.deinit();
+            try expectMeeting(&moved_slab, &moved_box, .two_solids);
+        }
+    };
+}
+
+test "degeneracy: points clear of a slab by its lifted edge are inside or outside it as its two faces' planes there have them, and a segment in from each crosses its boundary once, however it is turned" {
+    // The cases about the find above, on the queries themselves: points across the edge
+    // and over it, three tolerances either way, each farther than the tolerance from both
+    // planes and from the edge; the edge over its top's plane (the side face runs past
+    // the top's plane, and the top past the side's) and under it (both stop short of each
+    // other, and a ray through the gap between the edge and the planes' line met the
+    // solid's boundary nowhere: points 2 to 3 tolerances outside were inside, in place
+    // too). A segment from each point outside to a point well inside goes in once
+    const in_face = @import("../query/in_face.zig");
+    const raycast = @import("../query/raycast.zig");
+    const x = LIP_TOLERANCE.xsect;
+    for ([_]f64{ LIP_OVER, LIP_UNDER }) |lip| for ([_]bool{ false, true }) |mirrored| {
+        var slab = try lippedSlabAt(lip, mirrored);
+        defer slab.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const frame = lipFrame(mirrored, false);
+        const mid = vec.add(frame.origin, .{ 0, 0, LIP_Z });
+        // The two faces at the edge, by their planes
+        var planes: [2]struct { n: Vec3, at: Vec3 } = undefined;
+        var n_planes: usize = 0;
+        for (0..slab.faces.items.len) |fi| {
+            const f = types.FaceIndex.of(@intCast(fi));
+            if (slab.face(f).flags.tombstone or !try in_face.nearEdge(&slab, f, mid, CLOSE, &diag)) continue;
+            try testing.expect(n_planes < planes.len);
+            planes[n_planes] = .{ .n = in_face.outwardNormal(&slab, f, .{ 0, 0 }), .at = slab.geometry.planes.items[slab.face(f).surface.index].frame.origin };
+            n_planes += 1;
+        }
+        try testing.expectEqual(planes.len, n_planes);
+        // 0.01 inside the edge the slab is 0.009 thick under its top
+        const within = vec.add(vec.addScaled(mid, frame.inward, 0.01), .{ 0, 0, -lip - 3e-3 });
+        for (SLIVER_TURNS, 0..) |turn, k| {
+            const move = sliverMove(turn);
+            var moved = try sliverMoved(&slab, turn);
+            defer moved.deinit();
+            var index = try FaceIndex.build(testing.allocator, &moved, &diag);
+            defer index.deinit(testing.allocator);
+            var iy: i32 = -SLIVER_HALVES;
+            while (iy <= SLIVER_HALVES) : (iy += 1) {
+                var iz: i32 = -SLIVER_HALVES;
+                while (iz <= SLIVER_HALVES) : (iz += 1) {
+                    const y = 0.5 * x * @as(f64, @floatFromInt(iy));
+                    const z = 0.5 * x * @as(f64, @floatFromInt(iz));
+                    if (@sqrt(y * y + z * z) <= x) continue;
+                    const p = vec.add(vec.addScaled(mid, frame.inward, y), .{ 0, 0, z });
+                    const over = @max(vec.dot(planes[0].n, vec.sub(p, planes[0].at)), vec.dot(planes[1].n, vec.sub(p, planes[1].at)));
+                    if (@abs(over) <= x) continue;
+                    errdefer std.debug.print("the edge {e} over the top's plane, mirrored {}, turn {d}: {d} tolerances in from the edge and {d} over it\n", .{ lip, mirrored, k, y / x, z / x });
+                    const want: point_in_body.Place = if (over > 0) .outside else .inside;
+                    try testing.expectEqual(want, try point_in_body.classify(testing.allocator, &moved, &index, move.point(p), .{}, &diag));
+                    if (want == .inside) continue;
+                    const hits = try raycast.cast(testing.allocator, &moved, &index, move.point(p), move.point(within), .{}, &diag);
+                    defer testing.allocator.free(hits);
+                    var depth: i32 = 0;
+                    for (hits) |hit| depth += hit.crossing;
+                    try testing.expectEqual(@as(i32, 1), depth);
+                }
+            }
+        }
     };
 }
 
