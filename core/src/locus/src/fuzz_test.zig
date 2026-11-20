@@ -2188,6 +2188,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // bottom's plane, welded on by the imprint (pave.sectionsApart: a piece left on
         // a face against the face's own blocks too, refused)
         "solids 0 0 4 0 3 0 4 0 1 1 2 0 0 0 7 3 0 1 0 -1 16 -2 3 1 5 3 0 0 0 2 3 4 3 2 2 0 0 3 0 0 0 1 7 0 1 2 1 14 3 11 16 1",
+        // The session on 9fb6daae (locus_overlay, 2026-11-20, bk): an arc's end at 5e-324,
+        // the least double east of its circle's highest point, which the product with the
+        // radius 0.25 rounds onto that point's radius; no cut was made there and the arc's
+        // west half was told east by that end, so the crossings counted for a point inside
+        // were one too many (overlay.Place: an extreme's cut by the ends' x against the
+        // centre's, as a piece's side is)
+        "overlay 3 1 1 3 19 5 3 5 0 1 5 18 1 1 2 1 1 1 0 2 1 1 2 2 7 1 5 3 5 1 1 24 1 1 15 4 1 14 1 1 0 19 5 0 6 1 1 0 1 2 0 0 1 2 0 1 1 1 3 2 1 1 3 1 1 0 1 1 3 23 24 1 11 20 1 24 5 1 2 1 1 2 0 0 2 1 0 2 2 8 11 14 5 15 11 7 1 2 4 23 13 2 3 14 5 15 14 6 7 3 2 1 14 3 3 3 0 4 2 1 1 3 1 1 2 0 1 3 1 1 3 0 1 2 0 2 3 0 0 7 14 1 3 0 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

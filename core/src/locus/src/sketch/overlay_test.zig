@@ -36,6 +36,18 @@ const EXTREME_ENDS = [QUARTER_TURNS]Vec2{ .{ 1, 0 }, .{ 0, 1 }, .{ -1, 0 }, .{ 0
 const LATTICE_ENDS = [QUARTER_TURNS]Vec2{ .{ 4, -3 }, .{ 3, 4 }, .{ -4, 3 }, .{ -3, -4 } };
 const LATTICE_HYPOTENUSE: f64 = 5;
 
+/// The hair family (the test of an arc one of whose ends is the least double off an
+/// extreme of its circle about the origin): the hair; the radii, whose product with the
+/// hair rounds to nothing (0.25), ties and rounds to nothing (0.5) and is the hair (1);
+/// the arc's other end as a direction from the centre before the quarter turn, a lattice
+/// point; and the probes, as shares of the radius, at heights whose crossings of the circle
+/// are 6.8° or more from every end of the family.
+const HAIR: f64 = std.math.floatTrueMin(f64);
+const HAIR_RADII = [_]f64{ 0.25, 0.5, 1 };
+const HAIR_OTHER_END: Vec2 = .{ 0.6, -0.8 };
+const HAIR_PROBE_HEIGHTS = [_]f64{ -0.5, 0.5 };
+const HAIR_PROBE_XS = [_]f64{ -2, 0, 2 };
+
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
 /// angles draw an arc, an end a rounding to one side of the extreme, 3.25 − 5.5e-16 for
@@ -773,6 +785,72 @@ fn expectTurnsAlike(case: IslandLineCase, island_ends: Ends) !void {
             try testing.expectApproxEqAbs(want.area, found.area, TURNED_AREA_CLOSE);
         }
     }
+}
+
+test "overlay: an arc from the least double east of its circle's highest point round to its east point is crossed as its three quarters are" {
+    // The overlay fuzz target's find (the session on 9fb6daae, 2026-11-20, bk): the arc
+    // about (0, 1.25) of radius 0.25 from (5e-324, 1.5), the least double east of the
+    // circle's highest point, counter-clockwise to (0.25, 1.25): over the top, down the
+    // west half, through the lowest point and up to the east point. `orient2d` of the
+    // highest point against the first end is 0.25 times 5e-324, which rounds to nothing,
+    // so the end read as on the highest point's radius and no cut was made there; the
+    // piece from that end to the lowest point, the west half, was then told east by its
+    // end's x. A ray at a height above the centre crossed the quarter the arc leaves out,
+    // and one below it crossed the east half twice
+    const a = Vec2{ HAIR, 1.5 };
+    const b = Vec2{ 0.25, 1.25 };
+    const arc: overlay.Arc = .{ .c = .{ 0, 1.25 }, .r = 0.25, .ccw = true };
+    // From inside, above the centre: the east quarter there is not the arc's
+    try testing.expect(!overlay.arcCrossings(a, b, arc, .{ -0.1, 1.3 }));
+    // The fuzzer's point, inside and below the centre: the east half once
+    try testing.expect(overlay.arcCrossings(a, b, arc, .{ 0.22589695592558076, 1.14407165014239 }));
+    // From the west, outside: the west half alone above the centre, both halves below it
+    try testing.expect(overlay.arcCrossings(a, b, arc, .{ -1, 1.3 }));
+    try testing.expect(!overlay.arcCrossings(a, b, arc, .{ -1, 1.2 }));
+}
+
+test "overlay: an arc with an end the least double off an extreme of its circle, either side of it, is crossed as its turn has it in each quarter turn" {
+    // The cases about the find above: the end the least double east or west of the
+    // highest or lowest point (where the product with the radius underflows, ties or
+    // survives) and, a quarter turn on, above or below the east or west point; the arc
+    // leaving that end or arriving at it, either way round. Each ray's crossings are held
+    // against a count by the angles of the circle's two points at its height
+    for (HAIR_RADII) |r| for (0..QUARTER_TURNS) |q| for ([_]f64{ HAIR, -HAIR }) |hair| for ([_]bool{ true, false }) |leaves| for ([_]bool{ true, false }) |ccw| {
+        errdefer std.debug.print("radius {d}, quarter turn {d}, the end {e} off the extreme, the arc {s} it, {s}\n", .{ r, q, hair, if (leaves) "leaving" else "arriving at", if (ccw) "counter-clockwise" else "clockwise" });
+        var near = Vec2{ hair, r };
+        var other = vec.scale2(HAIR_OTHER_END, r);
+        for (0..q) |_| {
+            near = vec.perp2(near);
+            other = vec.perp2(other);
+        }
+        const a = if (leaves) near else other;
+        const b = if (leaves) other else near;
+        const arc: overlay.Arc = .{ .c = .{ 0, 0 }, .r = r, .ccw = ccw };
+        for (HAIR_PROBE_HEIGHTS) |height| for (HAIR_PROBE_XS) |x| {
+            const p = Vec2{ x * r, height * r };
+            errdefer std.debug.print("the ray from ({d}, {d})\n", .{ p[0], p[1] });
+            try testing.expectEqual(crossingsByAngle(a, b, arc, p), overlay.arcCrossings(a, b, arc, p));
+        };
+    };
+}
+
+/// Whether the ray from `p` to +x crosses the arc an odd number of times, by the angles
+/// about the centre of the circle's two points at `p`'s height against the arc's turn: a
+/// count of the test's own, for rays whose crossings are well clear of the arc's ends.
+fn crossingsByAngle(a: Vec2, b: Vec2, arc: overlay.Arc, p: Vec2) bool {
+    const start = std.math.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
+    const end = std.math.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
+    const sweep = @mod(if (arc.ccw) end - start else start - end, 2 * PI);
+    const dy = p[1] - arc.c[1];
+    const half = @sqrt(arc.r * arc.r - dy * dy);
+    var odd = false;
+    for ([_]f64{ -half, half }) |dx| {
+        if (arc.c[0] + dx <= p[0]) continue;
+        const at = std.math.atan2(dy, dx);
+        const along = @mod(if (arc.ccw) at - start else start - at, 2 * PI);
+        if (along < sweep) odd = !odd;
+    }
+    return odd;
 }
 
 test "overlay: a cycle that runs each of its edges both ways bounds nothing, whatever its area's rounding" {

@@ -557,7 +557,12 @@ the first of them off the centre's x, and for the half circle between the two ex
 way its arc runs; never by its middle's angle (2026-11-19, the overlay target, bj: an
 arc's piece 4.4e-16 wide, from a vertex a rounding west of the circle's lowest point down
 to it, read east by the cosine of its middle and west by its twin's, tied the east piece
-on an island's ray and nested the island in the circle). The ray starts at the cycle's leftmost point, an arc's west extreme
+on an island's ray and nested the island in the circle). Whether the arc is cut at an
+extreme is told by the same comparison of its ends' x with the centre's, never by
+`orient2d` of the extreme's point, whose product of the radius and an end's distance from
+the centre's x can round to nothing (2026-11-20, the overlay target, bk: an arc's end the
+least double east of its circle's highest point read as on that point's radius, no cut
+was made there, and the west half was told east by that end). The ray starts at the cycle's leftmost point, an arc's west extreme
 when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
 end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
 vertex crossed the ray a rounding to either side, and a component's outer boundary was

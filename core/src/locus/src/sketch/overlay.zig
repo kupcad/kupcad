@@ -1153,21 +1153,69 @@ fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
 /// the same whichever piece of the arc asks, which a test against the chord is not. A
 /// point on an end's own radius is that end, or the rounding of one.
 fn onArcStrictly(a: Vec2, b: Vec2, arc: Arc, p: Vec2) bool {
-    if (!arc.ccw) return onArcStrictly(b, a, .{ .c = arc.c, .r = arc.r, .ccw = true }, p);
-    const c = arc.c;
-    const turn = predicates.orient2d(c, a, b);
-    if (turn > 0) return withinMinorTurn(c, a, b, p);
-    if (turn < 0) return !withinMinorTurn(c, b, a, p) and !onRay(c, a, p) and !onRay(c, b, p);
-    // `b` on `a`'s radius or opposite it: a half circle, or (the ends welded) a full one
-    if (vec.dot2(vec.sub2(a, c), vec.sub2(b, c)) < 0) return predicates.orient2d(c, a, p) > 0;
-    return !onRay(c, a, p);
+    return strictlyOnArc(a, b, arc, .{ .point = p });
 }
 
-/// Whether `p` lies strictly within the counter-clockwise turn of less than a half turn
-/// from the radius through `a` to the radius through `b`.
-fn withinMinorTurn(c: Vec2, a: Vec2, b: Vec2, p: Vec2) bool {
-    return predicates.orient2d(c, a, p) > 0 and predicates.orient2d(c, p, b) > 0;
+/// `onArcStrictly` of the circle's highest or lowest point, decided by the ends' own
+/// coordinates against the centre's (`Place`).
+fn extremeOnArcStrictly(a: Vec2, b: Vec2, arc: Arc, extreme: Extreme) bool {
+    return strictlyOnArc(a, b, arc, .{ .extreme = extreme });
 }
+
+fn strictlyOnArc(a: Vec2, b: Vec2, arc: Arc, place: Place) bool {
+    if (!arc.ccw) return strictlyOnArc(b, a, .{ .c = arc.c, .r = arc.r, .ccw = true }, place);
+    const c = arc.c;
+    const turn = predicates.orient2d(c, a, b);
+    // Within the minor turn from `a` to `b`, or not within the one from `b` to `a`
+    if (turn > 0) return place.after(c, a) and place.before(c, b);
+    if (turn < 0) return !(place.after(c, b) and place.before(c, a)) and !place.onRayThrough(c, a) and !place.onRayThrough(c, b);
+    // `b` on `a`'s radius or opposite it: a half circle, or (the ends welded) a full one
+    if (vec.dot2(vec.sub2(a, c), vec.sub2(b, c)) < 0) return place.after(c, a);
+    return !place.onRayThrough(c, a);
+}
+
+/// A circle's highest or lowest point: straight above or below its centre.
+const Extreme = enum { top, bottom };
+
+/// What is asked of an arc's turn about its centre `c`: a point, by `orient2d`, or the
+/// circle's highest or lowest point. An extreme is straight above or below the centre, so
+/// which way round an end `q` is from it is which side of the centre's x the end's x is, a
+/// comparison of two coordinates: the same comparison `ArcPieces` tells a piece's side by,
+/// and one with no product in it to underflow, where `orient2d` of the extreme's point
+/// multiplies the radius by the end's distance from the centre's x (0.25 times 5e-324,
+/// the least double, rounds to nothing: the end reads as on the extreme's radius, no cut
+/// is made at the extreme, and the piece from that end to the lowest point, the whole
+/// west half, is told east by its end; the overlay fuzz target, 2026-11-20, bk).
+const Place = union(enum) {
+    point: Vec2,
+    extreme: Extreme,
+
+    /// Whether the place is strictly within the half turn counter-clockwise from the
+    /// radius through `q`.
+    fn after(self: Place, c: Vec2, q: Vec2) bool {
+        return switch (self) {
+            .point => |p| predicates.orient2d(c, q, p) > 0,
+            .extreme => |extreme| if (extreme == .top) q[0] > c[0] else q[0] < c[0],
+        };
+    }
+
+    /// Whether the place is strictly within the half turn clockwise from the radius
+    /// through `q`.
+    fn before(self: Place, c: Vec2, q: Vec2) bool {
+        return switch (self) {
+            .point => |p| predicates.orient2d(c, p, q) > 0,
+            .extreme => |extreme| if (extreme == .top) q[0] < c[0] else q[0] > c[0],
+        };
+    }
+
+    /// Whether the place lies on the ray from `c` through `q`.
+    fn onRayThrough(self: Place, c: Vec2, q: Vec2) bool {
+        return switch (self) {
+            .point => |p| onRay(c, q, p),
+            .extreme => |extreme| q[0] == c[0] and (if (extreme == .top) q[1] > c[1] else q[1] < c[1]),
+        };
+    }
+};
 
 /// Whether `p` lies on the ray from `c` through `a`.
 fn onRay(c: Vec2, a: Vec2, p: Vec2) bool {
@@ -1191,9 +1239,10 @@ fn arcParam(a: Vec2, b: Vec2, arc: Arc, p: Vec2) f64 {
 /// vertex counts the vertex by its point; the circle's top and bottom at the extremes
 /// between. Pieces that short are kept: the half-open rule then agrees at every vertex.
 /// A piece's side of the centre is told by its ends, exactly (D26): an end is a vertex or
-/// an extreme, the extremes at the centre's x, and `onArcStrictly` cuts at an extreme just
-/// when the arc's ends lie strictly either side of it in x, so a piece's ends are never on
-/// opposite sides and the first of them off the centre's x tells the side; a piece between
+/// an extreme, the extremes at the centre's x, and the arc is cut at an extreme just when
+/// its ends lie strictly either side of it in x, both decided by the one comparison of an
+/// end's x with the centre's (`Place`), so a piece's ends are never on opposite sides and
+/// the first of them off the centre's x tells the side; a piece between
 /// the two extremes, both at that x, is a half circle and lies where its arc runs that way
 /// (a counter-clockwise arc goes down its west half). Never by the angle of its middle: a
 /// piece 4.4e-16 wide between a vertex and the lowest point has its middle within a
@@ -1226,12 +1275,11 @@ const ArcPieces = struct {
         var n: usize = 0;
         cuts[n] = .{ .t = 0, .x = a[0], .y = a[1] };
         n += 1;
-        for ([_]f64{ arc.r, -arc.r }) |rise| {
-            const extreme: Vec2 = .{ arc.c[0], arc.c[1] + rise };
-            if (onArcStrictly(a, b, arc, extreme)) {
-                cuts[n] = .{ .t = arcParam(a, b, arc, extreme), .x = extreme[0], .y = extreme[1] };
-                n += 1;
-            }
+        for (std.enums.values(Extreme)) |extreme| {
+            if (!extremeOnArcStrictly(a, b, arc, extreme)) continue;
+            const at: Vec2 = .{ arc.c[0], if (extreme == .top) arc.c[1] + arc.r else arc.c[1] - arc.r };
+            cuts[n] = .{ .t = arcParam(a, b, arc, at), .x = at[0], .y = at[1] };
+            n += 1;
         }
         cuts[n] = .{ .t = span.sweep, .x = b[0], .y = b[1] };
         n += 1;
