@@ -1262,3 +1262,30 @@ test "Formatter: a quoted symbol keeps its quotes and escapes, and a `%i[]` word
         try expectStableFormat(case.source, case.formatted);
     }
 }
+
+test "Formatter: a literal whose text ends in a line break ends on its closing delimiter's line" {
+    // A string's token is its text between the delimiters, so one ending in a line break
+    // ended a line above its closing quote: a comment after that quote was put below the
+    // statement, and a blank line above it on the next run (the nightly front-end fuzzer,
+    // run 44776676523: `"`, a line break, `"#1`), and the statement after such a string
+    // got a blank line it never had.
+    try expectStableFormat("\"\n\"#1\x02z", "\"\n\" #1\x02z\n");
+    const kept = [_][]const u8{
+        "x = \"a\n\" # c\ny = 1\n",
+        "x = \"a\n\"\ny = 1\n",
+        "x = \"\n\"\ny = 1\n",
+        "x = 'a\n' # c\ny = 1\n",
+        "x = %q(a\n) # c\ny = 1\n",
+        "x = \"a#{1}\n\" # c\ny = 1\n",
+        "x = \"a\n#{1}\" # c\ny = 1\n",
+        "x = :\"a\n\" # c\ny = 1\n",
+        "x = :'a\n' # c\ny = 1\n",
+        "x = :\"a#{1}\n\" # c\ny = 1\n",
+        "f(\n  1,\n  \"a\n\",\n) # c\ny = 1\n",
+        "x = \"a\n\"; y = 1 # c\nz = 2\n",
+    };
+    for (kept) |source| {
+        errdefer std.debug.print("source:\n{s}\n", .{source});
+        try expectStableFormat(source, source);
+    }
+}

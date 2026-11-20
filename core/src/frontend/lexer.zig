@@ -216,6 +216,17 @@ pub const Tag = enum {
             inline else => |fixed| comptime "'" ++ fixed.text().? ++ "'",
         };
     }
+
+    /// Whether the token is the text between a literal's delimiters and the last piece of
+    /// it, so the byte after the token is the closing delimiter and the literal ends there,
+    /// not at the token's last byte: a string or symbol whose text ends in a line break
+    /// closes on the line below it.
+    pub fn closedAfter(tag: Tag) bool {
+        return switch (tag) {
+            .string, .raw_string, .string_end, .quoted_symbol, .raw_symbol => true,
+            else => false,
+        };
+    }
 };
 
 pub const Token = common_token.Token(Tag);

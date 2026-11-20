@@ -136,11 +136,16 @@ pub const Formatter = struct {
 
     /// The line a token ends on: a string may run over several (its start line was taken,
     /// so the statement after a multi-line string got a blank line it never had), and a
-    /// line with heredoc openers goes on to their terminator lines.
+    /// line with heredoc openers goes on to their terminator lines. A literal's last piece
+    /// ends at its closing delimiter, the byte after the token (`Tag.closedAfter`): one
+    /// whose text ends in a line break ended on the line above its closing quote, so a
+    /// comment after the quote went below the statement, and a blank line above it on the
+    /// next run.
     fn tokenEndLine(self: *const Formatter, tok: u32) u32 {
         const start = self.token_starts[tok];
         const len = self.token_lengths[tok];
-        return self.pastHeredocs(self.line_index.getLine(if (len == 0) start else start + len - 1));
+        const last = if (self.token_tags[tok].closedAfter()) start + len else if (len == 0) start else start + len - 1;
+        return self.pastHeredocs(self.line_index.getLine(last));
     }
 
     /// `line`, or the terminator line of the last heredoc opened on it: the bodies come
