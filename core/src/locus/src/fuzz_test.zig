@@ -2218,6 +2218,15 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // in place, 82.93419 turned (overlay.piece: an arc piece keeps its circle, one
         // edge with a line between its ends only where there is one, `mergeLenses`)
         "chain 2 6 5 5 1 0 1 4 6 2 6 5 0 1 4 2 1 1 0 2 3 4 7 2 1 5 3 6 1 3 4 6 2 0 1 6 5 2 4 2 4 4 1 3 0 2 3 0 1 7 0 5 3 4 6 2 4 6 5 0 2 3 4 5 1 2 0 4 4 4 2 3 4 0 1 4 -2 0 4 1 8 3 2 2 5 0",
+        // The bm prototype's session (locus_overlay, 2026-11-20, bo): a line through a
+        // circle's lowest point, on an island's ray, welded with the circle 1.8e-15 east of
+        // that point and 4e-15 over the ray; the circle's arc into the vertex has a piece
+        // down to the lowest point and one up to the vertex, and the first was ordered
+        // against the line by their exact crossings, the second about the vertex: three
+        // hits each nearer than the next, and the island placed west of the line
+        // (overlay.orderAtSharedVertex: both pieces share the arc's end past the lowest
+        // point, `Hit.past`)
+        "overlay 3 2 0 24 11 6 0 0 1 0 13 5 1 0 0 0 2 1 8 24 23 1 14 3 1 20 10 2 7 2 1 7 24 4 12 6 1 20 6 4 12 7 6 4 2 1 3 0 1 1 0 0 4 1 0 2 1 0 4 3 0 1 1 0 4 2 0 1 8 6 15 7 23 15 5 13 7 1 8 12 3 20 20 7 4 17 3 24 1 8 4 19 8 1 3 0 1 2 1 2 0 0 1 0 1 3 1 1 4 0 0 3 1 0 1 1 1 2 0 18 12 1 0 0 1 1 4 3 7 3 7 17 1 7 9 1 9 13 1 4 1 0 4 3 1 1 1 1 3 0 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

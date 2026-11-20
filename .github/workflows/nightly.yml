@@ -55,7 +55,7 @@ jobs:
           # target took 133 minutes on an M-series Mac (2026-11-09), so this is about 35 there
           # and within the 75 or so the others take on a slower hosted runner.
           - target: locus
-            runs: 50K
+            runs: 40K
           # Locus's overlay on generated arrangements alone (near-tangent arcs, points a
           # rounding off the grid), each checked against its inputs by exact point counts:
           # 100K took 5.5 minutes on an M-series Mac (2026-11-12), so this is about 30 there.

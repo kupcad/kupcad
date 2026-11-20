@@ -580,7 +580,15 @@ extreme is told by the same comparison of its ends' x with the centre's, never b
 `orient2d` of the extreme's point, whose product of the radius and an end's distance from
 the centre's x can round to nothing (2026-11-20, the overlay target, bk: an arc's end the
 least double east of its circle's highest point read as on that point's radius, no cut
-was made there, and the west half was told east by that end). The ray starts at the cycle's leftmost point, an arc's west extreme
+was made there, and the west half was told east by that end). An arc's two pieces at its
+lowest point on the ray are one place of it, only the inside of their circle between them,
+so both are ordered against a segment that shares the arc's end past that point by the
+order about that end, not the one that ends there alone (2026-11-20, the overlay target,
+bo: a line through a circle's lowest point, welded with the circle 1.8e-15 east of the
+point and 4e-15 over the ray, crossed the ray 2e-16 west of the point; east of the arc's
+east piece about the vertex and west of its west piece by the exact crossings, with the
+east piece nearer than the west, the three hits had no nearest and an island east of the
+line was placed west of it). The ray starts at the cycle's leftmost point, an arc's west extreme
 when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
 end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
 vertex crossed the ray a rounding to either side, and a component's outer boundary was

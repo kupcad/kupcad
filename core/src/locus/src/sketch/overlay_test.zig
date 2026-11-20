@@ -58,6 +58,25 @@ const STUB_ANGLES = [_]f64{ 3e-4, 1.2e-3, 4e-3 };
 const STUB_PAST_CHORD: f64 = 1e-2;
 const STUB_REST: f64 = 1;
 
+/// The lowest-point family (the tests of an island whose ray runs through a circle's
+/// lowest point, a vertex of the circle and of a polygon a rounding off that point): the
+/// circle, as the find had it (the overlay fuzz target, 2026-11-20, bo); the vertex's
+/// place from the lowest point, in steps of the doubles there (8.9e-16 along x, 4.4e-16
+/// along y: the find's welded vertex was 2 east and 9 up); where the polygon's sides come
+/// to the vertex from above and leave it to below, from the lowest point; its last
+/// corner; and the island, east of the circle on the lowest point's height.
+const LOWEST_CENTRE: Vec2 = .{ 4.500000000000001, 3 };
+const LOWEST_RADIUS: f64 = 0.25;
+const LOWEST_X_STEP: f64 = 0x1p-50;
+const LOWEST_Y_STEP: f64 = 0x1p-51;
+const LOWEST_X_STEPS = [_]f64{ -2, 0, 2 };
+const LOWEST_Y_STEPS = [_]f64{ -4, 0, 4, 9 };
+const LOWEST_FROM = [_]Vec2{ .{ 1.5, 3 }, .{ -1.5, 3 } };
+const LOWEST_TO = [_]Vec2{ .{ -1, -2 }, .{ -2, -1 }, .{ 1, -2 } };
+const LOWEST_LAST: Vec2 = .{ 4.5, -1 };
+const LOWEST_ISLAND: Vec2 = .{ 1.5, 0 };
+const LOWEST_ISLAND_RADIUS: f64 = 0.25;
+
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
 /// angles draw an arc, an end a rounding to one side of the extreme, 3.25 − 5.5e-16 for
@@ -1298,4 +1317,82 @@ test "overlay: a vertex the zone from coincident sides given either way round is
     };
     errdefer std.debug.print("edges a–b {d}, a–p {d}, p–b {d}\n", .{ between[0], between[1], between[2] });
     try testing.expect(std.mem.eql(usize, &between, &.{ 1, 0, 0 }) or std.mem.eql(usize, &between, &.{ 0, 1, 1 }));
+}
+
+/// Exactly one face is wound by the first input, the island's disc of radius `r`, once:
+/// its windings by the two inputs after it are `second` and `third`.
+fn expectIslandWindings(o: *const Overlay, r: f64, second: i32, third: i32) !void {
+    var islands: usize = 0;
+    for (o.faces.items, 0..) |f, fi| {
+        if (o.windingOf(@intCast(fi), 0) == 0) continue;
+        islands += 1;
+        try testing.expectEqual(@as(i32, 1), o.windingOf(@intCast(fi), 0));
+        try testing.expectApproxEqAbs(PI * r * r, o.cycles.items[f.outer].area, 1e-9);
+        try testing.expectEqual(second, o.windingOf(@intCast(fi), 1));
+        try testing.expectEqual(third, o.windingOf(@intCast(fi), 2));
+    }
+    try testing.expectEqual(@as(usize, 1), islands);
+}
+
+test "overlay: an island's ray through a circle's lowest point, a line's vertex with the circle a rounding east of it and above, places the island east of the line" {
+    // The overlay fuzz target's find (2026-11-20, bo), reduced: a small circle about
+    // (6, 2.75), an island touching nothing; to its west a circle of radius 0.25 about
+    // (4.5, 3) whose lowest point (4.5, 2.75) is on the island's ray, and a triangle whose
+    // side runs through that point, welded with the circle at (4.500000000000003,
+    // 2.750000000000004): 1.8e-15 east of the lowest point and 4e-15 over the ray. The
+    // circle's arc into that vertex has a piece down its west half to the lowest point
+    // and one 4e-15 high up to the vertex; the side crosses the ray 2e-16 west of the
+    // lowest point. About the vertex the side is east of the arc; by the exact crossings
+    // it is west of the lowest point, and the arc's west piece, which does not end at the
+    // vertex, was ordered that way: the side beat the east piece, the west piece beat the
+    // side, the east piece the west, and the island was placed outside the triangle
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    _ = try o.addInput();
+    try circle(&o, .{ 6, 2.75 }, 0.25);
+    _ = try o.addInput();
+    try polygon(&o, &.{ .{ 6.000000000000001, 5.75 }, .{ 3.5000000000000004, 0.75 }, .{ 9, 0.75 } });
+    _ = try o.addInput();
+    try circle(&o, LOWEST_CENTRE, LOWEST_RADIUS);
+    try o.run();
+    try expectPlanar(&o);
+    // As the find had it: the welded vertex east of the lowest point and over the ray
+    const welded: Vec2 = .{ 4.500000000000003, 2.750000000000004 };
+    var found = false;
+    for (o.points.items) |p| found = found or (p[0] == welded[0] and p[1] == welded[1]);
+    try testing.expect(found);
+    // The island is inside the triangle and outside the circle
+    try expectIslandWindings(&o, 0.25, 1, 0);
+}
+
+test "overlay: an island's ray through a circle's lowest point, a vertex of the circle and of a polygon a rounding off that point any way, places the island by the polygon's sides" {
+    // The cases about the find above: the circle's two lower arcs end at a vertex a few
+    // doubles from its lowest point, either side of it or straight over it, under the
+    // ray, on it and over it, and that vertex is a corner of a polygon whose side comes
+    // to it from above, from either side, and leaves it down to the west, steep or
+    // shallow, or to the east. The island is east of the circle, inside the polygon,
+    // its ray along the lowest point's height: the arcs' pieces at the lowest point and
+    // the side leaving the vertex downward meet the ray within a rounding of each
+    // other, and the island is inside the polygon whichever of them is the nearer
+    const lowest: Vec2 = .{ LOWEST_CENTRE[0], LOWEST_CENTRE[1] - LOWEST_RADIUS };
+    const east: Vec2 = .{ LOWEST_CENTRE[0] + LOWEST_RADIUS, LOWEST_CENTRE[1] };
+    const west: Vec2 = .{ LOWEST_CENTRE[0] - LOWEST_RADIUS, LOWEST_CENTRE[1] };
+    const arc: overlay.Arc = .{ .c = LOWEST_CENTRE, .r = LOWEST_RADIUS, .ccw = true };
+    for (LOWEST_X_STEPS) |dx| for (LOWEST_Y_STEPS) |dy| for (LOWEST_FROM) |from| for (LOWEST_TO) |to| {
+        errdefer std.debug.print("the vertex {d} doubles east of the lowest point and {d} up, the side from ({d}, {d}) to ({d}, {d})\n", .{ dx, dy, from[0], from[1], to[0], to[1] });
+        const at: Vec2 = .{ lowest[0] + dx * LOWEST_X_STEP, lowest[1] + dy * LOWEST_Y_STEP };
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        _ = try o.addInput();
+        try circle(&o, vec.add2(lowest, LOWEST_ISLAND), LOWEST_ISLAND_RADIUS);
+        _ = try o.addInput();
+        try polygon(&o, &.{ vec.add2(lowest, from), at, vec.add2(lowest, to), vec.add2(lowest, LOWEST_LAST) });
+        _ = try o.addInput();
+        try o.addEdge(.{ .a = east, .b = west, .arc = arc });
+        try o.addEdge(.{ .a = west, .b = at, .arc = arc });
+        try o.addEdge(.{ .a = at, .b = east, .arc = arc });
+        try o.run();
+        try expectPlanar(&o);
+        try expectIslandWindings(&o, LOWEST_ISLAND_RADIUS, 1, 0);
+    };
 }

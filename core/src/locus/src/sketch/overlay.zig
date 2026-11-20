@@ -1308,6 +1308,16 @@ const ArcPieces = struct {
         return .{ .y0 = c0.y, .y1 = c1.y, .x0 = c0.x, .x1 = c1.x, .side = self.sideOf(c0, c1) };
     }
 
+    /// The far end of the piece that meets the one `next` just gave at that one's lower
+    /// end: the piece after it when it ran down to that end (`descending`), the one before
+    /// it when it ran up from it. Null when the lower end is the arc's own, no cut at an
+    /// extreme of its circle.
+    fn pastLowerEnd(self: *const ArcPieces, descending: bool) ?Vec2 {
+        if (if (descending) self.at + 1 >= self.n else self.at < 2) return null;
+        const cut = self.cuts[if (descending) self.at + 1 else self.at - 2];
+        return .{ cut.x, cut.y };
+    }
+
     fn sideOf(self: *const ArcPieces, c0: Cut, c1: Cut) predicates.Side {
         for ([_]f64{ c0.x, c1.x }) |x| {
             if (x != self.centre_x) return if (x > self.centre_x) .east else .west;
@@ -1414,6 +1424,9 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     // A piece's end is the arc's own end or an extreme (no vertex there)
                     const slot_top = slotAt(s, top);
                     const slot_bottom = slotAt(s, bottom);
+                    // Up from an extreme of its circle on the ray (its lowest point): the
+                    // arc goes on past it, to where its other piece there ends
+                    const past: ?Vec2 = if (bottom[1] == v[1]) pieces.pastLowerEnd(descending) else null;
                     const radial = vec.sub2(at, arc.c);
                     var up = Vec2{ -radial[1], radial[0] };
                     // Level at the circle's lowest point: the piece on the east half leaves
@@ -1422,7 +1435,7 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
                     if (up[1] < 0 or (up[1] == 0 and (up[0] > 0) != (piece.side == .east))) up = vec.scale2(up, -1);
                     const up_ccw = if (descending) !arc.ccw else arc.ccw;
                     const bend = if (up_ccw) -1 / arc.r else 1 / arc.r;
-                    consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .slot_top = slot_top, .slot_bottom = slot_bottom, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
+                    consider(&best, .{ .at = where, .up = up, .bend = bend, .top = top, .bottom = bottom, .slot_top = slot_top, .slot_bottom = slot_bottom, .past = past orelse bottom, .slot_past = if (past) |end| slotAt(s, end) else NO_SLOT, .cycle = if (descending) s.cycle else s.beyond }, v[1]);
                 }
                 continue;
             }
@@ -1513,8 +1526,28 @@ const Hit = struct {
     /// `NO_SLOT` (an arc piece's end at an extreme, a segment not the overlay's).
     slot_top: u32 = NO_SLOT,
     slot_bottom: u32 = NO_SLOT,
+    /// For an arc's piece up from an extreme of its circle on the ray (its lowest point,
+    /// no vertex): where the arc's other piece at that point ends, and the arc's slot
+    /// there, or `NO_SLOT` when that is the circle's other extreme. The two pieces meet
+    /// the ray at the one point with only the inside of their circle between them, where
+    /// no segment that crosses the ray passes: one that shares an end with either piece is
+    /// on the same side of both, and is ordered against both about that end.
+    past: Vec2 = .{ 0, 0 },
+    slot_past: u32 = NO_SLOT,
     /// The cycle whose region is just east of the crossing.
     cycle: u32,
+
+    /// A vertex the hit's segment leaves, with its slot there.
+    const End = struct { at: Vec2, slot: u32 };
+
+    /// The segment's vertices above the ray at `y` (`above`) or at or below it, with the
+    /// slots it leaves them by: the piece's own end, and the arc's end past an extreme on
+    /// the ray (`past`).
+    fn ends(self: Hit, above: bool, y: f64) [2]End {
+        const own: End = if (above) .{ .at = self.top, .slot = self.slot_top } else .{ .at = self.bottom, .slot = self.slot_bottom };
+        const beyond: End = .{ .at = self.past, .slot = if ((self.past[1] > y) == above) self.slot_past else NO_SLOT };
+        return .{ own, beyond };
+    }
 };
 
 /// Keeps the hit nearer the vertex. Two segments sharing a vertex are ordered as the
@@ -1567,17 +1600,38 @@ fn consider(best: *?Hit, hit: Hit, y: f64) void {
 /// leaving it further east going down (the higher slot, the lower half running from west
 /// round to east) is the nearer. When they share both ends, the end nearer the ray. Null
 /// when they share no vertex the order knows: the lean and the bend decide.
+///
+/// An arc's piece up from its lowest point on the ray shares its arc's end past that point
+/// too (`Hit.past`), as the arc's other piece there does: left to its own ends, the piece
+/// was ordered against a line from that end by their exact crossings, the lowest point's
+/// x against the line's, while the piece that ends there was ordered about the vertex,
+/// and the two answers differed where the vertex is a rounding off the lowest point (the
+/// overlay fuzz target, 2026-11-20, bo: a line through a circle's lowest point, their
+/// welded vertex 1.8e-15 east of it and 4e-15 above; the line crossed the ray 2e-16 west
+/// of the point, east of it about the vertex. The line beat the east piece, the west
+/// piece beat the line, the east piece the west: the hit kept was whichever came last,
+/// and an island east of the line was placed west of it).
 fn orderAtSharedVertex(p: Hit, q: Hit, y: f64) ?bool {
-    const shared_top = p.slot_top != NO_SLOT and q.slot_top != NO_SLOT and p.top[0] == q.top[0] and p.top[1] == q.top[1];
-    const shared_bottom = p.slot_bottom != NO_SLOT and q.slot_bottom != NO_SLOT and p.bottom[0] == q.bottom[0] and p.bottom[1] == q.bottom[1];
-    const down = if (shared_top and shared_bottom) p.top[1] - y < y - p.bottom[1] else shared_top;
-    if (!shared_top and !shared_bottom) return null;
+    const top = sharedEnd(p.ends(true, y), q.ends(true, y));
+    const bottom = sharedEnd(p.ends(false, y), q.ends(false, y));
+    if (top == null and bottom == null) return null;
+    const down = if (top != null and bottom != null) top.?.y - y < y - bottom.?.y else top != null;
     if (down) {
-        if (p.slot_top == q.slot_top) return null;
-        return p.slot_top > q.slot_top;
+        if (top.?.p == top.?.q) return null;
+        return top.?.p > top.?.q;
     }
-    if (p.slot_bottom == q.slot_bottom) return null;
-    return p.slot_bottom < q.slot_bottom;
+    if (bottom.?.p == bottom.?.q) return null;
+    return bottom.?.p < bottom.?.q;
+}
+
+/// The first vertex two hits' segments both leave, among `ps` of the one and `qs` of the
+/// other, with its height and the slot each leaves it by; null when they share none the
+/// overlay's order knows.
+fn sharedEnd(ps: [2]Hit.End, qs: [2]Hit.End) ?struct { y: f64, p: u32, q: u32 } {
+    for (ps) |a| for (qs) |b| {
+        if (a.slot != NO_SLOT and b.slot != NO_SLOT and a.at[0] == b.at[0] and a.at[1] == b.at[1]) return .{ .y = a.at[1], .p = a.slot, .q = b.slot };
+    };
+    return null;
 }
 
 /// The slot of segment `s` at its end `at` (exactly `s.a` or `s.b`), or `NO_SLOT` at a
