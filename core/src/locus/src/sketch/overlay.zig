@@ -372,7 +372,7 @@ pub const Overlay = struct {
             }
             if (from != g.b) try self.piece(&merged, g, from, g.b);
         }
-        try self.mergeLenses();
+        try self.mergeLenses(&merged);
         // The contributions grouped by edge
         std.mem.sort(Contribution, self.contributions.items, {}, Contribution.lessThan);
         for (self.edges.items) |*e| e.contributions = 0;
@@ -654,21 +654,11 @@ pub const Overlay = struct {
         const forward = from < to;
         const a = if (forward) from else to;
         const b = if (forward) to else from;
-        var arc: ?Arc = if (g.arc) |given_arc| .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw } else null;
-        // An arc piece within the zone of its chord is its chord: its ends are welded
-        // vertices within the zone of its circle, not on it, so a lens thinner than the
-        // zone between it and a line through the same vertices has an area at the
-        // rounding level, of either sign, and is no region. A minor arc (its centre on
-        // the chord's far side, by the exact turn) has the sagitta `r − √(r² − chord²/4)`,
-        // within the zone when `chord² ≤ 4·zone·(2r − zone)`; a major arc's sagitta is at
-        // least its radius
-        if (arc) |piece_arc| {
-            const pa = self.point(a);
-            const pb = self.point(b);
-            const zone = self.tol.zone;
-            const minor = (predicates.orient2d(pa, pb, piece_arc.c) > 0) == piece_arc.ccw;
-            if (minor and (piece_arc.r <= zone or vec.distanceSq2(pa, pb) <= 4 * zone * (2 * piece_arc.r - zone))) arc = null;
-        }
+        // A piece keeps its given edge's curve, however short it is (D28's rule in the
+        // plane): an arc piece within the zone of its chord is still an arc of its circle,
+        // and one edge with a line between its ends only where there is such a line
+        // (`mergeLenses`)
+        const arc: ?Arc = if (g.arc) |given_arc| .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw } else null;
         const key = EdgeKey{ .a = a, .b = b, .arc = if (arc) |piece_arc| arcKey(piece_arc) else 0 };
         try merged.ensureUnusedCapacity(self.allocator, 1);
         const entry = merged.getOrPutAssumeCapacity(key);
@@ -680,16 +670,25 @@ pub const Overlay = struct {
         try self.contributions.append(self.allocator, .{ .edge = entry.value_ptr.*, .input = g.input, .along = forward });
     }
 
-    /// Arcs between the same two vertices that lie within the zone of each other are one
+    /// Edges between the same two vertices that lie within the zone of each other are one
     /// edge: the lens between them is thinner than the zone, its area at the rounding level
-    /// and of either sign, and no region (as an arc within the zone of its chord is its
-    /// chord, `piece`). Two minor arcs over one chord are furthest apart at its middle, by
-    /// the difference of their bulges across it; arcs a major arc's length within the zone
-    /// of each other are on one circle, welded in `addEdge`. The first edge keeps its arc and
-    /// takes the other's contributions (the fuzzer, 2026-11-13: two internally tangent
-    /// circles, a line crossing both where they are within the zone, both cut at the one
-    /// vertex its crossings welded to, and the lens between them made V − E + F wrong).
-    fn mergeLenses(self: *Overlay) Error!void {
+    /// and of either sign, and no region. Two minor arcs over one chord are furthest apart
+    /// at its middle, by the difference of their bulges across it, and an arc is as far
+    /// from the line between its ends as its own bulge; arcs a major arc's length within
+    /// the zone of each other are on one circle, welded in `addEdge`. The line, where there
+    /// is one (`merged` has it), keeps its curve and takes the arcs' contributions; else the
+    /// first arc keeps its own (the fuzzer, 2026-11-13: two internally tangent circles, a
+    /// line crossing both where they are within the zone, both cut at the one vertex its
+    /// crossings welded to, and the lens between them made V − E + F wrong).
+    ///
+    /// An arc with no such edge beside it keeps its circle, however near its chord it
+    /// lies: taken for its chord, as every such piece was, it left its circle's tangent by
+    /// half its angle, `√(2·zone/r)` at the most, and an offset's join at its end, which
+    /// goes by the tangent, moved by that times the offset (the nightly of 2026-11-20, bm:
+    /// an arc ending 0.0012 rad short of the point its sweeps met at, to +x of its centre
+    /// where the sheet's own arc was split, D7; the piece between a line, a bevel beside it
+    /// 9e-4 off at 1.5, the area 82.93347 in place and 82.93419 turned).
+    fn mergeLenses(self: *Overlay, merged: *const std.AutoHashMapUnmanaged(EdgeKey, u32)) Error!void {
         const allocator = self.allocator;
         const n = self.edges.items.len;
         // The arc edges by their ends
@@ -723,6 +722,14 @@ pub const Overlay = struct {
             const first = self.edges.items[by_ends[start]];
             while (end < m and self.edges.items[by_ends[end]].a == first.a and self.edges.items[by_ends[end]].b == first.b) end += 1;
             defer start = end;
+            if (merged.get(.{ .a = first.a, .b = first.b, .arc = 0 })) |line| {
+                for (by_ends[start..end]) |x| {
+                    if (self.withinZone(self.edges.items[line], self.edges.items[x])) {
+                        into[x] = line;
+                        merges += 1;
+                    }
+                }
+            }
             for (by_ends[start..end], 0..) |x, k| {
                 if (into[x] != x) continue;
                 for (by_ends[start..end][k + 1 ..]) |y| {
@@ -749,20 +756,22 @@ pub const Overlay = struct {
         self.edges.shrinkRetainingCapacity(kept);
     }
 
-    /// Whether two arc edges between the same vertices lie within the zone of each other:
-    /// both minor arcs, their bulges across the chord (signed by the side they bow to) the
-    /// zone apart at most.
+    /// Whether two edges between the same vertices lie within the zone of each other: each
+    /// a line or a minor arc, their bulges across the chord (signed by the side they bow
+    /// to) the zone apart at most.
     fn withinZone(self: *const Overlay, x: Edge, y: Edge) bool {
         const pa = self.point(x.a);
         const pb = self.point(x.b);
-        const bx = bulge(pa, pb, x.arc.?) orelse return false;
-        const by = bulge(pa, pb, y.arc.?) orelse return false;
+        const bx = bulge(pa, pb, x.arc) orelse return false;
+        const by = bulge(pa, pb, y.arc) orelse return false;
         return @abs(bx - by) <= self.tol.zone;
     }
 
-    /// How far a minor arc from `a` to `b` bows from its chord, positive to the chord's
-    /// left; null for a major arc (its centre on the side it bows to).
-    fn bulge(a: Vec2, b: Vec2, arc: Arc) ?f64 {
+    /// How far a line or a minor arc from `a` to `b` bows from its chord, positive to the
+    /// chord's left: nothing for a line; null for a major arc (its centre on the side it
+    /// bows to).
+    fn bulge(a: Vec2, b: Vec2, curve: ?Arc) ?f64 {
+        const arc = curve orelse return 0;
         const side = predicates.orient2d(a, b, arc.c);
         // A minor arc bows away from its centre: to the left when the centre is right of
         // the chord and the arc runs counter-clockwise about it from `a`, or left of it and

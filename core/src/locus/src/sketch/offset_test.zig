@@ -24,6 +24,21 @@ const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 const Vec2 = vec.Vec2;
 
+/// The seam family (the test of a segment of a disc grown twice): the disc's radius about
+/// the origin and the angle its arc runs through; how far short of its circle's seam (the
+/// point to +x of the centre, where an arc across it is two edges, D7) the arc starts, or
+/// past it ends, each but the last (a control) leaving a piece of the grown arc within the
+/// zone of its chord (`√(8·zone/r)`, 4e-3 at the grown radius, is the most), the second
+/// the find's (the nightly of 2026-11-20, bm); the two offsets; and the side of the square
+/// plate the segment is a hole of.
+const SEGMENT_RADIUS: f64 = 4;
+const SEGMENT_ANGLE: f64 = 2;
+const SEAM_GAPS = [_]f64{ 3e-4, 1.2e-3, 3e-3, 0.3 };
+const SEAM_OFFSETS = [2]f64{ 1, 1.5 };
+const SEAM_PLATE: f64 = 40;
+/// How near a twice-offset sheet's area is to its closed form, and to the control's.
+const SEAM_AREA_CLOSE: f64 = 1e-9;
+
 fn areaOf(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
@@ -503,5 +518,74 @@ test "offset: a miter reaching the limit is a miter, turned any way (the fuzzer'
         defer g.deinit();
         try testing.expectApproxEqRel(3 * s3 * inradius * inradius, try areaOf(&g), 1e-9);
         try testing.expectEqual(@as(usize, 3), g.counts().edges);
+    }
+}
+
+/// The seam family's segment as an outline: the arc from `start` through `SEGMENT_ANGLE`
+/// counter-clockwise about the origin, and its chord back.
+fn segmentOutline(start: f64) [2]primitives.OutlineEdge {
+    const a: Vec2 = .{ SEGMENT_RADIUS * @cos(start), SEGMENT_RADIUS * @sin(start) };
+    const b: Vec2 = .{ SEGMENT_RADIUS * @cos(start + SEGMENT_ANGLE), SEGMENT_RADIUS * @sin(start + SEGMENT_ANGLE) };
+    return .{ .{ .a = a, .b = b, .arc = .{ .c = .{ 0, 0 }, .r = SEGMENT_RADIUS, .ccw = true } }, .{ .a = b, .b = a } };
+}
+
+test "offset: a segment of a disc grown with bevels, then with each join, is the same wherever its arc ends by its circle's seam, a sheet or a hole" {
+    // The nightly's find (2026-11-20, bm; run 44729658253): the first offset's arc had a
+    // vertex to +x of its centre, where the sweeps of the sheet's arc, two edges there
+    // (D7), met; the piece from the arc's end to it, 0.0012 rad, was within the zone of
+    // its chord and was made a line, 6e-4 rad off the circle's tangent; the second
+    // offset's bevel at that end went by the line and came 9e-4 short at 1.5 (82.93347; on
+    // the sheet turned, the vertex elsewhere on the arc, 82.93419).
+    //
+    // A segment under the angle Δ is convex, so grown by d with bevels it gains its
+    // perimeter times d, the arc's turn Δ as a sector, ½·d²·Δ, and at each of its two
+    // corners, which turn τ = π − Δ/2, the triangle ½·d²·sin τ; its corners are then four,
+    // each turning τ/2, about bevels 2·d·sin(τ/2) long, and grown again it gains the same
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const r = SEGMENT_RADIUS;
+    const angle = SEGMENT_ANGLE;
+    const d1 = SEAM_OFFSETS[0];
+    const d2 = SEAM_OFFSETS[1];
+    const turn = PI - angle / 2.0;
+    const chord = 2 * r * @sin(angle / 2.0);
+    const once = r * r * (angle - @sin(angle)) / 2.0 + (r * angle + chord) * d1 + d1 * d1 * angle / 2.0 + d1 * d1 * @sin(turn);
+    const perimeter_once = (r + d1) * angle + chord + 4 * d1 * @sin(turn / 2.0);
+    const twice = once + perimeter_once * d2 + d2 * d2 * angle / 2.0 + 2 * d2 * d2 * @sin(turn / 2.0);
+    const plate_left = (SEAM_PLATE - 2 * (d1 + d2)) * (SEAM_PLATE - 2 * (d1 + d2));
+    const half = SEAM_PLATE / 2.0;
+    const plate = [_]primitives.OutlineEdge{
+        .{ .a = .{ -half, -half }, .b = .{ half, -half } },
+        .{ .a = .{ half, -half }, .b = .{ half, half } },
+        .{ .a = .{ half, half }, .b = .{ -half, half } },
+        .{ .a = .{ -half, half }, .b = .{ -half, -half } },
+    };
+    for ([_]bool{ false, true }) |hole| {
+        const sign: f64 = if (hole) -1 else 1;
+        for (std.enums.values(offset.Join)) |join| {
+            if (join == .round) continue;
+            // The control's area, the last gap's: what the others must come to
+            var control: [2]f64 = undefined;
+            var gap_at = SEAM_GAPS.len;
+            while (gap_at > 0) {
+                gap_at -= 1;
+                const gap = SEAM_GAPS[gap_at];
+                for ([_]bool{ false, true }, 0..) |past, which| {
+                    errdefer std.debug.print("the arc {s} the seam by {d}, the second join {s}, as a {s}\n", .{ if (past) "ending past" else "starting short of", gap, @tagName(join), if (hole) "hole" else "sheet" });
+                    const segment = segmentOutline(if (past) gap - SEGMENT_ANGLE else -gap);
+                    var sheet = try primitives.outlines(testing.allocator, tol, if (hole) &.{ &plate, &segment } else &.{&segment}, &diag);
+                    defer sheet.deinit();
+                    var first = try offset.offset(testing.allocator, &sheet, sign * d1, .bevel, 2, .{}, &diag);
+                    defer first.deinit();
+                    try testing.expectApproxEqRel(if (hole) (SEAM_PLATE - 2 * d1) * (SEAM_PLATE - 2 * d1) - once else once, try areaOf(&first), SEAM_AREA_CLOSE);
+                    var second = try offset.offset(testing.allocator, &first, sign * d2, join, 2, .{}, &diag);
+                    defer second.deinit();
+                    const area = try areaOf(&second);
+                    if (gap_at == SEAM_GAPS.len - 1) control[which] = area;
+                    try testing.expectApproxEqRel(control[which], area, SEAM_AREA_CLOSE);
+                    if (join == .bevel) try testing.expectApproxEqRel(if (hole) plate_left - twice else twice, area, SEAM_AREA_CLOSE);
+                }
+            }
+        }
     }
 }

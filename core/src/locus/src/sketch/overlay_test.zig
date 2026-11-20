@@ -48,6 +48,16 @@ const HAIR_OTHER_END: Vec2 = .{ 0.6, -0.8 };
 const HAIR_PROBE_HEIGHTS = [_]f64{ -0.5, 0.5 };
 const HAIR_PROBE_XS = [_]f64{ -2, 0, 2 };
 
+/// The stub family (the tests of an arc piece within the zone of its chord): the arc's
+/// radius; the angles of the stub a line cuts off its end, each within the zone of its
+/// chord (`√(8·zone/r)`, 4.5e-3 at this radius, is the most), the second the find's (the
+/// nightly of 2026-11-20, bm); the angle of an arc past the zone of its chord; and the
+/// angle the rest of the arc runs through.
+const STUB_RADIUS: f64 = 4;
+const STUB_ANGLES = [_]f64{ 3e-4, 1.2e-3, 4e-3 };
+const STUB_PAST_CHORD: f64 = 1e-2;
+const STUB_REST: f64 = 1;
+
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
 /// angles draw an arc, an end a rounding to one side of the extreme, 3.25 − 5.5e-16 for
@@ -982,6 +992,102 @@ test "overlay: two arcs between the same vertices within the zone of each other 
     try testing.expectEqual(@as(u32, 2), o.edges.items[0].contributions);
     try testing.expectEqual(@as(usize, 0), o.faces.items.len);
     try expectPlanar(&o);
+}
+
+/// The point of the stub family's circle, about the origin, at `angle`.
+fn onStubCircle(angle: f64) Vec2 {
+    return .{ STUB_RADIUS * @cos(angle), STUB_RADIUS * @sin(angle) };
+}
+
+test "overlay: an arc piece within the zone of its chord keeps its circle, cut off at either end of its arc, run either way" {
+    // The nightly's find (2026-11-20, bm): the piece of an arc of radius 4.1 between its
+    // end and a vertex 0.0012 rad along it was taken for its chord, a line 6e-4 rad off
+    // the circle's tangent at the end. A circle of two arcs, one starting the stub short
+    // of the point to +x of the centre or ending the stub past it, and a square with a
+    // side along the radius through that point, which cuts the stub off: the circle's
+    // four pieces are arcs, the square's six are lines
+    for (STUB_ANGLES) |stub| {
+        for ([_]bool{ false, true }) |at_end| {
+            for ([_]bool{ true, false }) |ccw| {
+                errdefer std.debug.print("a stub of {d} rad at the arc's {s}, the circle run {s}\n", .{ stub, if (at_end) "end" else "start", if (ccw) "counter-clockwise" else "clockwise" });
+                var o = Overlay.init(testing.allocator, tol);
+                defer o.deinit();
+                _ = try o.addInput();
+                const start: f64 = if (at_end) stub - PI else -stub;
+                const ends = [_]Vec2{ onStubCircle(start), onStubCircle(start + PI) };
+                for (ends, 0..) |from, k| {
+                    const to = ends[1 - k];
+                    try o.addEdge(if (ccw) .{ .a = from, .b = to, .arc = .{ .c = .{ 0, 0 }, .r = STUB_RADIUS, .ccw = true } } else .{ .a = to, .b = from, .arc = .{ .c = .{ 0, 0 }, .r = STUB_RADIUS, .ccw = false } });
+                }
+                _ = try o.addInput();
+                const corners = [_]Vec2{ .{ STUB_RADIUS - 1, 0 }, .{ STUB_RADIUS + 1, 0 }, .{ STUB_RADIUS + 1, 1 }, .{ STUB_RADIUS - 1, 1 } };
+                for (corners, 0..) |corner, k| try o.addEdge(.{ .a = corner, .b = corners[(k + 1) % corners.len] });
+                try o.run();
+                try expectPlanar(&o);
+                var arcs: usize = 0;
+                for (o.edges.items) |e| arcs += @intFromBool(e.arc != null);
+                try testing.expectEqual(@as(usize, 10), o.edges.items.len);
+                try testing.expectEqual(@as(usize, 4), arcs);
+            }
+        }
+    }
+}
+
+test "overlay: an arc within the zone of the line between its ends is one edge with it, the line's; past the zone, the lens between them is a face" {
+    for (STUB_ANGLES ++ [_]f64{STUB_PAST_CHORD}) |angle| {
+        errdefer std.debug.print("an arc of {d} rad\n", .{angle});
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        _ = try o.addInput();
+        const a = onStubCircle(-angle);
+        const b = onStubCircle(0);
+        try o.addEdge(.{ .a = a, .b = b, .arc = .{ .c = .{ 0, 0 }, .r = STUB_RADIUS, .ccw = true } });
+        try o.addEdge(.{ .a = b, .b = a });
+        try o.run();
+        try expectPlanar(&o);
+        if (angle == STUB_PAST_CHORD) {
+            try testing.expectEqual(@as(usize, 2), o.edges.items.len);
+            try testing.expectEqual(@as(usize, 1), o.faces.items.len);
+            continue;
+        }
+        try testing.expectEqual(@as(usize, 1), o.edges.items.len);
+        try testing.expectEqual(@as(u32, 2), o.edges.items[0].contributions);
+        try testing.expect(o.edges.items[0].arc == null);
+        try testing.expectEqual(@as(usize, 0), o.faces.items.len);
+    }
+}
+
+test "overlay: arcs bowing either side of the line between their ends, each within the zone of it, are one edge with it" {
+    // Two lenses on one chord, an arc and the line each, the second's circle the first's
+    // mirrored in the line: the arcs are farther apart than either is from the line, 1.6
+    // zones at the most, and the line takes both, whichever of them is given first
+    for (STUB_ANGLES) |angle| {
+        for ([_]bool{ true, false }) |first_line_first| {
+            for ([_]bool{ true, false }) |second_line_first| {
+                errdefer std.debug.print("arcs of {d} rad, the line given first in the first lens: {}, in the second: {}\n", .{ angle, first_line_first, second_line_first });
+                var o = Overlay.init(testing.allocator, tol);
+                defer o.deinit();
+                const a = onStubCircle(-angle);
+                const b = onStubCircle(0);
+                const mirrored = vec.add2(a, b);
+                const lenses = [_][2]overlay.InputEdge{
+                    .{ .{ .a = b, .b = a }, .{ .a = a, .b = b, .arc = .{ .c = .{ 0, 0 }, .r = STUB_RADIUS, .ccw = true } } },
+                    .{ .{ .a = a, .b = b }, .{ .a = b, .b = a, .arc = .{ .c = mirrored, .r = STUB_RADIUS, .ccw = true } } },
+                };
+                for (lenses, [_]bool{ first_line_first, second_line_first }) |lens, line_first| {
+                    _ = try o.addInput();
+                    try o.addEdge(lens[if (line_first) 0 else 1]);
+                    try o.addEdge(lens[if (line_first) 1 else 0]);
+                }
+                try o.run();
+                try expectPlanar(&o);
+                try testing.expectEqual(@as(usize, 1), o.edges.items.len);
+                try testing.expectEqual(@as(u32, 4), o.edges.items[0].contributions);
+                try testing.expect(o.edges.items[0].arc == null);
+                try testing.expectEqual(@as(usize, 0), o.faces.items.len);
+            }
+        }
+    }
 }
 
 test "overlay: a ring doubling back along a tangent circle, a line crossing both arcs where they are within the zone, is planar" {

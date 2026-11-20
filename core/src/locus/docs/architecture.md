@@ -585,9 +585,18 @@ nested in its own face). A cycle that runs each of its edges both ways bounds no
 area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
-arc's welded ends on its circle; those reconciliations (an arc piece within the zone of its
-chord is its chord, every vertex within the zone of an edge cuts it, the pieces cut again
-until a pass cuts nothing) are the welding's, not the predicates'.
+arc's welded ends on its circle; those reconciliations (edges between the same two
+vertices within the zone of each other are one edge, every vertex within the zone of an
+edge cuts it, the pieces cut again until a pass cuts nothing) are the welding's, not the
+predicates'. A piece keeps its given edge's curve, however short (D28's rule in the plane):
+an arc piece within the zone of its chord is one edge with a line between its ends only
+where there is such a line, and is the line's then; alone it is an arc of its circle still.
+Taken for its chord, as every such piece once was, it left its circle's tangent by half
+its angle, `√(2·zone/r)` at the most, and what goes by the tangent at its end, an offset's
+join, moved by that times the offset (the nightly of 2026-11-20, bm: an offset's arc ending
+0.0012 rad short of the point to +x of its centre, where the sweeps of the sheet's arc,
+two edges there by D7, met; the piece between a line, the next offset's bevel beside it
+9e-4 off at 1.5, the area 82.93347 in place and 82.93419 turned).
 
 ---
 

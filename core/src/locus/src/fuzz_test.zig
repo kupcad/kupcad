@@ -139,8 +139,8 @@ const LABEL_PROBE_MIN = 50;
 /// How many zones a probe must keep from every edge of its face.
 const LABEL_PROBE_CLEAR = 10;
 /// How closely each input's winding over the faces holds to its own area beyond the
-/// welding (the zone along its perimeter, twice: its own ends moved, and an arc piece
-/// within the zone of its chord taken as the chord).
+/// welding (the zone along its perimeter, twice: its own ends moved, and an arc within
+/// the zone of a line between its ends taken as that line).
 const WINDING_CLOSE = 1e-9;
 /// The shifts the 2D targets move a chain or an arrangement whole by, after a turn from
 /// `TURNS` about z: near, and far out (2e6, where a coordinate's ulp is 4.7e-10 and a
@@ -2210,6 +2210,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // (`unclassified`; pave.hingedWithin: parallel faces meet along their merged
         // vertices' line only within the tolerance of each other there)
         "solids 1 7 1 3 1 1 4 4 2 3 4 3 0 2 2 2 4 4 2 0 0 1 2 3 3 11 14 8 9 3 2 2 0 3 1 4 2 4 0 3 7 0 2 0 0 14 4 10 8 2 2 2 2 3 1 3 2 4 1 1 6 12 3 15 0",
+        // The nightly of 2026-11-20 (run 44729658253, locus, bm): a sheet shrunk by 1 with
+        // round joins, its arc of radius 4.1 ending 0.0012 rad short of the point to +x of
+        // its centre, where the sweeps of the sheet's arc met; the piece between, within
+        // the zone of its chord, was made a line 6e-4 rad off the circle's tangent, and
+        // the bevel beside it of the offset by 1.5 that followed came 9e-4 short: 82.93347
+        // in place, 82.93419 turned (overlay.piece: an arc piece keeps its circle, one
+        // edge with a line between its ends only where there is one, `mergeLenses`)
+        "chain 2 6 5 5 1 0 1 4 6 2 6 5 0 1 4 2 1 1 0 2 3 4 7 2 1 5 3 6 1 3 4 6 2 0 1 6 5 2 4 2 4 4 1 3 0 2 3 0 1 7 0 5 3 4 6 2 4 6 5 0 2 3 4 5 1 2 0 4 4 4 2 3 4 0 1 4 -2 0 4 1 8 3 2 2 5 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
