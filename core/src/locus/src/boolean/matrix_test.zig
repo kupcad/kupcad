@@ -184,11 +184,10 @@ const FAST_WALL_GAPS = [_]f64{3};
 /// Where the side of the plate joined to that wall lies from the wall's middle plane, in
 /// tolerances (bp's 1: inside a wall 3 thick, half a tolerance from its outer face); and
 /// how far the hull that meets the two is nudged along x and z, within the tolerance and
-/// clear of it (bp's -1 up; its 0.25 along waits for bp's fix: with it the walls 3 and 4
-/// thick fail as bp does, `unclassified`).
+/// clear of it (bp's 0.25 and -1).
 const WALL_PLATE_SIDES = [_]f64{ -2.5, -1.6, -1.1, -0.5, 0, 0.5, 1, 1.1, 1.6, 2.5 };
 const FAST_WALL_PLATE_SIDES = [_]f64{1.1};
-const WALL_HULL_ALONG = [_]f64{ 0, 1.1, 5 };
+const WALL_HULL_ALONG = [_]f64{ 0, 0.25, 1.1, 5 };
 const FAST_WALL_HULL_ALONG = [_]f64{1.1};
 const WALL_HULL_UP = [_]f64{ -1.1, -1, -0.5, 0, 0.5, 1.1, 5 };
 const FAST_WALL_HULL_UP = [_]f64{-1.1};

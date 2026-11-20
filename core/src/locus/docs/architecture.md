@@ -716,8 +716,18 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    tolerance and its gap; D27's band about every limit), which the paves, the
    simplification, the provenance and the overlap rules ask (OCCT's `IntTools_Context`;
    2026-11-15, the M0–M4 review: a predicate written per stage was decided with two
-   measures, about 30 of 54 fuzz fixes); an edge's end is on a face's plane for
-   edge–face by the reach vertex–face decided it with.
+   measures, about 30 of 54 fuzz fixes); an edge's end is on a face for edge–face as
+   vertex–face decided it, within its reach of the plane and inside the face or on its
+   boundary, and only then is the edge's crossing of the face that end (OCCT's `PerformEF`:
+   an intersection at an end is the end's where the end is on the face, `CheckFacePaves`,
+   or can be put on it, `ForceInterfVF`; else a new vertex). An end within reach of the
+   plane and outside the face is on nothing of the face, and the edge's crossing is placed
+   as any other: taken for vertex–face's by the plane alone, it was nobody's (the nightly
+   of 2026-11-20, bp: a hull's corner 1.5e-4 from the plane of a box's side, 2.5e-4 from
+   the side's edge, which a union had left 1e-4 off that plane, D28, its foot on the edge's
+   footprint; the hull's edge from the corner crossed the side 3.7e-4 on with no vertex,
+   the hull's section of the side ended inside it and the side's fragment read both sides
+   of the hull from the spur, `unclassified`).
    Coincident vertices merge into one with the enclosing ball; a vertex on an edge or an
    edge crossing an edge splits the edge there (`mev` split form) on its shrunk range;
    collinear overlaps become *common blocks* (one edge record shared by both bodies).
@@ -802,7 +812,7 @@ importing only those before it, which the layering test holds):**
   made it come within twice the tolerance of the one it misses: refused,
   `below_feature_size`, 2026-11-15: a hull's edge by both front edges of a plate 2.5e-5
   thick, whose top edge ended 2.56e-5 off its line); vertex–face; edge–face where an edge's ends lie
-  beyond `xsect` on either side of a face's plane and the crossing is in the face (one on
+  on either side of a face's plane, neither on the face, and the crossing is in the face (one on
   its boundary tried against the other's edges, which edge–edge should have split), or a
   pave the edge already has on the face, an edge meeting a plane once (at a shallow angle
   the computed point can be several `xsect` from where edge–edge met the face's edge);

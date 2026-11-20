@@ -195,6 +195,31 @@ const LIP_UNDER_BOTTOM = [_]LipCase{
     .{ .lip = LIP_UNDER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = -1e-4 } }, .want = .one_solid },
     .{ .lip = LIP_UNDER, .shape = .{ .under = .{ .foot = FOOT_COVER, .lift = 1e-4 } }, .want = .refused },
 };
+/// The solids of the tests of an edge from a corner within the tolerance of a side's
+/// plane and off the side, as the solids fuzzer drew them (the nightly of 2026-11-20, bp;
+/// zone 1e-4, an intersection tolerance of 2e-4): a box with its side at x = 2.0003, the
+/// cavity that leaves that side a wall 3 tolerances thick, and a plate through both whose
+/// side is 1e-4 inside the box's (their union has one face there in the plate's plane,
+/// the box's edges 1e-4 off it, D28); and the hull, zone 1e-5, whose corner (2, 1, 4)
+/// comes to the box's top edge at y = 1, 2.5e-4 from the side's edges and 1.5e-4 from the
+/// side's plane, on the far side of it from them.
+const OFFSIDE_TOLERANCE = Tolerance.fromZone(1e-4);
+const OFFSIDE_BOX = [2]Vec3{ .{ 0.25, 1, 1 }, .{ 2 + 1.5 * OFFSIDE_TOLERANCE.xsect, 4, 4 } };
+const OFFSIDE_CAVITY = [2]Vec3{ .{ 0.5, 1.25, 1.25 }, .{ 2 - 1.5 * OFFSIDE_TOLERANCE.xsect, 3.75, 3.75 } };
+const OFFSIDE_BOX_NUDGE: Vec3 = .{ 0, 0, -5e-5 };
+const OFFSIDE_PLATE = [2]Vec3{ .{ -48, 2, 1.5 }, .{ 2, 102, 2.5 } };
+const OFFSIDE_PLATE_NUDGE: Vec3 = .{ 2.000000014495072e-4, 5e-5, 0 };
+const OFFSIDE_HULL = [_]Vec3{ .{ 3, 3, 2 }, .{ 2, 1, 4 }, .{ 0, 3, 4 }, .{ 3, 3, 3 }, .{ 0, 2, 0 }, .{ 1, 3, 3 }, .{ 3, 0, 2 } };
+const OFFSIDE_HULL_NUDGE: Vec3 = .{ 5e-5, 0, -1.999999999431566e-4 };
+/// The plane those solids are mirrored in: y = 2.5, the box's own middle.
+const OFFSIDE_MIRROR_Y: f64 = 5;
+/// How far the hull of those tests is shifted: in x, its corner 1.6e-4 to 1.9e-4 from the
+/// side's plane (within the tolerance of it) and 2.5e-4 (clear of it); in y, the corner's
+/// foot on the footprint of the side's edge or outside it, and inside it.
+const OFFSIDE_NEAR = [_]f64{ -1e-5, -3e-5, -4e-5 };
+const OFFSIDE_CLEAR: f64 = -1e-4;
+const OFFSIDE_OUT = [_]f64{ 0, -4e-6, -3e-5, -6e-5 };
+const OFFSIDE_IN = [_]f64{ 1e-5, 3e-5 };
 /// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
 /// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
 /// numbers, as the case gives them.
@@ -3747,4 +3772,104 @@ test "degeneracy: a box across a slab's lifted edge, its bottom within the toler
         defer other.deinit();
         try expectMeeting(&slab, &other, .refused);
     };
+}
+
+/// The box of the tests of an edge from a corner off a side (`OFFSIDE_BOX`, less its
+/// cavity when `hollow`) joined with the plate through its side, mirrored in y or not: the
+/// side's face in the plate's plane, the box's own edges of it 1e-4 off that plane.
+fn offsideBox(hollow: bool, mirrored: bool) !Body {
+    var outer = try offsidePlaced(OFFSIDE_BOX, OFFSIDE_BOX_NUDGE, mirrored);
+    defer outer.deinit();
+    var plate = try offsidePlaced(OFFSIDE_PLATE, OFFSIDE_PLATE_NUDGE, mirrored);
+    defer plate.deinit();
+    if (!hollow) return sound(&plate, &outer, .@"union");
+    var cavity = try offsidePlaced(OFFSIDE_CAVITY, OFFSIDE_BOX_NUDGE, mirrored);
+    defer cavity.deinit();
+    var wall = try sound(&outer, &cavity, .difference);
+    defer wall.deinit();
+    return sound(&plate, &wall, .@"union");
+}
+
+/// A box of those tests between `corners`, moved by `nudge`, mirrored in y or not.
+fn offsidePlaced(corners: [2]Vec3, nudge: Vec3, mirrored: bool) !Body {
+    if (!mirrored) return fuzzBoxPlaced(OFFSIDE_TOLERANCE, corners[0], corners[1], vec.Z3, 0, null, nudge);
+    return fuzzBoxPlaced(OFFSIDE_TOLERANCE, .{ corners[0][0], OFFSIDE_MIRROR_Y - corners[1][1], corners[0][2] }, .{ corners[1][0], OFFSIDE_MIRROR_Y - corners[0][1], corners[1][2] }, vec.Z3, 0, null, .{ nudge[0], -nudge[1], nudge[2] });
+}
+
+/// The hull of those tests shifted by `dx` and `dy` (toward the box's inside in y when
+/// positive), mirrored in y or not.
+fn offsideHull(dx: f64, dy: f64, mirrored: bool) !Body {
+    var points = OFFSIDE_HULL;
+    if (mirrored) for (&points) |*p| {
+        p[1] = OFFSIDE_MIRROR_Y - p[1];
+    };
+    const y = OFFSIDE_HULL_NUDGE[1] + dy;
+    return fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ OFFSIDE_HULL_NUDGE[0] + dx, if (mirrored) -y else y, OFFSIDE_HULL_NUDGE[2] });
+}
+
+/// The hull through the box's side, its corner on the box's top edge: every operation made
+/// and sound with the identities at the tolerance, the hull first; the union and the
+/// intersection the same solids the other way round, one each (the union with the box's
+/// `voids`); and the box less the hull refused by design, the pocket the hull leaves
+/// touching the box's edge at the corner alone (`pinched`).
+fn expectThroughSide(joined: *const Body, hull: *const Body, voids: usize) !void {
+    try helpers.expectIdentitiesAtTolerance(hull, joined);
+    for ([2][2]*const Body{ .{ joined, hull }, .{ hull, joined } }) |operands| {
+        var both = try sound(operands[0], operands[1], .@"union");
+        defer both.deinit();
+        try testing.expectEqual([2]usize{ 1, voids }, shellKinds(&both));
+        var common = try sound(operands[0], operands[1], .intersection);
+        defer common.deinit();
+        try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&common));
+    }
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, joined, hull, .difference, .{}, &diag, null));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+}
+
+test "degeneracy: a hull's corner within the tolerance of a side's plane and off the side, on the box's edge beside it, its edge crossing the side farther on, is cut by the side there" {
+    // The nightly's find (2026-11-20, locus_solids, bp), as it drew it: a box hollowed to
+    // a wall 3 tolerances thick, joined with a plate whose side is 1e-4 inside the wall's
+    // (one face, in the plate's plane, the wall's edges 1e-4 off it), then a hull whose
+    // corner lies on the box's top edge at y = 1: 1.5e-4 from that face's plane (a
+    // tolerance of 2e-4), its foot on the footprint of the face's edge at y = 1 and
+    // 2.5e-4 from the edge itself, so off the face. Edge–face left the crossing of the
+    // hull's edge from that corner to vertex–face, the corner being on the plane, and
+    // vertex–face had the corner off the face: the edge crossed the side 3.7e-4 from the
+    // corner, 3e-4 inside it, with no vertex there, the hull's section of the side ended
+    // inside it, and the side's fragment read both sides of the hull from the spur
+    // (`unclassified`). The crossing is the corner's only where the corner is on the face
+    var joined = try offsideBox(true, false);
+    defer joined.deinit();
+    var hull = try offsideHull(0, 0, false);
+    defer hull.deinit();
+    try expectThroughSide(&joined, &hull, 3);
+}
+
+test "degeneracy: a hull's corner on a box's edge, within the tolerance of the plane of the side beside it or clear of it, its foot on the side's edge, outside it or inside it, mirrored or not: cut by the side where the corner is off it, refused where its foot is inside" {
+    // The cases about the find above, the box solid: the corner 1.6e-4 to 1.9e-4 from the
+    // side's plane and its foot on the footprint of the side's edge or up to 6e-5 outside
+    // it (off the side: the edge from it crosses the side farther on, a vertex of its own,
+    // each of these `unclassified` before); the corner 2.5e-4 from the plane (the edge
+    // crossed the side as any other, then and now); and the foot inside the footprint,
+    // the corner inside the side by its distance from the side's edge and on that edge by
+    // its foot (`below_feature_size`, the paves' feature-size rule, then and now)
+    for ([_]bool{ false, true }) |mirrored| {
+        var joined = try offsideBox(false, mirrored);
+        defer joined.deinit();
+        for (OFFSIDE_NEAR ++ [_]f64{OFFSIDE_CLEAR}) |dx| for (OFFSIDE_OUT) |dy| {
+            errdefer std.debug.print("mirrored {}, shifted {e} in x and {e} in y\n", .{ mirrored, dx, dy });
+            var hull = try offsideHull(dx, dy, mirrored);
+            defer hull.deinit();
+            try expectThroughSide(&joined, &hull, 0);
+        };
+        for (OFFSIDE_NEAR) |dx| for (OFFSIDE_IN) |dy| {
+            errdefer std.debug.print("mirrored {}, shifted {e} in x and {e} in y\n", .{ mirrored, dx, dy });
+            var hull = try offsideHull(dx, dy, mirrored);
+            defer hull.deinit();
+            try expectRefused(&joined, &hull, .below_feature_size);
+            try expectRefused(&hull, &joined, .below_feature_size);
+        };
+    }
 }

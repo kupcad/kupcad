@@ -2227,6 +2227,15 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // (overlay.orderAtSharedVertex: both pieces share the arc's end past the lowest
         // point, `Hit.past`)
         "overlay 3 2 0 24 11 6 0 0 1 0 13 5 1 0 0 0 2 1 8 24 23 1 14 3 1 20 10 2 7 2 1 7 24 4 12 6 1 20 6 4 12 7 6 4 2 1 3 0 1 1 0 0 4 1 0 2 1 0 4 3 0 1 1 0 4 2 0 1 8 6 15 7 23 15 5 13 7 1 8 12 3 20 20 7 4 17 3 24 1 8 4 19 8 1 3 0 1 2 1 2 0 0 1 0 1 3 1 1 4 0 0 3 1 0 1 1 1 2 0 18 12 1 0 0 1 1 4 3 7 3 7 17 1 7 9 1 9 13 1 4 1 0 4 3 1 1 1 1 3 0 1",
+        // The nightly of 2026-11-20 on 22662066 (locus_solids, bp): a box's side 3
+        // tolerances off its cavity joined with a plate's side 1e-4 inside it (one face in
+        // the plate's plane, the box's edges 1e-4 off it), then a hull whose corner lies
+        // on the box's top edge, 1.5e-4 from that face's plane and 2.5e-4 from its edge,
+        // the corner's foot on the edge's footprint: off the face. Edge–face left the
+        // crossing of the hull's edge from the corner to vertex–face by the plane alone,
+        // and the hull's section of the side ended inside it (`unclassified`;
+        // pave.edgeFace: the crossing is an end's only where the end is on the face)
+        "solids 2 1 2 2 4 1 2 2 1 11 3 1 14 2 1 3 1 5 2 3 4 3 1 4 0 1 4 1 0 0 4 2 0 1 1 7 3 4 2 2 2 4 0 4 4 3 4 3 0 3 0 1 4 3 3 1 2 1 2 3 -2 10 5 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -847,12 +847,17 @@ const Filler = struct {
     /// plane first and refused a vertex at its reach of it over the notch of an L-shaped
     /// face, outside it (step 1 of closing M4, order symmetry).
     fn placeOnFace(self: *Filler, k: usize, f: types.FaceIndex, plane: Plane, v: u32) Error!?in_face.Place {
+        const at = try self.faceVerdict(k, f, plane, v);
+        return if (try self.settle(at.on, .of(.face, @backingInt(f)))) at.place else null;
+    }
+
+    /// `placeOnFace`'s verdict, not yet taken (a decision of several vertices combines
+    /// theirs first, `canonical.either`), with the place where it is not apart.
+    fn faceVerdict(self: *Filler, k: usize, f: types.FaceIndex, plane: Plane, v: u32) Error!struct { on: Verdict, place: in_face.Place } {
         const height = self.planeVerdict(plane, v);
-        if (height == .apart) return null;
+        if (height == .apart) return .{ .on = .apart, .place = .outside };
         const place = try self.placeIn(k, f, self.p.point(v), v);
-        if (place == .outside) return null;
-        _ = try self.settle(height, .of(.face, @backingInt(f)));
-        return place;
+        return .{ .on = if (place == .outside) .apart else height, .place = place };
     }
 
     /// Face `f` of operand `k`'s edges in trees, when it has many; built on first asking.
@@ -1457,15 +1462,15 @@ const Filler = struct {
     // --- edge–face ---
 
     /// Every edge of one operand crossing a face of the other, its ends on either side of
-    /// the face's plane beyond the tolerance (an end on the plane is vertex–face's): the
-    /// crossing, inside the face or on its boundary, a merged vertex on the edge and the
-    /// face (one on the face's boundary tried against the other operand's edges, where
-    /// edge–edge should have found it). A straight edge meets a plane once: a pave the edge
-    /// already has on the face (edge–edge's, where it passes an edge of the face) is the
-    /// crossing, however far the computed point is from it. At a shallow angle the edge
-    /// stays within the tolerance of the plane along a stretch many times the tolerance,
-    /// and a second vertex there made the two faces meet along a bent chain that both kept,
-    /// a fold (2026-11-13).
+    /// the face's plane and neither on the face (an end on the face is vertex–face's, and
+    /// the crossing is that end): the crossing, inside the face or on its boundary, a
+    /// merged vertex on the edge and the face (one on the face's boundary tried against the
+    /// other operand's edges, where edge–edge should have found it). A straight edge meets
+    /// a plane once: a pave the edge already has on the face (edge–edge's, where it passes
+    /// an edge of the face) is the crossing, however far the computed point is from it. At
+    /// a shallow angle the edge stays within the tolerance of the plane along a stretch
+    /// many times the tolerance, and a second vertex there made the two faces meet along a
+    /// bent chain that both kept, a fold (2026-11-13).
     fn edgeFace(self: *Filler) Error!void {
         for (0..2) |k| {
             const other = 1 - k;
@@ -1480,13 +1485,30 @@ const Filler = struct {
                 const plane = planar_faces.planeOf(planar_faces.frameOf(self.body(other), f).?);
                 const h0 = plane.height(p0);
                 const h1 = plane.height(p1);
-                // An end on the plane is vertex–face's, by the reach vertex–face decided it
-                // with: the tolerance alone took an end with a gap, on the plane there, as
-                // across it here (the M0–M4 review, 2026-11-15: one predicate, one measure).
-                // Both ends asked, then decided: one on the plane settles it whatever the
-                // other (a plate's edge from a box's corner to an end at the tolerance to
-                // rounding was refused when it ran from that end; the 10K session on 0fce3ff4)
-                if ((h0 < 0) == (h1 < 0) or try self.settle(canonical.either(self.planeVerdict(plane, v[0]), self.planeVerdict(plane, v[1])), .of(.edge, @backingInt(e)))) continue;
+                if ((h0 < 0) == (h1 < 0)) continue;
+                // An end on the face is vertex–face's, as vertex–face decided it
+                // (`faceVerdict`: within its reach of the plane, the tolerance and its gap,
+                // and inside the face or on its boundary; the M0–M4 review, 2026-11-15: one
+                // predicate, one measure), and the crossing is that end. An end within
+                // reach of the plane and outside the face is on nothing of the face: the
+                // edge crosses the plane elsewhere, and that crossing is placed as any
+                // other. Taken as vertex–face's by the plane alone, the crossing of an edge
+                // from such an end was nobody's (OCCT's `PerformEF` takes an intersection
+                // at an end for the end only where the end is on the face,
+                // `CheckFacePaves`, or can be put on it, `ForceInterfVF`, and makes a
+                // vertex otherwise): a hull's corner 1.5e-4 from the plane of a box's side,
+                // its foot on the footprint of the side's edge and the corner 2.5e-4 from
+                // the edge itself, which a union had left 1e-4 off the side's plane (D28),
+                // its edge crossing the side 3.7e-4 on, 3e-4 inside it; the hull's section
+                // of the side ended there on one face of the two about that edge, and the
+                // side's fragment had the chain as a spur, inside and outside by it
+                // (`unclassified`; the nightly of 2026-11-20, bp). Both ends asked, then
+                // decided: one on the face settles it whatever the other (a plate's edge
+                // from a box's corner to an end at the tolerance to rounding was refused
+                // when it ran from that end; the 10K session on 0fce3ff4)
+                const on0 = try self.faceVerdict(other, f, plane, v[0]);
+                const on1 = try self.faceVerdict(other, f, plane, v[1]);
+                if (try self.settle(canonical.either(on0.on, on1.on), .of(.edge, @backingInt(e)))) continue;
                 const q = vec.lerp(p0, p1, h0 / (h0 - h1));
                 if (try self.paveOnFace(k, e, other, f, plane, q)) |at| {
                     try self.foundOn(other, f, at.vertex, at.place);
