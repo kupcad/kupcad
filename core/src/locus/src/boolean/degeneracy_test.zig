@@ -262,6 +262,18 @@ const H7_WIDTHS = [_]f64{ 5, 3, 1.5 };
 /// How far the spec case's second box stands over the first's height and depth: within
 /// the zone, and five intersection tolerances.
 const OVERSIZES = [_]f64{ 1e-6, 1e-4 };
+/// The hull of the tests of a flat tetrahedron cut to a strip along its upper edge, as the
+/// solids fuzzer drew it: its edge between (3, 1, 4) and (3, 3, 4) runs over that edge.
+const FLAT_HULL = [_]Vec3{ .{ 1, 4, 1 }, .{ 3, 3, 4 }, .{ 4, 0, 1 }, .{ 4, 4, 3 }, .{ 3, 1, 4 } };
+/// The tetrahedron of those tests, two opposite edges through (3, 1), the lower along x and
+/// the upper along y from 0 to 2: how many intersection tolerances apart the two are in z
+/// and half the lower edge's length (the fuzzer's 3 and 1, the corner at the upper edge's
+/// end a right angle from above; that corner sharper and blunter; and the edges nearer and
+/// farther, all past the minimum feature size, 2); and where it lies, how far under the
+/// hull's edge and nudged along its own upper edge (the fuzzer's 2e-3 under, the strip the
+/// hull cuts of it 3e-3 wide, nudged either way, and ten times as far under).
+const FLAT_SHAPES = [_][2]f64{ .{ 3, 1 }, .{ 3, 0.5 }, .{ 3, 2 }, .{ 2.5, 1 }, .{ 4, 1 } };
+const FLAT_PLACES = [_][2]f64{ .{ 2e-3, 1e-5 }, .{ 2e-3, -1e-5 }, .{ 2e-2, 1e-5 } };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -3992,6 +4004,74 @@ test "degeneracy: a hull's corner on a box's edge, within the tolerance of the p
             defer hull.deinit();
             try expectRefused(&joined, &hull, .below_feature_size);
             try expectRefused(&hull, &joined, .below_feature_size);
+        };
+    }
+}
+
+/// Each operation of `a` and `b`, either way round, made and sound, every face of it a
+/// part of one face of one operand (operands with no two faces in one plane: the paves
+/// find none, so the result's faces share no plane record but as parts of one face); the
+/// identities.
+fn expectSoundFaceByFace(a: *const Body, b: *const Body) !void {
+    for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            var r = pipeline.Report.init(testing.allocator);
+            defer r.deinit();
+            var made = try helpers.soundReported(operands[0], operands[1], op, &r);
+            defer made.deinit();
+            for (r.faces.items, 0..) |x, i| for (r.faces.items[i + 1 ..]) |y| try testing.expect(x.result != y.result);
+        }
+    }
+    try helpers.expectIdentities(a, b);
+}
+
+test "degeneracy: a flat tetrahedron cut by a hull to a strip along its upper edge keeps its two upper faces two, each operation sound either way round" {
+    // The locus fuzzer's find (2026-11-20, the session on 5c1e164e, br), as it drew it: a
+    // tetrahedron two of whose opposite edges are three intersection tolerances apart
+    // (6e-5), its two upper faces 1.2e-4 rad apart about the upper edge, its two lower
+    // about the lower; a hull's edge 2e-3 over the upper edge, the hull's faces cutting a
+    // strip 3e-3 wide of the tetrahedron along it, to the corner at its end. The two upper
+    // faces' parts in the strip have their corners 1.6e-7 off each other's planes, and
+    // simplify, deciding "one plane" by that, made them one face: it met the lower face
+    // along the two edges that end at the corner, 6e-5 from it at the strip's other end,
+    // and the intersection and the difference were bodies whose faces intersect. Two faces
+    // of one operand are one plane only where the paves found them so (D28)
+    var hull = try fuzzHullPlaced(&.{ .{ 1, 4, 1 }, .{ 3, 3, 4 }, .{ 4, 0, 1 }, .{ 1, 4, 1 }, .{ 4, 4, 3 }, .{ 3, 1, 4 } }, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ 0, 0, -5e-6 });
+    defer hull.deinit();
+    const half = 3.0 * tol.xsect / 2.0;
+    var flat = try fuzzHullPlaced(&.{ .{ 1, 1, 4 - half }, .{ 3, 1, 4 - half }, .{ 2, 0, 4 + half }, .{ 2, 2, 4 + half } }, vec.Z3, 0, null, .{ 1, 0, 0 }, .{ 0, 1e-5, -2e-3 });
+    defer flat.deinit();
+    try expectSoundFaceByFace(&hull, &flat);
+    var common = try sound(&hull, &flat, .intersection);
+    defer common.deinit();
+    try testing.expectEqual(@as(usize, 8), common.counts().faces);
+}
+
+test "degeneracy: a flat tetrahedron cut by a hull to a strip along its upper edge, its edges a few tolerances apart, its corner sharp or blunt, the strip narrow or wider, mirrored or not, keeps its faces apart" {
+    // The cases about the find above. The face simplify made of the two upper faces met
+    // the lower face along two edges from the tetrahedron's corner; the overlap rules saw
+    // it where the corner is sharp or a right angle from above (the edges' marks along the
+    // two planes' line out of order: `faces_intersect`) and passed it where the corner is
+    // blunt, the same two faces on each other. Every case made, each face of a result a
+    // part of one face of an operand
+    for ([_]bool{ false, true }) |mirrored| {
+        var corners = FLAT_HULL;
+        if (mirrored) for (&corners) |*p| {
+            p[1] = 4 - p[1];
+        };
+        var hull = try fuzzHullPlaced(&corners, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ 0, 0, -5e-6 });
+        defer hull.deinit();
+        for (FLAT_SHAPES) |shape| for (FLAT_PLACES) |place| {
+            errdefer std.debug.print("mirrored {}, {d} tolerances apart, lower edge {d} either way, {e} under, nudged {e}\n", .{ mirrored, shape[0], shape[1], place[0], place[1] });
+            const half = shape[0] * tol.xsect / 2.0;
+            var points = [_]Vec3{ .{ 3 - shape[1], 1, 4 - half }, .{ 3 + shape[1], 1, 4 - half }, .{ 3, 0, 4 + half }, .{ 3, 2, 4 + half } };
+            if (mirrored) for (&points) |*p| {
+                p[1] = 4 - p[1];
+            };
+            var flat = try fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, 0, 0 }, .{ 0, place[1], -place[0] });
+            defer flat.deinit();
+            try expectSoundFaceByFace(&hull, &flat);
         };
     }
 }

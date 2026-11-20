@@ -264,11 +264,14 @@ test "simplify: a short edge collapsed into its start gives the start the gap th
     try testing.expect(body.vertex(corner).gap > 0);
 }
 
-test "simplify: two faces on planes the same within the tolerance, different records, become one" {
-    // The boolean gives each fragment its source's plane (D28): two faces in one plane
-    // could hold two records, and by records alone they stayed two, or not, by which
-    // operand came first (A ∪ B 20 faces, B ∪ A 19). The top's right half given its own
-    // record 1e-9 above the left's: one face, as for one record
+test "simplify: two faces on planes the same within the tolerance, of two records, stay two" {
+    // One record is one plane as the paves decided it (D28: a face's fragments share its
+    // record, and the faces the paves found in one plane share their group's), and
+    // simplify decides nothing again by geometry. It merged faces of two records on planes
+    // the same within the tolerance, and so made one face of two faces of one operand
+    // where a cut left little of them (the locus session on 5c1e164e, br). The top's right
+    // half given its own record 1e-9 above the left's: two faces, the edge between them
+    // and its vertices kept
     var body = try splitTop(0, 0);
     defer body.deinit();
     var tops: [2]types.FaceIndex = undefined;
@@ -290,7 +293,9 @@ test "simplify: two faces on planes the same within the tolerance, different rec
     defer diag.deinit();
     try simplify.run(&body, &diag, null);
     try expectValid(&body);
-    try testing.expectEqual(@as(usize, 6), body.counts().faces);
+    const counts = body.counts();
+    try testing.expectEqual(@as(usize, 7), counts.faces);
+    try testing.expectEqual(@as(usize, 10), counts.vertices);
 }
 
 test "simplify: coverLine's gap holds a vertex to the line as the checker measures it, the line at the vertex's projection" {

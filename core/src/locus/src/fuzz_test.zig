@@ -2236,6 +2236,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // and the hull's section of the side ended inside it (`unclassified`;
         // pave.edgeFace: the crossing is an end's only where the end is on the face)
         "solids 2 1 2 2 4 1 2 2 1 11 3 1 14 2 1 3 1 5 2 3 4 3 1 4 0 1 4 1 0 0 4 2 0 1 1 7 3 4 2 2 2 4 0 4 4 3 4 3 0 3 0 1 4 3 3 1 2 1 2 3 -2 10 5 2",
+        // The session on 5c1e164e (locus, 2026-11-20, br): a tetrahedron two of whose
+        // opposite edges are three intersection tolerances apart, cut by a hull to a strip
+        // 3e-3 wide along its upper edge; its two upper faces' parts there, 1.2e-4 rad
+        // apart and 1.6e-7 off each other's planes, were merged, and the face made of them
+        // lay on the lower face between the two edges it met it along (`faces_intersect`;
+        // simplify.sameDomain: one plane record is one plane, as the paves decided it)
+        "solids 1 6 1 4 1 3 3 4 4 0 1 1 4 1 4 4 3 3 1 4 1 2 0 0 4 7 2 0 0 -1 -1 4 3 1 3 2 5 2 3 4 1 0 1 4 2 4 1 2 5 14 4 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
