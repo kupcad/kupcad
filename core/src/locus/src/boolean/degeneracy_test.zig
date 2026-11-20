@@ -42,6 +42,15 @@ const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
 /// The middle of the solids fuzzer's grid, which it turns a placement about.
 const FUZZ_GRID_MIDDLE: Vec3 = .{ 2, 2, 2 };
+/// The solids fuzzer's turn at the angular tolerance (`1 − cos` of it is the tolerance less
+/// 1.4e-14) and one clear of it, and how far the hull of the tests of a top that shallow to
+/// a plate's is lifted: the find's (two of its top's corners 1.8e-4 under the plate's top,
+/// the intersection tolerance 2e-4) and its neighbours, down to 5e-5 over it.
+const TURN_AT_ANGLE: f64 = 0.014142253476507214;
+const TURN_PAST_ANGLE: f64 = 0.02;
+const SHALLOW_LIFTS = [_]f64{ 2.0000000063948848e-5, 6e-5, 1e-4, 1.5e-4, 2.5e-4 };
+/// The hull of those tests, as the fuzzer drew it: its top the four points at z = 4.
+const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
 /// OCCT's bug33361 (research/occt-tests.md, O6): four convex hexahedra from a real model,
 /// their corners meant to meet 9.6e-5 to 1.7e-4 apart, coordinates near 128; its own
 /// numbers, as the case gives them.
@@ -2925,4 +2934,62 @@ test "degeneracy: a plate's top 0.8° off a box's top, its edge the tolerance un
         errdefer std.debug.print("at ({d}, {d}, {d})\n", .{ p[0], p[1], p[2] });
         try testing.expectEqual(point_in_body.Place.inside, try point_in_body.classify(testing.allocator, &pocketed, &index, p, .{}, &diag));
     }
+}
+
+/// The plate of the tests of a hull's top shallow to it, as the solids fuzzer placed it:
+/// x from 2, its top at z = 4, at a zone of 1e-4.
+fn shallowPlate() !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var drawn = try helpers.boxAt(Tolerance.fromZone(1e-4), .{ 2, -48, 1 }, .{ 52, 52, 3 });
+    defer drawn.deinit();
+    var place = mat.Affine.translate(vec.ZERO3);
+    place = mat.Affine.translate(.{ 0, 0, 1 }).compose(&place);
+    place = mat.Affine.translate(.{ 0, 5e-5, 0 }).compose(&place);
+    return @import("../construct/transform.zig").transform(testing.allocator, &drawn, &place, .{}, &diag);
+}
+
+test "degeneracy: a hull's top at the angular tolerance to a plate's, two corners within the tolerance under it, takes the plate's strip beside them as under it" {
+    // The locus fuzzer's find (2026-11-20, the session on 6f0faa84, bl), as it drew it less
+    // a plate that plays no part: a hull turned 0.01414 rad about y, its top's corners at
+    // x = 2.028 1.8e-4 under a plate's top (zone 1e-4, an intersection tolerance of 2e-4),
+    // on it, the plate's side at x = 2. The two tops are parallel within the angular
+    // tolerance (by 1.4e-14) and not in one plane, so they meet along the line through
+    // those corners, the hull's top rising from it over the plate's edge, 2.2e-4 over
+    // it there. The planes' own line is 0.0127 from the corners' and through the strip of
+    // the plate's top between them and its edge: the strip is under the hull's top along
+    // the corners' line as the paves made it, and its points are either side of that top,
+    // none farther than 2.2e-4. The seam there was passed over, the faces parallel; a ray
+    // from a point 1.4e-4 over the hull's top read the strip outside and kept it, and the
+    // corners' line had three faces (`edge_coedge_count`), every operation either way
+    var plate = try shallowPlate();
+    defer plate.deinit();
+    var hull = try fuzzHullPlaced(&SHALLOW_HULL, vec.Y3, TURN_AT_ANGLE, null, .{ 0, 0.5, 0 }, .{ 2e-5, 0, SHALLOW_LIFTS[0] });
+    defer hull.deinit();
+    try expectAllSound(&hull, &plate);
+    // The same solid whichever operand comes first
+    var forward = try sound(&hull, &plate, .@"union");
+    defer forward.deinit();
+    var swapped = try sound(&plate, &hull, .@"union");
+    defer swapped.deinit();
+    try testing.expectEqual(forward.counts(), swapped.counts());
+}
+
+test "degeneracy: a hull's top at the angular tolerance to a plate's or past it, its corners from the tolerance under the plate's top to over it, mirrored or not, is joined and cut either way round" {
+    // The cases about the find above: the hull lifted so that its top's corners are 1.8e-4,
+    // 1.4e-4, 1e-4 and 5e-5 under the plate's top and 5e-5 over it, turned at the angular
+    // tolerance (the tops meeting along the corners' line) and past it (along their
+    // planes' own), the hull as drawn and mirrored in y
+    var plate = try shallowPlate();
+    defer plate.deinit();
+    for ([_]f64{ TURN_AT_ANGLE, TURN_PAST_ANGLE }) |turn| for (SHALLOW_LIFTS) |lift| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("turned {d}, lifted {e}, mirrored {}\n", .{ turn, lift, mirrored });
+        var points = SHALLOW_HULL;
+        if (mirrored) for (&points) |*p| {
+            p[1] = 3 - p[1];
+        };
+        var hull = try fuzzHullPlaced(&points, vec.Y3, turn, null, .{ 0, 0.5, 0 }, .{ 2e-5, 0, lift });
+        defer hull.deinit();
+        try expectAllSound(&hull, &plate);
+    };
 }

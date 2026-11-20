@@ -71,6 +71,10 @@ pub const Classified = struct {
 
 pub const NONE: u32 = std.math.maxInt(u32);
 
+/// How near nothing the part of a direction across a face is and shows no side of it: a
+/// dot product of two unit vectors, to rounding (D27's ulps).
+const SIDE_ROUNDING: f64 = canonical.AT_TOLERANCE_ULPS * std.math.floatEps(f64);
+
 /// What classification did, for the result report: the rays it cast, the fragments a
 /// component's ray decided without one of their own, and the components whose second ray
 /// was cast to check the first's (each agreeing, or the boolean refused).
@@ -389,8 +393,7 @@ const Seams = struct {
 /// two of them disagreeing a contradiction of the paves, refused (`unclassified`); else by
 /// every piece, as the last resort for a fragment no ray decides, null when two disagree.
 /// Null when no piece decides (none lies on the other, the faces there are in one plane
-/// with the fragment's within the angular tolerance, or the edge a piece is of runs across
-/// that plane: `wedgeSide`).
+/// with the fragment's, or the edge a piece is of runs across that plane: `wedgeSide`).
 fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, fragments: *const Fragments, i: usize, clear_only: bool, diag: *Diagnostics) Error!?Class {
     const fragment = fragments.items.items[i];
     const normal = in_face.outwardNormal(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face), .{ 0, 0 });
@@ -402,7 +405,7 @@ fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, frag
             const y = vertices[(k + 1) % vertices.len];
             const piece = seams.of(other, x, y) orelse continue;
             const into = vec.normalized(vec.cross(normal, vec.sub(paves.point(y), paves.point(x)))) orelse continue;
-            const side = (try pieceSide(allocator, paves, seams, other, piece, x, y, normal, into, diag)) orelse continue;
+            const side = (try pieceSide(allocator, paves, seams, other, piece, x, y, fragment.face, normal, into, diag)) orelse continue;
             if (clear_only and !side.clear) continue;
             if (found) |c| {
                 if (c == side.class) continue;
@@ -430,8 +433,19 @@ const Side = struct { class: Class, clear: bool };
 /// wedge where solids touch along it), else behind the face `g`
 /// of `other` it is a section with (clear when its middle lies in `g` beyond reach of
 /// `g`'s boundary, `in_face.placeWithin`, the paves' decision). Null for a face there in
-/// one plane with the fragment's.
-fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, other: u1, piece: Seams.Piece, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
+/// one plane with the fragment's face `face`, as the paves decided it (`Paves.inOnePlane`:
+/// one region with it, the twins' to decide), or when `into` runs along `g` to rounding.
+/// A face parallel to the fragment's within the angular tolerance and not in one plane
+/// with it shows its side as any other, by the sign of the turn however small (OCCT's
+/// `IsInternalFace` reads the dihedral to its angular precision): the paves made a section
+/// of the two along the line through the merged vertices on both, and the fragment beside
+/// it is on the side the face turns from it, wherever the planes' own line runs. Passed
+/// over as parallel, a strip of a plate's top beside the line through two corners of a
+/// hull's top, 0.8° off it and 1.8e-4 under it there, was left to a ray: the planes' own
+/// line ran through the strip 0.0127 from the corners', its points lay either side of
+/// the hull's top within 2.2e-4, and the first of them clear of it, over it, kept the
+/// strip the hull's top covers (`edge_coedge_count`; the session on 6f0faa84, bl).
+fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, other: u1, piece: Seams.Piece, x: u32, y: u32, face: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
     const body = paves.operands[other];
     switch (piece) {
         .edges => |range| {
@@ -448,12 +462,14 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
             return .{ .class = class orelse return null, .clear = true };
         },
         .section => |g| {
+            if (paves.inOnePlane(1 - other, face, @backingInt(g))) return null;
             const n_g = in_face.outwardNormal(body, g, .{ 0, 0 });
-            if (paves.tol.parallel(normal, n_g)) return null;
+            const across = vec.dot(into, n_g);
+            if (@abs(across) <= SIDE_ROUNDING) return null;
             const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
             const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
             const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, try seams.edgesOf(allocator, paves, other, g, diag), diag) == .inside;
-            return .{ .class = if (vec.dot(into, n_g) < 0) .inside else .outside, .clear = clear };
+            return .{ .class = if (across < 0) .inside else .outside, .clear = clear };
         },
     }
 }

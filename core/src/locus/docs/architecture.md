@@ -876,7 +876,19 @@ importing only those before it, which the layering test holds):**
   piece cut off there within the zone of the box's face all over, its corner past the
   tolerance, 2026-11-17), and the reading of every piece is the last resort for a fragment
   no ray decides (a piece along a face's boundary is unclear: there the face's neighbour
-  bounds the material too). The report counts fragments by seam (`by_seam`); rays fell,
+  bounds the material too). A section shows no side only of a face in one plane with the
+  fragment's as the paves decided it (`Paves.inOnePlane`, the twins' to decide), or when
+  the way into the fragment runs along the face to rounding; a face parallel to the
+  fragment's within the angular tolerance and not in one plane with it shows its side as
+  any other, by the sign of the turn however small (OCCT's `IsInternalFace` reads the
+  dihedral to its angular precision, 1e-12). "Parallel" alone passed the seam over and
+  left the fragment to a ray: a hull's top at the angular tolerance to a plate's, two of
+  its corners 1.8e-4 under the plate's top and on it (the tolerance 2e-4), met it along
+  the corners' line, 0.0127 from the planes' own; the strip of the plate's top between
+  that line and the plate's edge lies either side of the hull's top, within 2.2e-4 of
+  it, a ray from a point 1.4e-4 over it read the strip outside, and the corners' line
+  had three faces (`edge_coedge_count`; the session on 6f0faa84, 2026-11-20, bl). The
+  report counts fragments by seam (`by_seam`); rays fell,
   and a union of two 1000-sided prisms took 18% less time.
 - `select.zig`: Mäntylä's table, a coincident face kept once: from `a` where the two faces
   are in one plane (one record, D28, so either copy merges alike), else the copy whose face's

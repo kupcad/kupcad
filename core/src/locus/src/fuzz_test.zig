@@ -2195,6 +2195,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // were one too many (overlay.Place: an extreme's cut by the ends' x against the
         // centre's, as a piece's side is)
         "overlay 3 1 1 3 19 5 3 5 0 1 5 18 1 1 2 1 1 1 0 2 1 1 2 2 7 1 5 3 5 1 1 24 1 1 15 4 1 14 1 1 0 19 5 0 6 1 1 0 1 2 0 0 1 2 0 1 1 1 3 2 1 1 3 1 1 0 1 1 3 23 24 1 11 20 1 24 5 1 2 1 1 2 0 0 2 1 0 2 2 8 11 14 5 15 11 7 1 2 4 23 13 2 3 14 5 15 14 6 7 3 2 1 14 3 3 3 0 4 2 1 1 3 1 1 2 0 1 3 1 1 3 0 1 2 0 2 3 0 0 7 14 1 3 0 0",
+        // The session on 6f0faa84 (locus, 2026-11-20, bl): a hull's top at the angular
+        // tolerance to a plate's, two of its corners 1.8e-4 under the plate's top and on
+        // it; the strip of the plate's top between the corners' line and its edge lies
+        // either side of the hull's top, the seam along that line was passed over as the
+        // faces are parallel, and a ray kept the strip (classify.pieceSide: a section shows
+        // no side only of a face in one plane with the fragment's, as the paves have it)
+        "solids 2 2 4 1 2 3 4 1 0 0 1 0 10 3 -1 16 3 1 1 7 0 3 1 4 3 4 2 3 4 0 1 1 1 4 1 2 0 4 0 1 4 0 1 5 2 7 1 11 13 0 3 2 2 3 1 3 1 3 1 3 0 3 2 2 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

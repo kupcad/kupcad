@@ -410,6 +410,15 @@ pub const Paves = struct {
         return true;
     }
 
+    /// Whether face `face` of `operand` and face `other_face` of the other operand lie in
+    /// one plane, as the paves decided it (`coplanar`).
+    pub fn inOnePlane(self: *const Paves, operand: u1, face: u32, other_face: u32) bool {
+        for (self.coplanar.items) |pair| {
+            if (pair[operand] == face and pair[1 - operand] == other_face) return true;
+        }
+        return false;
+    }
+
     /// The faces of the other operand that face `face` of `operand` lies in one plane with.
     pub fn coplanarWith(self: *const Paves, operand: u1, face: u32, out: *std.ArrayList(u32)) Error!void {
         out.clearRetainingCapacity();
