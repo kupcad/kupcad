@@ -2291,6 +2291,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // measured it, and the checker, projecting onto the face, measured 5.5e-16 more
         // (`edge_off_surface`; pipeline.coverFaces: the gap carries the height's rounding)
         "solids 0 2 3 3 4 2 4 1 2 -2 2 0 4 3 2 2 0 2 1 4 2 3 2 0 1 2 2 9 3 2 1 2 6 0 2 1 7 2 1 1 1 3 0 1 3 4 0 4 1 1 4 0 4 2 3 0 2 4 0 1 1 0 2 0 2 4 3 3 11 0",
+        // The nightly of 2026-11-21 (run 44939579466, locus_solids, by): (a plate ∪ a wall)
+        // and a hull turned over it, the hull's top 1.5e-4 under the wall's and their sides
+        // in one plane; the slab the hull cut off the wall's side had its top edge a block
+        // of an edge of each, a region of both on either side, and took the first
+        // operand's line; the corner triangle a sliver on the hull's line only: the
+        // intersection made one way round, refused (`sliver_face`) the other
+        // (Provenance.blockLines: the finer zone's line, refused alike)
+        "solids 2 1 3 2 4 1 2 2 1 8 3 10 14 2 1 3 1 5 2 3 4 3 0 2 0 1 4 1 0 2 4 2 0 1 1 7 4 1 2 2 0 4 0 4 4 3 4 3 0 3 2 0 2 3 0 4 2 0 1 0 2 3 -2 10 5 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

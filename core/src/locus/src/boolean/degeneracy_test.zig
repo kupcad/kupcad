@@ -377,6 +377,22 @@ const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4
 /// apart in place, are the intersection tolerance to rounding and their union is refused
 /// `at_tolerance` before the hull comes).
 const SLOPE_TURNS = [_]@TypeOf(SLIVER_TURNS[0]){ SLIVER_TURNS[0], SLIVER_TURNS[2], SLIVER_TURNS[3], SLIVER_TURNS[4] };
+/// The solids of the tests of a common block between two regions of both operands (the
+/// nightly's find of 2026-11-21, by): a box whose top (z = 3.99995) and side (y = 3) meet
+/// along the edge the result keeps, and the hull the fuzzer turned a quarter about y over
+/// it, its top `TIE_DROPS` under 4 and its side in y = 3, its face x = 2.00005 cutting a
+/// slab 2.5e-4 thick off the box's side x = 2.0003. Both tops and both sides are one plane
+/// each (the tops 1.5e-4 apart at a tolerance of 2e-4), so the slab's top edge is a block
+/// of an edge of each, with as many faces of each along it, and its corner at y = 3 a
+/// triangle about the zone wide: 1.31e-7 on the box's line, 0.98e-7 on the hull's, against
+/// 1.02e-7 for no sliver.
+const TIE_BOX = [2]Vec3{ .{ 1, 1, 0.99995 }, .{ 2.0003, 3, 3.99995 } };
+const TIE_HULL = [_]Vec3{ .{ 2.00005, 0, 0 }, .{ 4.00005, -1, 2 }, .{ 4.00005, 3, 4 }, .{ 3.00005, 3, 1 }, .{ 2.00005, 2, 4 }, .{ 3.00005, 1, 4 }, .{ 2.00005, 3, 4 } };
+/// How far under 4 the hull's top is, and so how far under the box's (5e-5 less): the
+/// find's, within the zone and the tolerance of the box's, and at its edge.
+const TIE_DROPS = [_]f64{ 2e-4, 1e-4, 1.5e-4, 2.4e-4 };
+/// The zones of the box and the hull: the find's, and the other way round.
+const TIE_ZONES = [_][2]f64{ .{ 1e-4, 1e-5 }, .{ 1e-5, 1e-4 } };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4269,6 +4285,106 @@ test "degeneracy: a hull's edge along another's within the tolerance, inside its
         defer for (&hulls) |*h| h.deinit();
         try expectAlong(&hulls[0], &hulls[1], case.meet);
     };
+}
+
+test "degeneracy: a common block between two regions of both operands takes the finer operand's line, either way round" {
+    // The nightly's find (2026-11-21, run 44939579466, by), its slab alone: the block's
+    // two edges are each along a region of both operands, as many faces of each, and the
+    // block took the first operand's line. The intersection's corner triangle was 1.29
+    // times the least area that is no sliver's on the box's line and 0.96 of it on the
+    // hull's: made with the box first, refused (`sliver_face`) with the hull first. The
+    // hull's zone is the finer, its edge stated the more closely: its line either way
+    // round, so refused alike; with the zones the other way round, the box's, made alike
+    var solids = try tieSolids(TIE_ZONES[0], TIE_DROPS[0], 0, false);
+    defer for (&solids) |*x| x.deinit();
+    try expectRefusedOf(&solids[0], &solids[1], .intersection, .sliver_face);
+    try expectRefusedOf(&solids[1], &solids[0], .intersection, .sliver_face);
+    var other = try tieSolids(TIE_ZONES[1], TIE_DROPS[0], 0, false);
+    defer for (&other) |*x| x.deinit();
+    var forward = try sound(&other[0], &other[1], .intersection);
+    defer forward.deinit();
+    var swapped = try sound(&other[1], &other[0], .intersection);
+    defer swapped.deinit();
+    try testing.expectEqual(forward.counts(), swapped.counts());
+}
+
+test "degeneracy: a common block between two regions of both operands, the hull's top under the box's by less than the zone or more, at either zone, turned and mirrored, meets alike either way round" {
+    // The cases about the find above: whatever the line makes of the corner, a sliver or
+    // not, the union and the intersection are made alike or refused alike whichever
+    // solid comes first. By the first operand's line 24 of the 64 intersections were made
+    // one way round and refused the other
+    for (TIE_ZONES) |zones| for (TIE_DROPS) |drop| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("zones {any}, drop {e}, quarter turns {d}, mirrored {}\n", .{ zones, drop, quarter, mirrored });
+        var solids = try tieSolids(zones, drop, quarter, mirrored);
+        defer for (&solids) |*x| x.deinit();
+        for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            try expectAlikeEitherWay(&solids[0], &solids[1], op);
+        }
+    };
+}
+
+/// The box and the hull of those tests at `zones`, the hull's top `drop` under 4, both
+/// turned `quarter` quarter turns about z through the origin and then mirrored in x = 0
+/// when `mirrored` (exact: coordinates swapped and negated).
+fn tieSolids(zones: [2]f64, drop: f64, quarter: usize, mirrored: bool) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const corners = [2]Vec3{ tieMove(TIE_BOX[0], quarter, mirrored), tieMove(TIE_BOX[1], quarter, mirrored) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(corners[0][k], corners[1][k]);
+        hi[k] = @max(corners[0][k], corners[1][k]);
+    }
+    var a = try helpers.boxAt(Tolerance.fromZone(zones[0]), lo, hi);
+    errdefer a.deinit();
+    var points: [TIE_HULL.len]Vec3 = undefined;
+    for (TIE_HULL, &points) |p, *q| q.* = tieMove(.{ p[0], p[1], p[2] - drop }, quarter, mirrored);
+    const b = try @import("../construct/hull.zig").hull(testing.allocator, Tolerance.fromZone(zones[1]), &points, &diag);
+    return .{ a, b };
+}
+
+/// Point `p` turned `quarter` quarter turns about z through the origin, then mirrored in
+/// x = 0 when `mirrored`.
+fn tieMove(p: Vec3, quarter: usize, mirrored: bool) Vec3 {
+    var q = p;
+    for (0..quarter) |_| {
+        const turned_once: Vec3 = .{ -q[1], q[0], q[2] };
+        q = turned_once;
+    }
+    return if (mirrored) .{ -q[0], q[1], q[2] } else q;
+}
+
+/// `op` of `a` and `b` and of `b` and `a` alike: both made, sound, with the same counts
+/// and shells, or both refused for the same finding.
+fn expectAlikeEitherWay(a: *const Body, b: *const Body, op: pipeline.Op) !void {
+    var codes: [2]?diagnostics.Code = .{ null, null };
+    var made: [2]?Body = .{ null, null };
+    defer for (&made) |*m| if (m.*) |*body| body.deinit();
+    for ([2][2]*const Body{ .{ a, b }, .{ b, a } }, 0..) |operands, k| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        if (pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &diag, null)) |result| {
+            made[k] = result;
+        } else |err| {
+            if (err == error.OutOfMemory) return err;
+            codes[k] = diag.first().?.code;
+        }
+    }
+    errdefer std.debug.print("refused: {any}\n", .{codes});
+    try testing.expectEqual(codes[0], codes[1]);
+    if (codes[0] != null) return;
+    for (&made) |m| {
+        var report = try check.run(testing.allocator, &m.?, .global);
+        defer report.deinit(testing.allocator);
+        if (report.first()) |f| {
+            std.debug.print("the checker: {f}\n", .{f});
+            return error.ResultNotValid;
+        }
+    }
+    try testing.expectEqual(made[0].?.counts(), made[1].?.counts());
+    try testing.expectEqual(shellKinds(&made[0].?), shellKinds(&made[1].?));
 }
 
 /// A box of the tests of a pocket's mouth between `corners`, mirrored in y or not.

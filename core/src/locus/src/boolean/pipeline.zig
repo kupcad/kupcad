@@ -1118,15 +1118,21 @@ const Provenance = struct {
     /// kept fragment holding the piece is bounded there by its own operand's edge, unless
     /// it is coincident with a fragment of the other operand (`Classified.partner`), a
     /// region of both, bounded by both edges alike: the operand with more faces of its own
-    /// along the piece gives the line, so an edge the result keeps between two faces of
-    /// one operand is that operand's edge, whichever operand comes first. With as many of
-    /// each (a face of each operand meeting along the block, or two regions of both), the
-    /// first operand's, as every block's was: a hull's edge between two of its faces and
-    /// another hull's edge along it 1.67e-5 off (a tolerance of 2e-5), their corners
-    /// 4.15e-5 apart; the intersection kept both faces of the one hull and, of one of
-    /// them, a corner 4e-5 across, 1.37 times the least area that is no sliver's on that
-    /// hull's line and 0.96 of it on the other's: made one way round and refused the
-    /// other (`sliver_face`; the locus session on 0856d7ba, bs). Not the lines' fixed
+    /// along the piece gives the line, so an edge the result keeps between two faces of one
+    /// operand is that operand's edge, whichever operand comes first. With as many of each
+    /// (a face of each operand meeting along the block, or two regions of both), the
+    /// operand built at the finer zone, whose edge is stated the more closely: a box's top
+    /// and side each one plane with a hull's, the tops 1.5e-4 apart (a tolerance of 2e-4),
+    /// the slab the hull cut off the box's side kept a corner triangle at its top edge,
+    /// 1.29 times the least area that is no sliver's on the box's line and 0.96 of it on
+    /// the hull's, and the block took the first operand's: the intersection made one way
+    /// round and refused the other (the nightly, run 44939579466, 2026-11-21, by). With the
+    /// zones alike too, the first operand's, as every block's was: a hull's edge between
+    /// two of its faces and another hull's edge along it 1.67e-5 off (a tolerance of 2e-5),
+    /// their corners 4.15e-5 apart; the intersection kept both faces of the one hull and,
+    /// of one of them, a corner 4e-5 across, 1.37 times the least area that is no sliver's
+    /// on that hull's line and 0.96 of it on the other's: made one way round and refused
+    /// the other (`sliver_face`; the locus session on 0856d7ba, bs). Not the lines' fixed
     /// order for the rest: it turns with the operands moved whole, and a strip's ridge
     /// along a box's edge, a face of each along it, was one line in place and the other
     /// moved (the edge matrix, 16 cases of a ridge in a face).
@@ -1148,9 +1154,11 @@ const Provenance = struct {
                 }
             }
         }
+        // With as many of each, the operand built at the finer zone
+        const finer: u1 = @intFromBool(p.operands[1].tol.zone < p.operands[0].tol.zone);
         for (p.common.items) |block| {
             const count = own.get(block.vertices).?;
-            const operand: u1 = @intFromBool(count[1] > count[0]);
+            const operand: u1 = if (count[0] == count[1]) finer else @intFromBool(count[1] > count[0]);
             self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });
         }
     }

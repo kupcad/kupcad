@@ -892,7 +892,9 @@ importing only those before it, which the layering test holds):**
   blocks of an edge of each operand between the same
   two merged vertices are the common blocks, a table of their own (one edge of the result,
   on the line of one of its two edges, which the assembly chooses by the result's faces
-  along it, `Provenance.blockLines`; the operands' contact for the result report).
+  along it, `Provenance.blockLines`, as many of each by the finer zone's, then the first
+  operand's (the nightly's by, 2026-11-21: two regions of both along a block, a corner
+  triangle a sliver on one line only); the operands' contact for the result report).
 - `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its
   section segments there and back (input 1); each region input 0 winds about is a fragment,
   its cycles read back as merged vertices by their coordinates. A vertex the overlay made
