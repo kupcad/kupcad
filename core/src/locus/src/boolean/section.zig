@@ -4,9 +4,11 @@
 //! on the face: the trace is split where the face's edges cross the plane
 //! (`intersect/curve_surface.zig`, each edge's crossings computed once, so the faces on
 //! either side of an edge split at the same points), and each piece is kept when its middle
-//! lies inside the face (`query/in_face.zig`). Each kept piece bounds the section with the
-//! material on its left, running along `n_plane × n_face`. The pieces are one input of the
-//! overlay (§7.3), and the faces it winds about once are the section's faces.
+//! lies inside the face by its loops (`query/in_face.zig`'s `byLoops`), however near the
+//! boundary: a piece between two boundary points is in the face or out of it whole. Each
+//! kept piece bounds the section with the material on its left, running along `n_plane ×
+//! n_face`. The pieces are one input of the overlay (§7.3), and the faces it winds about
+//! once are the section's faces.
 //!
 //! On the plane itself the section is the solid just above it, as the mesh engine slices
 //! (a triangle counts when its lowest corner is at or below the height and its highest
@@ -304,15 +306,39 @@ const Section = struct {
         }
     }
 
-    /// The piece of `curve` from `a` to `b`, kept when its middle is inside face `f`.
+    /// The piece of `curve` from `a` to `b`, kept when its middle is inside face `f` by the
+    /// face's loops (`in_face.byLoops`): the piece runs between two of the points where
+    /// the face's boundary meets the plane, so it lies in the face or out of it whole, however
+    /// near the boundary its middle is. A piece along an edge lying in the plane is that
+    /// edge, which `edgeInPlane` gives (`alongInPlane`). Not by the zone about the boundary:
+    /// a face narrower than two zones has no point beyond it, and the piece across it was
+    /// dropped and the section's outline left open (a sheet with a strip 2e-5 wide,
+    /// extruded: a side face that wide, and the section at 1.11 lost a face of 0.58; the
+    /// 2D chain fuzzer's find cc, 2026-11-22).
     fn piece(self: *Section, f: types.FaceIndex, curve: Curve, a: Mark, b: Mark) Error!void {
         if (self.tol.samePoint(a.p, b.p) and b.t - a.t < std.math.pi) return;
         const mid = curve.eval((a.t + b.t) / 2);
+        if (try self.alongInPlane(f, mid)) return;
+        if (try in_face.byLoops(self.body, f, mid, null, self.diag) != .inside) return;
         const uv = in_face.uvOf(self.body, f, mid);
-        const place = try in_face.classify(self.body, f, mid, uv, self.tol.zone, self.diag);
-        if (place != .inside) return;
         const dir = vec.cross(self.plane.n, in_face.outwardNormal(self.body, f, uv));
         try self.add(curve, a, b, dir);
+    }
+
+    /// Whether `p` lies within the zone of an edge of face `f` that lies in the plane
+    /// (`cutOf`): a trace piece through it runs along that edge.
+    fn alongInPlane(self: *Section, f: types.FaceIndex, p: Vec3) Error!bool {
+        const body = self.body;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const e = body.coedge(c).edge;
+                if (!(try self.cutOf(e)).lies_in) continue;
+                if (in_face.edgeDistance(body, e, p) <= self.tol.zone) return true;
+            }
+        }
+        return false;
     }
 
     /// Edge `e` of face `f` (by coedge `c`), lying in the plane: a bound of the section

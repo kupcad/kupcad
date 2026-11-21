@@ -703,7 +703,11 @@ its axis, a sphere and a torus along its axis in circles; a plane only touching 
 `tangent`; the rest waits for M5), and each edge's crossings with the plane from
 `intersect/curve_surface.zig`, computed once per edge so both faces of an edge split their
 traces at the same points. The imprint on a face is the trace split at the face's boundary
-points and each piece kept when its middle is inside the face; the face itself is not split,
+points and each piece kept when its middle is inside the face by the face's loops, not by the
+zone about its boundary (a piece between two boundary points is in the face or out of it
+whole, and a face narrower than two zones has no point past the zone: a strip 2e-5 wide
+extruded, the trace across its end face was dropped and the section left open, find cc,
+2026-11-22), a piece along an edge lying in the plane being that edge; the face itself is not split,
 since a section needs only the pieces (M4's `trim_by_plane` splits it with the same pieces).
 Each kept piece runs along `n_plane × n_face`, the material on its left, and the pieces are
 one input of the overlay, whose faces wound once are the section, a sheet on `z = 0`. On the

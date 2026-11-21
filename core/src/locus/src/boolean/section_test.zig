@@ -3,7 +3,8 @@
 //! (nothing); a cylinder lying down cut in lines and touched along its side; a plate with
 //! a hole; a stepped solid of revolution at its step; a groove's floor (two faces rising
 //! from one edge, which cancel); a tetrahedron by its corners; turned solids whose slices'
-//! areas integrate to their volumes; two parts; and the refusals (a tilted cylinder's
+//! areas integrate to their volumes; two parts; a tab two zones wide, its end face a
+//! side face no point of which is past the zone; and the refusals (a tilted cylinder's
 //! ellipse, a free-form face, a sheet, a height that is not a number). Every section is
 //! checked.
 
@@ -29,6 +30,14 @@ const tol = tolerance.Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 /// Exact areas agree to rounding.
 const EXACT = 1e-9;
+/// The lines a tab runs between, out of a unit square below the upper one to x = 3 (find
+/// cc's, 2026-11-22: a sheet with a strip 2e-5 wide, extruded): 2e-5 apart, two zones,
+/// to rounding, so the trace across the tab's end face has its middle the zone from both
+/// its edges, at the find's coordinates and others; and 3e-5 apart, past two zones.
+const TAB_LINES = [_][2]f64{ .{ 4.99998, 5 }, .{ 0.99998, 1 }, .{ 6.99998, 7 }, .{ 4.99997, 4.99999 }, .{ 4.99996, 4.99998 }, .{ 4.99998, 5.00001 } };
+/// How far the tabbed square is extruded, and the heights it is sliced at.
+const TAB_EXTRUSION: f64 = 3;
+const TAB_HEIGHTS = [_]f64{ 0, 0.5, 1.11, 1.5, 2.9 };
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
 fn sliced(body: *const Body, height: f64) !Body {
@@ -300,4 +309,43 @@ test "slice: a box tilted the zone each way across its bottom and top, at them: 
     try testing.expectEqual(@as(usize, 1), bottom.counts().faces);
     try testing.expectApproxEqRel(@as(f64, 40), try areaOf(&bottom), 1e-9);
     try expectSection(&tilted, 6, 0, 0);
+}
+
+/// Point `p` turned `quarter` quarter turns about the origin, then mirrored in the y axis
+/// when `mirrored`: exact.
+fn quarterTurned(p: Vec2, quarter: usize, mirrored: bool) Vec2 {
+    var q = p;
+    for (0..quarter) |_| {
+        const turned_once: Vec2 = .{ -q[1], q[0] };
+        q = turned_once;
+    }
+    return if (mirrored) .{ -q[0], q[1] } else q;
+}
+
+test "slice: a side face two zones wide (a tab's end) bounds the section at every height, turned and mirrored" {
+    // The 2D chain fuzzer's find cc (2026-11-22): the trace across the tab's end face, its
+    // middle the zone from both the face's edges, was taken for the face's boundary and
+    // dropped, and the section's outline left open: no area at every height but the
+    // bottom (there the bottom edges bound it). A piece between two of the points where a
+    // face's boundary meets the plane is in the face or out of it whole: decided by the
+    // face's loops
+    for (TAB_LINES) |lines| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("tab between {d} and {d}, quarter turns {d}, mirrored {}\n", .{ lines[0], lines[1], quarter, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const low = lines[1] - 1;
+        const drawn = [_]Vec2{ .{ 0, low }, .{ 1, low }, .{ 1, lines[0] }, .{ 3, lines[0] }, .{ 3, lines[1] }, .{ 0, lines[1] } };
+        var points: [drawn.len]Vec2 = undefined;
+        // Mirrored, the outline taken backwards, so it runs counter-clockwise still
+        for (drawn, 0..) |p, i| points[if (mirrored) drawn.len - 1 - i else i] = quarterTurned(p, quarter, mirrored);
+        var sheet = try primitives.polygon(testing.allocator, tol, &points, &diag);
+        defer sheet.deinit();
+        const want = try areaOf(&sheet);
+        var solid = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, TAB_EXTRUSION }, .{}, &diag);
+        defer solid.deinit();
+        for (TAB_HEIGHTS) |z| {
+            errdefer std.debug.print("at {d}\n", .{z});
+            try expectSection(&solid, z, want, 1);
+        }
+    };
 }

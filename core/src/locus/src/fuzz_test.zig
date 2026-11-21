@@ -2299,6 +2299,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // intersection made one way round, refused (`sliver_face`) the other
         // (Provenance.blockLines: the finer zone's line, refused alike)
         "solids 2 1 3 2 4 1 2 2 1 8 3 10 14 2 1 3 1 5 2 3 4 3 0 2 0 1 4 1 0 2 4 2 0 1 1 7 4 1 2 2 0 4 0 4 4 3 4 3 0 3 2 0 2 3 0 4 2 0 1 0 2 3 -2 10 5 0",
+        // The first ReleaseSafe session (2026-11-22, a1444371, locus, cc): a sheet offset
+        // 2e-5 and intersected with another, extruded 3; the sheet kept a strip 2e-5 wide,
+        // the solid a side face that wide, and the section at 1.11 dropped the trace across
+        // it (its middle the zone from both the face's edges, to rounding) and lost a face
+        // of 0.58 (section.Section.piece: a piece in the face by its loops)
+        "chain 1 3 5 5 3 0 0 5 1 0 1 3 3 4 4 2 5 1 1 10 1 6 0 2 8 6 2 3 3 1 4 2 1 0 6 3 4 0 4 2 6 4 4 3 2 3 1 2 0 2 1 0 0 8 3 2 3 5 2 5 4 3 2 5 4 5 4 6 6 1 4 4 1 3 1 1 0 1 1 1 1 4 1 2 1 1 2 1 2 3 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
