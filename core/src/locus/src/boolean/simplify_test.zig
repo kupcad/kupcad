@@ -24,6 +24,12 @@ const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
+/// The gap the builder's cover leaves on an edge whose line runs off its faces' planes, and
+/// on its ends (`simplify.coverEdge`): what the tests of a later edit carry over.
+const COVERED_GAP: f64 = 3e-6;
+/// The length of the short edge the tests leave at a box's corner: under the checker's
+/// minimum, two zones.
+const SHORT_PIECE: f64 = 1e-5;
 
 /// A unit cube whose top is split along x = 0.5 into two faces on one plane, of
 /// attributes `left` and `right`; the front's top edge split there too, at a vertex of
@@ -72,6 +78,25 @@ fn splitTop(left: u32, right: u32) !Body {
         faces[f] = .{ .surface = plane.surface, .same_sense = plane.same_sense, .loops = &loops[f], .uv_box = uv, .attribute = attribute };
     }
     return b.finish(&faces, .outer);
+}
+
+/// The edge of `body` between the vertices at `p` and `q`, either way round.
+fn edgeBetween(body: *const Body, p: Vec3, q: Vec3) types.EdgeIndex {
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone) continue;
+        const a = body.point(e.start);
+        const b = body.point(e.end);
+        if ((vec.distance(a, p) == 0 and vec.distance(b, q) == 0) or (vec.distance(a, q) == 0 and vec.distance(b, p) == 0)) return types.EdgeIndex.of(i);
+    }
+    unreachable;
+}
+
+/// The vertex of `body` at `p`.
+fn vertexAt(body: *const Body, p: Vec3) types.VertexIndex {
+    for (body.vertices.items, 0..) |v, i| {
+        if (!v.tombstone and vec.distance(body.point(types.VertexIndex.of(i)), p) == 0) return types.VertexIndex.of(i);
+    }
+    unreachable;
 }
 
 fn expectValid(body: *const Body) !void {
@@ -319,5 +344,88 @@ test "simplify: coverLine's gap holds a vertex to the line as the checker measur
         try simplify.coverLine(&body, v, line, .of(.vertex, @backingInt(v)), "the test's vertex", &diag);
         // As `vertex_off_curve` measures and sums it, for an edge with no gap
         try testing.expect(vec.distance(line.eval(line.project(p)), p) <= tol.xsect + 0 + body.vertex(v).gap);
+    }
+}
+
+test "simplify: a run joined into one edge gives the run's ends the joined edge's gap" {
+    // The audit of 2026-11-22: `joinRun` gave the joined edge the largest of its pieces'
+    // gaps, and the run's ends kept their own. Along a line whose height over a face grows
+    // past the intersection tolerance, the builder's cover gives the far piece and its ends
+    // a gap and the near piece none; joined, the edge's gap passed its near end's, and the
+    // checker refused the boolean's own result (`gap_order`). A box's bottom edge split at
+    // its middle, as the cover leaves such a line: the far half and both its ends covered,
+    // the near half and its start not
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+    defer body.deinit();
+    const near: Vec3 = .{ 0, 0, 0 };
+    const far: Vec3 = .{ 1, 0, 0 };
+    const e = edgeBetween(&body, near, far);
+    const line = body.geometry.curve(body.edge(e).curve).line;
+    const t = (body.edge(e).t0 + body.edge(e).t1) / 2;
+    const middle = try body.geometry.addPoint(testing.allocator, line.eval(t));
+    const split = try euler.mevSplitEdge(&body, body.edge(e).coedge, t, middle);
+    const far_piece = if (body.edge(split.edge).end == vertexAt(&body, far) or body.edge(split.edge).start == vertexAt(&body, far)) split.edge else e;
+    body.edge(far_piece).gap = COVERED_GAP;
+    body.vertex(split.vertex).gap = COVERED_GAP;
+    body.vertex(vertexAt(&body, far)).gap = COVERED_GAP;
+    try expectValid(&body);
+    try simplify.run(&body, &diag, null);
+    try expectValid(&body);
+    try testing.expectEqual(@as(usize, 8), body.counts().vertices);
+    try testing.expect(body.vertex(vertexAt(&body, near)).gap >= COVERED_GAP);
+}
+
+test "simplify: a short edge collapsed gives the vertex kept the gaps of the edges moved to it" {
+    // The audit of 2026-11-22: `kevMerge` moves the edges of the vertex gone to the vertex
+    // kept and leaves their gaps; the collapse grew the kept vertex's gap only to its
+    // offsets from their lines (`coverLine`), and an edge moved over with a gap larger
+    // than the kept vertex's left the result refused (`gap_order`). A box's corner split
+    // off by an edge `SHORT_PIECE` long, the edge up moved to the new vertex (the collapse
+    // keeps the corner, the short edge's start), the cover's gap on the edge moved, on the
+    // edges staying, or on both
+    const Covered = enum { moved, staying, both };
+    for ([_]Covered{ .moved, .staying, .both }) |covered| {
+        errdefer std.debug.print("the gap on the edges {s}\n", .{@tagName(covered)});
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+        defer body.deinit();
+        const origin: Vec3 = .{ 0, 0, 0 };
+        const corner = vertexAt(&body, origin);
+        if (covered != .moved) {
+            for ([_]Vec3{ .{ 1, 0, 0 }, .{ 0, 1, 0 } }) |q| {
+                body.edge(edgeBetween(&body, origin, q)).gap = COVERED_GAP;
+                body.vertex(vertexAt(&body, q)).gap = COVERED_GAP;
+            }
+            body.vertex(corner).gap = COVERED_GAP;
+        }
+        var up: types.CoedgeIndex = .none;
+        var around = traverse.Umbrella.init(&body, corner);
+        while (try around.next()) |c| {
+            if (body.point(body.coedgeEnd(c))[2] == 1) up = c;
+        }
+        var from_up = traverse.Umbrella.initFrom(&body, up);
+        _ = try from_up.next();
+        const next_around = (try from_up.next()).?;
+        const q = vec.scale(vec.normalized(.{ 1, 1, 0 }).?, SHORT_PIECE);
+        const point = try body.geometry.addPoint(testing.allocator, q);
+        const short = try body.geometry.addLine(testing.allocator, curves.Line.through(origin, q).?);
+        const made = try euler.mevSplitVertex(&body, up, next_around, point, .{ .curve = short, .t0 = 0, .t1 = SHORT_PIECE });
+        if (covered != .staying) {
+            body.edge(body.coedge(up).edge).gap = COVERED_GAP;
+            body.vertex(made.vertex).gap = COVERED_GAP;
+            body.vertex(vertexAt(&body, .{ 0, 0, 1 })).gap = COVERED_GAP;
+        }
+        var before = try check.run(testing.allocator, &body, .geometric);
+        defer before.deinit(testing.allocator);
+        try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
+        try simplify.run(&body, &diag, null);
+        try expectValid(&body);
+        try testing.expectEqual(@as(usize, 8), body.counts().vertices);
+        // The corner kept (the end nearer the line moved to it, which runs through it),
+        // with the gap of the edge moved to it
+        try testing.expect(body.vertex(vertexAt(&body, origin)).gap >= COVERED_GAP);
     }
 }

@@ -377,6 +377,18 @@ const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4
 /// apart in place, are the intersection tolerance to rounding and their union is refused
 /// `at_tolerance` before the hull comes).
 const SLOPE_TURNS = [_]@TypeOf(SLIVER_TURNS[0]){ SLIVER_TURNS[0], SLIVER_TURNS[2], SLIVER_TURNS[3], SLIVER_TURNS[4] };
+/// The hull of those tests tilted alone about an axis through the middle of the plate's
+/// edge along its sloped face (`SLOPE_EDGE_MIDDLE`), so the edge's height over the face's
+/// plane changes along it: about x (along the edge's run, from 4 to 5 in y) and about z,
+/// each by these angles, every union made (tilted 5e-5 the other way about x, the edge's
+/// height at one end passes the intersection tolerance by more than the zone, refused
+/// `gap_too_large`).
+const SLOPE_TILT_AXES = [_]Vec3{ vec.X3, vec.Z3 };
+const SLOPE_TILTS = [_]f64{ 1e-5, 2e-5, 5e-5, -2e-5 };
+const SLOPE_EDGE_MIDDLE: Vec3 = .{ 2.0002, 4.5, 4 };
+/// The hull's nudges in z of the tilted tests: the plate's edge from within the
+/// intersection tolerance of the face's plane to past it.
+const SLOPE_TILT_LIFTS = [_]f64{ 3e-5, 5e-5, 8e-5 };
 /// The solids of the tests of a common block between two regions of both operands (the
 /// nightly's find of 2026-11-21, by): a box whose top (z = 3.99995) and side (y = 3) meet
 /// along the edge the result keeps, and the hull the fuzzer turned a quarter about y over
@@ -4683,6 +4695,29 @@ test "degeneracy: a plate's edge along a hull's sloped face, from within the int
 /// The box and the plate of the tests of an edge along a sloped face joined, then joined
 /// with the hull nudged `lift` in z, all three turned as `turn` has it: each union made and
 /// sound, the last either way round.
+/// The box and the plate of the tests of an edge along a sloped face joined, then joined
+/// with the hull nudged `lift` in z and tilted alone by `angle` about `axis` through
+/// `SLOPE_EDGE_MIDDLE`: each union made and sound, the last either way round.
+fn expectSlopeTilted(lift: f64, axis: Vec3, angle: f64) !void {
+    var block = try fuzzBoxPlaced(tol, SLOPE_BOX[0], SLOPE_BOX[1], vec.Z3, 0, null, SLOPE_BOX_MOVE);
+    defer block.deinit();
+    var plate = try fuzzBoxPlaced(Tolerance.fromZone(1e-4), SLOPE_PLATE[0], SLOPE_PLATE[1], vec.Z3, 0, SLOPE_PLATE_SCALE, SLOPE_PLATE_NUDGE);
+    defer plate.deinit();
+    var drawn_hull = try fuzzHullPlaced(&SLOPE_HULL, SLOPE_HULL_AXIS, std.math.pi, SLOPE_HULL_SCALE, vec.ZERO3, .{ SLOPE_HULL_NUDGE[0], SLOPE_HULL_NUDGE[1], lift });
+    defer drawn_hull.deinit();
+    const tilt = mat.Affine.rotateAbout(SLOPE_EDGE_MIDDLE, axis, angle);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var hull = try @import("../construct/transform.zig").transform(testing.allocator, &drawn_hull, &tilt, .{}, &diag);
+    defer hull.deinit();
+    var joined = try helpers.sound(&block, &plate, .@"union");
+    defer joined.deinit();
+    var all = try helpers.sound(&joined, &hull, .@"union");
+    defer all.deinit();
+    var swapped = try helpers.sound(&hull, &joined, .@"union");
+    defer swapped.deinit();
+}
+
 fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
     var drawn_block = try fuzzBoxPlaced(tol, SLOPE_BOX[0], SLOPE_BOX[1], vec.Z3, 0, null, SLOPE_BOX_MOVE);
     defer drawn_block.deinit();
@@ -4990,4 +5025,19 @@ fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move:
     defer wall.deinit();
     const place = mat.Affine.translate(nudge).compose(&mat.Affine.translate(move));
     return @import("../construct/transform.zig").transform(testing.allocator, &wall, &place, .{}, &diag);
+}
+
+test "degeneracy: a plate's edge along a hull's sloped face tilted under it, its height changing along the edge, is joined with its ends' gaps holding it either way round" {
+    // The audit of 2026-11-22 drew this to reach a join of pieces of different gaps
+    // (simplify.coverEdge after joinRun): the cover gives each piece of the plate's edge
+    // the gap of its line's height at its own ends, and a run joined into one edge must
+    // give its ends the joined edge's. Here the box's sides leave the pieces' vertices
+    // more than two edges, so no run is joined, and the find's operands with the hull
+    // tilted alone about x and z through the edge's middle (`SLOPE_TILTS` ×
+    // `SLOPE_TILT_AXES` × `SLOPE_TILT_LIFTS`) guard the cover of an edge whose height
+    // changes along it; the join itself is pinned by simplify's own tests
+    for (SLOPE_TILT_AXES) |axis| for (SLOPE_TILTS) |angle| for (SLOPE_TILT_LIFTS) |lift| {
+        errdefer std.debug.print("the hull nudged {e} in z, tilted {e} about {any}\n", .{ lift, angle, axis });
+        try expectSlopeTilted(lift, axis, angle);
+    };
 }

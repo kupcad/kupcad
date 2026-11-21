@@ -790,7 +790,13 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    valence two on a single curve, or on two lines the same within the tolerance (the
    later edge given the earlier's line: OCCT's `UnifySameDomain` joining edges, D28);
    collapse edges below `δ`, the vertex kept given the gap that holds the lines moved to it
-   (as the builder gives a vertex it puts on an edge; the 10K session, 2026-11-18); `compact()`.
+   (as the builder gives a vertex it puts on an edge; the 10K session, 2026-11-18); every
+   edge it edits covered again where it now ends (`simplify.coverEdge`, the one rule with
+   the builder's `coverFaces`: a run joined into one edge gives the run's ends the joined
+   edge's gap, and the edges moved to a kept vertex their heights at the new end and the
+   vertex their gaps, as OCCT re-validates tolerances after `UnifySameDomain`; a joined
+   edge took its largest piece's gap and left its other end its own, smaller, the audit
+   of 2026-11-22); `compact()`.
 8. **Check** (§9): the result must pass every rule or the operation fails with the finding.
 
 Batch unions and differences (KupCAD's chains) run as a sequence; a disjoint union is a
