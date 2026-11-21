@@ -13,6 +13,14 @@ const Polygon = triangulate.Polygon;
 
 /// How close the triangles' area is to the polygon's, relative.
 const CLOSE = 1e-12;
+/// A cap of the 2D chain fuzzer's extrusion (2026-11-21, bw), its chorded outline as the
+/// tessellator gave it: two arcs leave (2, 0) (the seventh point) 7.1° apart, curving the
+/// same way, the flatter one's single chord to (1.109, 0.164) crossing the other's chord
+/// from (1.80, 0.035) 0.2 from the vertex; the region between the chords is wound twice.
+const CROSSED_CAP = [_]Vec2{ .{ 6, 0 }, .{ 4, 3 }, .{ 3.75, 3.1666666666666665 }, .{ 2.6, 2.4000000000000004 }, .{ 1.1903200733589268, 0.2854801100383906 }, .{ 1.8014947190130184, 0.03496997149489123 }, .{ 2, 0 }, .{ 1.1093541668271576, 0.16403125024073617 }, .{ 1, 0 }, .{ 1, 0.20871215252208009 }, .{ 0.23223304703363068, 0.7322330470336313 }, .{ -0.5, 2.5000000000000004 }, .{ 0.23223304703363135, 4.267766952966369 }, .{ 1, 4.7912878474779195 }, .{ 1, 5 }, .{ 0.8483011093985733, 4.945976220173328 }, .{ -0.7087485216717395, 3.8712224601329233 }, .{ -1.5879845232121115, 2.195978223631126 }, .{ -1.5879845232121124, 0.30402177636887695 }, .{ -0.7087485216717413, -1.371222460132921 }, .{ 0.8483011093985715, -2.4459762201733284 }, .{ 2.726463064002831, -2.674026369513976 }, .{ 4.495473072646427, -2.0031293672431496 }, .{ 5.75007226123078, -0.5869796313957469 } };
+/// One ring round a square whose closing edges dip through its first edge and come back
+/// up, crossing it twice far from any vertex.
+const BOW_TIE = [_]Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 4 }, .{ 0, 4 }, .{ 2, -1 }, .{ 2, 1 } };
 
 /// About the ring's first point: about the origin, a ring far from it sums terms far
 /// larger than its area.
@@ -402,4 +410,32 @@ test "triangulate: a polygon far from the origin is triangulated as near it" {
     var holed: [8]Vec2 = undefined;
     for ([_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } }, &holed) |p, *q| q.* = vec.add2(at, p);
     try expectPolygon(&holed, &.{ 0, 4, 8 });
+}
+
+/// Point `p` turned `quarter` quarter turns about the origin, then mirrored in the y axis
+/// when `mirrored`: exact.
+fn moved(p: Vec2, quarter: usize, mirrored: bool) Vec2 {
+    var q = p;
+    for (0..quarter) |_| {
+        const turned: Vec2 = .{ -q[1], q[0] };
+        q = turned;
+    }
+    return if (mirrored) .{ -q[0], q[1] } else q;
+}
+
+test "triangulate: rings whose edges cross, the region between them wound twice, are refused in every quarter turn, mirrored or not" {
+    // The 2D chain fuzzer's find (2026-11-21, bw): the sweep ran through the crossing and
+    // covered the twice-wound region twice, the triangles' count, signed area and ring
+    // sides all the polygon's (once with a triangle of no area across three points left
+    // out and counted: a diagonal through a vertex), and the tessellator never refined
+    // the arcs; the extrusion's mesh had a side used once
+    var points: [CROSSED_CAP.len]Vec2 = undefined;
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ quarter, mirrored });
+        // A mirror turns the ring clockwise: it is read backwards, the region kept on its left
+        for (CROSSED_CAP, 0..) |p, k| points[if (mirrored) CROSSED_CAP.len - 1 - k else k] = moved(p, quarter, mirrored);
+        try expectRefused(&points, &.{ 0, CROSSED_CAP.len }, .not_simple);
+    };
+    // Two edges crossing far from any vertex, as a bow tie: refused as well
+    try expectRefused(&BOW_TIE, &.{ 0, BOW_TIE.len }, .not_simple);
 }

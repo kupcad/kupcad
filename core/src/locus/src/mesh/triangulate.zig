@@ -33,6 +33,9 @@ const SIDES = 3;
 /// How far the triangles' area may differ from the polygon's, relative to it: rounding
 /// in the sums of many small triangles.
 const AREA_SLACK: f64 = 1e-9;
+/// The most cells along each side of the grid the rings' edges are bucketed in to find a
+/// crossing (`expectNoCrossing`): about the square root of the edge count, this at most.
+const MAX_CROSSING_GRID: usize = 1024;
 
 /// A polygon with holes as closed rings of points.
 pub const Polygon = struct {
@@ -58,6 +61,7 @@ pub const Polygon = struct {
 /// finding that says which.
 pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) Error![][3]u32 {
     try validate(polygon, diag);
+    try expectNoCrossing(allocator, polygon, diag);
     var woven = try reweave(allocator, polygon, diag);
     defer woven.deinit(allocator);
     const rings: Polygon = .{ .points = woven.points, .starts = woven.starts };
@@ -264,6 +268,101 @@ fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) f64 {
     var twice: f64 = 0;
     for (triangles) |t| twice += predicates.orient2d(points[t[0]], points[t[1]], points[t[2]]);
     return twice / 2;
+}
+
+/// No two edges of the rings cross: one passes from one side of the other to the other
+/// side, at a point inside both (every turn exact). The count, the area and the rings'
+/// sides cannot see every crossing: rings that cross so that the region between them is
+/// wound twice are covered twice by a sweep that runs through them, and the triangles'
+/// count and signed area are the polygon's (a face's chords where two arcs leave a vertex
+/// 7° apart, curving the same way: the flatter arc's one chord crossed the other's
+/// polyline 0.2 from the vertex, and the cap's mesh was left with a side used once and
+/// overlapping triangles; the 2D chain fuzzer's extrusion, bw). A crossing refused, the
+/// tessellator refines the face's arcs (`tessellate`). Touching (a ring through a point
+/// twice, a hole touching the outer loop, a slit's two passages along one segment) is no
+/// crossing; a point on another edge is `expectRingSides`'s. The edges are bucketed in a
+/// grid over the rings' bounding box by their own boxes, and only edges sharing a cell are
+/// compared: a cell is found by rounding monotone in the coordinate, so two boxes that
+/// meet share a cell.
+fn expectNoCrossing(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) Error!void {
+    const points = polygon.points;
+    const n = points.len;
+    var lo: Vec2 = points[0];
+    var hi: Vec2 = points[0];
+    for (points) |p| {
+        lo = .{ @min(lo[0], p[0]), @min(lo[1], p[1]) };
+        hi = .{ @max(hi[0], p[0]), @max(hi[1], p[1]) };
+    }
+    const side: usize = @max(1, @min(MAX_CROSSING_GRID, std.math.sqrt(n)));
+    const next = try allocator.alloc(u32, n);
+    defer allocator.free(next);
+    for (0..polygon.rings()) |r| {
+        const first = polygon.starts[r];
+        const last = polygon.starts[r + 1] - 1;
+        for (first..last + 1) |i| next[i] = if (i == last) first else @intCast(i + 1);
+    }
+    const Grid = struct {
+        lo: Vec2,
+        hi: Vec2,
+        side: usize,
+
+        fn cell(self: @This(), x: f64, axis: usize) usize {
+            const extent = self.hi[axis] - self.lo[axis];
+            if (!(extent > 0)) return 0;
+            const at = @floor((x - self.lo[axis]) / extent * @as(f64, @floatFromInt(self.side)));
+            return @min(self.side - 1, @as(usize, @intFromFloat(@max(at, 0))));
+        }
+
+        /// The cells edge `a b`'s box covers, as ranges along each axis.
+        fn cells(self: @This(), a: Vec2, b: Vec2) [2][2]usize {
+            return .{
+                .{ self.cell(@min(a[0], b[0]), 0), self.cell(@max(a[0], b[0]), 0) },
+                .{ self.cell(@min(a[1], b[1]), 1), self.cell(@max(a[1], b[1]), 1) },
+            };
+        }
+    };
+    const grid: Grid = .{ .lo = lo, .hi = hi, .side = side };
+    // The edges of each cell, by counting: the counts, their running sums as starts, the
+    // edges written in
+    const starts = try allocator.alloc(u32, side * side + 1);
+    defer allocator.free(starts);
+    @memset(starts, 0);
+    for (0..n) |i| {
+        const c = grid.cells(points[i], points[next[i]]);
+        for (c[1][0]..c[1][1] + 1) |y| for (c[0][0]..c[0][1] + 1) |x| {
+            starts[y * side + x + 1] += 1;
+        };
+    }
+    for (1..starts.len) |k| starts[k] += starts[k - 1];
+    const members = try allocator.alloc(u32, starts[starts.len - 1]);
+    defer allocator.free(members);
+    const filled = try allocator.alloc(u32, side * side);
+    defer allocator.free(filled);
+    @memcpy(filled, starts[0 .. side * side]);
+    for (0..n) |i| {
+        const c = grid.cells(points[i], points[next[i]]);
+        for (c[1][0]..c[1][1] + 1) |y| for (c[0][0]..c[0][1] + 1) |x| {
+            members[filled[y * side + x]] = @intCast(i);
+            filled[y * side + x] += 1;
+        };
+    }
+    for (0..side * side) |k| {
+        const in_cell = members[starts[k]..starts[k + 1]];
+        for (in_cell, 0..) |i, at| for (in_cell[at + 1 ..]) |j| {
+            if (cross(points[i], points[next[i]], points[j], points[next[j]])) return notSimpleCount(diag, i, j);
+        };
+    }
+}
+
+/// Whether segments `a b` and `c d` cross: each one's ends strictly either side of the
+/// other's line.
+fn cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) bool {
+    const c_side = predicates.orient2d(a, b, c);
+    const d_side = predicates.orient2d(a, b, d);
+    if (c_side == 0 or d_side == 0 or (c_side > 0) == (d_side > 0)) return false;
+    const a_side = predicates.orient2d(c, d, a);
+    const b_side = predicates.orient2d(c, d, b);
+    return a_side != 0 and b_side != 0 and (a_side > 0) != (b_side > 0);
 }
 
 fn validate(polygon: Polygon, diag: *Diagnostics) Error!void {

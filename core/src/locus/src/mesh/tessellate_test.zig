@@ -28,6 +28,22 @@ const tol = tolerance.Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 /// How close a mesh measure is to the exact one, relative.
 const CLOSE = 1e-12;
+/// The 2D chain fuzzer's sheet of 2026-11-21 (bw): three rings of grid points, each point
+/// with the bulge and sense of the arc it leaves by (none for a line), as the fuzzer drew
+/// them. The third ring's two arcs leave (2, 0) 7.1° apart, curving the same way, and the
+/// even-odd sheet keeps the region about the narrow wedge between them.
+const WEDGE_RINGS = [_][]const WedgePoint{
+    &.{ .{ .p = .{ 6, 0 } }, .{ .p = .{ 4, 3 } }, .{ .p = .{ 1, 5 }, .bulge = -0.5, .ccw = true } },
+    &.{ .{ .p = .{ 5, 4 } }, .{ .p = .{ 2, 2 } }, .{ .p = .{ 5, 6 } }, .{ .p = .{ 1, 0 } }, .{ .p = .{ 1, 2 } }, .{ .p = .{ 1, 5 } } },
+    &.{ .{ .p = .{ 4, 1 } }, .{ .p = .{ 4, 4 }, .bulge = -0.5, .ccw = true }, .{ .p = .{ 2, 0 }, .bulge = 0.5, .ccw = false }, .{ .p = .{ 4, 3 } } },
+};
+const WedgePoint = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = false };
+/// The lunes of two circles through one vertex, their tangents there the angle apart (in
+/// degrees: past the angular tolerance, 0.8°, where the cusp matcher stops) and both
+/// centres on one side: radii, and the lune drawn as a sheet or as a hole in a square.
+const LUNE_ANGLES = [_]f64{ 1.5, 3, 7.1, 15 };
+const LUNE_RADII = [_]f64{ 2.5, 2 };
+const LUNE_SQUARE = [2]Vec2{ .{ -6, -6 }, .{ 6, 6 } };
 
 fn meshOf(body: *const Body, resolution: tolerance.Resolution) !Mesh {
     var diag = Diagnostics.init(testing.allocator);
@@ -646,4 +662,106 @@ test "tessellate: solids touching at a corner, along an edge or apex to apex are
         const want = (try mass.mass(pair[0], .{}, &diag)).volume + (try mass.mass(pair[1], .{}, &diag)).volume;
         try testing.expectApproxEqAbs(want, signedVolume(mesh), 1e-12);
     }
+}
+
+/// Point `p` turned `quarter` quarter turns about the origin, then mirrored in the y axis
+/// when `mirrored`: exact for grid points.
+fn wedgeMove(p: Vec2, quarter: usize, mirrored: bool) Vec2 {
+    var q = p;
+    for (0..quarter) |_| {
+        const turned: Vec2 = .{ -q[1], q[0] };
+        q = turned;
+    }
+    return if (mirrored) .{ -q[0], q[1] } else q;
+}
+
+/// The sheet and its extrusion by 1 each meshed with every face triangulated at three
+/// resolutions, the extrusion's mesh closed with no singular vertex (each solid of regions
+/// touching at a corner its own vertices there).
+fn expectSheetAndSolidMeshed(sheet: *const Body) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_]tolerance.Resolution{ .{}, .{ .segments = 8 }, .{ .segments = 64 } }) |resolution| {
+        var flat = try meshOf(sheet, resolution);
+        defer flat.deinit(testing.allocator);
+        for (flat.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        var solid = try sweep.extrude(testing.allocator, sheet, .{ 0, 0, 1 }, .{}, &diag);
+        defer solid.deinit();
+        var mesh = try meshOf(&solid, resolution);
+        defer mesh.deinit(testing.allocator);
+        for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
+        errdefer std.debug.print("resolution {any}: mesh {s}, {d} singular\n", .{ resolution, verdict.grade.condition.word(), verdict.grade.singular_vertices });
+        try testing.expect(verdict.isManifoldClosed());
+    }
+}
+
+test "tessellate: two arcs leaving a vertex 7° apart, curving the same way, are chorded so that their polylines do not cross, the extrusion's mesh closed, in every quarter turn, mirrored or not (fuzz find bw)" {
+    // The 2D chain fuzzer's find (2026-11-21, bw): the flatter arc's one chord from (2, 0)
+    // passed over the other arc's grid point 0.2 from the vertex, 1.5e-3 above it, and the
+    // face's chorded outline crossed itself there; the triangulator took it, the region
+    // between the chords wound twice and covered twice, and the extrusion's top cap was
+    // left a side used once, its triangles overlapping
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ quarter, mirrored });
+        var storage: [WEDGE_RINGS.len][6]primitives.OutlineEdge = undefined;
+        var rings: [WEDGE_RINGS.len][]const primitives.OutlineEdge = undefined;
+        for (WEDGE_RINGS, 0..) |ring, r| {
+            for (ring, 0..) |point, k| {
+                const a = point.p;
+                const b = ring[(k + 1) % ring.len].p;
+                storage[r][k] = .{ .a = wedgeMove(a, quarter, mirrored), .b = wedgeMove(b, quarter, mirrored) };
+                if (point.bulge) |bulge| {
+                    const half = vec.scale2(vec.sub2(b, a), 0.5);
+                    const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+                    storage[r][k].arc = .{ .c = wedgeMove(c, quarter, mirrored), .r = vec.distance2(a, c), .ccw = point.ccw != mirrored };
+                }
+            }
+            rings[r] = storage[r][0..ring.len];
+        }
+        var sheet = try primitives.outlines(testing.allocator, tol, &rings, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+test "tessellate: the lune of two circles through a vertex, their tangents there past the angular tolerance apart, as a sheet or a hole, is meshed and its extrusion closed in every quarter turn, mirrored or not" {
+    // The configuration of the find above: two arcs leaving one vertex into a narrow wedge,
+    // both curving to one side, where a chord of the flatter can pass over the other's
+    // polyline; within the angular tolerance the two are a cusp, matched (`edges.zig`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (LUNE_ANGLES) |degrees| for ([_]bool{ false, true }) |as_hole| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("{d}°, as a hole {}, quarter turns {d}, mirrored {}\n", .{ degrees, as_hole, quarter, mirrored });
+        const angle = degrees * PI / 180;
+        const a_centre: Vec2 = .{ 0, LUNE_RADII[0] };
+        const b_centre = vec.scale2(.{ -@sin(angle), @cos(angle) }, LUNE_RADII[1]);
+        // The circles' second meeting: the vertex reflected in the line of the centres
+        const along = vec.sub2(b_centre, a_centre);
+        const t = -vec.dot2(a_centre, along) / vec.dot2(along, along);
+        const far = vec.scale2(vec.add2(a_centre, vec.scale2(along, t)), 2);
+        const v = wedgeMove(.{ 0, 0 }, quarter, mirrored);
+        const p = wedgeMove(far, quarter, mirrored);
+        // The lune inside the first circle, outside the second: up the first from the
+        // vertex counter-clockwise, back down the second clockwise
+        var lune = [_]primitives.OutlineEdge{
+            .{ .a = v, .b = p, .arc = .{ .c = wedgeMove(a_centre, quarter, mirrored), .r = LUNE_RADII[0], .ccw = !mirrored } },
+            .{ .a = p, .b = v, .arc = .{ .c = wedgeMove(b_centre, quarter, mirrored), .r = LUNE_RADII[1], .ccw = mirrored } },
+        };
+        const lo = LUNE_SQUARE[0];
+        const hi = LUNE_SQUARE[1];
+        const square = [_]primitives.OutlineEdge{
+            .{ .a = lo, .b = .{ hi[0], lo[1] } },
+            .{ .a = .{ hi[0], lo[1] }, .b = hi },
+            .{ .a = hi, .b = .{ lo[0], hi[1] } },
+            .{ .a = .{ lo[0], hi[1] }, .b = lo },
+        };
+        const with_square = [_][]const primitives.OutlineEdge{ &square, &lune };
+        const alone = [_][]const primitives.OutlineEdge{&lune};
+        var sheet = try primitives.outlines(testing.allocator, tol, if (as_hole) &with_square else &alone, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
 }

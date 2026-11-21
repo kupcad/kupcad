@@ -1247,11 +1247,20 @@ pcurve's start, so the ring runs along the pole line), scaled to be near-isometr
 surface's derivative lengths at the middle of its UV box (on a cylinder `u` is radians and
 `v` millimetres; without the scaling every triangle is a sliver); triangulated by monotone
 partition (BKOS ch. 3, deterministic, holes native), then Lawson flips to a constrained
-Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped). Before the flips the
+Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped). Before the sweep
+the rings' edges are checked for a crossing (two edges each with its ends strictly either
+side of the other's line, exact turns; candidates by a grid of the edges' boxes,
+`expectNoCrossing`, OCCT's `BRepMesh_FaceChecker`): the count and the area cannot see
+rings that cross so that the region between them is wound twice, which the sweep covers
+twice (two arcs leaving a vertex 7° apart, curving the same way, the flatter one's chord
+across the other's polyline; the extrusion's cap left a side used once, the 2D chain
+fuzzer's find bw, 2026-11-21); touching rings are no crossing. After the sweep the
 triangles are checked by their count (Euler), their area and their boundary: each ring
 edge a side of one triangle, run its ring's way, and of none run the other (a ring's
 point on another ring edge, a notch reaching an arc's chord, passes count and area with
-triangles across the edge; 2026-11-16); a polygon failing any of them is not simple. A curved face
+triangles across the edge; 2026-11-16); a polygon failing any of them is not simple, and
+the tessellator doubles the face's arcs and meshes it again (OCCT's healer refines the
+crossing edges alike). A curved face
 (cylinder, cone, sphere, torus; 2026-11-11) then gets interior points: the tensor grid of
 its boundary's distinct `u` and `v` values and of the resolution's own parameter lines
 around each circular direction (the grid a full circle of that direction's largest radius

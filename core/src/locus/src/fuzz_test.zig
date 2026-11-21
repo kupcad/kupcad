@@ -2279,6 +2279,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // sweep refuses it (`below_feature_size`). The difference was refused as a sliver
         // until f9efed3d kept its arc piece's circle
         "chain 3 4 5 4 4 0 4 2 4 0 2 1 3 1 2 3 5 0 0 5 6 5 2 5 4 4 4 2 3 4 4 2 7 2 1 2 3 3 6 3 4 2 3 5 2 1 0 1 0 0 4 1 1 0 4 3 2 3 4 1 1 10 3 10 4 3 0 0 2 5 0 1 6 2 2 5 0 0 2 3 1 3 1 1 1 1 4 3 4 4 4 3 0 3 6 2 4 2 3 2 4 1 1 1 1 3 6",
+        // The bv prototype's locus 10K run (2026-11-21, bw): a sheet of three rings, two
+        // arcs of one leaving (2, 0) 7.1° apart, curving the same way, the flatter one's
+        // single chord across the other's polyline; the triangulator took the crossed
+        // outline, the region between the chords covered twice, and the extrusion's cap
+        // had a side used once (triangulate.expectNoCrossing: refused, the arcs refined)
+        "chain 3 3 6 0 4 3 1 5 4 4 1 1 1 6 5 4 2 2 5 6 1 0 1 2 1 5 3 4 3 2 4 4 4 4 1 4 4 2 0 4 3 2 1 1 1 1 2 0 3 1 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
