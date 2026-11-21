@@ -2285,6 +2285,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // outline, the region between the chords covered twice, and the extrusion's cap
         // had a side used once (triangulate.expectNoCrossing: refused, the arcs refined)
         "chain 3 3 6 0 4 3 1 5 4 4 1 1 1 6 5 4 2 2 5 6 1 0 1 2 1 5 3 4 3 2 4 4 4 4 1 4 4 2 0 4 3 2 1 1 1 1 2 0 3 1 3 1",
+        // The bw prototype's locus 10K run (2026-11-21, bx): a box joined with a plate (zone
+        // 1e-4), then with a hull whose sloped face the plate's edge runs along 2.12e-4
+        // below; the edge's gap was set to its height over the face's plane as the plane
+        // measured it, and the checker, projecting onto the face, measured 5.5e-16 more
+        // (`edge_off_surface`; pipeline.coverFaces: the gap carries the height's rounding)
+        "solids 0 2 3 3 4 2 4 1 2 -2 2 0 4 3 2 2 0 2 1 4 2 3 2 0 1 2 2 9 3 2 1 2 6 0 2 1 7 2 1 1 1 3 0 1 3 4 0 4 1 1 4 0 4 2 3 0 2 4 0 1 1 0 2 0 2 4 3 3 11 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

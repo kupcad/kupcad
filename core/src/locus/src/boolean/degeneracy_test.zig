@@ -355,6 +355,28 @@ const ALONG_CASES = [_]struct { nudge: Vec3, meet: Along }{
     .{ .nudge = .{ 0, -1e-5, -2.000000005684342e-5 }, .meet = .edge_too_short },
     .{ .nudge = .{ 0, -1e-5, -1e-5 }, .meet = .below_feature_size },
 };
+/// The operands of the tests of an edge along a sloped face (the solids fuzzer's find bx,
+/// as it drew them): a box, a plate (zone 1e-4, an intersection tolerance of 2e-4) whose
+/// edge at x = 2.0002, z = 4 runs along y, and a hull whose face in the plane z = x +
+/// 2.0001 (45°, `SLOPE_FACE_NORMAL` its outward normal) has that edge 2.1213e-4 below it.
+const SLOPE_BOX = [2]Vec3{ .{ 2, 3, 2 }, .{ 3, 4, 4 } };
+const SLOPE_BOX_MOVE: Vec3 = .{ -1, 1, 0 };
+const SLOPE_PLATE = [2]Vec3{ .{ -98, -48, 2 }, .{ 2, 102, 3 } };
+const SLOPE_PLATE_SCALE: Vec3 = .{ 1, 2, 2 };
+const SLOPE_PLATE_NUDGE: Vec3 = .{ 1.9999999710098565e-4, 5e-5, -1e-15 };
+const SLOPE_HULL = [_]Vec3{ .{ 2, 1, 1 }, .{ 1, 3, 0 }, .{ 1, 3, 4 }, .{ 0, 4, 1 }, .{ 1, 4, 0 }, .{ 4, 2, 3 }, .{ 0, 2, 4 } };
+const SLOPE_HULL_AXIS: Vec3 = .{ 0, 1, 0 };
+const SLOPE_HULL_SCALE: Vec3 = .{ 2, 0.5, 2 };
+const SLOPE_HULL_NUDGE: Vec3 = .{ -5e-5, 5e-5, 5e-5 };
+/// The hull's nudges in z in the tests about that find (the fuzzer's 5e-5): the plate's
+/// edge from 1.84e-4 under the sloped face's plane (within the intersection tolerance) to
+/// 2.62e-4 under it (past it by 0.62 of the zone), in steps of about 7e-6.
+const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4, 1.2e-4 };
+/// How the three operands of those tests are turned together: in place and about three
+/// skew axes (`SLIVER_TURNS` but its far shift, where the box's side and the plate's, 2e-4
+/// apart in place, are the intersection tolerance to rounding and their union is refused
+/// `at_tolerance` before the hull comes).
+const SLOPE_TURNS = [_]@TypeOf(SLIVER_TURNS[0]){ SLIVER_TURNS[0], SLIVER_TURNS[2], SLIVER_TURNS[3], SLIVER_TURNS[4] };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4368,4 +4390,50 @@ test "degeneracy: a hull's face by a corner of a pocket's mouth, from clear of t
             try expectByPocket(&solid, &hull, case.want);
         }
     }
+}
+
+test "degeneracy: a plate's edge along a hull's sloped face, its height over the face's plane past the intersection tolerance, is within the gap the union carries on it however it is measured" {
+    // The locus fuzzer's find (2026-11-21, bx), as it drew it: a box joined with a plate
+    // (zone 1e-4), then with a hull whose sloped face the plate's edge runs along 2.12e-4
+    // below, past the intersection tolerance, 2e-4, its ends merged within it. The edge
+    // keeps the plate's line (D28) and its gap covers the line's height over the face's
+    // plane past the tolerance (`pipeline.coverFaces`), set to that height as the plane
+    // measures it; the checker measures it by projecting points of the edge onto the
+    // face, 5.5e-16 more, and refused the union (`edge_off_surface`)
+    try expectSlopeJoined(SLOPE_HULL_NUDGE[2], SLOPE_TURNS[0]);
+}
+
+test "degeneracy: a plate's edge along a hull's sloped face, from within the intersection tolerance of its plane to well past it, turned about skew axes, is within the gap the union carries on it either way round" {
+    // The cases about the find above (`SLOPE_LIFTS` × `SLOPE_TURNS`): the edge's height
+    // over the face's plane from under the tolerance to 0.62 of the zone past it, the three
+    // operands in place and turned. Without the gap's rounding, 17 of the 40 unions were
+    // refused `edge_off_surface` (each way round), in place and turned
+    for (SLOPE_TURNS) |turn| for (SLOPE_LIFTS) |lift| {
+        errdefer std.debug.print("the hull nudged {e} in z, turned {d} about {any}\n", .{ lift, turn.angle, turn.axis });
+        try expectSlopeJoined(lift, turn);
+    };
+}
+
+/// The box and the plate of the tests of an edge along a sloped face joined, then joined
+/// with the hull nudged `lift` in z, all three turned as `turn` has it: each union made and
+/// sound, the last either way round.
+fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
+    var drawn_block = try fuzzBoxPlaced(tol, SLOPE_BOX[0], SLOPE_BOX[1], vec.Z3, 0, null, SLOPE_BOX_MOVE);
+    defer drawn_block.deinit();
+    var drawn_plate = try fuzzBoxPlaced(Tolerance.fromZone(1e-4), SLOPE_PLATE[0], SLOPE_PLATE[1], vec.Z3, 0, SLOPE_PLATE_SCALE, SLOPE_PLATE_NUDGE);
+    defer drawn_plate.deinit();
+    var drawn_hull = try fuzzHullPlaced(&SLOPE_HULL, SLOPE_HULL_AXIS, std.math.pi, SLOPE_HULL_SCALE, vec.ZERO3, .{ SLOPE_HULL_NUDGE[0], SLOPE_HULL_NUDGE[1], lift });
+    defer drawn_hull.deinit();
+    var block = try sliverMoved(&drawn_block, turn);
+    defer block.deinit();
+    var plate = try sliverMoved(&drawn_plate, turn);
+    defer plate.deinit();
+    var hull = try sliverMoved(&drawn_hull, turn);
+    defer hull.deinit();
+    var joined = try helpers.sound(&block, &plate, .@"union");
+    defer joined.deinit();
+    var all = try helpers.sound(&joined, &hull, .@"union");
+    defer all.deinit();
+    var swapped = try helpers.sound(&hull, &joined, .@"union");
+    defer swapped.deinit();
 }

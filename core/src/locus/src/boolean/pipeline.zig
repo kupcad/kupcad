@@ -725,8 +725,14 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
 /// through merged vertices the paves put on both faces within the intersection tolerance
 /// and their gaps, and a face takes its own plane or its group's, so the line leaves a
 /// plane by up to its ends' heights; its edge, made with no gap, did not carry them. A
-/// line's height over a plane is linear, so its ends bound it. Past the zone, refused
-/// (`gap_too_large`), as `Provenance.piece` refuses a vertex's.
+/// line's height over a plane is linear, so its ends bound it. The gap carries the
+/// height's rounding (D27's band, at the size of the line's origin, its ends and the
+/// plane's): the checker measures the same distance another way, projecting points along
+/// the edge onto the face, and a gap set to the height as the plane gave it left the edge
+/// off its face by 5.5e-16 so measured (the plate's edge along a hull's sloped face, find
+/// bx, 2026-11-21), as OCCT's `BRepLib_ValidateEdge::UpdateTolerance` sets a distance it
+/// measured with a margin. Past the zone, refused (`gap_too_large`), as `Provenance.piece`
+/// refuses a vertex's.
 fn coverFaces(body: *Body, diag: *Diagnostics) Error!void {
     const tol = body.tol;
     for (body.edges.items, 0..) |*edge, i| {
@@ -736,7 +742,12 @@ fn coverFaces(body: *Body, diag: *Diagnostics) Error!void {
         for (traverse.coedgesOfEdge(body, types.EdgeIndex.of(i))) |c| {
             if (c == .none) continue;
             const plane = body.geometry.planes.items[body.face(body.loop(body.coedge(c).loop).face).surface.index];
-            for ([_]f64{ edge.t0, edge.t1 }) |t| gap = @max(gap, @abs(plane.height(line.eval(t))) - tol.xsect);
+            for ([_]f64{ edge.t0, edge.t1 }) |t| {
+                const end = line.eval(t);
+                const height = @abs(plane.height(end));
+                const rounding = canonical.Comparison.distance(height, tol.xsect, canonical.magnitude(&.{ line.o, end, plane.frame.origin })).band;
+                gap = @max(gap, height + rounding - tol.xsect);
+            }
         }
         if (gap == edge.gap) continue;
         if (gap > tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.edge, i), .label = "an edge whose line leaves its faces' planes past the intersection tolerance by", .measured = gap, .threshold = tol.zone });
