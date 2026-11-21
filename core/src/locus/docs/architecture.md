@@ -944,7 +944,12 @@ importing only those before it, which the layering test holds):**
   a hull's edge touched it along, read alone, put a piece inside the hull outside, the
   nightly 2026-11-18); a tetrahedron's tip 2.45e-5 through a face leaves
   a section 8.7e-6 in inradius, a plate's front inside a notch 1.25 tolerances deep a
-  triangle 2.5e-5 a side),
+  triangle 2.5e-5 a side; a spur of the fragment, a piece its loops run there and back,
+  decides nothing, the fragment lying on both sides of it, as OCCT's IsInternalFace passes
+  over an edge internal to the face: a tetrahedron's edge in the plane of a hull's face,
+  from the face's edge to the apex 2.83e-5 inside it, its faces along it one above the
+  plane and one below within the tolerance, read the fragment inside along one run and
+  outside along the other, cg, 2026-11-22),
   `unclassified` only when no piece decides or two disagree. Since
   2026-11-15 (the M0–M4 review, Leo's order; Hoffmann pp. 86–93, OCCT's builder) the seams
   come first: a fragment with pieces lying clearly on the other operand (along its edges,

@@ -399,6 +399,15 @@ const Seams = struct {
 /// every piece, as the last resort for a fragment no ray decides, null when two disagree.
 /// Null when no piece decides (none lies on the other, the faces there are in one plane
 /// with the fragment's, or the edge a piece is of runs across that plane: `wedgeSide`).
+/// A spur of the fragment (a piece its loops run there and back, a section or an edge of
+/// the other ending inside the face) decides nothing: the fragment lies on both sides of
+/// it, so its two runs read the two sides of the other's material there, as OCCT's
+/// `IsInternalFace` passes over an edge internal to the face it classifies, and as `sample`
+/// triangulates a fragment without its spurs. A hull's edge lying in a face's plane from
+/// the face's boundary to the hull's apex 2.8e-5 inside it, the hull's faces along it one
+/// above the plane and one below it within the tolerance, read the fragment inside along
+/// one run and outside along the other (`unclassified`; the cd fork's solids fuzz run,
+/// cg, 2026-11-22).
 fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, fragments: *const Fragments, i: usize, clear_only: bool, diag: *Diagnostics) Error!?Class {
     const fragment = fragments.items.items[i];
     const normal = in_face.outwardNormal(paves.operands[fragment.operand], types.FaceIndex.of(fragment.face), .{ 0, 0 });
@@ -409,6 +418,9 @@ fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, frag
         for (vertices, 0..) |x, k| {
             const y = vertices[(k + 1) % vertices.len];
             const piece = seams.of(other, x, y) orelse continue;
+            // A spur, run back the other way in the fragment's loops, has the fragment on
+            // both sides and bounds no region of it
+            if (fragments.steps(i, y, x)) continue;
             const into = vec.normalized(vec.cross(normal, vec.sub(paves.point(y), paves.point(x)))) orelse continue;
             const side = (try pieceSide(allocator, paves, seams, other, piece, x, y, fragment.face, normal, into, diag)) orelse continue;
             if (clear_only and !side.clear) continue;

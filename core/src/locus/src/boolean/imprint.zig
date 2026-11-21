@@ -64,6 +64,17 @@ pub const Fragments = struct {
     pub fn loopVertices(self: *const Fragments, loop: [2]u32) []const u32 {
         return self.vertices.items[loop[0]..][0..loop[1]];
     }
+
+    /// Whether fragment `i`'s loops step from merged vertex `from` to `to`.
+    pub fn steps(self: *const Fragments, i: usize, from: u32, to: u32) bool {
+        for (self.loopsOf(i)) |loop| {
+            const vertices = self.loopVertices(loop);
+            for (vertices, 0..) |v, k| {
+                if (v == from and vertices[(k + 1) % vertices.len] == to) return true;
+            }
+        }
+        return false;
+    }
 };
 
 /// The fragments of every face of both operands.

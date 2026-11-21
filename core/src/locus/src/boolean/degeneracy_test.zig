@@ -469,6 +469,21 @@ const SLIT_DROPS = [_]f64{ 1.999999999431566e-4, 1.5e-4, 2.5e-4 };
 /// this deep, and its cavity inset this far from the box's other sides.
 const FUZZ_WALL_DEPTH: f64 = 1.5;
 const FUZZ_WALL_INSET: f64 = 0.25;
+/// The solids of the tests of an edge lying in a face from its boundary to an apex inside
+/// it (the cd fork's solids fuzz run, 2026-11-22, cg, as the fuzzer drew them): a
+/// tetrahedron whose apex (3, 3.5, 2) lies on the hull's face in the plane x - z = 1, its
+/// edge to (0, 4.5, -1) in that plane, its faces along that edge one above the plane and
+/// one below it; and the hull, moved by `SPUR_HULL_NUDGE` with its edge x = 3, z = 2 moved
+/// back by the inset in x and in z, so the apex lies on the face √2 times the inset from
+/// that edge and the tetrahedron's edge crosses it there. The piece of the edge on the face
+/// is a spur of its fragment, from the boundary to the apex.
+const SPUR_APEX = [_]Vec3{ .{ 2, 4.5, -1 }, .{ 3, 3.5, 2 }, .{ 0, 4.5, -1 }, .{ 0, 2.5, 0 } };
+const SPUR_HULL = [_]Vec3{ .{ 1, 2, 2 }, .{ 1, 0, 3 }, .{ 1, 1, 1 }, .{ 4, 4, 3 }, .{ 3, 0, 2 }, .{ 3, 2, 4 }, .{ 3, 4, 2 }, .{ 1, 1, 4 } };
+const SPUR_HULL_NUDGE: Vec3 = .{ 0, 2e-3, 0 };
+/// The hull's edge moved back in x and in z: the find's (the intersection tolerance and
+/// D27's band at these coordinates), within the tolerance (the apex on the edge), and
+/// past it to 2.5 times it.
+const SPUR_INSETS = [_]f64{ 2.000000005684342e-5, 1.5e-5, 2.5e-5, 3e-5, 5e-5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4398,6 +4413,65 @@ test "degeneracy: a common block between two regions of both operands, the hull'
             try expectAlikeEitherWay(&solids[0], &solids[1], op);
         }
     };
+}
+
+test "degeneracy: an edge lying in a face from its boundary to an apex inside it is joined either way round" {
+    // The fuzz find (2026-11-22, cg): the tetrahedron's edge, in the plane of the hull's
+    // face, lay on it from the hull's edge to the apex 2.83e-5 inside, a spur of the face's
+    // fragment run there and back. The tetrahedron's faces along that edge, one above the
+    // face's plane and one below it within the tolerance, read the fragment inside along
+    // one run and outside along the other, and the union was refused (`unclassified`)
+    var solids = try spurSolids(SPUR_INSETS[0], 0, false);
+    defer for (&solids) |*x| x.deinit();
+    var forward = try sound(&solids[0], &solids[1], .@"union");
+    defer forward.deinit();
+    var swapped = try sound(&solids[1], &solids[0], .@"union");
+    defer swapped.deinit();
+    try testing.expectEqual(forward.counts(), swapped.counts());
+}
+
+test "degeneracy: an edge lying in a face from its boundary to an apex inside it, the apex near the boundary or farther, turned and mirrored, is decided alike either way round" {
+    // The cases about the find above: the apex on the face's edge within the tolerance,
+    // and inside the face from the tolerance and D27's band out to 2.5 tolerances. Each
+    // union, intersection and difference is decided, never left unclassified by the
+    // spur's two runs, and the union and the intersection alike whichever solid comes
+    // first. Before, 84 of the 240 were refused `unclassified`; the rest are made, or
+    // refused for features nearer than the minimum size or an edge too short
+    for (SPUR_INSETS) |inset| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("inset {e}, quarter turns {d}, mirrored {}\n", .{ inset, quarter, mirrored });
+        var solids = try spurSolids(inset, quarter, mirrored);
+        defer for (&solids) |*x| x.deinit();
+        for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            for ([2][2]*const Body{ .{ &solids[0], &solids[1] }, .{ &solids[1], &solids[0] } }) |operands| {
+                var diag = Diagnostics.init(testing.allocator);
+                defer diag.deinit();
+                var result = pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &diag, null) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    try testing.expect(diag.first().?.code != .unclassified);
+                    continue;
+                };
+                result.deinit();
+            }
+            if (op != .difference) try expectAlikeEitherWay(&solids[0], &solids[1], op);
+        }
+    };
+}
+
+/// The tetrahedron and the hull of those tests, the hull's edge moved back by `inset`,
+/// both turned `quarter` quarter turns about z and mirrored as `tieMove` does.
+fn spurSolids(inset: f64, quarter: usize, mirrored: bool) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const hull = @import("../construct/hull.zig").hull;
+    var apex: [SPUR_APEX.len]Vec3 = undefined;
+    for (SPUR_APEX, &apex) |p, *q| q.* = tieMove(p, quarter, mirrored);
+    var a = try hull(testing.allocator, tol, &apex, &diag);
+    errdefer a.deinit();
+    var points: [SPUR_HULL.len]Vec3 = undefined;
+    for (SPUR_HULL, &points) |p, *q| q.* = tieMove(.{ p[0] - inset + SPUR_HULL_NUDGE[0], p[1] + SPUR_HULL_NUDGE[1], p[2] - inset + SPUR_HULL_NUDGE[2] }, quarter, mirrored);
+    const b = try hull(testing.allocator, tol, &points, &diag);
+    return .{ a, b };
 }
 
 /// The box and the hull of those tests at `zones`, the hull's top `drop` under 4, both

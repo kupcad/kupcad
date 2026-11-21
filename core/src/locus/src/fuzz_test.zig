@@ -2338,6 +2338,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // round from the pieces' ends: a map of genus one (overlay.orderSample: along the
         // arc through the piece's ends)
         "overlay 3 2 2 7 5 14 2 16 20 4 2 1 6 3 23 6 23 0 7 4 12 3 23 0 5 3 0 0 1 3 1 3 1 1 3 3 0 2 1 1 3 1 1 1 3 0 1 6 11 18 3 15 5 1 15 20 1 20 6 6 24 17 6 3 10 5 1 0 0 2 2 0 3 3 0 2 1 1 4 0 1 1 2 0 2 2 8 15 22 2 1 8 7 23 20 3 5 21 3 8 5 5 24 22 3 0 7 1 14 21 2 1 0 0 2 3 1 4 0 1 4 0 0 2 2 0 4 1 1 1 3 1 1 0 1 0 20 11 5 0 0 1 2 2 8 22 6 3 8 21 8 0 8 4 7 8 4 22 13 3 0 24 1 12 15 6 5 8 1 3 3 0 2 3 1 3 1 1 1 0 0 4 3 1 4 0 1 1 1 1 4 3 0 1 8 1 10 4 10 19 8 21 20 5 22 14 3 2 6 4 7 6 4 3 14 3 22 23 3 1 2 1 4 3 1 3 1 0 4 3 1 3 1 1 2 0 1 3 3 1 3 3 0",
+        // The cd fork's solids fuzz run (2026-11-22, cg): a tetrahedron's apex on a hull's
+        // face 2.83e-5 inside its edge, the tetrahedron's edge from it lying in the face's
+        // plane across that edge, its faces along it one above the plane and one below; the
+        // piece of the edge on the face a spur of its fragment, whose two runs read it
+        // inside and outside (`unclassified`; classify.bySeam: a spur decides nothing)
+        "solids 1 4 2 4 0 3 3 3 0 4 0 0 2 1 1 3 0 1 -2 15 3 3 1 8 1 2 2 1 0 3 1 1 1 4 4 3 3 0 2 3 2 4 3 4 2 1 1 4 1 3 12 13 12 13 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
