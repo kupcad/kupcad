@@ -1580,18 +1580,50 @@ const Filler = struct {
         return Incidence.in(self.p.boundary.items, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
     }
 
-    /// Whether the piece from `u` to `w`, its middle at `place` against face `f` of operand
-    /// `k`, lies inside the face for the imprint: inside, or on the boundary by its middle
-    /// but not along it (`alongBoundary`, `other` the face the piece is a section with): a
-    /// piece from the boundary to an end the paves put off it (one intersection tolerance
-    /// long, from an edge's tolerance out, its middle is within the zone of the edge), or a
-    /// chord across a sliver or a corner.
-    fn imprinted(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, place: in_face.Place, other: FaceRef) Error!bool {
-        return switch (place) {
-            .inside => true,
-            .outside => false,
-            .boundary => !self.onBoundary(k, f, u) or !self.onBoundary(k, f, w) or !try self.alongBoundary(k, f, u, w, other),
-        };
+    /// How a piece between two merged vertices lies against a face (`lies`).
+    const Lie = enum {
+        /// In the face: a section of it, imprinted on it.
+        in,
+        /// A run of the face's own boundary: the face's already, a section of the other
+        /// face alone.
+        along,
+        /// Beside the face: a section of neither face.
+        beside,
+    };
+
+    /// How the piece from `u` to `w`, its middle `mid` at `place` against face `f` of
+    /// operand `k`, lies against the face (`other` the face the piece is a section with).
+    /// Inside by its middle, it is in the face. On the boundary by its middle, it is in
+    /// the face too when an end is off the boundary (a piece from the boundary to an end
+    /// the paves put off it: one intersection tolerance long, from an edge's tolerance
+    /// out, its middle is within the zone of the edge), and along the boundary when it is
+    /// a run of the face's own blocks (`alongBoundary`). What is left is a chord between
+    /// two places of the boundary, within reach of it at its middle: across a sliver or a
+    /// corner of the face, in the face, or across a notch of it, beside the face. The
+    /// distance cannot tell these apart, so the face's loops do, by the chord's middle
+    /// (`in_face.byLoops`, what places a point beyond reach of the boundary; OCCT's
+    /// `IsValidBlockForFaces` classifies a section block's middle against each face, its
+    /// band the edges' own tolerance).
+    ///
+    /// Every such chord was taken for one in the face: a hull's face 1.6 tolerances from a
+    /// corner of a pocket's mouth, where the pocket's ceiling and side (a reflex edge
+    /// between them) meet the face the pocket opens through, cut the corner's three edges,
+    /// and the 6e-5 between its crossings of the mouth's two edges, 1.5e-5 from one of
+    /// them and over the open mouth, was made a section of the face about the mouth. The
+    /// piece of the hull's face in the pocket, all of it within the zone of the pocket's
+    /// faces, was then outside by its seams on the ceiling and the side and inside by that
+    /// one (`unclassified`; the locus session on 0856d7ba, 2026-11-21, bt, a chain an
+    /// `at_tolerance` refusal of edge–face stopped a step earlier until 955002cb).
+    fn lies(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, mid: Vec3, place: in_face.Place, other: FaceRef) Error!Lie {
+        switch (place) {
+            .inside => return .in,
+            .outside => return .beside,
+            .boundary => {
+                if (!self.onBoundary(k, f, u) or !self.onBoundary(k, f, w)) return .in;
+                if (try self.alongBoundary(k, f, u, w, other)) return .along;
+                return if (try in_face.byLoops(self.body(k), f, mid, try self.edgesOf(k, f), self.diag) == .outside) .beside else .in;
+            },
+        }
     }
 
     /// Whether merged vertices `u` and `w` are joined along face `f`'s boundary by a run of
@@ -1748,8 +1780,10 @@ const Filler = struct {
     /// Every pair of faces of `a` and `b`: lying in one plane, recorded, and each one's
     /// pave blocks inside the other a section segment of it; else the merged vertices both
     /// lie on, sorted along their planes' line, each gap whose middle is in both faces a
-    /// section segment of each face it is inside of. The line is `meetingLine`'s: planes at
-    /// an angle meet along their own line; planes parallel within the angular tolerance
+    /// section segment of each face it is inside of (`lies`: not a run of the face's own
+    /// boundary, and no section at all where it is a chord beside either face, across a
+    /// notch of its boundary). The line is `meetingLine`'s: planes at an angle meet along
+    /// their own line; planes parallel within the angular tolerance
     /// have none (their normals' cross product is noise), so they meet along the merged
     /// vertices' line, and merged vertices off one line put them in one plane where they
     /// meet, whatever corners of theirs lie off it elsewhere: the pair is recorded as lying
@@ -1829,8 +1863,12 @@ const Filler = struct {
                 const in_b = try self.placeIn(1, fb, mid, null);
                 if (in_b == .outside) continue;
                 const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
-                const imprint_a = try self.imprinted(0, fa, u, w, in_a, .{ .operand = 1, .face = @backingInt(fb) });
-                const imprint_b = try self.imprinted(1, fb, u, w, in_b, .{ .operand = 0, .face = @backingInt(fa) });
+                // Beside either face it is no part of where the two meet
+                const lies_a = try self.lies(0, fa, u, w, mid, in_a, .{ .operand = 1, .face = @backingInt(fb) });
+                const lies_b = try self.lies(1, fb, u, w, mid, in_b, .{ .operand = 0, .face = @backingInt(fa) });
+                if (lies_a == .beside or lies_b == .beside) continue;
+                const imprint_a = lies_a == .in;
+                const imprint_b = lies_b == .in;
                 if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
                 if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
                 if (imprint_a or imprint_b) {
@@ -2285,7 +2323,7 @@ const Filler = struct {
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
-                    if (!try self.imprinted(other, g, x.vertex, y.vertex, place, .{ .operand = @intCast(k), .face = @backingInt(f) })) continue;
+                    if (try self.lies(other, g, x.vertex, y.vertex, mid, place, .{ .operand = @intCast(k), .face = @backingInt(f) }) != .in) continue;
                     for ([2]u32{ x.vertex, y.vertex }) |v| {
                         if (try self.onPlane(plane, v, .of(.face, @backingInt(g)))) continue;
                         return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary inside that face beyond reach of its plane," else "a face of the second operand in one plane with a face of the first, its boundary inside that face beyond reach of its plane,", .measured = @abs(plane.height(p.point(v))), .threshold = p.tol.xsect + p.gaps.items[v] });

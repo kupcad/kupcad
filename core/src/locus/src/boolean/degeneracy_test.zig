@@ -274,6 +274,51 @@ const FLAT_HULL = [_]Vec3{ .{ 1, 4, 1 }, .{ 3, 3, 4 }, .{ 4, 0, 1 }, .{ 4, 4, 3 
 /// hull cuts of it 3e-3 wide, nudged either way, and ten times as far under).
 const FLAT_SHAPES = [_][2]f64{ .{ 3, 1 }, .{ 3, 0.5 }, .{ 3, 2 }, .{ 2.5, 1 }, .{ 4, 1 } };
 const FLAT_PLACES = [_][2]f64{ .{ 2e-3, 1e-5 }, .{ 2e-3, -1e-5 }, .{ 2e-2, 1e-5 } };
+/// The solid of the tests of a face by a corner of a pocket's mouth, as the solids fuzzer
+/// made it: a box less a cavity (the fuzzer's wall with a gap of 2.5 intersection
+/// tolerances, moved and nudged as it placed it), cut by a hull moved up 1 and nudged
+/// 5e-6 in y. The cut leaves the cavity a pocket open through the hull's face; where the
+/// pocket's ceiling (z = 2.75002) and its side (y = 3.25), a reflex edge between them, meet
+/// that face is the corner (1.8750267, 3.25, 2.75002), a notch's corner of the face.
+const POCKET_OUTER = [2]Vec3{ .{ 1.25, 2, 1 }, .{ 3.000025, 4, 3 } };
+const POCKET_CAVITY = [2]Vec3{ .{ 1.5, 2.25, 1.25 }, .{ 2.999975, 3.75, 2.75 } };
+const POCKET_MOVE: Vec3 = .{ 0, 1, 0 };
+const POCKET_NUDGE: Vec3 = .{ 0, 0, 2.0000000071054275e-5 };
+const POCKET_CUTTER = [_]Vec3{ .{ 0, 2, 0 }, .{ 2, 4, 4 }, .{ 0, 2, 4 }, .{ 4, 4, 4 }, .{ 3, 2, 2 }, .{ 0, 3, 0 }, .{ 0, 2, 3 }, .{ 3, 2, 4 } };
+const POCKET_CUTTER_MOVE: Vec3 = .{ 0, 0, 1 };
+const POCKET_CUTTER_NUDGE: Vec3 = .{ 0, 5e-6, 0 };
+/// The hull of those tests, as the fuzzer drew, scaled and moved it: its face in the plane
+/// 2x + z = 6.5 (`POCKET_FACE_NORMAL` its outward normal) has that corner 3.27e-5 behind
+/// it, `POCKET_FOUND_DEPTH` intersection tolerances inside the hull.
+const POCKET_HULL = [_]Vec3{ .{ 2, 0, 3 }, .{ 2, 4, 0 }, .{ 2, 1, 1 }, .{ 0, 4, 4 }, .{ 4, 1, 0 }, .{ 1, 2, 4 }, .{ 1, 2, 2 } };
+const POCKET_HULL_SCALE: Vec3 = .{ 2, 1, 2 };
+const POCKET_HULL_MOVE: Vec3 = .{ -0.5, 0, -0.5 };
+const POCKET_FACE_NORMAL: Vec3 = .{ -0.8944271909999161, 0, -0.44721359549995804 };
+const POCKET_FOUND_DEPTH: f64 = 1.635;
+/// The solid and the hull of those tests are mirrored in the plane y = 2: a y becomes
+/// this less it.
+const POCKET_MIRROR_Y: f64 = 4;
+/// How the hull of those tests meets the pocket's corner, by how many intersection
+/// tolerances the corner lies behind its face (`PocketCase.depth`; at the fuzzer's,
+/// `POCKET_FOUND_DEPTH`, the hull is as it drew it): the face clear of the corner on its far side and
+/// the corner on the face, each operation made; the corner past its reach of the face and
+/// within the minimum feature size of where the face meets the pocket's faces, refused;
+/// the face cutting the corner's three edges, the chord between its crossings of the
+/// mouth's two edges within reach of them (the find's and either side of it), where the
+/// solids are joined, the tip of the corner the hull holds a sliver (the intersection
+/// and the hull less the solid refused); and the face farther in, each operation made.
+const PocketCase = struct { depth: f64, want: enum { made, below_feature_size, sliver_tip } };
+const POCKET_CASES = [_]PocketCase{
+    .{ .depth = -1.5, .want = .made },
+    .{ .depth = 0.5, .want = .made },
+    .{ .depth = 1.2, .want = .below_feature_size },
+    .{ .depth = 1.4, .want = .below_feature_size },
+    .{ .depth = 1.5, .want = .sliver_tip },
+    .{ .depth = POCKET_FOUND_DEPTH, .want = .sliver_tip },
+    .{ .depth = 1.8, .want = .sliver_tip },
+    .{ .depth = 2.2, .want = .made },
+    .{ .depth = 5, .want = .made },
+};
 /// The two hulls of the tests of an edge along another's within the tolerance, as the
 /// solids fuzzer drew them (the second before its quarter turn about z): the first's edge
 /// from (3, 0, 2) to (2, 0, 0), once moved, and the second's from (3, 0, 2) to (4, 0, 4),
@@ -4202,4 +4247,125 @@ test "degeneracy: a hull's edge along another's within the tolerance, inside its
         defer for (&hulls) |*h| h.deinit();
         try expectAlong(&hulls[0], &hulls[1], case.meet);
     };
+}
+
+/// A box of the tests of a pocket's mouth between `corners`, mirrored in y or not.
+fn pocketBox(corners: [2]Vec3, mirrored: bool) !Body {
+    if (!mirrored) return helpers.boxAt(tol, corners[0], corners[1]);
+    return helpers.boxAt(tol, .{ corners[0][0], POCKET_MIRROR_Y - corners[1][1], corners[0][2] }, .{ corners[1][0], POCKET_MIRROR_Y - corners[0][1], corners[1][2] });
+}
+
+/// `points` of those tests, mirrored in y or not.
+fn pocketPoints(comptime n: usize, points: [n]Vec3, mirrored: bool) [n]Vec3 {
+    var out = points;
+    if (mirrored) for (&out) |*p| {
+        p[1] = POCKET_MIRROR_Y - p[1];
+    };
+    return out;
+}
+
+/// A move of those tests, mirrored in y or not.
+fn pocketMove(by: Vec3, mirrored: bool) Vec3 {
+    return if (mirrored) .{ by[0], -by[1], by[2] } else by;
+}
+
+/// The solid with a pocket open through a cut face (`POCKET_OUTER`), mirrored in y or not.
+fn pocketSolid(mirrored: bool) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var outer = try pocketBox(POCKET_OUTER, mirrored);
+    defer outer.deinit();
+    var cavity = try pocketBox(POCKET_CAVITY, mirrored);
+    defer cavity.deinit();
+    var drawn = try sound(&outer, &cavity, .difference);
+    defer drawn.deinit();
+    // As the fuzzer composes a placement: one rounding of the move and the nudge together
+    const place = mat.Affine.translate(pocketMove(POCKET_NUDGE, mirrored)).compose(&mat.Affine.translate(pocketMove(POCKET_MOVE, mirrored)));
+    var wall = try @import("../construct/transform.zig").transform(testing.allocator, &drawn, &place, .{}, &diag);
+    defer wall.deinit();
+    const points = pocketPoints(POCKET_CUTTER.len, POCKET_CUTTER, mirrored);
+    var cutter = try fuzzHull(&points, POCKET_CUTTER_MOVE, pocketMove(POCKET_CUTTER_NUDGE, mirrored));
+    defer cutter.deinit();
+    return sound(&wall, &cutter, .intersection);
+}
+
+/// The hull of those tests moved along its face's normal to have the pocket's corner
+/// `depth` intersection tolerances behind that face (not moved at the fuzzer's depth),
+/// mirrored in y or not.
+fn pocketHull(depth: f64, mirrored: bool) !Body {
+    const points = pocketPoints(POCKET_HULL.len, POCKET_HULL, mirrored);
+    return fuzzHullPlaced(&points, vec.Z3, 0, POCKET_HULL_SCALE, pocketMove(POCKET_HULL_MOVE, mirrored), vec.scale(POCKET_FACE_NORMAL, (depth - POCKET_FOUND_DEPTH) * tol.xsect));
+}
+
+/// The pocket's solid and a hull by its mouth's corner meet as `want` has it
+/// (`POCKET_CASES`), either way round.
+fn expectByPocket(solid: *const Body, hull: *const Body, want: @FieldType(PocketCase, "want")) !void {
+    switch (want) {
+        .made => {
+            try helpers.expectIdentitiesAtTolerance(solid, hull);
+            try helpers.expectIdentitiesAtTolerance(hull, solid);
+        },
+        .below_feature_size => {
+            try expectRefused(solid, hull, .below_feature_size);
+            try expectRefused(hull, solid, .below_feature_size);
+        },
+        .sliver_tip => {
+            for ([2][2]*const Body{ .{ solid, hull }, .{ hull, solid } }) |operands| {
+                var joined = try sound(operands[0], operands[1], .@"union");
+                defer joined.deinit();
+                try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&joined));
+                var diag = Diagnostics.init(testing.allocator);
+                defer diag.deinit();
+                try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, operands[0], operands[1], .intersection, .{}, &diag, null));
+                try testing.expectEqual(diagnostics.Code.sliver_face, diag.first().?.code);
+            }
+            var cut = try sound(solid, hull, .difference);
+            defer cut.deinit();
+            try testing.expectEqual([2]usize{ 1, 0 }, shellKinds(&cut));
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, hull, solid, .difference, .{}, &diag, null));
+            try testing.expectEqual(diagnostics.Code.sliver_face, diag.first().?.code);
+        },
+    }
+}
+
+test "degeneracy: a hull's face 1.6 tolerances from a corner of a pocket's mouth, the chord between its crossings of the mouth's two edges over the open mouth, joins the solids either way round" {
+    // The locus fuzzer's find (2026-11-21, the session on 0856d7ba, bt), as it drew it: a
+    // pocket open through a cut face, its ceiling and its side meeting that face at one
+    // corner, a reflex edge between them (the face has a notch there, the mouth), and a
+    // hull's face 3.27e-5 from the corner (a tolerance of 2e-5), which cuts the corner's
+    // three edges. Its crossings of the mouth's two edges are 6e-5 apart, the chord
+    // between them 1.5e-5 from one edge at its middle and over the open mouth: beside the
+    // cut face, not in it. The paves made it a section of the two faces as they make a
+    // chord across a corner of a face, and the piece of the hull's face in the pocket, a
+    // triangle all within the zone of the pocket's faces, was outside by its seams on the
+    // ceiling and the side and inside by its seam on the cut face (`unclassified`, every
+    // operation). The hull fills the pocket to its face; what the two have in common ends
+    // in the corner's tip, a face of it a sliver, refused by design
+    var solid = try pocketSolid(false);
+    defer solid.deinit();
+    var hull = try pocketHull(POCKET_FOUND_DEPTH, false);
+    defer hull.deinit();
+    try expectByPocket(&solid, &hull, .sliver_tip);
+}
+
+test "degeneracy: a hull's face by a corner of a pocket's mouth, from clear of the corner on its far side through it to well past it, mirrored or not, meets the pocket's solid the same either way round" {
+    // The cases about the find above (`POCKET_CASES`): the chord between the face's
+    // crossings of the mouth's two edges lies within reach of them, over the open mouth,
+    // while the corner is 1.5 to 1.8 tolerances behind the face (at 1.5 and at the find's
+    // 1.635 every operation was `unclassified`; at 1.8 the chord's middle is past reach of
+    // the edges and was left out as outside the cut face); nearer, the corner is within
+    // the minimum feature size of the hull's face and refused, or on it; farther, the
+    // crossings are clear of the corner
+    for ([_]bool{ false, true }) |mirrored| {
+        var solid = try pocketSolid(mirrored);
+        defer solid.deinit();
+        for (POCKET_CASES) |case| {
+            errdefer std.debug.print("the corner {d} tolerances behind the face, mirrored {}\n", .{ case.depth, mirrored });
+            var hull = try pocketHull(case.depth, mirrored);
+            defer hull.deinit();
+            try expectByPocket(&solid, &hull, case.want);
+        }
+    }
 }

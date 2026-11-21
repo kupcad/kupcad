@@ -160,9 +160,16 @@ pub fn placeWithin(decide: incidence.Decider, body: *const Body, f: types.FaceIn
         .at_tolerance => |c| return .{ .at_tolerance = c },
         .apart => {},
     }
+    return if (try byLoops(body, f, p, index, diag) == .inside) .inside else .outside;
+}
+
+/// Where `p` (on face `f`'s surface) lies by the face's loops alone, however near its
+/// boundary: inside or outside by their winding, on the boundary only exactly on an edge.
+/// What `placeWithin` answers beyond reach of the boundary, and the side of the boundary a
+/// point within reach of it is on. `index`: as `placeWithin`'s.
+pub fn byLoops(body: *const Body, f: types.FaceIndex, p: Vec3, index: ?*const face_edges.FaceEdges, diag: *Diagnostics) Error!Place {
     const uv = uvOf(body, f, p);
-    const place = if (index) |i| try i.classify(body, p, uv, diag) else try classify(body, f, p, uv, 0, diag);
-    return if (place == .inside) .inside else .outside;
+    return if (index) |i| try i.classify(body, p, uv, diag) else try classify(body, f, p, uv, 0, diag);
 }
 
 /// The parameters of `p` on face `f`'s surface, a periodic direction's value taken a

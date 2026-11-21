@@ -863,7 +863,17 @@ importing only those before it, which the layering test holds):**
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
   the result has faces that thin). A section piece lies on a face's boundary only when
   the paves put both its ends there (never by its middle's distance alone), and is then
-  not imprinted again. Each merged vertex strictly inside a face of the other operand is
+  not imprinted again. A piece with both ends on a face's boundary and its middle within
+  reach of it that is no run of the boundary is a chord: across a sliver or a corner of
+  the face, in it, or across a notch, beside it and no section of either face. The
+  distance cannot tell which, so the face's loops do, by the chord's middle
+  (`pave.lies`, `in_face.byLoops`; OCCT's `IsValidBlockForFaces` classifies a block's
+  middle against each face, its band the edges' own tolerance). Every such chord was
+  taken for one in the face: a hull's face 1.6 tolerances from the corner of a pocket's
+  mouth cut the corner's three edges, the chord between its crossings of the mouth's two
+  edges lay over the open mouth 1.5e-5 from one of them, and the piece of the hull's face
+  in the pocket had a seam on the face about the mouth that read it inside
+  (`unclassified`, the locus session on 0856d7ba, 2026-11-21, bt). Each merged vertex strictly inside a face of the other operand is
   kept (`Paves.touches`), whichever stage found it: a corner of one solid on a face of
   the other, or crossings of its edges merged into one there (a tetrahedron's tip just
   over the tolerance past a box's top, its pocket's apex on the top, 2026-11-17). Pave

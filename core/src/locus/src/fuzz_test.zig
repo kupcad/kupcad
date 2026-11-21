@@ -2251,6 +2251,15 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // (pipeline.Provenance.blockLines: the line of the hull whose faces the result
         // keeps along the piece)
         "solids 1 6 4 1 3 4 0 2 3 2 1 4 4 0 3 2 0 3 0 0 3 1 -2 0 11 15 1 1 1 6 3 4 1 1 4 3 4 0 3 0 0 4 0 1 2 3 3 0 0 2 0 1 4 5 12 6 1",
+        // The session on 0856d7ba (locus, 2026-11-21, bt): a wall cut by a hull, its cavity a
+        // pocket open through the cut face, and a second hull's face 3.3e-5 from the corner
+        // where the pocket's ceiling and side meet that face (a tolerance of 2e-5). The
+        // chord between its crossings of the mouth's two edges, over the open mouth and
+        // 1.5e-5 from one of them, was made a section of the cut face, and the piece of
+        // the hull's face in the pocket was inside by that seam and outside by its other
+        // two (`unclassified`; pave.lies: a chord across a notch is beside the face). The
+        // chain's first step was refused `at_tolerance` by edge–face until 955002cb
+        "solids 3 1 4 3 1 2 0 2 4 4 1 3 1 0 2 11 12 3 1 1 8 0 2 0 2 4 4 0 2 4 4 4 4 3 2 2 0 3 0 0 2 3 3 2 4 1 1 0 3 2 2 2 1 1 7 2 0 3 2 4 0 2 1 1 0 4 4 4 1 0 1 2 4 1 2 2 3 0 2 1 2 -1 0 -1 10 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
