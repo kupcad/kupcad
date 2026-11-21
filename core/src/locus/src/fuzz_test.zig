@@ -2243,6 +2243,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // lay on the lower face between the two edges it met it along (`faces_intersect`;
         // simplify.sameDomain: one plane record is one plane, as the paves decided it)
         "solids 1 6 1 4 1 3 3 4 4 0 1 1 4 1 4 4 3 3 1 4 1 2 0 0 4 7 2 0 0 -1 -1 4 3 1 3 2 5 2 3 4 1 0 1 4 2 4 1 2 5 14 4 2",
+        // The session on 0856d7ba (locus, 2026-11-21, bs): two hulls, an edge of each along
+        // the other's 1.67e-5 apart, their corners 4.15e-5 apart; the piece between the
+        // corners, one edge of the result, took the first operand's line, and a corner of
+        // a face 4e-5 across beside it was a sliver on the second hull's line and not on
+        // the first's: the intersection made one way round and refused the other
+        // (pipeline.Provenance.blockLines: the line of the hull whose faces the result
+        // keeps along the piece)
+        "solids 1 6 4 1 3 4 0 2 3 2 1 4 4 0 3 2 0 3 0 0 3 1 -2 0 11 15 1 1 1 6 3 4 1 1 4 3 4 0 3 0 0 4 0 1 2 3 3 0 0 2 0 1 4 5 12 6 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

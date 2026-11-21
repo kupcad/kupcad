@@ -274,6 +274,42 @@ const FLAT_HULL = [_]Vec3{ .{ 1, 4, 1 }, .{ 3, 3, 4 }, .{ 4, 0, 1 }, .{ 4, 4, 3 
 /// hull cuts of it 3e-3 wide, nudged either way, and ten times as far under).
 const FLAT_SHAPES = [_][2]f64{ .{ 3, 1 }, .{ 3, 0.5 }, .{ 3, 2 }, .{ 2.5, 1 }, .{ 4, 1 } };
 const FLAT_PLACES = [_][2]f64{ .{ 2e-3, 1e-5 }, .{ 2e-3, -1e-5 }, .{ 2e-2, 1e-5 } };
+/// The two hulls of the tests of an edge along another's within the tolerance, as the
+/// solids fuzzer drew them (the second before its quarter turn about z): the first's edge
+/// from (3, 0, 2) to (2, 0, 0), once moved, and the second's from (3, 0, 2) to (4, 0, 4),
+/// once turned, run along each other, the two corners at (3, 0, 2) the nudges apart; and
+/// the first hull's nudge.
+const ALONG_HULL = [_]Vec3{ .{ 4, 1, 3 }, .{ 4, 0, 2 }, .{ 3, 2, 1 }, .{ 4, 4, 0 }, .{ 3, 2, 0 }, .{ 3, 0, 0 } };
+const ALONG_OTHER = [_]Vec3{ .{ 3, 4, 1 }, .{ 1, 4, 3 }, .{ 4, 0, 3 }, .{ 0, 0, 4 }, .{ 0, 1, 2 }, .{ 3, 3, 0 } };
+const ALONG_NUDGE: Vec3 = .{ 0, 0, 2.000000005684342e-5 };
+/// How the two hulls of those tests meet, whichever comes first: every operation made;
+/// their intersection refused for a sliver (the corner the two edges cut off the first
+/// hull's face, narrower than the zone on the line the result's edge keeps) and the rest
+/// made; that and the second less the first refused alike; or every operation refused,
+/// an edge too short or features below the minimum size.
+const Along = enum { made, sliver_in_common, sliver_in_common_and_rest, edge_too_short, below_feature_size };
+/// The second hull's nudges in those tests (the fuzzer's first, the two edges 1.67e-5
+/// apart at a tolerance of 2e-5 and the corners 4.15e-5): the second edge inside the
+/// first hull's face or outside it, by the zone and by half of it, level with the first
+/// or to one side, the corners two tolerances apart along the edges or one and a half.
+const ALONG_CASES = [_]struct { nudge: Vec3, meet: Along }{
+    .{ .nudge = .{ -5e-6, 1e-5, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, 1e-5, -1e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, 5e-6, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, 5e-6, -1e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, -5e-6, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, -5e-6, -1e-5 }, .meet = .sliver_in_common },
+    .{ .nudge = .{ -5e-6, -1e-5, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, -1e-5, -1e-5 }, .meet = .sliver_in_common },
+    .{ .nudge = .{ 0, 1e-5, -2.000000005684342e-5 }, .meet = .edge_too_short },
+    .{ .nudge = .{ 0, 1e-5, -1e-5 }, .meet = .below_feature_size },
+    .{ .nudge = .{ 0, 5e-6, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ 0, 5e-6, -1e-5 }, .meet = .sliver_in_common_and_rest },
+    .{ .nudge = .{ 0, -5e-6, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ 0, -5e-6, -1e-5 }, .meet = .sliver_in_common_and_rest },
+    .{ .nudge = .{ 0, -1e-5, -2.000000005684342e-5 }, .meet = .edge_too_short },
+    .{ .nudge = .{ 0, -1e-5, -1e-5 }, .meet = .below_feature_size },
+};
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4074,4 +4110,96 @@ test "degeneracy: a flat tetrahedron cut by a hull to a strip along its upper ed
             try expectSoundFaceByFace(&hull, &flat);
         };
     }
+}
+
+/// The two hulls of the tests of an edge along another's (`ALONG_HULL`, `ALONG_OTHER`),
+/// placed as the solids fuzzer placed them, the second nudged by `nudge`; mirrored in y
+/// or not.
+fn alongHulls(nudge: Vec3, mirrored: bool) ![2]Body {
+    var first = ALONG_HULL;
+    var second = ALONG_OTHER;
+    if (mirrored) for ([_][]Vec3{ &first, &second }) |points| for (points) |*p| {
+        p[1] = 4 - p[1];
+    };
+    var a = try fuzzHullPlaced(&first, vec.Z3, 0, null, .{ -1, 0, 0 }, ALONG_NUDGE);
+    errdefer a.deinit();
+    const quarter: f64 = if (mirrored) -std.math.pi / 2.0 else std.math.pi / 2.0;
+    const b = try fuzzHullPlaced(&second, vec.Z3, quarter, null, .{ 0, 0, 0 }, .{ nudge[0], if (mirrored) -nudge[1] else nudge[1], nudge[2] });
+    return .{ a, b };
+}
+
+/// `op` of `a` and `b` refused with `code`.
+fn expectRefusedOf(a: *const Body, b: *const Body, op: pipeline.Op, code: diagnostics.Code) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null)) |result| {
+        var made = result;
+        made.deinit();
+        std.debug.print("{s} was not refused\n", .{@tagName(op)});
+        return error.TestExpectedError;
+    } else |_| {}
+    errdefer std.debug.print("{s}: {f}\n", .{ @tagName(op), diag });
+    try testing.expectEqual(code, diag.first().?.code);
+}
+
+/// `a` and `b` meet as `want` whichever comes first: an operation made is sound, and a
+/// union or an intersection made has the same counts and shells either way round; one
+/// refused is refused alike either way round.
+fn expectAlong(a: *const Body, b: *const Body, want: Along) !void {
+    switch (want) {
+        .edge_too_short => for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| try expectRefused(operands[0], operands[1], .edge_too_short),
+        .below_feature_size => for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| try expectRefused(operands[0], operands[1], .below_feature_size),
+        .made, .sliver_in_common, .sliver_in_common_and_rest => {
+            for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+                errdefer std.debug.print("{s}\n", .{@tagName(op)});
+                if (op == .intersection and want != .made) {
+                    try expectRefusedOf(a, b, op, .sliver_face);
+                    try expectRefusedOf(b, a, op, .sliver_face);
+                    continue;
+                }
+                var forward = try sound(a, b, op);
+                defer forward.deinit();
+                var swapped = try sound(b, a, op);
+                defer swapped.deinit();
+                try testing.expectEqual(forward.counts(), swapped.counts());
+                try testing.expectEqual(shellKinds(&forward), shellKinds(&swapped));
+            }
+            var less = try sound(a, b, .difference);
+            less.deinit();
+            if (want == .sliver_in_common_and_rest) return expectRefusedOf(b, a, .difference, .sliver_face);
+            var rest = try sound(b, a, .difference);
+            rest.deinit();
+        },
+    }
+}
+
+test "degeneracy: a hull's edge along another's within the tolerance, their corners two tolerances apart, is intersected the same either way round" {
+    // The locus fuzzer's find (2026-11-21, the session on 0856d7ba, bs), as it drew it: an
+    // edge of each hull along the other's, 1.67e-5 apart (a tolerance of 2e-5), each
+    // ending at a corner, the corners 4.15e-5 apart. The piece between the corners is one
+    // edge of the result (a common block), and the intersection keeps both of the first
+    // hull's faces about it and, of one of them, the corner the second hull's faces cut
+    // off: a face 4e-5 across. On the first hull's line that face is 1.37 times the
+    // least area that is no sliver's, on the second's 0.96 of it, and the block took the
+    // first operand's line: made with the first hull first, refused (`sliver_face`) with
+    // the second. The edge between two faces of one hull is that hull's
+    // (`pipeline.Provenance.blockLines`): made either way round, the same
+    var hulls = try alongHulls(ALONG_CASES[0].nudge, false);
+    defer for (&hulls) |*h| h.deinit();
+    try expectAlong(&hulls[0], &hulls[1], .made);
+    try helpers.expectIdentitiesAtTolerance(&hulls[0], &hulls[1]);
+    try helpers.expectIdentitiesAtTolerance(&hulls[1], &hulls[0]);
+}
+
+test "degeneracy: a hull's edge along another's within the tolerance, inside its face or outside it, level with it or to one side, the corners near or nearer, mirrored or not, meets it the same either way round" {
+    // The cases about the find above: where the block's two lines differ, the result's
+    // faces along it decide whose it keeps, and what follows from the line (a corner of a
+    // face a sliver or not) is the same whichever hull comes first. By the first operand's
+    // line 6 of the 16 were made one way round and refused the other, mirrored alike
+    for ([_]bool{ false, true }) |mirrored| for (ALONG_CASES) |case| {
+        errdefer std.debug.print("nudged ({e}, {e}, {e}), mirrored {}\n", .{ case.nudge[0], case.nudge[1], case.nudge[2], mirrored });
+        var hulls = try alongHulls(case.nudge, mirrored);
+        defer for (&hulls) |*h| h.deinit();
+        try expectAlong(&hulls[0], &hulls[1], case.meet);
+    };
 }

@@ -667,7 +667,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     var normals: std.ArrayList(Vec3) = .empty;
     defer normals.deinit(allocator);
     // Every plane and line the result is given, by where it comes from (D28)
-    var from = try Provenance.init(allocator, paves, fragments, keeps, diag);
+    var from = try Provenance.init(allocator, paves, fragments, classes, keeps, diag);
     defer from.deinit();
 
     for (fragments.items.items, keeps, 0..) |fragment, keep, i| {
@@ -1070,8 +1070,8 @@ fn builderVertex(b: *primitives.Builder, paves: *const pave.Paves, vertex_of: []
 /// Where the result's geometry comes from (D28; OCCT's images and same-domain faces): a
 /// fragment's plane is its face's own record, copied, unless the paves found the face in
 /// one plane with faces of the other operand, when the whole group takes one face's plane
-/// (`samePlanes`); an edge's line is the operand edge it is a piece of (the first
-/// operand's for a common block), else its section's line (`Paves.section_lines`). Nothing
+/// (`samePlanes`); an edge's line is the operand edge it is a piece of (one of the two for
+/// a common block, `blockLines`), else its section's line (`Paves.section_lines`). Nothing
 /// is decided again by geometry: what the paves found coincident shares a record, and
 /// nothing else does.
 const Provenance = struct {
@@ -1097,15 +1097,15 @@ const Provenance = struct {
     /// index there.
     const Copy = struct { from: u2, index: u32 };
 
-    fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, keeps: []const select.Keep, diag: *Diagnostics) Error!Provenance {
+    fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, classes: []const classify.Classified, keeps: []const select.Keep, diag: *Diagnostics) Error!Provenance {
         var self: Provenance = .{ .allocator = allocator, .paves = paves, .fragments = fragments, .keeps = keeps };
         errdefer self.deinit();
         for (0..2) |k| {
             self.plane_of[k] = try allocator.alloc(Face, paves.operands[k].faces.items.len);
             for (self.plane_of[k], 0..) |*face, i| face.* = .{ .operand = @intCast(k), .face = @intCast(i) };
         }
-        // Pieces of operand edges, the first operand's first (a common block is one edge of
-        // it), then the section segments
+        // Pieces of operand edges (a common block one edge of one of the two, `blockLines`),
+        // then the section segments
         for (0..2) |k| for (paves.edge_paves[k], 0..) |list, e| {
             if (list.items.len < 2) continue;
             for (list.items[0 .. list.items.len - 1], list.items[1..]) |x, y| {
@@ -1118,9 +1118,58 @@ const Provenance = struct {
             const entry = try self.line_of.getOrPut(allocator, section.key_ptr.*);
             if (!entry.found_existing) entry.value_ptr.* = .{ .section = section.value_ptr.* };
         }
+        try self.blockLines(classes);
         // Then the planes, which must hold the pieces on their lines
         try self.samePlanes(diag);
         return self;
+    }
+
+    /// Each common block's line: one of its two edges', by the result's faces along the
+    /// piece where they tell. The result's edge there lies between two of its faces, and a
+    /// kept fragment holding the piece is bounded there by its own operand's edge, unless
+    /// it is coincident with a fragment of the other operand (`Classified.partner`), a
+    /// region of both, bounded by both edges alike: the operand with more faces of its own
+    /// along the piece gives the line, so an edge the result keeps between two faces of
+    /// one operand is that operand's edge, whichever operand comes first. With as many of
+    /// each (a face of each operand meeting along the block, or two regions of both), the
+    /// first operand's, as every block's was: a hull's edge between two of its faces and
+    /// another hull's edge along it 1.67e-5 off (a tolerance of 2e-5), their corners
+    /// 4.15e-5 apart; the intersection kept both faces of the one hull and, of one of
+    /// them, a corner 4e-5 across, 1.37 times the least area that is no sliver's on that
+    /// hull's line and 0.96 of it on the other's: made one way round and refused the
+    /// other (`sliver_face`; the locus session on 0856d7ba, bs). Not the lines' fixed
+    /// order for the rest: it turns with the operands moved whole, and a strip's ridge
+    /// along a box's edge, a face of each along it, was one line in place and the other
+    /// moved (the edge matrix, 16 cases of a ridge in a face).
+    fn blockLines(self: *Provenance, classes: []const classify.Classified) Error!void {
+        const p = self.paves;
+        if (p.common.items.len == 0) return;
+        // Each block's kept fragments of an operand's own, by operand
+        var own: std.AutoHashMapUnmanaged([2]u32, [2]u32) = .empty;
+        defer own.deinit(self.allocator);
+        try own.ensureTotalCapacity(self.allocator, @intCast(p.common.items.len));
+        for (p.common.items) |block| own.putAssumeCapacity(block.vertices, .{ 0, 0 });
+        for (self.fragments.items.items, self.keeps, classes, 0..) |fragment, keep, class, i| {
+            if (keep == .drop or class.partner != classify.NONE) continue;
+            for (self.fragments.loopsOf(i)) |loop| {
+                const vertices = self.fragments.loopVertices(loop);
+                for (vertices, 0..) |x, j| {
+                    const y = vertices[(j + 1) % vertices.len];
+                    if (own.getPtr(.{ @min(x, y), @max(x, y) })) |count| count[fragment.operand] += 1;
+                }
+            }
+        }
+        for (p.common.items) |block| {
+            const count = own.get(block.vertices).?;
+            const operand: u1 = @intFromBool(count[1] > count[0]);
+            self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });
+        }
+    }
+
+    /// The line of edge `e` of `operand`.
+    fn edgeLine(self: *const Provenance, operand: u1, e: u32) curves.Line {
+        const body = self.paves.operands[operand];
+        return body.geometry.curve(body.edge(types.EdgeIndex.of(e)).curve).line;
     }
 
     fn deinit(self: *Provenance) void {
@@ -1347,7 +1396,7 @@ const Provenance = struct {
     fn lineOf(self: *const Provenance, x: u32, y: u32) ?curves.Line {
         const source = self.line_of.get(.{ @min(x, y), @max(x, y) }) orelse return null;
         return switch (source) {
-            .edge => |e| self.paves.operands[e.operand].geometry.curve(self.paves.operands[e.operand].edge(types.EdgeIndex.of(e.edge)).curve).line,
+            .edge => |e| self.edgeLine(e.operand, e.edge),
             .section => |index| self.paves.section_lines.items[index],
         };
     }
