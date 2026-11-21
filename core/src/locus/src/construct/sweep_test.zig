@@ -16,6 +16,21 @@ const bbox = @import("../topology/bbox.zig");
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
+/// The widths, in zones, of the strip or the gap of a sheet in the tests of a sheet's
+/// features nearer than a solid's can be: between the zone, past which a sheet keeps its
+/// features apart, and the intersection tolerance, twice it, past which a solid keeps its
+/// faces apart; and past that (under a solid's minimum feature size, four zones, and over
+/// it). Not the zone or twice it themselves, where rounding has it either way.
+const NARROW_WIDTHS = [_]f64{ 1.5, 1.9 };
+const WIDE_WIDTHS = [_]f64{ 2.5, 3, 5 };
+/// Where those sheets are put after a quarter turn about z, mirrored in x first or not.
+const NARROW_PLACE: Vec3 = .{ 2, 4, 0 };
+const QUARTER_TURNS = 4;
+/// How those sheets come by their strip or gap: drawn, a strip with ends askew (ends
+/// square to it are edges shorter than a sheet may have); a square grown by the width less
+/// the square, a frame; a square grown and cut to what a neighbour with sides askew holds
+/// of it, a strip; and a square joined with its neighbour shrunk, the two apart by the width.
+const Narrow = enum { drawn, frame, strip, gap };
 
 fn expectValid(body: *const Body) !void {
     var report = try check.run(testing.allocator, body, .geometric);
@@ -557,4 +572,88 @@ test "extrude: two blocks whose sides lie in one plane facing opposite ways are 
     }
     try testing.expectEqual(@as(usize, 2), on_y0);
     try testing.expect(senses[0] != senses[1]);
+}
+
+/// A sheet with a strip or a gap `width` across (`Narrow`), each made as its kind says.
+fn narrowSheet(kind: Narrow, width: f64, diag: *Diagnostics) !Body {
+    const sketch_boolean = @import("../sketch/boolean.zig");
+    const offset = @import("../sketch/offset.zig");
+    if (kind == .drawn) return primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ width, width }, .{ width, 1 + width }, .{ 0, 1 } }, diag);
+    var block = try primitives.square(testing.allocator, tol, 1, 1, false, diag);
+    defer block.deinit();
+    switch (kind) {
+        .drawn => unreachable,
+        .frame => {
+            var grown = try offset.offset(testing.allocator, &block, width, .miter, offset.LEAST_MITER_LIMIT, .{}, diag);
+            defer grown.deinit();
+            return sketch_boolean.boolean(testing.allocator, &.{ &grown, &block }, .difference, .{}, diag);
+        },
+        .strip => {
+            var grown = try offset.offset(testing.allocator, &block, width, .miter, offset.LEAST_MITER_LIMIT, .{}, diag);
+            defer grown.deinit();
+            var beside = try primitives.polygon(testing.allocator, tol, &.{ .{ -1, -1 }, .{ 0, 0.25 }, .{ 0, 0.75 }, .{ -1, 2 } }, diag);
+            defer beside.deinit();
+            return sketch_boolean.boolean(testing.allocator, &.{ &grown, &beside }, .intersection, .{}, diag);
+        },
+        .gap => {
+            var beside = try primitives.polygon(testing.allocator, tol, &.{ .{ 1, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 1, 1 } }, diag);
+            defer beside.deinit();
+            var shrunk = try offset.offset(testing.allocator, &beside, -width, .miter, offset.LEAST_MITER_LIMIT, .{}, diag);
+            defer shrunk.deinit();
+            return sketch_boolean.boolean(testing.allocator, &.{ &block, &shrunk }, .@"union", .{}, diag);
+        },
+    }
+}
+
+/// `sheet` mirrored in x or not, turned `turn` quarter turns about z and put at
+/// `NARROW_PLACE`.
+fn placedSheet(sheet: *const Body, turn: usize, mirrored: bool, diag: *Diagnostics) !Body {
+    const Affine = @import("../math/mat.zig").Affine;
+    var place = Affine.rotate(.{ 0, 0, 1 }, @as(f64, @floatFromInt(turn)) * std.math.pi / 2.0);
+    if (mirrored) place = place.compose(&Affine.mirror(.{ 1, 0, 0 }));
+    place = Affine.translate(NARROW_PLACE).compose(&place);
+    return @import("transform.zig").transform(testing.allocator, sheet, &place, .{}, diag);
+}
+
+test "extrude: a sheet with a strip or a gap past the zone and within the intersection tolerance across is refused below a solid's feature size, however it was made, turned or mirrored; past the tolerance it is swept" {
+    // The locus fuzzer's find (the session on 6f83a2ff, bv): an offset by two zones and an
+    // intersection left a strip two zones wide and one long, its ends askew (3.4e-5 and
+    // 2.8e-5, no edge shorter than a sheet may have). The sheet is sound: its edges meet
+    // only at its vertices, and a touch is within the zone. Extruded, the strip was a wall
+    // whose sides lay within the intersection tolerance of each other, and its end face in
+    // its side's plane by its corners: `faces_intersect` by the overlap rules, from a sweep
+    // that asked them only for a pinch. The boolean asks them of its own result wherever
+    // its features come nearer than the minimum feature size and refuses what they find
+    // (`below_feature_size`, `overlap.nearRules`); the sweep asks the same now
+    const overlap = @import("../query/overlap.zig");
+    const Code = @import("../diagnostics.zig").Code;
+    for (std.enums.values(Narrow)) |kind| for (0..QUARTER_TURNS) |turn| for ([_]bool{ false, true }) |mirrored| {
+        for (NARROW_WIDTHS) |zones| {
+            errdefer std.debug.print("{t}, {d} zones, {d} quarter turns, mirrored {}\n", .{ kind, zones, turn, mirrored });
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var drawn = try narrowSheet(kind, zones * tol.zone, &diag);
+            defer drawn.deinit();
+            var sheet = try placedSheet(&drawn, turn, mirrored, &diag);
+            defer sheet.deinit();
+            try expectValid(&sheet);
+            try overlap.check(testing.allocator, &sheet, .{}, &diag);
+            try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 3 }, .{}, &diag));
+            try testing.expectEqual(Code.below_feature_size, diag.first().?.code);
+        }
+        for (WIDE_WIDTHS) |zones| {
+            errdefer std.debug.print("{t}, {d} zones, {d} quarter turns, mirrored {}\n", .{ kind, zones, turn, mirrored });
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var drawn = try narrowSheet(kind, zones * tol.zone, &diag);
+            defer drawn.deinit();
+            var sheet = try placedSheet(&drawn, turn, mirrored, &diag);
+            defer sheet.deinit();
+            var solid = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 3 }, .{}, &diag);
+            defer solid.deinit();
+            try expectValid(&solid);
+            try overlap.check(testing.allocator, &solid, .{}, &diag);
+            try testing.expectEqual(@as(usize, if (kind == .gap) 2 else 1), solid.counts().shells);
+        }
+    };
 }

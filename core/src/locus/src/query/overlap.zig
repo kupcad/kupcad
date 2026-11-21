@@ -76,14 +76,42 @@ pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnosti
 
 /// `check`'s rules on a solid body whose faces `index` holds: its faces met pairwise
 /// (`faces_intersect`, `pinched`) and its shells counted (`shell_overlaps`). The boolean
-/// runs them on a result whose features come nearer than its minimum feature size
-/// (`pipeline.boolean`'s last step), with the index it built for `nearest`.
+/// and the sweeps run them on a result whose features come nearer than its minimum feature
+/// size (`nearRules`), with the index built for `nearest`.
 pub fn rules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     const tol = options.tolerance orelse body.tol;
     var solids = try Solids.init(allocator, body, options, diag);
     defer solids.deinit(allocator);
     try facePairs(allocator, body, index, &solids, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
+}
+
+/// The rules on a body an operation made whose nearest features `near` come closer than its
+/// minimum feature size (`nearest`). A pinch there is the rules' own refusal (`pinched`);
+/// faces they find meeting away from their boundaries lie within the tolerance of each
+/// other's planes by that pair's nearness, which no decision of the tolerance keeps apart,
+/// so the body is refused as a boolean's operand precondition refuses such a pair
+/// (`below_feature_size`, naming the face the rules found; `label` says whose faces), not
+/// called invalid: the locus fuzzer's sessions on 3681979b (2026-11-19, bd) found a hull's
+/// tip cut by a plate a tetrahedron 2.05e-4 high at an intersection tolerance of 2e-4, every
+/// face of it within the tolerance of another's plane; a hull's face 2.05e-4 under a box's
+/// bottom; a hull's vertex 1.8e-5 from a plate's corner at 2e-5. One rule for every
+/// operation that makes a solid of what it is given, the boolean and the sweeps: a sheet's
+/// features are distinct past the zone, a solid's faces past the intersection tolerance,
+/// twice it, so a strip of a sheet between the two wide is sound and its extrusion a wall
+/// whose sides lie on each other (the locus session on 6f83a2ff, bv: a strip 2e-5 wide at
+/// a zone of 1e-5, extruded with its end face, 3.4e-5 across, in its side's plane by its
+/// corners; `faces_intersect` from a sweep that asked only for a pinch).
+pub fn nearRules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, near: Near, label: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+    var scratch = Diagnostics.init(allocator);
+    defer scratch.deinit();
+    rules(allocator, body, index, options, &scratch) catch |e| switch (e) {
+        error.NotValid => return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = scratch.first().?.entity, .label = label, .measured = near.distance, .threshold = near.limit }),
+        else => {
+            for (scratch.findings.items) |f| try diag.add(f);
+            return e;
+        },
+    };
 }
 
 /// Two features of a body that do not meet, the distance between them, and the least

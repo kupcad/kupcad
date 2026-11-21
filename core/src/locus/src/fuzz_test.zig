@@ -2260,6 +2260,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // two (`unclassified`; pave.lies: a chord across a notch is beside the face). The
         // chain's first step was refused `at_tolerance` by edge–face until 955002cb
         "solids 3 1 4 3 1 2 0 2 4 4 1 3 1 0 2 11 12 3 1 1 8 0 2 0 2 4 4 0 2 4 4 4 4 3 2 2 0 3 0 0 2 3 3 2 4 1 1 0 3 2 2 2 1 1 7 2 0 3 2 4 0 2 1 1 0 4 4 4 1 0 1 2 4 1 2 2 3 0 2 1 2 -1 0 -1 10 0",
+        // The session on 6f83a2ff (locus, 2026-11-21, bv): a sheet grown by two zones and
+        // cut by another to a strip two zones wide and one long, its ends askew, a sound
+        // sheet (its features apart past the zone); extruded, a wall whose sides lay within
+        // the intersection tolerance of each other and whose end face lay in its side's
+        // plane by its corners (`faces_intersect`: the sweep asks the overlap rules of a
+        // solid with features nearer than its minimum size, as the boolean does of its
+        // result, and refuses what they find, `below_feature_size`)
+        "chain 1 5 2 2 6 6 2 0 2 5 6 0 3 1 1 0 3 3 3 4 1 1 10 3 6 0 2 5 1 5 2 4 2 5 2 6 0 6 4 3 1 3 1 4 2 6 0 2 4 2 0 3 6 0 2 4 5 6 3 3 3 3 1 0 1 1 0 0 2 3 5",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

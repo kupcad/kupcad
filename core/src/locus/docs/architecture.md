@@ -479,8 +479,9 @@ triangle 2·xsect a side, a wall thinner than the tolerance; the 10K session on 
 nothing more). What they find there is refused as below the feature size, not called
 invalid: a feature under the minimum may lie within the tolerance of every plane about
 it, as a hull's tip a plate cut off, a tetrahedron as high as the tolerance, whose faces
-all read coplanar, which no decision of the tolerance keeps apart (`pipeline.nearRules`;
-a pinch stays `pinched`; the sessions on 3681979b, bd; Leo, 2026-11-19). The paves' own
+all read coplanar, which no decision of the tolerance keeps apart (`overlap.nearRules`,
+the sweeps' rule too, §7.1; a pinch stays `pinched`; the sessions on 3681979b, bd; Leo,
+2026-11-19). The paves' own
 refusals below are what an operand
 past the minimum can still bring about, the two operands together: properties of the pair
 and its merged vertices (whose gaps reach up to the zone beyond the tolerance), kept in the
@@ -643,9 +644,20 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
   (2026-11-12: the examples `parabolic_dish` and `planetary_gearbox`). One region through
   a vertex twice (a hole touching its side, a slit) sweeps one solid touching itself,
   along the line or the circle: refused, `pinched`, by the rule the boolean refuses by
-  (`overlap.refusePinched`; Leo, 2026-11-14). A full turn of a region with a hole sweeps a
-  cavity, its shell a void (`primitives.markVoids`, the boolean's rule: a shell enclosing
-  negative volume).
+  (`overlap.refusePinched`; Leo, 2026-11-14). A sheet keeps its features apart past the
+  zone (its edges meet only at its vertices, a touch within the zone a fault,
+  `sketch/overlap.zig`), a solid its faces past the intersection tolerance, twice that: a
+  sound sheet's strip or gap between the two across sweeps a wall whose sides, or two
+  solids whose faces, lie on each other. The sweep asks the overlap rules of its solid
+  where its features come nearer than the minimum feature size and refuses what they
+  find, `below_feature_size`, as the boolean does of its own result
+  (`overlap.nearRules`, one rule for both: the locus session on 6f83a2ff, bv, a strip two
+  zones wide left by an offset and an intersection, its end face in its side's plane by
+  its corners, `faces_intersect` from a sweep that asked only for a pinch); a sheet whose
+  swept features keep the minimum, or come nearer where the rules find no fault, is swept
+  as it is. Planar faces and straight edges, as the rules are until M5. A full turn of a
+  region with a hole sweeps a cavity, its shell a void (`primitives.markVoids`, the
+  boolean's rule: a shell enclosing negative volume).
 - Loft and sweep along a path (later): NURBS skinning (A10, §10.3) and the exact
   translational sweep (10.17); the general sweep is approximated by skinning placed
   profiles with the projection-normal frame (A10.1).
