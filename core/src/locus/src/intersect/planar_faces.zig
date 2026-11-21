@@ -401,25 +401,50 @@ pub fn addFace(o: *overlay_mod.Overlay, body: *const Body, f: types.FaceIndex, f
     }
 }
 
-/// A fixed order of planes, whichever way they face: by their normal (turned so its first
-/// non-zero component is positive), then their offset along it. What a choice between
-/// planes that hold a region alike falls back on, so that both orders of a boolean's
-/// operands choose alike (`boolean/classify.zig`'s twins, `boolean/pipeline.zig`'s
-/// coplanar groups).
-pub fn planeBefore(a: Frame, b: Frame) bool {
-    const na = canonicalNormal(a.z);
-    const nb = canonicalNormal(b.z);
-    for (na, nb) |x, y| if (x != y) return x < y;
-    return vec.dot(na, a.origin) < vec.dot(nb, b.origin);
-}
+/// A face of an operand as the last resort of a tie between faces' planes sees it
+/// (`TieFace.before`).
+pub const TieFace = struct {
+    frame: Frame,
+    /// The face's outward normal.
+    outward: Vec3,
+    /// The zone of the operand it is a face of.
+    zone: f64,
+    operand: u1,
+    face: u32,
 
-fn canonicalNormal(n: Vec3) Vec3 {
-    for (n) |c| {
-        if (c > 0) return n;
-        if (c < 0) return vec.neg(n);
+    pub fn of(body: *const Body, operand: u1, face: u32) TieFace {
+        const f = types.FaceIndex.of(face);
+        const frame = frameOf(body, f).?;
+        return .{ .frame = frame, .outward = outward(body, f, frame), .zone = body.tol.zone, .operand = operand, .face = face };
     }
-    return n;
-}
+
+    /// The order a choice between faces' planes that hold what it measures alike (to
+    /// rounding) falls back on, the one tie rule of the boolean (D28; `Provenance`'s
+    /// coplanar groups, `classify`'s twins, as `blockLines` breaks a tie between lines):
+    /// - faces facing alike (within the angular tolerance): the inner plane, the one point
+    ///   `at` (the region's or the group's, which the two hold) lies farther outside of
+    ///   along its outward normal;
+    /// - else, or as far to rounding (`canonical.sameToRounding` at `scale`): the face of
+    ///   the operand built at the finer zone, whose plane is stated the more closely;
+    /// - else the first operand's, then the lower face of one operand.
+    /// None of it changes when the solids are moved whole; only the operands' order, for
+    /// two faces of the two at one zone tied exactly, which OCCT's same-domain faces take
+    /// the first argument's too. By the planes' normals made canonical (their first
+    /// non-zero component positive) and their offsets, it was the operands' order that
+    /// changed nothing and a turn that changed the choice: two boxes side by side, their
+    /// tops 5e-6 apart and each kept alike, took the lower top in place and the upper
+    /// turned 0.3 about x (the audit of the ties, finding 4, 2026-11-22).
+    pub fn before(x: TieFace, y: TieFace, at: Vec3, scale: f64, tol: Tolerance) bool {
+        if (tol.sameDirection(x.outward, y.outward)) {
+            const hx = vec.dot(vec.sub(at, x.frame.origin), x.outward);
+            const hy = vec.dot(vec.sub(at, y.frame.origin), y.outward);
+            if (!canonical.sameToRounding(hx, hy, scale)) return hx > hy;
+        }
+        if (x.zone != y.zone) return x.zone < y.zone;
+        if (x.operand != y.operand) return x.operand < y.operand;
+        return x.face < y.face;
+    }
+};
 
 /// `p` in the coordinates of `frame`'s plane.
 pub fn flat(frame: Frame, p: Vec3) Vec2 {

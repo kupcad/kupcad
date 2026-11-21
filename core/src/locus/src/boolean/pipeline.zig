@@ -1163,7 +1163,7 @@ const Provenance = struct {
     /// shared faces), each given one face's plane (OCCT's same-domain representative): of
     /// those whose plane holds every face of the group within the intersection tolerance,
     /// the one moving the group's kept fragments least (`moved`, the report's shift), a tie
-    /// to rounding by the planes' fixed order (`planar_faces.planeBefore`); for one region
+    /// to rounding by the boolean's tie rule (`planar_faces.TieFace.before`); for one region
     /// that is the plane nearest its corners, as a twin's copy is chosen
     /// (`classify.represents`). Not the first operand's first: two planes 1.9e-4 apart at a
     /// tolerance of 2e-4 both held a plate's top and a box's, each order of the operands
@@ -1245,25 +1245,34 @@ const Provenance = struct {
                 .apart => {},
             }
         }
-        // The least moved first: those as little as the least to rounding by the planes'
-        // order, then the rest by how much they move
+        // The least moved first: those as little as the least to rounding by the tie rule
+        // (`planar_faces.TieFace.before`, at the group's points' centroid), then the rest by
+        // how much they move
         var least = std.math.inf(f64);
         for (holding.items) |candidate| least = @min(least, candidate.moved);
+        var centroid = vec.ZERO3;
+        for (points.items) |pt| centroid = vec.add(centroid, pt);
+        if (points.items.len > 0) centroid = vec.scale(centroid, 1 / @as(f64, @floatFromInt(points.items.len)));
         const Order = struct {
             least: f64,
             scale: f64,
+            at: Vec3,
+            paves: *const pave.Paves,
             fn first(o: @This(), x: Candidate) bool {
                 return canonical.sameToRounding(x.moved, o.least, o.scale);
+            }
+            fn tieFace(o: @This(), x: Candidate) planar_faces.TieFace {
+                return .of(o.paves.operands[x.face.operand], x.face.operand, x.face.face);
             }
             fn lessThan(o: @This(), x: Candidate, y: Candidate) bool {
                 const fx = o.first(x);
                 const fy = o.first(y);
                 if (fx != fy) return fx;
                 if (!fx and x.moved != y.moved) return x.moved < y.moved;
-                return planar_faces.planeBefore(x.plane.frame, y.plane.frame);
+                return o.tieFace(x).before(o.tieFace(y), o.at, o.scale, o.paves.tol);
             }
         };
-        std.mem.sort(Candidate, holding.items, Order{ .least = least, .scale = scale }, Order.lessThan);
+        std.mem.sort(Candidate, holding.items, Order{ .least = least, .scale = scale, .at = centroid, .paves = p }, Order.lessThan);
         var pressed: ?Face = null;
         for (holding.items) |candidate| {
             if (try self.keepsApart(group, n_a, candidate.plane, diag)) |g| {

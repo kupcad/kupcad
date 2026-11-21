@@ -635,8 +635,8 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 
 /// Whether fragment `i`, of a face not in one plane with its twin `j`'s, is the pair's copy
 /// the result keeps: the one whose face's plane holds the region (their merged vertices)
-/// more closely, a tie (to rounding, `canonical.sameToRounding`) by the planes in a fixed
-/// order. Not the first operand's, which made the result hang on the operands' order where
+/// more closely, a tie (to rounding, `canonical.sameToRounding`) by the boolean's tie rule
+/// (`planar_faces.TieFace.before`, at the region's centroid). Not the first operand's, which made the result hang on the operands' order where
 /// the two faces are two planes: the region joins its own face's other fragments (one
 /// record), so A ∪ B kept a hull's corner the region reached and B ∪ A a flat
 /// tetrahedron's face over it (the 10K fuzz session, 2026-11-15). Both orders measure
@@ -644,8 +644,26 @@ pub fn byShell(allocator: std.mem.Allocator, paves: *const Paves, fragments: *co
 fn represents(paves: *const Paves, fragments: *const Fragments, i: usize, j: usize) bool {
     const own = farthest(paves, fragments, i, i);
     const other = farthest(paves, fragments, j, i);
-    if (!canonical.sameToRounding(own, other, regionScale(paves, fragments, i, j))) return own < other;
-    return planar_faces.planeBefore(planeOfFragment(paves, fragments, i), planeOfFragment(paves, fragments, j));
+    const scale = regionScale(paves, fragments, i, j);
+    if (!canonical.sameToRounding(own, other, scale)) return own < other;
+    return tieFace(paves, fragments, i).before(tieFace(paves, fragments, j), regionCentroid(paves, fragments, i), scale, paves.tol);
+}
+
+/// Fragment `i`'s face as the tie rule sees it.
+fn tieFace(paves: *const Paves, fragments: *const Fragments, i: usize) planar_faces.TieFace {
+    const fragment = fragments.items.items[i];
+    return .of(paves.operands[fragment.operand], fragment.operand, fragment.face);
+}
+
+/// The centroid of fragment `region`'s merged vertices.
+fn regionCentroid(paves: *const Paves, fragments: *const Fragments, region: usize) Vec3 {
+    var sum = vec.ZERO3;
+    var n: f64 = 0;
+    for (fragments.loopsOf(region)) |loop| for (fragments.loopVertices(loop)) |v| {
+        sum = vec.add(sum, paves.point(v));
+        n += 1;
+    };
+    return if (n > 0) vec.scale(sum, 1 / n) else sum;
 }
 
 /// The size of fragment `region`'s merged vertices' coordinates and of the origins of its
