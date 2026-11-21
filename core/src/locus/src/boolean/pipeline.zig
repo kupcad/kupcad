@@ -1538,6 +1538,18 @@ fn magnitudeOf(body: *const Body, diag: *Diagnostics) Error!f64 {
 /// at 28° to a box's side, a corner 1e-5 inside it and the crossing of its edge 2.5e-5 on,
 /// laid in the side as a slit: the side's material, read about the hull's edge, took in the
 /// hull's face, and the four uses did not pair; the 10K session on 600148f2, 2026-11-17).
+/// The uses across their planes are taken by plane (normals parallel within the angular
+/// tolerance; two planes holding the edge by reach lie within the tolerance of each other
+/// along it): each plane's two uses one edge, as many planes as hold it so (a wall's side
+/// in two pieces either side of a section line at 8° to it, and a hull's face at 33° to it
+/// holding it as a slit: four uses, two planes across; the nightly on 1ade5090, ce); a
+/// plane's lone use, a face bounded by the edge across its plane, no slit, is read by its
+/// bi-normal with the rest, its normal crossed with the edge's direction, which lies in its
+/// plane and across the edge's cross-section whatever the angle between them, as OCCT's
+/// `GetFaceDir` reads every face about an edge (a hull's face at 24° to a plate's corner
+/// edge 5e-5 long, held by reach: the plate's corner and a wedge of two hulls touching
+/// along it; the ReleaseSafe session on a1444371, bz; both did not pair before,
+/// 2026-11-21). A plane with more than two uses across leaves them unpaired.
 pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, diag: *Diagnostics) Error!void {
     const Key = struct { lo: u32, hi: u32 };
     var groups: std.AutoArrayHashMapUnmanaged(Key, std.ArrayList(u32)) = .empty;
@@ -1582,10 +1594,22 @@ pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []se
             }
         }
         var copy: u32 = 0;
-        if (across.items.len > 0) {
-            // One face's plane, holding the edge by reach: its two uses one edge
-            if (across.items.len != 2 or !body.tol.parallel(normals[uses[across.items[0]].face], normals[uses[across.items[1]].face])) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(list.items.len) });
-            for (across.items) |u| specs[uses[u].spec].copy = copy;
+        // The faces holding the edge across their planes, by plane: a plane's two uses one
+        // edge (a slit's two sides, or its pieces either side), a plane's lone use a face
+        // bounded by the edge, read by its bi-normal with the rest
+        while (across.pop()) |u| {
+            var partner: ?usize = null;
+            for (across.items, 0..) |v, k| {
+                if (!body.tol.parallel(normals[uses[u].face], normals[uses[v].face])) continue;
+                if (partner != null) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(list.items.len) });
+                partner = k;
+            }
+            const k = partner orelse {
+                try in_plane.append(allocator, u);
+                continue;
+            };
+            specs[uses[u].spec].copy = copy;
+            specs[uses[across.swapRemove(k)].spec].copy = copy;
             copy += 1;
         }
         try pairByWedges(allocator, specs, uses, normals, key.lo, axis, in_plane.items, angle_of, &copy, list.items.len, diag);

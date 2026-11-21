@@ -2319,6 +2319,18 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // A ∪ B took the wall's plane and B ∪ A the box's, the section across the face one
         // edge one way round and two the other (Provenance.moved: both copies count)
         "solids 1 5 2 1 2 3 1 2 2 1 3 2 0 1 0 3 4 0 3 3 3 10 3 14 10 2 2 3 1 5 2 3 4 0 1 2 0 1 3 0 1 3 1 12 -1 12 0 3 0 1 3 1 3 1 4 3 2 3 4 -1 15 2",
+        // The ReleaseSafe session on a1444371 (2026-11-21, locus, bz): (a hull ∪ a plate 5e-5
+        // thick) ∩ a second hull kept the plate's corner and a wedge of the two hulls,
+        // touching along the corner's edge; one of the edge's four uses a hull's face at 24°
+        // to it, holding it by reach, and the faces did not pair (`edge_coedge_count`;
+        // pipeline.pairTouching: a face alone across its plane read by its bi-normal)
+        "solids 1 5 0 2 3 3 4 4 2 2 3 1 4 3 1 0 1 0 1 0 1 6 10 5 9 2 2 3 0 4 1 1 3 2 3 4 2 0 1 1 0 6 7 15 0 1 1 5 1 2 2 0 1 0 3 3 3 4 4 0 2 2 3 2 2 0 6 3 13 2",
+        // The nightly of 2026-11-21 on 1ade5090 (run 44955501203, locus_solids, ce): (a
+        // plate ∪ a wall) ∩ a hull; a section line 4.9e-4 long across the wall's side y = 1
+        // at 8°, the side's pieces either side of it, and in a hull's face at 33° as a slit,
+        // both by reach: four uses, two planes across, did not pair (`edge_coedge_count`;
+        // pipeline.pairTouching: each plane across the edge pairs its own two uses)
+        "solids 2 1 2 0 4 1 2 2 1 8 3 5 14 2 1 3 1 5 2 3 4 4 0 2 0 0 4 1 0 2 4 2 0 1 1 7 1 4 2 2 3 4 0 4 4 3 4 2 0 3 0 0 4 3 3 1 2 1 2 1 -2 10 5 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -424,6 +424,51 @@ const SHARED_B_FROM: f64 = 1;
 const SHARED_B_TOP: f64 = 1.5;
 const SHARED_B_ENDS = [_]f64{ 2.5, 3, 3.5 };
 const SHARED_GAPS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+/// The solids of the tests of a thin plate's corner where two solids of a result touch (the
+/// ReleaseSafe session's find on a1444371, 2026-11-21, bz), as the solids fuzzer drew them:
+/// a hull turned a quarter about y, a plate `CORNER_THICKNESSES` intersection tolerances
+/// thick (the find's 2.5: 5e-5) about z = 2 from (1, 3) to (3, 4) in x and y, and a second
+/// hull, its two faces through the plate's corner edge at x = 3, y = 3: one a vertical
+/// plane holding the edge, the other at 24° to it, holding it by reach alone (the edge
+/// rises 2.04e-5 off that plane along its 5e-5). The intersection of the first hull and
+/// the plate joined with the second keeps the plate's corner and a wedge of the two hulls,
+/// touching along the edge: its four uses, the sloped face's one of them across its plane.
+const CORNER_HULL_A = [_]Vec3{ .{ 0, 2, 3 }, .{ 3, 4, 4 }, .{ 2, 2, 3 }, .{ 1, 4, 3 }, .{ 1, 0, 1 } };
+const CORNER_HULL_A_NUDGE: Vec3 = .{ -1e-5, -1.9999999943156583e-5, 1e-5 };
+const CORNER_PLATE = [2]Vec3{ .{ 1, 3, 2 }, .{ 3, 4, 2 } };
+const CORNER_PLATE_NUDGE: Vec3 = .{ 0, -1e-5, 2e-5 };
+const CORNER_HULL_B = [_]Vec3{ .{ 1, 2, 2 }, .{ 0, 1, 0 }, .{ 3, 3, 3 }, .{ 4, 4, 0 }, .{ 2, 2, 3 } };
+const CORNER_HULL_B_NUDGE: Vec3 = .{ 0, -1e-5, 5e-6 };
+/// The plate's thickness in intersection tolerances (the fuzzer's gaps past the minimum
+/// feature size): the corner edge 4.2e-5 to 6e-5 long, the sloped face rising 1.7e-5 to
+/// 2.45e-5 off it along it, held by its reach at the first two, past it at the third.
+const CORNER_THICKNESSES = [_]f64{ 2.1, 2.5, 3 };
+/// The second hull's lift in z: where its sloped edge crosses the plate's corner edge,
+/// along it (the find's 5e-6).
+const CORNER_LIFTS = [_]f64{ 0, 5e-6, 1e-5, 2e-5 };
+/// The solids of the tests of an edge two faces hold across their planes, each its two
+/// uses (the nightly's find on 1ade5090, 2026-11-21, ce), as the solids fuzzer drew them: a
+/// plate (zone 1e-4) and a wall 3 intersection tolerances thick (a box less a cavity,
+/// `FUZZ_WALL_*`) about x = 2 from (3, 0, 0) to (4, 2, 4), moved 1 in y, joined; and a hull
+/// moved (0.5, -1, 0) and `SLIT_DROPS` down. A section line 4.9e-4 long crosses the wall's
+/// side y = 1 at 8° to it, the side's two pieces either side of it, and lies in a hull's
+/// face at 33° to it as a slit, both by reach: four uses, two planes across.
+const SLIT_PLATE = [2]Vec3{ .{ -48, -98, 1 }, .{ 2, 102, 2 } };
+const SLIT_PLATE_NUDGE: Vec3 = .{ -2e-4, 5e-5, 1e-4 };
+const SLIT_WALL_AT: Vec3 = .{ 2, 4, 0 };
+const SLIT_WALL = [2]Vec3{ .{ 3, 0, 0 }, .{ 4, 2, 4 } };
+const SLIT_WALL_XSECTS: f64 = 3;
+const SLIT_WALL_MOVE: Vec3 = .{ 0, 1, 0 };
+const SLIT_WALL_NUDGE: Vec3 = .{ 0, 0, -5e-5 };
+const SLIT_HULL = [_]Vec3{ .{ 1, 4, 2 }, .{ 2, 3, 4 }, .{ 0, 4, 4 }, .{ 3, 4, 2 }, .{ 0, 3, 0 }, .{ 0, 4, 3 }, .{ 3, 1, 2 } };
+const SLIT_HULL_MOVE: Vec3 = .{ 0.5, -1, 0 };
+/// How far the hull is moved down: the find's, and a quarter of the plate's tolerance
+/// either side of it.
+const SLIT_DROPS = [_]f64{ 1.999999999431566e-4, 1.5e-4, 2.5e-4 };
+/// The solids fuzzer's wall (`GapShape.wall` in fuzz_test.zig): the box behind the gap
+/// this deep, and its cavity inset this far from the box's other sides.
+const FUZZ_WALL_DEPTH: f64 = 1.5;
+const FUZZ_WALL_INSET: f64 = 0.25;
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4728,4 +4773,147 @@ fn expectSamePlanes(a: *const Body, b: *const Body) !void {
     }
     defer for (planes) |list| testing.allocator.free(list);
     try testing.expectEqualSlices([4]f64, planes[0], planes[1]);
+}
+
+test "degeneracy: two solids of an intersection touching along a thin plate's corner, a face holding it across its plane, pair their faces about it" {
+    // The ReleaseSafe session's find on a1444371 (2026-11-21, locus, bz), as the solids
+    // fuzzer drew it: (a hull ∪ a plate 5e-5 thick) ∩ a second hull keeps the plate's
+    // corner and a wedge of the two hulls, touching along the corner's edge, 5e-5 long.
+    // Of its four uses, the second hull's sloped face holds the edge by reach alone, at 24°
+    // to its plane: the faces did not pair (`edge_coedge_count`), the rule for a face
+    // across its plane taking two uses of one plane only. A face bounded by the edge across
+    // its plane is read by its bi-normal about it, as OCCT's GetFaceDir reads every face
+    var joined, var hull = try cornerSolids(2.5, CORNER_HULL_B_NUDGE[2], SLIVER_TURNS[0]);
+    defer joined.deinit();
+    defer hull.deinit();
+    var meet = try sound(&joined, &hull, .intersection);
+    defer meet.deinit();
+    try testing.expectEqual([2]usize{ 2, 0 }, shellKinds(&meet));
+    try expectPairedEitherWay(&joined, &hull);
+}
+
+test "degeneracy: a thin plate's corner where two solids touch, its edge across a face's plane, is paired however thick, lifted or turned" {
+    // Around the find above: the plate 2.1, 2.5 and 3 intersection tolerances thick (the
+    // corner's edge 4.2e-5 to 6e-5 long, held by the sloped face's reach, and past it), the
+    // second hull's sloped edge crossing it at four heights, the three solids in place
+    // and turned about skew axes (one shifted far out); every operation either way round,
+    // its faces never left unpaired, what it makes sound, the union and the intersection
+    // alike
+    for (CORNER_THICKNESSES) |thickness| for (CORNER_LIFTS) |lift| for (SLIVER_TURNS) |turn| {
+        errdefer std.debug.print("{d} tolerances thick, lifted {e}, turned {d} about {any}\n", .{ thickness, lift, turn.angle, turn.axis });
+        var joined, var hull = try cornerSolids(thickness, lift, turn);
+        defer joined.deinit();
+        defer hull.deinit();
+        try expectPairedEitherWay(&joined, &hull);
+    };
+}
+
+/// The first hull joined with the plate `thickness` intersection tolerances thick, and the
+/// second hull lifted `lift` in z, as the solids fuzzer drew them (`CORNER_*`), each turned
+/// as `turn` has it.
+fn cornerSolids(thickness: f64, lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !struct { Body, Body } {
+    const half = thickness * tol.xsect / 2;
+    var drawn_a = try fuzzHullPlaced(&CORNER_HULL_A, vec.Y3, std.math.pi / 2.0, null, vec.ZERO3, CORNER_HULL_A_NUDGE);
+    defer drawn_a.deinit();
+    var drawn_plate = try fuzzBoxPlaced(tol, .{ CORNER_PLATE[0][0], CORNER_PLATE[0][1], CORNER_PLATE[0][2] - half }, .{ CORNER_PLATE[1][0], CORNER_PLATE[1][1], CORNER_PLATE[1][2] + half }, vec.Z3, 0, null, CORNER_PLATE_NUDGE);
+    defer drawn_plate.deinit();
+    var drawn_b = try fuzzHullPlaced(&CORNER_HULL_B, vec.Z3, 0, null, vec.ZERO3, .{ CORNER_HULL_B_NUDGE[0], CORNER_HULL_B_NUDGE[1], lift });
+    defer drawn_b.deinit();
+    var a = try sliverMoved(&drawn_a, turn);
+    defer a.deinit();
+    var plate = try sliverMoved(&drawn_plate, turn);
+    defer plate.deinit();
+    var joined = try sound(&a, &plate, .@"union");
+    errdefer joined.deinit();
+    return .{ joined, try sliverMoved(&drawn_b, turn) };
+}
+
+/// Each operation of `a` and `b` either way round never leaves an edge's faces unpaired
+/// (`NotValid`), and what it makes is sound; the union and the intersection come out alike
+/// either way round (`expectAlikeEitherWay`).
+fn expectPairedEitherWay(a: *const Body, b: *const Body) !void {
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        errdefer std.debug.print("{t}\n", .{op});
+        for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var result = pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &diag, null) catch |err| {
+                if (err == error.NotValid) std.debug.print("{f}\n", .{diag.first().?});
+                if (err == error.NotValid or err == error.OutOfMemory) return err;
+                continue;
+            };
+            defer result.deinit();
+            var report = try check.run(testing.allocator, &result, .global);
+            defer report.deinit(testing.allocator);
+            if (report.first()) |f| {
+                std.debug.print("the checker: {f}\n", .{f});
+                return error.ResultNotValid;
+            }
+        }
+        if (op != .difference) try expectAlikeEitherWay(a, b, op);
+    }
+}
+
+test "degeneracy: an edge two faces hold across their planes, a side's two pieces and a hull face's slit, pairs each plane's uses" {
+    // The nightly's find on 1ade5090 (run 44955501203, 2026-11-21, locus_solids, ce), as
+    // the solids fuzzer drew it: (a plate ∪ a wall) ∩ a hull. A section line 4.9e-4 long
+    // crosses the wall's side y = 1 at 8° to it, the side's pieces either side of it, and
+    // lies in a hull's face at 33° to it as a slit, both by reach: four uses, two planes
+    // across, and the faces did not pair (`edge_coedge_count`), the rule taking one plane
+    // across only. Each plane across the edge pairs its own two uses
+    var joined, var hull = try slitSolids(SLIT_DROPS[0], SLIVER_TURNS[0]);
+    defer joined.deinit();
+    defer hull.deinit();
+    try expectPairedEitherWay(&joined, &hull);
+}
+
+test "degeneracy: an edge two planes hold across, each its two uses, is paired however far the hull drops or the solids turn" {
+    // Around the find above: the hull a quarter of the plate's tolerance higher and lower,
+    // the solids in place and turned about skew axes (one shifted far out); every
+    // operation either way round, its faces never left unpaired, what it makes sound, the
+    // union and the intersection alike
+    for (SLIT_DROPS) |drop| for (SLIVER_TURNS) |turn| {
+        errdefer std.debug.print("dropped {e}, turned {d} about {any}\n", .{ drop, turn.angle, turn.axis });
+        var joined, var hull = try slitSolids(drop, turn);
+        defer joined.deinit();
+        defer hull.deinit();
+        try expectPairedEitherWay(&joined, &hull);
+    };
+}
+
+/// The plate joined with the wall, and the hull dropped `drop`, as the solids fuzzer drew
+/// them (`SLIT_*`), each turned as `turn` has it.
+fn slitSolids(drop: f64, turn: @TypeOf(SLIVER_TURNS[0])) !struct { Body, Body } {
+    const coarse = Tolerance.fromZone(1e-4);
+    var drawn_plate = try fuzzBoxPlaced(coarse, SLIT_PLATE[0], SLIT_PLATE[1], vec.Z3, 0, null, SLIT_PLATE_NUDGE);
+    defer drawn_plate.deinit();
+    var drawn_wall = try fuzzWallPlaced(coarse, SLIT_WALL_AT, SLIT_WALL[0], SLIT_WALL[1], SLIT_WALL_XSECTS, SLIT_WALL_MOVE, SLIT_WALL_NUDGE);
+    defer drawn_wall.deinit();
+    var drawn_hull = try fuzzHullPlaced(&SLIT_HULL, vec.Z3, 0, null, SLIT_HULL_MOVE, .{ 0, 0, -drop });
+    defer drawn_hull.deinit();
+    var plate = try sliverMoved(&drawn_plate, turn);
+    defer plate.deinit();
+    var wall = try sliverMoved(&drawn_wall, turn);
+    defer wall.deinit();
+    var joined = try sound(&plate, &wall, .@"union");
+    errdefer joined.deinit();
+    return .{ joined, try sliverMoved(&drawn_hull, turn) };
+}
+
+/// The solids fuzzer's wall `xsects` intersection tolerances thick at the tolerance `t`
+/// (`GapShape.wall`): a box less a cavity, the wall's middle plane x = `at[0]`, from `lo`
+/// to `hi` in y and z; moved by `move` and by `nudge` in one translation, as the fuzzer
+/// places a solid of a tolerance of its own.
+fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move: Vec3, nudge: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = xsects * t.xsect / 2;
+    var outer = try helpers.boxAt(t, .{ at[0] - FUZZ_WALL_DEPTH - FUZZ_WALL_INSET, lo[1], lo[2] }, .{ at[0] + half, hi[1], hi[2] });
+    defer outer.deinit();
+    var cavity = try helpers.boxAt(t, .{ at[0] - FUZZ_WALL_DEPTH, lo[1] + FUZZ_WALL_INSET, lo[2] + FUZZ_WALL_INSET }, .{ at[0] - half, hi[1] - FUZZ_WALL_INSET, hi[2] - FUZZ_WALL_INSET });
+    defer cavity.deinit();
+    var wall = try pipeline.boolean(testing.allocator, &outer, &cavity, .difference, .{}, &diag, null);
+    defer wall.deinit();
+    const place = mat.Affine.translate(nudge).compose(&mat.Affine.translate(move));
+    return @import("../construct/transform.zig").transform(testing.allocator, &wall, &place, .{}, &diag);
 }

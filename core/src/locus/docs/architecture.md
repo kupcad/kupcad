@@ -990,7 +990,14 @@ importing only those before it, which the layering test holds):**
   material about it into one edge per solid (`EdgeSpec.copy`), a wedge read only about an
   edge in its face's plane (`canonical.Comparison.lineInPlane`, as `classify` reads one):
   a face holding the edge across its plane by reach alone pairs its own two uses (a hull's
-  edge at 28° to a box's side, laid in it as a slit 2.5e-5 long, 2026-11-17); a shell of negative volume
+  edge at 28° to a box's side, laid in it as a slit 2.5e-5 long, 2026-11-17), each such
+  plane its own two (a wall's side in pieces either side of a section line and a hull's
+  face holding it as a slit, two planes across: the nightly on 1ade5090, ce), and a face
+  bounded by the edge across its plane, alone in it, is read by its bi-normal (normal ×
+  tangent, the direction into it across the cross-section, as OCCT's `GetFaceDir` reads
+  every face: a hull's face at 24° to a plate's corner edge 5e-5 long, the plate's corner
+  and a wedge of two hulls touching along it; the ReleaseSafe session on a1444371, bz;
+  both did not pair before, 2026-11-21); a shell of negative volume
   a void (`primitives.markVoids`). Shells of one solid touch nowhere (`overlap.Solids`: a
   void the innermost outer shell around a point inside one of its faces): a touch point
   whose face piece and faces about the vertex are of one solid, or where the body touches
