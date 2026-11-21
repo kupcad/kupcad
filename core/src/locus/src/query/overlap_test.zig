@@ -23,6 +23,25 @@ const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
+/// A corner of an extruded sheet where a narrow side face folds back over its long
+/// neighbour within the zone of their shared edge: the sheet's outline, the long side
+/// first, the narrow one second, its far end 1.9e-5 over the long side's line (the
+/// tolerance 2e-5) and 9e-6 back along it (the zone 1e-5), 64.7° to it: the corner of the
+/// nightly's sheet (2026-11-21, bu) and the same at 65° from a round corner.
+const FOLDS = [_][4]vec.Vec2{
+    .{ .{ 4.5, 2 }, .{ 5.000015276650916, 2 }, .{ 5.00000632455532, 2.000018973665961 }, .{ 4.6552495314720685, 2.114937904693712 } },
+    .{ .{ 0, 0 }, .{ 0.5, 0 }, .{ 0.5 - FOLD_RISE / @tan(FOLD_TURN), FOLD_RISE }, .{ 0.15, 0.12 } },
+};
+const FOLD_RISE: f64 = 1.9e-5;
+const FOLD_TURN: f64 = 65.0 * std.math.pi / 180.0;
+/// Folds past the zone: a narrow side 1.9e-5 or 1.5e-5 over the long side's line at 10°,
+/// 45° and 55° to it, back along it by 1.3e-5 to 1.1e-4, lying on the long face over a
+/// strip wider than the zone (in degrees, and the rise).
+const FOLDS_PAST = [_][2]f64{ .{ 45, 1.9e-5 }, .{ 55, 1.9e-5 }, .{ 10, 1.5e-5 } };
+/// How tall the folds are extruded, as the nightly's chain extruded its sheet.
+const FOLD_HEIGHT: f64 = 6;
+/// The quarter turns about z the folds are tried in.
+const QUARTER_TURNS = 4;
 
 /// An axis-aligned box from `lo` to `hi`, a void's (faces wound into it) when `void`.
 const BoxSpec = struct { lo: Vec3, hi: Vec3, void: bool = false };
@@ -307,4 +326,64 @@ test "overlap: features nearer than twice the tolerance that do not meet are war
     defer box.deinit();
     try overlap.check(testing.allocator, &box, .{}, &diag);
     try testing.expectEqual(@as(usize, 0), diag.findings.items.len);
+}
+
+/// Fold `outline` as drawn, its narrow side first or second, turned by `quarter` quarter
+/// turns about z and mirrored in x or not (turned round, so it still runs counter-
+/// clockwise and the same side comes first).
+fn placedOutline(outline: [4]vec.Vec2, narrow_first: bool, quarter: usize, mirrored: bool) [4]vec.Vec2 {
+    const drawn: [4]vec.Vec2 = if (narrow_first) .{ outline[1], outline[2], outline[3], outline[0] } else outline;
+    const order: [4]usize = if (mirrored) .{ 1, 0, 3, 2 } else .{ 0, 1, 2, 3 };
+    var points: [4]vec.Vec2 = undefined;
+    for (&points, order) |*p, from| {
+        var q: vec.Vec2 = .{ if (mirrored) -drawn[from][0] else drawn[from][0], drawn[from][1] };
+        for (0..quarter) |_| {
+            const turned: vec.Vec2 = .{ -q[1], q[0] };
+            q = turned;
+        }
+        p.* = q;
+    }
+    return points;
+}
+
+test "overlap: a narrow side face folded within the zone of its neighbour's edge covers no region of it, whichever face comes first, turned or mirrored" {
+    // The nightly's find (2026-11-21, bu): a sheet's corner where a side 2.1e-5 long
+    // leaves a long one at 64.7°, its far end 1.9e-5 over the long side's line and 9e-6
+    // back along it. Extruded, the narrow side face lies in the long one's plane (both its
+    // edges within the tolerance of it) and the long one does not lie in the narrow one's;
+    // the overlay of the two was taken in the first face's plane, so with the narrow face
+    // first the long face, flattened 64.7° into its plane, covered it (`faces_intersect`),
+    // and with the long face first the narrow one was a strip within the zone of their
+    // shared edge, no region. The plane that holds both decides (`planar_faces.Holder`)
+    for (FOLDS) |outline| for ([_]bool{ false, true }) |narrow_first| for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("narrow side first {}, {d} quarter turns, mirrored {}\n", .{ narrow_first, quarter, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const points = placedOutline(outline, narrow_first, quarter, mirrored);
+        var sheet = try primitives.polygon(testing.allocator, tol, &points, &diag);
+        defer sheet.deinit();
+        var prism = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, FOLD_HEIGHT }, .{}, &diag);
+        defer prism.deinit();
+        try expectSound(&prism);
+    };
+}
+
+test "overlap: a narrow side face folded back over its neighbour past the zone is swept into no solid, refused below the feature size whichever face comes first, turned or mirrored" {
+    // The folds the narrow face covers its neighbour in past the zone, in the plane that
+    // holds both: features of the sheet nearer than the minimum feature size, a solid's
+    // faces lying on each other over a strip wider than the zone. The sweep refuses them
+    // as the boolean refuses such a result (`overlap.nearRules`); the nightly's sheet
+    // (2026-11-21, bu) had one at its other corner, a side 3.8e-5 long 31.8° off its
+    // neighbour, its far end 2e-5 over that neighbour's line
+    for (FOLDS_PAST) |fold| for ([_]bool{ false, true }) |narrow_first| for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("{d}° and {e} over, narrow side first {}, {d} quarter turns, mirrored {}\n", .{ fold[0], fold[1], narrow_first, quarter, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const outline = [4]vec.Vec2{ .{ 0, 0 }, .{ 0.5, 0 }, .{ 0.5 - fold[1] / @tan(fold[0] * std.math.pi / 180.0), fold[1] }, .{ 0.15, 0.12 } };
+        const points = placedOutline(outline, narrow_first, quarter, mirrored);
+        var sheet = try primitives.polygon(testing.allocator, tol, &points, &diag);
+        defer sheet.deinit();
+        try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, .{ 0, 0, FOLD_HEIGHT }, .{}, &diag));
+        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+    };
 }

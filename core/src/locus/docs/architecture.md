@@ -1471,7 +1471,11 @@ line (not by the edge's reach, the larger end gap's, at both ends: a section's e
 no gap was on a wall's far side by its other end's gap, 2026-11-14, and a needle's end
 with none, 2.6e-5 off its other face's plane, lay in it, the two faces in one plane,
 2026-11-15); coplanar faces cover no
-region together, by the overlay of the two), so solids touching along a line or at a
+region together, by the overlay of the two in the plane that holds both, the one the other
+face lies in (`planar_faces.Holder`), not the first face's: a narrow face lies in a plane
+it stands at an angle to, and the other face, flattened into the narrow face's own plane,
+covered it, so the rule's verdict on a narrow face folded within the zone of its
+neighbour's edge went by which face came first, 2026-11-21, bu), so solids touching along a line or at a
 point pass, a point of two shells' faces needing only one's boundary (a corner on a face
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take
 one), and a face passing through or lying on another does not (`faces_intersect`);

@@ -468,7 +468,7 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
                     return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) });
                 }
             },
-            .coplanar => if (try coplanarOverlap(allocator, body, f, g, tol, diag)) return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) }),
+            .coplanar => |holder| if (try coplanarOverlap(allocator, body, f, g, planar_faces.frameOf(body, if (holder == .first) f else g).?, tol, diag)) return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) }),
         }
     }
 }
@@ -528,10 +528,10 @@ fn onBoundary(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tol
     return try planar_faces.place(body, f, p, gap, tol, diag) == .boundary;
 }
 
-/// Whether faces `f` and `g`, in one plane, cover a region together: the overlay of the
-/// two in `f`'s plane has a face both wind about.
-fn coplanarOverlap(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, g: types.FaceIndex, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    const frame = planar_faces.frameOf(body, f).?;
+/// Whether faces `f` and `g`, one lying in the other's plane, cover a region together: the
+/// overlay of the two in the plane that holds both (`frame`, `planar_faces.Holder`) has a
+/// face both wind about.
+fn coplanarOverlap(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, g: types.FaceIndex, frame: geometry.Frame, tol: Tolerance, diag: *Diagnostics) Error!bool {
     var o = overlay_mod.Overlay.init(allocator, tol);
     defer o.deinit();
     for ([2]types.FaceIndex{ f, g }) |face| {

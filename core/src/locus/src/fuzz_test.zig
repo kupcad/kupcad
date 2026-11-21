@@ -2268,6 +2268,17 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // solid with features nearer than its minimum size, as the boolean does of its
         // result, and refuses what they find, `below_feature_size`)
         "chain 1 5 2 2 6 6 2 0 2 5 6 0 3 1 1 0 3 3 3 4 1 1 10 3 6 0 2 5 1 5 2 4 2 5 2 6 0 6 4 3 1 3 1 4 2 6 0 2 4 2 0 3 6 0 2 4 5 6 3 3 3 3 1 0 1 1 0 0 2 3 5",
+        // The nightly of 2026-11-21 (run 44897239263, locus, bu): a sheet grown by two
+        // zones with square joins, less another sheet, extruded. Its corners were folds: a
+        // side 2.1e-5 long 64.7° off its long neighbour, its far end 1.9e-5 over that
+        // neighbour's line and 9e-6 back, and a side 3.8e-5 long 31.8° off another, 2e-5
+        // over it and 3.2e-5 back. The overlap rules overlaid each narrow face with its
+        // neighbour in the narrow face's own plane, by which came first (`faces_intersect`
+        // at the first, planar_faces.Holder: in the plane that holds both, it is within
+        // the zone of their edge); the second covers its neighbour past the zone, and the
+        // sweep refuses it (`below_feature_size`). The difference was refused as a sliver
+        // until f9efed3d kept its arc piece's circle
+        "chain 3 4 5 4 4 0 4 2 4 0 2 1 3 1 2 3 5 0 0 5 6 5 2 5 4 4 4 2 3 4 4 2 7 2 1 2 3 3 6 3 4 2 3 5 2 1 0 1 0 0 4 1 1 0 4 3 2 3 4 1 1 10 3 10 4 3 0 0 2 5 0 1 6 2 2 5 0 0 2 3 1 3 1 1 1 1 4 3 4 4 4 3 0 3 6 2 4 2 3 2 4 1 1 1 1 3 6",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

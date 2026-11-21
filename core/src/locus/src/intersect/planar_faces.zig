@@ -39,15 +39,27 @@ const Error = diagnostics.Error;
 /// tolerance: the gap of the vertex it is, 0 for an edge's crossing.
 const Mark = struct { p: Vec3, gap: f64 };
 
-pub const Relation = enum {
+pub const Relation = union(enum) {
     /// The faces share no point.
     apart,
     /// Their planes cross; what they share is in the pieces (maybe none).
     crossing,
     /// One lies in the other's plane: what they share is a region, a segment or a point of
-    /// that plane, for the overlay to find.
-    coplanar,
+    /// that plane, the one named, for the overlay to find there.
+    coplanar: Holder,
 };
+
+/// Which of two faces' planes holds both, one face lying in the other's (its every edge
+/// within the tolerance of it, `crossings`): the first's when the second lies in it (each
+/// in the other's too, two faces of one plane), else the second's. A face narrower than
+/// the tolerance over the sine of its angle to a plane lies in that plane at any angle,
+/// and the plane holds it; its own plane does not hold the other face. What the two share
+/// is a region of the holding plane only: flattened into the narrow face's own plane, a
+/// face 64.7° off it covered it, where the narrow face, flattened into the other's, is a
+/// strip 9e-6 wide along their shared edge, within the zone of it (the overlap rules on
+/// the nightly's extruded sheet, 2026-11-21, bu: the narrow face first, the faces
+/// overlapped; the other way round, they did not).
+pub const Holder = enum { first, second };
 
 /// A piece of what two faces share: the segment from `a` to `b` along their planes'
 /// line, or the point `a` when `b` is `a`; each end with the gap of the vertex it is (0
@@ -122,7 +134,7 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     // Each face's boundary on the other's plane
     const in_b = try crossings(allocator, a, fa, planeOf(frame_b), tol, &marks, diag);
     const in_a = try crossings(allocator, b, fb, planeOf(frame_a), tol, &marks, diag);
-    if (in_b or in_a) return .coplanar;
+    if (in_b or in_a) return .{ .coplanar = if (in_a) .first else .second };
     if (marks.items.len == 0) return .apart;
     const along = lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse return .apart);
 
