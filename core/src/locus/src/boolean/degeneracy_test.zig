@@ -413,6 +413,17 @@ const CHAIN_DROPS = [_]f64{ -1e-5, -9e-5, -5e-5, 0, 5e-5 };
 /// How the three solids are moved together: in place, `SLIVER_TURNS`, and the fuzzer's
 /// move of the find, a turn of 0.3 about x and a shift 2.3e3 out.
 const CHAIN_MOVES = SLIVER_TURNS ++ [_]@TypeOf(SLIVER_TURNS[0]){.{ .axis = vec.X3, .angle = 0.3, .shift = .{ 1e3, -2e3, 500 } }};
+/// The boxes of the tests of two faces in one plane a hair apart sharing a region (the
+/// solids fuzzer's find ca, 2026-11-21): A's bottom in y = 0, x from 0 to 2, and B's in y =
+/// `SHARED_GAPS` (within the intersection tolerance), x from 1 to `SHARED_B_ENDS`, the two
+/// sharing x from 1 to 2. A's own region beside it is 1 long, B's 0.5, 1 or 1.5: a group
+/// plane moving the operands' own fragments least is A's, a tie (the planes' fixed order)
+/// or B's.
+const SHARED_A = [2]Vec3{ .{ 0, 0, 0 }, .{ 2, 1, 1 } };
+const SHARED_B_FROM: f64 = 1;
+const SHARED_B_TOP: f64 = 1.5;
+const SHARED_B_ENDS = [_]f64{ 2.5, 3, 3.5 };
+const SHARED_GAPS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4626,4 +4637,95 @@ fn chainCut(drop: f64, move: @TypeOf(CHAIN_MOVES[0]), plate_first: bool) !Body {
     var notched = try helpers.sound(&hull, &cutter, .difference);
     defer notched.deinit();
     return if (plate_first) helpers.sound(&plate, &notched, .intersection) else helpers.sound(&notched, &plate, .intersection);
+}
+
+test "degeneracy: two faces in one plane a hair apart sharing a region take the plane their own regions move least, whichever operand comes first" {
+    // The solids fuzzer's find (2026-11-21, ca): the group's plane was the one moving its
+    // kept fragments least, and the region the two faces share was kept as the first
+    // operand's copy only, so it moved nothing on the first operand's plane: A ∪ B took
+    // A's plane and B ∪ A B's, and the section across the face was one edge one way round
+    // and two the other. Counted by both copies, the region weighs alike on either plane,
+    // and B's own region, the longer, gives B's plane either way round
+    var a = try sharedBox(SHARED_A, 0, false);
+    defer a.deinit();
+    var b = try sharedBox(.{ .{ SHARED_B_FROM, SHARED_GAPS[2], 0 }, .{ SHARED_B_ENDS[2], SHARED_B_TOP, 1 } }, 0, false);
+    defer b.deinit();
+    for ([2][2]*const Body{ .{ &a, &b }, .{ &b, &a } }) |operands| {
+        var joined = try sound(operands[0], operands[1], .@"union");
+        defer joined.deinit();
+        try testing.expectEqual(1, facesAt(&joined, .{ 0, -1, 0 }, -SHARED_GAPS[2]));
+        try testing.expectEqual(0, facesAt(&joined, .{ 0, -1, 0 }, 0));
+    }
+}
+
+test "degeneracy: two faces in one plane a hair apart sharing a region, the gap and the regions beside it varied, turned and mirrored, are joined and intersected on the same planes either way round" {
+    // The cases about the find above: A's plane, a tie and B's, at three gaps within the
+    // tolerance; the union keeps the shared region and both regions beside it, the
+    // intersection the shared region alone (a tie, its two copies a gap apart). By the
+    // kept copy alone every case took its first operand's plane
+    for (SHARED_B_ENDS) |end| for (SHARED_GAPS) |gap| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("B to {d}, gap {e}, quarter turns {d}, mirrored {}\n", .{ end, gap, quarter, mirrored });
+        var a = try sharedBox(SHARED_A, quarter, mirrored);
+        defer a.deinit();
+        var b = try sharedBox(.{ .{ SHARED_B_FROM, gap, 0 }, .{ end, SHARED_B_TOP, 1 } }, quarter, mirrored);
+        defer b.deinit();
+        for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            var forward = try sound(&a, &b, op);
+            defer forward.deinit();
+            var swapped = try sound(&b, &a, op);
+            defer swapped.deinit();
+            try testing.expectEqual(forward.counts(), swapped.counts());
+            try expectSamePlanes(&forward, &swapped);
+        }
+    };
+}
+
+/// A box of those tests between `corners`, turned and mirrored as `tieMove` has it.
+fn sharedBox(corners: [2]Vec3, quarter: usize, mirrored: bool) !Body {
+    const moved = [2]Vec3{ tieMove(corners[0], quarter, mirrored), tieMove(corners[1], quarter, mirrored) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(moved[0][k], moved[1][k]);
+        hi[k] = @max(moved[0][k], moved[1][k]);
+    }
+    return helpers.boxAt(tol, lo, hi);
+}
+
+/// How many of `body`'s faces have the outward normal `n` and lie in the plane through
+/// the point `at` times `n` (exactly: the plane is one record, copied).
+fn facesAt(body: *const Body, n: Vec3, at: f64) usize {
+    var count: usize = 0;
+    for (0..body.faces.items.len) |i| {
+        const f = types.FaceIndex.of(i);
+        const plane = body.geometry.planes.items[body.face(f).surface.index];
+        const outward = if (body.face(f).same_sense) plane.frame.z else vec.scale(plane.frame.z, -1);
+        if (!std.meta.eql(outward, n)) continue;
+        if (vec.dot(plane.frame.origin, n) == at) count += 1;
+    }
+    return count;
+}
+
+/// `a` and `b` have the same faces' planes: the outward normal and the offset of each,
+/// sorted, exactly (a plane is one operand's record, copied).
+fn expectSamePlanes(a: *const Body, b: *const Body) !void {
+    var planes: [2][]([4]f64) = undefined;
+    for ([2]*const Body{ a, b }, &planes) |body, *list| {
+        list.* = try testing.allocator.alloc([4]f64, body.faces.items.len);
+        for (list.*, 0..) |*row, i| {
+            const f = types.FaceIndex.of(i);
+            const plane = body.geometry.planes.items[body.face(f).surface.index];
+            const n = if (body.face(f).same_sense) plane.frame.z else vec.scale(plane.frame.z, -1);
+            row.* = .{ n[0], n[1], n[2], vec.dot(plane.frame.origin, n) };
+        }
+        std.mem.sort([4]f64, list.*, {}, struct {
+            fn lessThan(_: void, x: [4]f64, y: [4]f64) bool {
+                for (x, y) |p, q| if (p != q) return p < q;
+                return false;
+            }
+        }.lessThan);
+    }
+    defer for (planes) |list| testing.allocator.free(list);
+    try testing.expectEqualSlices([4]f64, planes[0], planes[1]);
 }

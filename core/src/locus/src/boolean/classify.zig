@@ -62,10 +62,14 @@ pub const Classified = struct {
     class: Class,
     /// The other operand's face a coincident fragment lies on, `NONE` for another.
     partner: u32 = NONE,
+    /// A coincident fragment's twin, the other operand's fragment over the same pieces
+    /// (`NONE` for another): the region's other copy.
+    twin: u32 = NONE,
     /// Of a coincident fragment and its twin, whether it is the one the result keeps when
     /// it keeps the region (`select`): the first operand's when their faces are in one
-    /// plane (D28 gives them one record, and either merges alike), else the one whose
-    /// face's plane holds the region more closely (`represents`).
+    /// plane (D28 gives them one record, and either merges alike; the record's choice
+    /// counts both copies, `Provenance.moved`), else the one whose face's plane holds the
+    /// region more closely (`represents`).
     represents: bool = true,
 };
 
@@ -104,6 +108,8 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     const n = fragments.items.items.len;
     const classes = try allocator.alloc(Classified, n);
     errdefer allocator.free(classes);
+    // Every record with no partner, no twin, until a fragment's class is decided
+    @memset(classes, .{ .class = undefined });
     const decided = try allocator.alloc(bool, n);
     defer allocator.free(decided);
     @memset(decided, false);
@@ -140,7 +146,7 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             const n_g = in_face.outwardNormal(other_body, types.FaceIndex.of(g), .{ 0, 0 });
             try paves.coplanarWith(fragment.operand, fragment.face, &partners);
             const coplanar = std.mem.indexOfScalar(u32, partners.items, g) != null;
-            classes[i] = .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g, .represents = if (coplanar) fragment.operand == 0 else represents(paves, fragments, i, twin_of[i]) };
+            classes[i] = .{ .class = if (vec.dot(n_f, n_g) > 0) .on_same else .on_opposite, .partner = g, .twin = twin_of[i], .represents = if (coplanar) fragment.operand == 0 else represents(paves, fragments, i, twin_of[i]) };
             decided[i] = true;
             continue;
         }
@@ -196,7 +202,6 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
         if (decided[i]) continue;
         try options.checkCancel();
         const root = find(parent, @intCast(i));
-        classes[i].partner = NONE;
         if (seam_of[i] != NO_CLASS) {
             classes[i].class = @fromBackingInt(@intCast(seam_of[i]));
             stats.by_seam += 1;

@@ -2312,6 +2312,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the rounding put farther: every vertex kept in place, two edges joined moved whole
         // (simplify.decide: split at every vertex as far to rounding)
         "solids 1 6 1 2 2 1 0 4 2 0 0 1 4 0 2 4 0 4 4 2 2 1 -1 14 0 3 2 2 0 1 4 0 1 2 3 3 3 -1 6 6 14 1 2 2 1 3 1 4 0 2 1 1 7 -2 6 5 2 0 3 1",
+        // The first ReleaseSafe local session (2026-11-21, a1444371, locus.2, ca): a hull
+        // and a wall turned 0.3, joined, then joined with a box whose side lies 1.5e-5 from
+        // the wall's, the two sharing a region; the group's plane was the one moving its
+        // kept fragments least, and the region counted as the first operand's copy alone:
+        // A ∪ B took the wall's plane and B ∪ A the box's, the section across the face one
+        // edge one way round and two the other (Provenance.moved: both copies count)
+        "solids 1 5 2 1 2 3 1 2 2 1 3 2 0 1 0 3 4 0 3 3 3 10 3 14 10 2 2 3 1 5 2 3 4 0 1 2 0 1 3 0 1 3 1 12 -1 12 0 3 0 1 3 1 3 1 4 3 2 3 4 -1 15 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

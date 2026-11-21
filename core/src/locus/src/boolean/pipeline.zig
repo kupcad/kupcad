@@ -1068,6 +1068,8 @@ const Provenance = struct {
     paves: *const pave.Paves,
     /// The fragments and which are kept: the pieces a group's plane must hold.
     fragments: *const imprint.Fragments,
+    /// Each fragment's class: a coincident one's twin, the region's other copy.
+    classes: []const classify.Classified,
     keeps: []const select.Keep,
     /// Each operand's face's plane: the face whose record it takes.
     plane_of: [2][]Face = .{ &.{}, &.{} },
@@ -1087,7 +1089,7 @@ const Provenance = struct {
     const Copy = struct { from: u2, index: u32 };
 
     fn init(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, classes: []const classify.Classified, keeps: []const select.Keep, diag: *Diagnostics) Error!Provenance {
-        var self: Provenance = .{ .allocator = allocator, .paves = paves, .fragments = fragments, .keeps = keeps };
+        var self: Provenance = .{ .allocator = allocator, .paves = paves, .fragments = fragments, .classes = classes, .keeps = keeps };
         errdefer self.deinit();
         for (0..2) |k| {
             self.plane_of[k] = try allocator.alloc(Face, paves.operands[k].faces.items.len);
@@ -1416,14 +1418,21 @@ const Provenance = struct {
     /// volume between each fragment, in its own face's plane, and `target` (the height of
     /// its area centroid times its area, a height over a plane being linear), as a mean
     /// thickness; 0 for a group with nothing kept, and for a fragment its own plane holds.
-    /// Not the report's shift (the farthest corner times the area), which a hole's corners
+    /// A region of both operands kept counts by both its copies, the one the result keeps
+    /// (`classify.Classified.represents`, the first operand's where the faces are in one
+    /// plane) and its twin: by the kept copy alone it moved nothing on the first operand's
+    /// plane, and a bottom in y = 0 sharing a region with one 1.5e-5 above took the first
+    /// operand's plane either way round (the solids fuzzer's find ca, 2026-11-21: the section
+    /// across the face one edge A ∪ B and two B ∪ A). Not the report's shift (the farthest corner times the area), which a hole's corners
     /// off the face's plane by their gaps charged to the face's own plane (a plate's side
     /// with a peg's face in it, 1e-5 out, took the peg's plane).
     fn moved(self: *const Provenance, group: []const u32, n_a: u32, target: surfaces.Plane) f64 {
         var volume: f64 = 0;
         var area: f64 = 0;
-        for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
-            if (keep == .drop) continue;
+        for (self.fragments.items.items, self.keeps, self.classes, 0..) |fragment, keep, class, i| {
+            // A region of both counted by both copies, kept or not: the result keeps one
+            // (`classify.Classified.represents`), but the region is a face of each operand
+            if (keep == .drop and (class.twin == classify.NONE or self.keeps[class.twin] == .drop)) continue;
             for (group) |member| {
                 const g = nodeFace(member, n_a);
                 if (g.operand != fragment.operand or g.face != fragment.face) continue;
