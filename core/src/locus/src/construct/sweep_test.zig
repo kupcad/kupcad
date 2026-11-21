@@ -31,6 +31,17 @@ const QUARTER_TURNS = 4;
 /// the square, a frame; a square grown and cut to what a neighbour with sides askew holds
 /// of it, a strip; and a square joined with its neighbour shrunk, the two apart by the width.
 const Narrow = enum { drawn, frame, strip, gap };
+/// The profiles of the tests of an extrusion askew to its sheet (each counter-clockwise):
+/// a unit square, and an L whose inner corner is reflex.
+const ASKEW_SQUARE = [_]vec.Vec2{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+const ASKEW_L = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 1, 1 }, .{ 1, 2 }, .{ 0, 2 } };
+/// The directions those profiles are extruded along: each leaves the sheet's plane askew,
+/// one of them downward-leaning, and one rising less than its length.
+const ASKEW_DIRECTIONS = [_]Vec3{ .{ 0, 3, 3 }, .{ 1, 0, 4 }, .{ -2, 1, 0.5 } };
+/// A strip 3 zones wide and 2 long, extruded along a direction rising 1.5 zones over 0.1
+/// across: its caps lie within the intersection tolerance of each other.
+const ASKEW_STRIP = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 3e-5 }, .{ 0, 3e-5 } };
+const ASKEW_LOW: Vec3 = .{ 0.1, 0, 1.5e-5 };
 
 fn expectValid(body: *const Body) !void {
     var report = try check.run(testing.allocator, body, .geometric);
@@ -208,7 +219,8 @@ test "extrude: a plate with a hole has the hole through it; downward and askew s
     try expectVec(.{ 10, 10, 0 }, db.max, 1e-12);
     try expectOutward(&down, Solids.plateDown);
 
-    // Askew: a circle's side is an extrusion surface, a square's are planes
+    // Askew: a circle's side is an extrusion surface (a polygon's, planes: the askew tests
+    // below)
     var ci = try primitives.circle(testing.allocator, tol, 2, &diag);
     defer ci.deinit();
     var skew = try sweep.extrude(testing.allocator, &ci, .{ 1, 0, 4 }, .{}, &diag);
@@ -656,4 +668,53 @@ test "extrude: a sheet with a strip or a gap past the zone and within the inters
             try testing.expectEqual(@as(usize, if (kind == .gap) 2 else 1), solid.counts().shells);
         }
     };
+}
+
+/// `points` turned `quarter` quarter turns about the origin, then mirrored in the y axis when
+/// `mirrored` (exact on these coordinates).
+fn askewMoved(points: []const vec.Vec2, quarter: usize, mirrored: bool, out: []vec.Vec2) []vec.Vec2 {
+    for (points, 0..) |p, i| {
+        var q = p;
+        for (0..quarter) |_| {
+            const turned: vec.Vec2 = .{ -q[1], q[0] };
+            q = turned;
+        }
+        out[i] = if (mirrored) .{ -q[0], q[1] } else q;
+    }
+    return out[0..points.len];
+}
+
+test "extrude: a sheet swept askew to its plane has plane sides through each edge and the direction" {
+    // A straight edge's side was the plane through the edge and the sheet's normal, which
+    // holds the swept edge only when the sweep runs along that normal: a unit square along
+    // (0, 3, 3) had sides y = 0 and y = 1 while their top copies lay 3 further along y,
+    // refused `edge_off_surface` (0.21 at the swept edge's first sample). The plane through
+    // the edge and the direction holds both, as the arc's extrusion surface already did
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_][]const vec.Vec2{ &ASKEW_SQUARE, &ASKEW_L }) |profile| {
+        for (ASKEW_DIRECTIONS) |d| for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("{d} corners along {any}, quarter turns {d}, mirrored {}: {any}\n", .{ profile.len, d, quarter, mirrored, diag.first() });
+            var moved: [ASKEW_L.len]vec.Vec2 = undefined;
+            var sheet = try primitives.polygon(testing.allocator, tol, askewMoved(profile, quarter, mirrored, &moved), &diag);
+            defer sheet.deinit();
+            const area = (try mass.mass(&sheet, .{}, &diag)).area;
+            var solid = try sweep.extrude(testing.allocator, &sheet, d, .{}, &diag);
+            defer solid.deinit();
+            try expectValid(&solid);
+            // Cavalieri: the volume is the area times the rise; positive, so outward
+            try testing.expectApproxEqRel(area * d[2], (try mass.mass(&solid, .{}, &diag)).volume, 1e-9);
+        };
+    }
+}
+
+test "extrude: a strip swept askew so that its caps lie within the tolerance is refused below the feature size" {
+    // Its rise is 1.5 zones: the caps, 3 zones wide, lie on each other within the
+    // intersection tolerance, which the sweep's rules refuse as the boolean's do
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = try primitives.polygon(testing.allocator, tol, &ASKEW_STRIP, &diag);
+    defer sheet.deinit();
+    try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, ASKEW_LOW, .{}, &diag));
+    try testing.expectEqual(.below_feature_size, diag.first().?.code);
 }

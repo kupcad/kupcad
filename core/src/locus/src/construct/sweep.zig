@@ -807,10 +807,16 @@ fn sideFace(b: *Builder, curve: curves.Curve, low: Copied, high: Copied, ends: E
     };
     switch (curve) {
         .line => {
-            // The plane through the edge with the outward normal: v runs along the
-            // sheet's normal, so the loop is counter-clockwise when the sweep rises
+            // The plane through the edge and the direction, which holds the edge and its
+            // swept copy, facing out (its normal on `outward`'s side: the plane through
+            // the edge and the sheet's normal held the copy only when the sweep ran along
+            // that normal, and a square swept along (0, 3, 3) had its sides 3 off their
+            // top edges): v runs along the direction's part across the edge, so the loop
+            // is counter-clockwise when the sweep rises
             const tangent = vec.normalized(vec.sub(pb, pa)).?;
-            const frame = Frame.init(pa, tangent, outward);
+            const across = vec.normalized(vec.cross(tangent, d_hat)) orelse return b.diag.fail(error.Degenerate, .{ .code = .edge_too_short, .label = "a side swept along its own edge" });
+            const normal = if (vec.dot(across, outward) > 0) across else vec.neg(across);
+            const frame = Frame.init(pa, tangent, normal);
             const corners = [_]Vec3{ pa, pb, vec.add(pa, direction), vec.add(pb, direction) };
             const facing = try b.facingPlane(frame, &corners);
             const plane = g.surface(facing.surface).plane;

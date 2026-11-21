@@ -631,7 +631,10 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
 - Extrude and revolve share one *generator × director* table (OCCT `BRepSweep`): a
   generator vertex swept along a director edge makes an edge, a generator edge a face, a
   generator face a solid; a generator face at a director vertex makes a cap. The surface
-  of each swept edge is chosen by kind: a line along a vector gives a plane, an arc a
+  of each swept edge is chosen by kind: a line along a vector gives the plane through the
+  line and the vector (not the line and the sheet's normal, which holds the swept copy only
+  when the sweep runs along that normal: a square swept along (0, 3, 3) had its sides 3
+  off their top edges, 2026-11-22, audit), an arc a
   cylinder, any other curve a linear-extrusion surface; around an axis a line parallel to
   it gives a cylinder, oblique a cone, an arc a torus or sphere, any other curve a
   revolution surface; a generator vertex on the axis gives a degenerate edge and no face.
