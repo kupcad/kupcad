@@ -1127,11 +1127,36 @@ pub fn turnAt(v: Vec2, a: Vec2, arc: ?Arc, t1: Vec2, b: Vec2, next_arc: ?Arc, t2
 }
 
 pub fn orderSample(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Vec2 {
-    const circle = arc orelse return b;
+    const circle = throughEnds(a, b, arc orelse return b);
     const span = arcSpan(a, b, circle);
     const s = @min(ORDER_REACH * zone, circle.r * span.sweep / 2.0);
     const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
     return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
+}
+
+/// The circle of `arc`'s radius through `a` and `b`, its centre on the side of their chord
+/// the arc's own centre is on: the piece of an arc as it runs once its ends are welded,
+/// which a line between welded ends is too (its direction from `a` is to `b`). Where the
+/// ends lie on the arc's circle it is that circle, to rounding; where a cut moved an end
+/// up to the zone off it, the piece runs to that end, and the circle's tangent at the
+/// other end, which the stored circle gives, may not be the way it leaves: two pieces from
+/// one vertex, each its far end a vertex on the other's circle 0.9 of the zone off its
+/// own, the pieces 1.3 zones long, left by their circles' tangents 44° the other way
+/// round from their ends, a rotation system of genus one (the overlay in the locus
+/// target's first ReleaseSafe session, 2026-11-21, cb). Ends farther apart than the
+/// diameter (moved apart, about a circle of the zone) take the half circle on their chord;
+/// an arc that closes on itself keeps its circle.
+fn throughEnds(a: Vec2, b: Vec2, arc: Arc) Arc {
+    const half = vec.scale2(vec.sub2(b, a), 0.5);
+    const h = vec.length2(half);
+    if (h == 0) return arc;
+    const r = @max(arc.r, h);
+    const rise = @sqrt(@max(r * r - h * h, 0));
+    const side = predicates.orient2d(a, b, arc.c);
+    const left = vec.scale2(vec.perp2(half), 1 / h);
+    const middle = vec.add2(a, half);
+    const c = if (side > 0) vec.addScaled2(middle, left, rise) else if (side < 0) vec.addScaled2(middle, left, -rise) else middle;
+    return .{ .c = c, .r = r, .ccw = arc.ccw };
 }
 
 /// Twice the signed area of the triangle `from`, `a`, `b`: a chord's share of its cycle's

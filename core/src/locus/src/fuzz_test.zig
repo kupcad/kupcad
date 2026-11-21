@@ -2331,6 +2331,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // both by reach: four uses, two planes across, did not pair (`edge_coedge_count`;
         // pipeline.pairTouching: each plane across the edge pairs its own two uses)
         "solids 2 1 2 0 4 1 2 2 1 8 3 5 14 2 1 3 1 5 2 3 4 4 0 2 0 0 4 1 0 2 4 2 0 1 1 7 1 4 2 2 3 4 0 4 4 3 4 2 0 3 0 0 4 3 3 1 2 1 2 1 -2 10 5 2",
+        // The first ReleaseSafe locus session (a1444371, 2026-11-21, cb): two arcs crossing
+        // at v and a line 1.24 zones from v crossing each 0.9 of the zone off the other's
+        // circle; each arc's piece from v ran to a vertex cut onto it 0.9 of the zone off
+        // its circle, and the order about v by the circles' tangents was the other way
+        // round from the pieces' ends: a map of genus one (overlay.orderSample: along the
+        // arc through the piece's ends)
+        "overlay 3 2 2 7 5 14 2 16 20 4 2 1 6 3 23 6 23 0 7 4 12 3 23 0 5 3 0 0 1 3 1 3 1 1 3 3 0 2 1 1 3 1 1 1 3 0 1 6 11 18 3 15 5 1 15 20 1 20 6 6 24 17 6 3 10 5 1 0 0 2 2 0 3 3 0 2 1 1 4 0 1 1 2 0 2 2 8 15 22 2 1 8 7 23 20 3 5 21 3 8 5 5 24 22 3 0 7 1 14 21 2 1 0 0 2 3 1 4 0 1 4 0 0 2 2 0 4 1 1 1 3 1 1 0 1 0 20 11 5 0 0 1 2 2 8 22 6 3 8 21 8 0 8 4 7 8 4 22 13 3 0 24 1 12 15 6 5 8 1 3 3 0 2 3 1 3 1 1 1 0 0 4 3 1 4 0 1 1 1 1 4 3 0 1 8 1 10 4 10 19 8 21 20 5 22 14 3 2 6 4 7 6 4 3 14 3 22 23 3 1 2 1 4 3 1 3 1 0 4 3 1 3 1 1 2 0 1 3 3 1 3 3 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

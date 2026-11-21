@@ -554,7 +554,11 @@ and with `Parallel` serial and threaded and compares the serialized bodies byte 
 Arcs in the 2D overlay are where the exact tier is thinnest (an arc–arc or line–arc
 intersection is irrational). Arc endpoints and intersection points are constructed,
 welded and then treated as exact vertices; the order of half-edges about a vertex is
-decided by `orient2d` on points sampled a hundred zones along each curve, and nesting by
+decided by `orient2d` on points sampled a hundred zones along each curve (an arc's along
+the arc of its radius through its welded ends, as a line's is toward its far end: a cut
+moves an end up to the zone off the circle, and two pieces 1.3 zones long, each to a
+vertex on the other's circle, left their own circles' tangents 44° the other way round
+from their ends, a map of genus one; 2026-11-21, the locus target's overlay, cb), and nesting by
 the exact ray rule. Every decision about a circle is exact too (D26, 2026-11-11): whether a
 line meets, touches or misses a circle and where each crossing lies along the segment
 (`lineCircleDiscriminant`, `lineCircleCrossing`), whether a point lies within an arc's turn

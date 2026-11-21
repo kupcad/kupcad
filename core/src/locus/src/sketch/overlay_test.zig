@@ -58,6 +58,24 @@ const STUB_ANGLES = [_]f64{ 3e-4, 1.2e-3, 4e-3 };
 const STUB_PAST_CHORD: f64 = 1e-2;
 const STUB_REST: f64 = 1;
 
+/// The triple point family (the tests of three curves crossing pairwise within a zone or so
+/// of one another, the locus target's overlay find of 2026-11-21, cb): two arcs whose
+/// circles cross at about (2.5821, 4.3678), each with the chord back to its start, and a
+/// triangle one of whose sides is the line from `TRIPLE_LINE_FROM` to `TRIPLE_LINE_TO`,
+/// which passes that crossing 1.24 zones off and crosses each arc there within the zone of
+/// the other: the cuts put each such crossing on the other arc, and each arc's piece from
+/// the circles' crossing ran to a vertex 0.9 of the zone off its own circle.
+const TRIPLE_ARC_A = overlay.InputEdge{ .a = .{ 3, 3.75 }, .b = .{ 1.2500000000000002, 2 }, .arc = .{ .c = .{ 1.6875, 3.3125 }, .r = 1.383496476323666, .ccw = true } };
+const TRIPLE_ARC_B = overlay.InputEdge{ .a = .{ 0.25, 2.5 }, .b = .{ 2.5, 4.75 }, .arc = .{ .c = .{ 0.8125, 4.1875 }, .r = 1.7787811838447134, .ccw = true } };
+const TRIPLE_LINE_FROM: Vec2 = .{ 0.75, 3.5 };
+const TRIPLE_LINE_TO: Vec2 = .{ 5.5, 5.75 };
+/// The triangle's third corner, far from the crossings.
+const TRIPLE_CORNER: Vec2 = .{ 5.5, 1 };
+/// The line's shifts in y: its distance from the circles' crossing about -2.3, -0.1,
+/// 0.5, 0.9, 1.1, 1.24 (the find's), 1.3, 1.4, 2 and 3.9 zones, so that every crossing,
+/// the two with the line only, or none lies within the zone of the third curve.
+const TRIPLE_LINE_SHIFTS = [_]f64{ -2.5e-5, -1.4e-5, -8e-6, -4e-6, -1.5e-6, 0, 6e-7, 1.7e-6, 8e-6, 3e-5 };
+
 /// The lowest-point family (the tests of an island whose ray runs through a circle's
 /// lowest point, a vertex of the circle and of a polygon a rounding off that point): the
 /// circle, as the find had it (the overlay fuzz target, 2026-11-20, bo); the vertex's
@@ -1395,4 +1413,64 @@ test "overlay: an island's ray through a circle's lowest point, a vertex of the 
         try expectPlanar(&o);
         try expectIslandWindings(&o, LOWEST_ISLAND_RADIUS, 1, 0);
     };
+}
+
+/// The triple point family's arrangement, its line shifted `shift` in y, turned `quarter`
+/// quarter turns about the origin after a mirror in the y axis when `mirrored`: exact moves,
+/// so the map must be the same in each.
+fn triplePoint(o: *Overlay, shift: f64, quarter: usize, mirrored: bool) !void {
+    const turn = EXTREME_ENDS[quarter];
+    const line_from: Vec2 = .{ TRIPLE_LINE_FROM[0], TRIPLE_LINE_FROM[1] + shift };
+    const line_to: Vec2 = .{ TRIPLE_LINE_TO[0], TRIPLE_LINE_TO[1] + shift };
+    const rings = [_][]const overlay.InputEdge{
+        &.{ TRIPLE_ARC_A, .{ .a = TRIPLE_ARC_A.b, .b = TRIPLE_ARC_A.a } },
+        &.{ TRIPLE_ARC_B, .{ .a = TRIPLE_ARC_B.b, .b = TRIPLE_ARC_B.a } },
+        &.{ .{ .a = line_from, .b = line_to }, .{ .a = line_to, .b = TRIPLE_CORNER }, .{ .a = TRIPLE_CORNER, .b = line_from } },
+    };
+    for (rings) |ring| {
+        _ = try o.addInput();
+        for (ring) |e| {
+            var m = if (mirrored) mirroredEdge(e) else e;
+            m = movedEdge(m, turn, .{ 0, 0 });
+            try o.addEdge(m);
+        }
+    }
+}
+
+/// Edge `e` mirrored in the y axis: its ends and centre's x negated, its arc run the other
+/// way round.
+fn mirroredEdge(e: overlay.InputEdge) overlay.InputEdge {
+    var m: overlay.InputEdge = .{ .a = .{ -e.a[0], e.a[1] }, .b = .{ -e.b[0], e.b[1] } };
+    if (e.arc) |arc| m.arc = .{ .c = .{ -arc.c[0], arc.c[1] }, .r = arc.r, .ccw = !arc.ccw };
+    return m;
+}
+
+test "overlay: three curves crossing pairwise a zone apart, two crossings on the third curve, are planar" {
+    // The locus target's overlay find (its first ReleaseSafe session, 2026-11-21, cb): two
+    // arcs crossing at v, a line 1.24 zones from v crossing each 0.9 of the zone from the
+    // other's circle. The cuts put each of those crossings on the other arc, so each arc's
+    // piece from v, 1.3 zones long, ran to a vertex 0.9 of the zone off its own circle; the
+    // order about v went by the circles' tangents there, 44° the other way round from the
+    // pieces' ends, and the cycles were walked as a map of genus one (V - E + F short by 2)
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    try triplePoint(&o, 0, 0, false);
+    try o.run();
+    try expectPlanar(&o);
+}
+
+test "overlay: three curves crossing pairwise near one point, the line moved through every regime, are planar alike in each quarter turn and mirrored" {
+    for (TRIPLE_LINE_SHIFTS) |shift| {
+        var first: ?[3]usize = null;
+        for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("line shifted {e}, quarter turns {d}, mirrored {}\n", .{ shift, quarter, mirrored });
+            var o = Overlay.init(testing.allocator, tol);
+            defer o.deinit();
+            try triplePoint(&o, shift, quarter, mirrored);
+            try o.run();
+            try expectPlanar(&o);
+            const counts = [3]usize{ o.points.items.len, o.edges.items.len, o.faces.items.len };
+            if (first) |f| try testing.expectEqual(f, counts) else first = counts;
+        };
+    }
 }
