@@ -362,25 +362,35 @@ fn lessPoint(a: vec.Vec3, b: vec.Vec3) bool {
 /// The runs of vertices `lo` to `hi` of `chain`: all of them one edge when a line of
 /// theirs holds them (`holdingLine`), else split at the vertex farthest from the chord
 /// between the ends (Douglas–Peucker), each side decided alike. Geometry alone decides,
-/// never the order the vertices are numbered in.
+/// never the order the vertices are numbered in, nor where the chain is placed: vertices
+/// as far from the chord to rounding (`canonical.sameToRounding`) are as far, and the chain
+/// splits at each of them. A tie broken by the measures' rounding, or by the points'
+/// coordinates, turns with the solids moved whole: a box's bottom edge along a hull's face
+/// and the plate's top across that face 9e-5 under it, two lines parallel, put two
+/// vertices of the chain exactly as far from its chord; in place the chain split at the
+/// one and kept every vertex, moved whole at the other and joined two edges into one (the
+/// first ReleaseSafe session on a1444371, cd, 2026-11-22).
 fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, lo: usize, hi: usize, runs: *std.ArrayList(Run), diag: *Diagnostics) Error!void {
     if (hi - lo < 2) return;
     if (try holdingLine(body, chain, lo, hi, diag)) |line| return runs.append(allocator, .{ .lo = lo, .hi = hi, .line = line });
     const vs = chain.vertices.items;
     const a = body.point(vs[lo]);
     const b = body.point(vs[hi]);
-    var split = lo + 1;
     var farthest: f64 = -1;
+    var scale = canonical.magnitude(&.{ a, b });
     for (lo + 1..hi) |i| {
         const p = body.point(vs[i]);
-        const d = chordDistance(a, b, p);
-        if (d > farthest or (d == farthest and lessPoint(p, body.point(vs[split])))) {
-            farthest = d;
-            split = i;
-        }
+        farthest = @max(farthest, chordDistance(a, b, p));
+        scale = @max(scale, canonical.magnitude(&.{p}));
     }
-    try decide(allocator, body, chain, lo, split, runs, diag);
-    try decide(allocator, body, chain, split, hi, runs, diag);
+    // Split at every vertex as far as the farthest, each run between two decided alike
+    var from = lo;
+    for (lo + 1..hi) |i| {
+        if (!canonical.sameToRounding(chordDistance(a, b, body.point(vs[i])), farthest, scale)) continue;
+        try decide(allocator, body, chain, from, i, runs, diag);
+        from = i;
+    }
+    try decide(allocator, body, chain, from, hi, runs, diag);
 }
 
 /// How far `p` lies from the segment `a`–`b` (from `a` when the two are one point).

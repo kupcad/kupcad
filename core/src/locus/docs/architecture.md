@@ -1007,7 +1007,11 @@ importing only those before it, which the layering test holds):**
   by `kemr` (never an edge with a copy either); `kevJoin` along
   chains of edges through vertices of two line edges, counted over the whole body, each
   chain decided whole (one edge on a line of its own edges holding all its vertices, else
-  split at the vertex farthest from its chord, Douglas–Peucker; vertex by vertex the
+  split at the vertex farthest from its chord, Douglas–Peucker, at each of them when
+  several are as far to rounding, `canonical.sameToRounding`: two lines parallel in a
+  face put two vertices exactly as far, and which the rounding found farther turned with
+  the solids moved whole, the chain joined in one placement and not in the other, find cd,
+  2026-11-22; vertex by vertex the
   joins hung on the numbering, the operands' order, 2026-11-16); `kevMerge` of an edge no
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
   `compact`, the checker, whose findings are faults (`NotValid`) but for a face narrower

@@ -2305,6 +2305,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // it (its middle the zone from both the face's edges, to rounding) and lost a face
         // of 0.58 (section.Section.piece: a piece in the face by its loops)
         "chain 1 3 5 5 3 0 0 5 1 0 1 3 3 4 4 2 5 1 1 10 1 6 0 2 8 6 2 3 3 1 4 2 1 0 6 3 4 0 4 2 6 4 4 3 2 3 1 2 0 2 1 0 0 8 3 2 3 5 2 5 4 3 2 5 4 5 4 6 6 1 4 4 1 3 1 1 0 1 1 1 1 4 1 2 1 1 2 1 2 3 3",
+        // The first ReleaseSafe session (a1444371, 2026-11-22, locus_solids, cd): a hull
+        // less a box, cut by a plate whose top crosses the hull's face 9e-5 under the box's
+        // bottom edge, parallel to it; of the chain of four vertices along the face, the two
+        // on the box's edge exactly as far from the chord, and the join split it at the one
+        // the rounding put farther: every vertex kept in place, two edges joined moved whole
+        // (simplify.decide: split at every vertex as far to rounding)
+        "solids 1 6 1 2 2 1 0 4 2 0 0 1 4 0 2 4 0 4 4 2 2 1 -1 14 0 3 2 2 0 1 4 0 1 2 3 3 3 -1 6 6 14 1 2 2 1 3 1 4 0 2 1 1 7 -2 6 5 2 0 3 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

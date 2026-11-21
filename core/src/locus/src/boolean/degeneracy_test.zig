@@ -393,6 +393,26 @@ const TIE_HULL = [_]Vec3{ .{ 2.00005, 0, 0 }, .{ 4.00005, -1, 2 }, .{ 4.00005, 3
 const TIE_DROPS = [_]f64{ 2e-4, 1e-4, 1.5e-4, 2.4e-4 };
 /// The zones of the box and the hull: the find's, and the other way round.
 const TIE_ZONES = [_][2]f64{ .{ 1e-4, 1e-5 }, .{ 1e-5, 1e-4 } };
+/// The solids of the tests of a chain of edges along two parallel lines (the first
+/// ReleaseSafe session's find of 2026-11-22, cd, as the solids fuzzer drew them): a hull
+/// whose face toward -x is crossed by a box's bottom (zone 1e-5) at z = 2 less the box's
+/// nudge and by a plate's top (zone 1e-4, an intersection tolerance of 2e-4) at z =
+/// 1.9999. The hull less the box, cut by the plate, keeps on that face a chain of four
+/// vertices: two where the plate's top crosses its edges, two where the box's bottom
+/// does, on two lines parallel within the face, 9e-5 apart in z.
+const CHAIN_HULL = [_]Vec3{ .{ 1, 2, 2 }, .{ 1, 0, 4 }, .{ 2, 0, 0 }, .{ 1, 4, 0 }, .{ 2, 4, 0 }, .{ 4, 4, 2 } };
+const CHAIN_HULL_MOVE: Vec3 = .{ -0.5, 0, 0 };
+const CHAIN_HULL_NUDGE: Vec3 = .{ 0, -2e-3, 0 };
+const CHAIN_BOX = [2]Vec3{ .{ 0.5, 0, 2 }, .{ 3.5, 1, 3 } };
+const CHAIN_BOX_NUDGE: Vec3 = .{ 0, -1e-5, -1e-5 };
+const CHAIN_PLATE = [2]Vec3{ .{ -48, -49, 0 }, .{ 52, 101, 2 } };
+const CHAIN_PLATE_NUDGE: Vec3 = .{ 2e-4, 0, -1e-4 };
+/// The box's nudges in z: the find's, its bottom 9e-5 over the plate's top, and its
+/// neighbours from 1e-5 over to 1.5e-4 over, within the intersection tolerance.
+const CHAIN_DROPS = [_]f64{ -1e-5, -9e-5, -5e-5, 0, 5e-5 };
+/// How the three solids are moved together: in place, `SLIVER_TURNS`, and the fuzzer's
+/// move of the find, a turn of 0.3 about x and a shift 2.3e3 out.
+const CHAIN_MOVES = SLIVER_TURNS ++ [_]@TypeOf(SLIVER_TURNS[0]){.{ .axis = vec.X3, .angle = 0.3, .shift = .{ 1e3, -2e3, 500 } }};
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -4552,4 +4572,58 @@ fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
     defer all.deinit();
     var swapped = try helpers.sound(&hull, &joined, .@"union");
     defer swapped.deinit();
+}
+
+test "degeneracy: a hull less a box, cut by a plate whose top crosses the hull's face parallel to the box's bottom edge, keeps the same edges moved whole" {
+    // The first ReleaseSafe session's find (2026-11-22, cd), as the solids fuzzer drew it.
+    // On the hull's face the box's bottom edge and the plate's top run parallel 9e-5 apart,
+    // so of the chain's four vertices the two on the box's edge lie exactly as far from
+    // the chord between the two on the plate's top. The join split the chain at the one
+    // the rounding put farther: in place at the first, every vertex kept, moved whole (a
+    // turn of 0.3 about x, a shift 2.3e3 out) at the second, two edges joined into one
+    try expectChainMoved(CHAIN_DROPS[0], CHAIN_MOVES[CHAIN_MOVES.len - 1], false);
+}
+
+test "degeneracy: a hull less a box, cut by a plate whose top crosses the hull's face parallel to the box's bottom edge, from 1e-5 under it to 1.5e-4, keeps the same edges moved whole and either way round" {
+    // The cases about the find above (`CHAIN_DROPS` × `CHAIN_MOVES` × the plate second or
+    // first): two lines parallel within the face at every gap within the intersection
+    // tolerance, the two vertices on the box's edge tied for the farthest from the chord.
+    // Without the tie taken as one, 21 of the 60 differed, one in place the plate first
+    for (CHAIN_DROPS) |drop| for (CHAIN_MOVES) |move| for ([_]bool{ false, true }) |plate_first| {
+        errdefer std.debug.print("the box nudged {e} in z, turned {d} about {any}, shifted {any}, the plate {s}\n", .{ drop, move.angle, move.axis, move.shift, if (plate_first) "first" else "second" });
+        try expectChainMoved(drop, move, plate_first);
+    };
+}
+
+/// The hull less the box nudged `drop` in z, cut by the plate (second, or first when
+/// `plate_first`), the three moved as `move` has it, has the counts it has in place, the
+/// plate second.
+fn expectChainMoved(drop: f64, move: @TypeOf(CHAIN_MOVES[0]), plate_first: bool) !void {
+    var placed = try chainCut(drop, CHAIN_MOVES[0], false);
+    defer placed.deinit();
+    var moved = try chainCut(drop, move, plate_first);
+    defer moved.deinit();
+    errdefer std.debug.print("in place {any}, moved {any}\n", .{ placed.counts(), moved.counts() });
+    try testing.expectEqual(placed.counts(), moved.counts());
+}
+
+/// The chain tests' hull less their box nudged `drop` in z, intersected with their plate
+/// (second, or first when `plate_first`), the three moved as `move` has it, each boolean
+/// made and sound.
+fn chainCut(drop: f64, move: @TypeOf(CHAIN_MOVES[0]), plate_first: bool) !Body {
+    var drawn_hull = try fuzzHullPlaced(&CHAIN_HULL, vec.Z3, 0, null, CHAIN_HULL_MOVE, CHAIN_HULL_NUDGE);
+    defer drawn_hull.deinit();
+    var drawn_box = try fuzzBoxPlaced(tol, CHAIN_BOX[0], CHAIN_BOX[1], vec.Z3, 0, null, .{ CHAIN_BOX_NUDGE[0], CHAIN_BOX_NUDGE[1], drop });
+    defer drawn_box.deinit();
+    var drawn_plate = try fuzzBoxPlaced(Tolerance.fromZone(1e-4), CHAIN_PLATE[0], CHAIN_PLATE[1], vec.Z3, 0, null, CHAIN_PLATE_NUDGE);
+    defer drawn_plate.deinit();
+    var hull = try sliverMoved(&drawn_hull, move);
+    defer hull.deinit();
+    var cutter = try sliverMoved(&drawn_box, move);
+    defer cutter.deinit();
+    var plate = try sliverMoved(&drawn_plate, move);
+    defer plate.deinit();
+    var notched = try helpers.sound(&hull, &cutter, .difference);
+    defer notched.deinit();
+    return if (plate_first) helpers.sound(&plate, &notched, .intersection) else helpers.sound(&notched, &plate, .intersection);
 }
