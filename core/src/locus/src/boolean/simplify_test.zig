@@ -30,6 +30,15 @@ const COVERED_GAP: f64 = 3e-6;
 /// The length of the short edge the tests leave at a box's corner: under the checker's
 /// minimum, two zones.
 const SHORT_PIECE: f64 = 1e-5;
+/// The test of which end a short edge collapses into: the new vertex the corner's edge up
+/// moves to, 1.96e-5 from the corner (`SHORT_FAR`, under the minimum), and the foot of that
+/// edge's line at the box's bottom (`SHORT_FOOT`): the line off the box's two side planes
+/// by 2.8e-5 each, within the tolerance and the edge's gap (`SHORT_LINE_GAP`), off the
+/// corner by 3.96e-5 (a gap past the zone to hold it) and off the new vertex by 2.47e-5
+/// (a gap within the zone).
+const SHORT_FAR: Vec3 = .{ 1.9e-5, 0.5e-5, 0 };
+const SHORT_FOOT: Vec3 = .{ 2.8e-5, 2.8e-5, 0 };
+const SHORT_LINE_GAP: f64 = 1e-5;
 
 /// A unit cube whose top is split along x = 0.5 into two faces on one plane, of
 /// attributes `left` and `right`; the front's top edge split there too, at a vertex of
@@ -241,15 +250,17 @@ test "simplify: an edge the checker finds too short by its chord collapses, thou
     try testing.expectEqual(@as(usize, 8), body.counts().vertices);
 }
 
-test "simplify: a short edge collapsed into its start gives the start the gap that holds the lines moved to it" {
+test "simplify: a short edge collapses into the end nearer the line moved to it, and the result holds its lines" {
     // The 10K session on 6007ab01 (2026-11-18): an edge the minimum feature size long
     // collapsed into a box's corner, and an edge moved there ended 2.0138e-5 off its line,
     // past the tolerance of 2e-5, with no gap; the checker refused the result
     // (`vertex_off_curve`). A box's corner split off by an edge 1.41e-5 long, the edge up
     // moved to the new vertex on a line of its own, 7.1e-6 from that vertex and 2.12e-5
     // from the corner (within the tolerance of both faces about it). Collapsed into the
-    // corner, the edge up starts there: the corner's gap holds it, as the builder gives a
-    // vertex it puts on an edge (`simplify.coverLine`)
+    // corner, the edge up starts there and the corner's gap must hold it, as the builder
+    // gives a vertex it puts on an edge (`simplify.coverLine`); the collapse keeps the end
+    // nearer the lines moved to it (`cheaperEnd`, the audit of 2026-11-22), here the new
+    // vertex, 1e-5 from the corner's two edges' lines and holding them with no gap
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
@@ -286,7 +297,15 @@ test "simplify: a short edge collapsed into its start gives the start the gap th
     try simplify.run(&body, &diag, null);
     try expectValid(&body);
     try testing.expectEqual(@as(usize, 8), body.counts().vertices);
-    try testing.expect(body.vertex(corner).gap > 0);
+    // The new vertex kept, the corner gone (by their points: simplify renumbers)
+    var at_q = false;
+    for (body.vertices.items, 0..) |v, i| {
+        if (v.tombstone) continue;
+        const p = body.point(types.VertexIndex.of(i));
+        try testing.expect(vec.length(p) != 0);
+        at_q = at_q or vec.distance(p, q) == 0;
+    }
+    try testing.expect(at_q);
 }
 
 test "simplify: two faces on planes the same within the tolerance, of two records, stay two" {
@@ -428,4 +447,88 @@ test "simplify: a short edge collapsed gives the vertex kept the gaps of the edg
         // with the gap of the edge moved to it
         try testing.expect(body.vertex(vertexAt(&body, origin)).gap >= COVERED_GAP);
     }
+}
+
+/// Edge `e` run the other way: its ends swapped, its line through them the other way, its
+/// coedges' senses turned, so each still leaves the vertex it left, and the edge's own
+/// coedge the one leaving its new start.
+fn reverseEdge(body: *Body, e: types.EdgeIndex) !void {
+    const edge = body.edge(e);
+    const from = body.point(edge.end);
+    const to = body.point(edge.start);
+    const line = curves.Line.through(from, to).?;
+    const curve = try body.geometry.addLine(testing.allocator, line);
+    std.mem.swap(types.VertexIndex, &edge.start, &edge.end);
+    edge.curve = curve;
+    edge.t0 = line.project(from);
+    edge.t1 = line.project(to);
+    for (traverse.coedgesOfEdge(body, e)) |c| {
+        if (c != .none) body.coedge(c).same_sense = !body.coedge(c).same_sense;
+    }
+    // The edge's own coedge its partner: the one leaving its new start, as a builder
+    // making the edge from that end would record it
+    edge.coedge = body.coedge(edge.coedge).partner;
+}
+
+test "simplify: a short edge collapses into the same end whichever way it runs" {
+    // The audit of 2026-11-22: a short edge collapsed into its start, and which end is its
+    // start goes by its source edge's direction (or a section line's sign), which follows
+    // the operands' order and placement. The gap the kept vertex needs to hold the lines
+    // moved to it, and with it made against refused (`gap_too_large`), goes by the end
+    // kept. A box's corner split off by an edge to a vertex 1.96e-5 from it, the edge up
+    // moved to that vertex on a line whose foot is off the corner by 3.96e-5: kept, the
+    // corner needs a gap past the zone to hold that line, the new vertex none for the
+    // corner's two edges. The short edge run each way, the same result either way
+    var results: [2]struct { refused: bool, vertices: usize, kept: ?Vec3 } = undefined;
+    for ([_]bool{ false, true }) |reversed| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var body = try primitives.box(testing.allocator, tol, 1, 1, 1, false, &diag);
+        defer body.deinit();
+        const origin: Vec3 = .{ 0, 0, 0 };
+        const top: Vec3 = .{ 0, 0, 1 };
+        const corner = vertexAt(&body, origin);
+        var up: types.CoedgeIndex = .none;
+        var around = traverse.Umbrella.init(&body, corner);
+        while (try around.next()) |c| {
+            if (body.point(body.coedgeEnd(c))[2] == 1) up = c;
+        }
+        var from_up = traverse.Umbrella.initFrom(&body, up);
+        _ = try from_up.next();
+        const next_around = (try from_up.next()).?;
+        const point = try body.geometry.addPoint(testing.allocator, SHORT_FAR);
+        const short = try body.geometry.addLine(testing.allocator, curves.Line.through(origin, SHORT_FAR).?);
+        const made = try euler.mevSplitVertex(&body, up, next_around, point, .{ .curve = short, .t0 = 0, .t1 = vec.length(SHORT_FAR) });
+        // The edge up on the line from its foot to the top corner, with the gap that holds
+        // it to the box's sides, and its ends' gaps the same
+        const up_edge = body.coedge(up).edge;
+        const from_far = body.edge(up_edge).start == made.vertex;
+        const line = if (from_far) curves.Line.through(SHORT_FOOT, top).? else curves.Line.through(top, SHORT_FOOT).?;
+        body.edge(up_edge).curve = try body.geometry.addLine(testing.allocator, line);
+        body.edge(up_edge).t0 = line.project(if (from_far) SHORT_FAR else top);
+        body.edge(up_edge).t1 = line.project(if (from_far) top else SHORT_FAR);
+        body.edge(up_edge).gap = SHORT_LINE_GAP;
+        body.vertex(made.vertex).gap = SHORT_LINE_GAP;
+        body.vertex(vertexAt(&body, top)).gap = SHORT_LINE_GAP;
+        if (reversed) try reverseEdge(&body, made.edge);
+        var before = try check.run(testing.allocator, &body, .geometric);
+        defer before.deinit(testing.allocator);
+        try testing.expectEqual(diagnostics.Code.edge_too_short, before.first().?.code);
+        const i: usize = @intFromBool(reversed);
+        simplify.run(&body, &diag, null) catch |err| {
+            try testing.expectEqual(error.Degenerate, err);
+            results[i] = .{ .refused = true, .vertices = 0, .kept = null };
+            continue;
+        };
+        try expectValid(&body);
+        const kept: ?Vec3 = for (body.vertices.items, 0..) |v, k| {
+            const p = body.point(types.VertexIndex.of(k));
+            if (!v.tombstone and p[2] == 0 and vec.length(p) < 1e-3) break p;
+        } else null;
+        results[i] = .{ .refused = false, .vertices = body.counts().vertices, .kept = kept };
+    }
+    errdefer std.debug.print("start kept: {any}\nend kept: {any}\n", .{ results[0], results[1] });
+    try testing.expectEqual(results[0].refused, results[1].refused);
+    try testing.expectEqual(results[0].vertices, results[1].vertices);
+    try testing.expectEqual(results[0].kept, results[1].kept);
 }

@@ -789,7 +789,12 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    strip along it, became one face lying on a third: find br, 2026-11-20); remove vertices of
    valence two on a single curve, or on two lines the same within the tolerance (the
    later edge given the earlier's line: OCCT's `UnifySameDomain` joining edges, D28);
-   collapse edges below `δ`, the vertex kept given the gap that holds the lines moved to it
+   collapse edges below `δ` into the end nearer the lines that move to it (`cheaperEnd`:
+   the end whose largest distance from the other end's edges' lines is the smaller, each
+   end its own point as the paves merged it; kept at its start, which goes by the way the
+   edge runs and so by the operands' order, a corner needed a gap past the zone where the
+   other end needed one within it, the audit of 2026-11-22), the vertex kept given the gap
+   that holds the lines moved to it
    (as the builder gives a vertex it puts on an edge; the 10K session, 2026-11-18); every
    edge it edits covered again where it now ends (`simplify.coverEdge`, the one rule with
    the builder's `coverFaces`: a run joined into one edge gives the run's ends the joined

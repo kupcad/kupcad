@@ -544,8 +544,9 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
         if (p == .none or body.coedge(c).loop == body.coedge(p).loop) continue;
         if ((traverse.loopLength(body, body.coedge(c).loop) catch return corrupt(diag)) <= 3) continue;
         if ((traverse.loopLength(body, body.coedge(p).loop) catch return corrupt(diag)) <= 3) continue;
-        const keep = body.coedgeStart(c);
-        euler.kevMerge(body, c) catch |err| switch (err) {
+        const out = try cheaperEnd(body, c, scale);
+        const keep = body.coedgeStart(out);
+        euler.kevMerge(body, out) catch |err| switch (err) {
             error.Invalid => continue,
             else => return eulerError(diag, err),
         };
@@ -569,6 +570,43 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
         changed = true;
     }
     return changed;
+}
+
+/// Of short edge `c`'s two ends, the coedge leaving the one to keep (`kevMerge` keeps the
+/// start of the coedge it is given): the end nearer the lines that move to it, the largest
+/// distance from it to a line of the other end's edges, so the gap it takes to hold them
+/// (`coverLine`) is the smaller, and made against refused (`gap_too_large`) does not go by
+/// which way the edge runs or which of its coedges it records, which follow the operands'
+/// order (the audit of 2026-11-22: kept at its start, a corner needed a gap past the zone
+/// for a line moved to it, where the other end needed one within it). Each end stays its
+/// own point, as the paves merged it (D28; OCCT's `MakeVertex` would move it to the middle
+/// of the two). The two as far to rounding keep the start.
+fn cheaperEnd(body: *const Body, c: types.CoedgeIndex, scale: f64) Error!types.CoedgeIndex {
+    const partner = body.coedge(c).partner;
+    const start = body.coedgeStart(c);
+    const end = body.coedgeEnd(c);
+    const short = body.coedge(c).edge;
+    const reach_start = farthestLine(body, start, end, short);
+    const reach_end = farthestLine(body, end, start, short);
+    if (canonical.sameToRounding(reach_start, reach_end, scale)) return c;
+    return if (reach_end < reach_start) partner else c;
+}
+
+/// The largest distance from vertex `keep` to the line of an edge at vertex `gone`, other
+/// than `short`, the edge between them: what holding the edges `gone` would move to `keep`
+/// takes.
+fn farthestLine(body: *const Body, keep: types.VertexIndex, gone: types.VertexIndex, short: types.EdgeIndex) f64 {
+    const p = body.point(keep);
+    var farthest: f64 = 0;
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or i == @backingInt(short) or (e.start != gone and e.end != gone)) continue;
+        const line = switch (body.geometry.curve(e.curve)) {
+            .line => |l| l,
+            else => continue,
+        };
+        farthest = @max(farthest, canonical.lineOffset(line, p));
+    }
+    return farthest;
 }
 
 /// Vertex `v`'s gap grown to cover its distance from `line` beyond the intersection
