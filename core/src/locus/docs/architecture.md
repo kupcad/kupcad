@@ -1559,7 +1559,10 @@ the table (`-Dupdate-snapshots`) and are the body reader's fuzz seeds too.
 - **Fuzz**: coverage-guided, as KupCAD's language is fuzzed (`std.testing.fuzz` with a
   `Smith` choosing the input, `zig build fuzz-run -Dfuzz-runs=<runs>` searching from a
   corpus nightly and failing on a find, which Zig 0.17's `zig build fuzz --fuzz=<runs>`
-  reports but exits 0 on; a plain test run replaying the corpus): the body JSON reader
+  reports but exits 0 on; a plain test run replaying the corpus; searching in ReleaseSafe,
+  `-Doptimize=safe`, which keeps every check Debug makes but the testing allocator's stack
+  traces at 10 to 80 times the runs, a find replaying bit for bit in Debug, 2026-11-21;
+  the sessions until then ran Debug, as fuzz-run did not pass the mode on): the body JSON reader
   and later the STEP reader on any bytes; the 2D kernel on generated rings of points on a
   coarse grid with operation chains (M2); the overlay alone on generated arrangements of
   near-tangent arcs, its labels checked at a point inside each face against each input's

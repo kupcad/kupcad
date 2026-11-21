@@ -13,8 +13,10 @@
 //! too: a watchdog stops a run past its wall-clock bound with a panic), and its line is
 //! printed (and kept in the output) with the failure.
 //!
-//! Arguments: the zig executable, the cache directory, the run count (`--fuzz=`'s), and the
-//! fuzz target (`-Dfuzz-target=`'s), or none for every target.
+//! Arguments: the zig executable, the cache directory, the run count (`--fuzz=`'s), the
+//! optimize mode (`-Doptimize=`'s: the outer build's, which the session would not inherit,
+//! so `zig build fuzz-run -Doptimize=safe` fuzzes a ReleaseSafe build), and the fuzz target
+//! (`-Dfuzz-target=`'s), or none for every target.
 
 const std = @import("std");
 
@@ -33,13 +35,14 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 4 or args.len > 5) {
-        try std.Io.File.stderr().writeStreamingAll(io, "usage: fuzz_run ZIG CACHE_DIR RUNS [TARGET]\n");
+    if (args.len < 5 or args.len > 6) {
+        try std.Io.File.stderr().writeStreamingAll(io, "usage: fuzz_run ZIG CACHE_DIR RUNS OPTIMIZE [TARGET]\n");
         std.process.exit(2);
     }
     const zig = args[1];
     const cache = args[2];
     const runs = args[3];
+    const optimize = args[4];
     const fuzz_dir = try std.fs.path.join(arena, &.{ cache, "f" });
     const crash = try std.fs.path.join(arena, &.{ fuzz_dir, "crash" });
     const output_path = try std.fs.path.join(arena, &.{ fuzz_dir, "fuzz-output.txt" });
@@ -57,8 +60,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(arena, &.{ zig, "build", "fuzz", try std.fmt.allocPrint(arena, "--fuzz={s}", .{runs}) });
-    if (args.len == 5) try argv.append(arena, try std.fmt.allocPrint(arena, "-Dfuzz-target={s}", .{args[4]}));
+    try argv.appendSlice(arena, &.{ zig, "build", "fuzz", try std.fmt.allocPrint(arena, "--fuzz={s}", .{runs}), try std.fmt.allocPrint(arena, "-Doptimize={s}", .{optimize}) });
+    if (args.len == 6) try argv.append(arena, try std.fmt.allocPrint(arena, "-Dfuzz-target={s}", .{args[5]}));
     var child = try std.process.spawn(io, .{ .argv = argv.items, .stdout = .inherit, .stderr = .pipe });
 
     // The session's output, echoed as it comes and kept

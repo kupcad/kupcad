@@ -780,10 +780,13 @@ pub fn build(b: *std.Build) void {
             fuzz_step.dependOn(&b.addRunArtifact(locus_fuzz_tests).step);
         }
 
-        // `zig build fuzz-run [-Dfuzz-target=T] [-Dfuzz-runs=N]`: a `zig build fuzz --fuzz=N`
-        // session whose exit status is what it found (scripts/fuzz_run.zig): Zig 0.17's
-        // build runner reports a failing input and saves it as f/crash in the cache, but
-        // exits 0, counting only the steps it made before fuzzing. The nightly runs this.
+        // `zig build fuzz-run [-Dfuzz-target=T] [-Dfuzz-runs=N] [-Doptimize=M]`: a `zig build
+        // fuzz --fuzz=N` session in this build's optimize mode, whose exit status is what it
+        // found (scripts/fuzz_run.zig): Zig 0.17's build runner reports a failing input and
+        // saves it as f/crash in the cache, but exits 0, counting only the steps it made
+        // before fuzzing. The nightly runs this, Locus's targets in ReleaseSafe: the same
+        // checks as Debug (assertions, safety checks, the structural checker, leaks, strict
+        // floats) at 20 to 60 times the runs; a find replays bit for bit in Debug.
         const fuzz_runs = b.option([]const u8, "fuzz-runs", "How many runs `zig build fuzz-run` fuzzes for (--fuzz's count: 10K, 1M)") orelse "10K";
         const fuzz_run_exe = b.addExecutable(.{
             .name = "fuzz_run",
@@ -807,6 +810,7 @@ pub fn build(b: *std.Build) void {
         fuzz_run.addFileArg(std.Build.LazyPath.zig_exe);
         fuzz_run.addDirectoryArg(std.Build.LazyPath.cache_root);
         fuzz_run.addArg(fuzz_runs);
+        fuzz_run.addArg(@tagName(optimize));
         if (fuzz_target) |t| fuzz_run.addArg(@tagName(t));
         fuzz_run.setCwd(b.path("."));
         fuzz_run.has_side_effects = true;

@@ -48,25 +48,31 @@ jobs:
           # small TrueType and CFF seeds (src/core/test_fonts).
           - target: fonts
             runs: 2M
+          # Locus's targets fuzz a ReleaseSafe build: the same checks as Debug (assertions,
+          # safety checks, the structural checker, leaks, strict floats) without the testing
+          # allocator's stack traces, at 10 to 80 times the runs; a find replays bit for bit in
+          # Debug. Debug's 10K of `locus` took 80 minutes here (2026-11-21), its 5K of
+          # `locus_solids` 23 and its 500K of `locus_overlay` 43; ReleaseSafe ran them 82, 57
+          # and 10 times as fast on an M-series Mac (2026-11-21), so each count below is about
+          # an hour here, with room under the job's limit.
           # Locus, the B-Rep kernel: its body JSON reader on bytes and its 2D kernel on
           # generated sketch chains (src/locus/src/fuzz_test.zig); a chain builds up to four
           # sheets, offsets one in sixteen by an extreme, and runs its booleans twice over for
-          # the area identities, in Debug with the testing allocator's stack traces: 200K a
-          # target took 133 minutes on an M-series Mac (2026-11-09), so this is about 35 there
-          # and within the 75 or so the others take on a slower hosted runner.
+          # the area identities.
           - target: locus
-            runs: 10K
+            runs: 300K
+            optimize: safe
           # Locus's overlay on generated arrangements alone (near-tangent arcs, points a
-          # rounding off the grid), each checked against its inputs by exact point counts:
-          # 100K took 5.5 minutes on an M-series Mac (2026-11-12), so this is about 30 there.
+          # rounding off the grid), each checked against its inputs by exact point counts.
           - target: locus_overlay
-            runs: 500K
+            runs: 4M
+            optimize: safe
           # Locus's booleans of solids alone: chains of boxes and hulls on a coarse grid,
           # each step all three booleans checked by the checker, the overlap rules and the
-          # volume identities, in Debug: about 0.6 s a run on an M-series Mac (2026-11-13),
-          # so this is about 50 minutes there.
+          # volume identities.
           - target: locus_solids
-            runs: 5K
+            runs: 400K
+            optimize: safe
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,7 +102,8 @@ jobs:
         # failure: Zig 0.17's `zig build fuzz --fuzz=N` reports it but exits 0, counting only
         # the steps before fuzzing. It clears a crash the cache brought back, and keeps the
         # session's output (with a Locus target's `replay:` line) beside the crash it saves.
-        run: zig build fuzz-run -Dfuzz-target=${{ matrix.target }} -Dfuzz-runs=${{ matrix.runs }}
+        # A target with no `optimize` fuzzes Debug.
+        run: zig build fuzz-run -Doptimize=${{ matrix.optimize || 'debug' }} -Dfuzz-target=${{ matrix.target }} -Dfuzz-runs=${{ matrix.runs }}
 
       # The crash bytes and the session's output: a Locus find's `replay:` line, copied into
       # a file, replays with `zig build test -Dfuzz-replay=FILE` in core/src/locus
