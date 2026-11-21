@@ -181,7 +181,8 @@ const Section = struct {
         const surface = body.geometry.surface(body.face(f).surface);
         const traced = surface_surface.planeSurface(self.plane, surface, near, extent, self.tol, self.diag) catch |e| return self.refused(e, f);
         if (traced.kind != .curves) return;
-        for (traced.slice()) |curve| try self.tracePieces(f, curve);
+        const traces = traced.slice();
+        for (traces, 0..) |curve, k| try self.tracePieces(f, curve, traces, k);
     }
 
     /// A refusal of `planeSurface`'s, its finding naming face `f`.
@@ -271,9 +272,16 @@ const Section = struct {
         return cut;
     }
 
-    /// The pieces of `curve` (the plane's trace on face `f`'s surface) inside the face,
-    /// between the face's boundary points on it.
-    fn tracePieces(self: *Section, f: types.FaceIndex, curve: Curve) Error!void {
+    /// The pieces of `curve` (the plane's trace on face `f`'s surface, `traces[which]` of its
+    /// traces) inside the face, between the face's boundary points on it: every point the
+    /// cuts put on the plane (`sideOf`, `cutOf`), each a mark of the trace nearest it, not
+    /// measured again. A vertex on the plane within the zone lies its height over the sine
+    /// of the face's slope from the trace, so on a face under 30° to the plane farther than
+    /// the intersection tolerance: dropped by that distance, the face's trace kept one
+    /// mark and the outline was left open at the vertex (the audit of decisions made twice,
+    /// 2026-11-22), where OCCT's section takes its vertices from the pave filler's
+    /// vertex–face and edge–face results as they are.
+    fn tracePieces(self: *Section, f: types.FaceIndex, curve: Curve, traces: []const Curve, which: usize) Error!void {
         const periodic = switch (curve) {
             .line => false,
             .circle => true,
@@ -281,12 +289,8 @@ const Section = struct {
         };
         self.marks.clearRetainingCapacity();
         for (self.points.items) |p| {
-            const t = switch (curve) {
-                .line => |line| line.project(p),
-                .circle => |circle| circle.project(p),
-                else => unreachable,
-            };
-            if (vec.distance(curve.eval(t), p) <= self.tol.xsect) try self.marks.append(self.allocator, .{ .t = t, .p = p });
+            const t = projectOnto(curve, p);
+            if (nearestTrace(traces, p) == which) try self.marks.append(self.allocator, .{ .t = t, .p = p });
         }
         std.mem.sort(Mark, self.marks.items, {}, Mark.before);
         const marks = self.marks.items;
@@ -304,6 +308,33 @@ const Section = struct {
             const b: Mark = if (k + 1 < marks.len) marks[k + 1] else .{ .t = marks[0].t + TWO_PI, .p = marks[0].p };
             try self.piece(f, curve, a, b);
         }
+    }
+
+    /// The parameter of `p`'s foot on trace `curve` (a line or a circle).
+    fn projectOnto(curve: Curve, p: Vec3) f64 {
+        return switch (curve) {
+            .line => |line| line.project(p),
+            .circle => |circle| circle.project(p),
+            else => unreachable,
+        };
+    }
+
+    /// Which of a face's traces `p` lies nearest (the first of two as near): a lying
+    /// cylinder's two lines each take the points of their own side.
+    fn nearestTrace(traces: []const Curve, p: Vec3) usize {
+        var best: usize = 0;
+        var nearest = std.math.inf(f64);
+        for (traces, 0..) |curve, k| {
+            const d = switch (curve) {
+                .line, .circle => vec.distance(curve.eval(projectOnto(curve, p)), p),
+                else => continue,
+            };
+            if (d < nearest) {
+                nearest = d;
+                best = k;
+            }
+        }
+        return best;
     }
 
     /// The piece of `curve` from `a` to `b`, kept when its middle is inside face `f` by the

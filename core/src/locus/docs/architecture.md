@@ -707,7 +707,10 @@ its axis, a sphere and a torus along its axis in circles; a plane only touching 
 `tangent`; the rest waits for M5), and each edge's crossings with the plane from
 `intersect/curve_surface.zig`, computed once per edge so both faces of an edge split their
 traces at the same points. The imprint on a face is the trace split at the face's boundary
-points and each piece kept when its middle is inside the face by the face's loops, not by the
+points, every point the cuts put on the plane a mark of the trace nearest it, not measured
+again (a vertex on the plane within the zone lies its height over the sine of the face's
+slope from the trace, past the intersection tolerance under 30°, and was dropped, the
+outline left open at it; the audit of decisions made twice, 2026-11-22), and each piece kept when its middle is inside the face by the face's loops, not by the
 zone about its boundary (a piece between two boundary points is in the face or out of it
 whole, and a face narrower than two zones has no point past the zone: a strip 2e-5 wide
 extruded, the trace across its end face was dropped and the section left open, find cc,

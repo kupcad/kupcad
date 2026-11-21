@@ -22,6 +22,7 @@ const sweep = @import("../construct/sweep.zig");
 const transform = @import("../construct/transform.zig");
 const test_bodies = @import("../construct/test_bodies.zig");
 const mass = @import("../measure/mass.zig");
+const hull = @import("../construct/hull.zig");
 const section = @import("section.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
@@ -38,6 +39,14 @@ const TAB_LINES = [_][2]f64{ .{ 4.99998, 5 }, .{ 0.99998, 1 }, .{ 6.99998, 7 }, 
 /// How far the tabbed square is extruded, and the heights it is sliced at.
 const TAB_EXTRUSION: f64 = 3;
 const TAB_HEIGHTS = [_]f64{ 0, 0.5, 1.11, 1.5, 2.9 };
+/// The slopes (degrees) of a wedge's face to the slicing plane under 30°, where a vertex
+/// on the plane within the zone lies farther than the intersection tolerance from the
+/// face's trace (its height over the sine), and how far that vertex is over the slicing
+/// height (in zones, under it negative).
+const WEDGE_SLOPES = [_]f64{ 10, 20, 29 };
+const WEDGE_RISES = [_]f64{ 0.4, 0.6, 0.9, -0.4, -0.6, -0.9 };
+/// The height a wedge is sliced at.
+const WEDGE_HEIGHT: f64 = 0.5;
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
 fn sliced(body: *const Body, height: f64) !Body {
@@ -347,5 +356,66 @@ test "slice: a side face two zones wide (a tab's end) bounds the section at ever
             errdefer std.debug.print("at {d}\n", .{z});
             try expectSection(&solid, z, want, 1);
         }
+    };
+}
+
+/// The area of the convex section of the tetrahedron of corners `corners` at height `z`:
+/// its edges' crossings of the plane, taken about their centroid.
+fn tetrahedronSection(corners: [4]Vec3, z: f64) f64 {
+    var points: [6]Vec2 = undefined;
+    var n: usize = 0;
+    for (0..4) |i| for (i + 1..4) |j| {
+        const a = corners[i];
+        const b = corners[j];
+        if ((a[2] - z) * (b[2] - z) >= 0) continue;
+        const t = (z - a[2]) / (b[2] - a[2]);
+        points[n] = .{ a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]) };
+        n += 1;
+    };
+    var c: Vec2 = .{ 0, 0 };
+    for (points[0..n]) |p| c = .{ c[0] + p[0] / @as(f64, @floatFromInt(n)), c[1] + p[1] / @as(f64, @floatFromInt(n)) };
+    const Around = struct {
+        c: Vec2,
+        fn less(self: @This(), p: Vec2, q: Vec2) bool {
+            return std.math.atan2(p[1] - self.c[1], p[0] - self.c[0]) < std.math.atan2(q[1] - self.c[1], q[0] - self.c[0]);
+        }
+    };
+    std.mem.sort(Vec2, points[0..n], Around{ .c = c }, Around.less);
+    var twice: f64 = 0;
+    for (0..n) |i| {
+        const p = points[i];
+        const q = points[(i + 1) % n];
+        twice += p[0] * q[1] - q[0] * p[1];
+    }
+    return @abs(twice) / 2;
+}
+
+test "slice: a vertex on the plane within the zone, on a face at under 30° to it, bounds that face's trace, turned and mirrored" {
+    // A tetrahedron with a face at `WEDGE_SLOPES` to the slicing plane, one corner of it
+    // `WEDGE_RISES` zones over the height (on the plane, `sideOf`), one over it and one
+    // under: the face's trace runs from that corner to the crossing of the other two's
+    // edge. The corner lies its height over the sine of the slope from the trace, past the
+    // intersection tolerance under 30°, and was dropped as a mark, the face's trace left
+    // with one: the outline open at the corner (the audit of decisions made twice,
+    // 2026-11-22). A point the cuts put on the plane is the face's mark, not measured again
+    for (WEDGE_SLOPES) |degrees| for (WEDGE_RISES) |rise| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("slope {d}°, corner {d} zones over, quarter turns {d}, mirrored {}\n", .{ degrees, rise, quarter, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const slope = @tan(degrees * PI / 180);
+        const v_z = WEDGE_HEIGHT + rise * tol.zone;
+        const drawn = [4]Vec3{ .{ 0, 0, v_z }, .{ 1, 1, v_z + slope }, .{ -1, 1, v_z - slope }, .{ 0, 0.5, WEDGE_HEIGHT - 1 } };
+        var corners: [4]Vec3 = undefined;
+        for (drawn, 0..) |p, i| {
+            const q = quarterTurned(.{ p[0], p[1] }, quarter, mirrored);
+            corners[i] = .{ q[0], q[1], p[2] };
+        }
+        var solid = try hull.hull(testing.allocator, tol, &corners, &diag);
+        defer solid.deinit();
+        var sheet = try sliced(&solid, WEDGE_HEIGHT);
+        defer sheet.deinit();
+        try testing.expectEqual(@as(usize, 1), sheet.counts().faces);
+        // The corner taken onto the plane moves the section by under its height
+        try testing.expectApproxEqRel(tetrahedronSection(corners, WEDGE_HEIGHT), try areaOf(&sheet), 1e-3);
     };
 }
