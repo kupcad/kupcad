@@ -81,6 +81,9 @@ pub const CORPUS = [_][]const u8{
     // a comment after its closing quote, which went below the statement, and a blank line
     // above it on the second run
     "\"\n\"#1\x02z",
+    // The nightly fuzzer's find of 2026-11-21: an `attr_reader` given a bare name, the
+    // colon of its symbol lost, which was "internal compiler error"
+    "class Part\n  attr_reader(size)\n  attr_writer(:size)\nend\nA",
     // Paths: open 2D geometry, joined, closed and stroked
     "p = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])\n[p.named(\"edge\"), p.close, p.stroke(2, cap: :square).extrude(1), arc(r: 5, start: [0, 0], to: [8, 0], large: true).rotate(45)]",
     // Quoted symbols, read as the string in the same quotes: escapes, interpolation

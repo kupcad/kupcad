@@ -2203,6 +2203,28 @@ test "Compiler: a failed compile reports where and why" {
     try expectCompileError(many_args, error.TooManyArguments, 1, 1, "a call takes at most 255 arguments");
 }
 
+test "Compiler: an attr_reader, attr_writer or attr_accessor given anything but a name is a compile error" {
+    // The accessors are defined while compiling, from names written as symbols or strings.
+    // Anything else was "internal compiler error" (the nightly front-end fuzzer, run
+    // 44897239263: `attr_reader(size)` in a class, the colon of `:size` lost), and a name
+    // under a keyword was taken as if the keyword weren't there.
+    const cases = [_]struct { src: []const u8, line: u32, col: u32, message: []const u8 }{
+        .{ .src = "class P\n  attr_reader(size)\nend", .line = 2, .col = 3, .message = "attr_reader takes names as symbols or strings, such as attr_reader(:size)" },
+        .{ .src = "class P\n  attr_writer :a, 1\nend", .line = 2, .col = 3, .message = "attr_writer takes names as symbols or strings, such as attr_writer(:size)" },
+        .{ .src = "class P\n  attr_accessor(:a, [:b])\nend", .line = 2, .col = 3, .message = "attr_accessor takes names as symbols or strings, such as attr_accessor(:size)" },
+        .{ .src = "class P\n  attr_reader(*names)\nend", .line = 2, .col = 3, .message = "attr_reader takes names as symbols or strings, such as attr_reader(:size)" },
+        .{ .src = "class P\n  attr_reader(name: :size)\nend", .line = 2, .col = 3, .message = "attr_reader takes names as symbols or strings, such as attr_reader(:size)" },
+        .{ .src = "class P\n  attr_reader(:\"a#{1}\")\nend", .line = 2, .col = 3, .message = "attr_reader takes names as symbols or strings, such as attr_reader(:size)" },
+        .{ .src = "class P\n  class << self\n    attr_reader(size)\n  end\nend", .line = 3, .col = 5, .message = "attr_reader takes names as symbols or strings, such as attr_reader(:size)" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectCompileError(case.src, error.InvalidAttribute, case.line, case.col, case.message);
+    }
+    // Names as symbols and strings, in parentheses or not, still define the accessors
+    try expectRunsTo("class P\n  attr_accessor :a, \"b\"\n  attr_reader(:c)\n  def initialize\n    @c = 3\n  end\nend\np = P.new\np.a = 1\np.b = 2\np.a + p.b + p.c", 6);
+}
+
 /// Compiles the single expression `build` makes and returns the compile error's message.
 /// The diagnostic of compiling the tree `build` makes, which must fail with `expected`
 /// (its message is the caller's to free).

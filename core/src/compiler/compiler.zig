@@ -44,6 +44,9 @@ pub const CompileError = error{
     OutsideMethod,
     /// `*` or `**` outside an array, a hash or a call's arguments.
     MisplacedSplat,
+    /// `attr_reader`, `attr_writer` or `attr_accessor` given something other than a name
+    /// written as a symbol or a string.
+    InvalidAttribute,
 };
 
 /// The first error of a failed compile: where it happened and what went wrong, for callers
@@ -77,6 +80,7 @@ fn describeError(err: CompileError) []const u8 {
         error.VariableAlreadyDeclared => "this name is already defined",
         error.OutsideMethod => "yield, block_given? and super are only valid inside a def",
         error.MisplacedSplat => "'*' and '**' only spread values inside an array, a hash or a call's arguments",
+        error.InvalidAttribute => "attr_reader, attr_writer and attr_accessor take names as symbols or strings",
         error.UnknownNode, error.CorruptedBytecode => "internal compiler error",
     };
 }
@@ -98,6 +102,7 @@ fn codeOf(err: CompileError) common_errors.Code {
         error.TooManyGlobalCaches => .@"too-many-global-uses",
         error.OutsideMethod => .@"outside-method",
         error.MisplacedSplat => .@"misplaced-splat",
+        error.InvalidAttribute => .@"invalid-attribute",
     };
 }
 
@@ -2438,19 +2443,23 @@ pub const Compiler = struct {
                 return true;
             }
         } else if ((std.mem.eql(u8, func_name, "attr_accessor") or std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_writer")) and mc.receiver == .none) {
+            // The accessors are defined here, while compiling: each argument is a name
+            // written as a symbol or a string, plain (no keyword, splat or block). Anything
+            // else was "internal compiler error", and a keyword's name was dropped. The
+            // statement isn't compiled as a node, so its place is taken here: an error is
+            // reported at it, and the accessors' code is the line's
+            if (stmt_node.main_token < self.token_starts.len) self.current_source_offset = self.token_starts[stmt_node.main_token];
             const args = self.tree.getNamedArgs(mc.args);
             for (args) |arg| {
                 const arg_node = self.tree.getNode(arg.value).?;
-                if (arg_node.tag == .symbol or arg_node.tag == .string) {
-                    const name_str = self.tree.getString(self.tree.stringId(arg_node));
-                    if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAccessor(self, name_str, .reader, is_singleton);
-                    }
-                    if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAccessor(self, name_str, .writer, is_singleton);
-                    }
-                } else {
-                    return error.UnknownNode;
+                const named = arg.name == .none and arg.modifier == null and (arg_node.tag == .symbol or arg_node.tag == .string);
+                if (!named) return self.fail(error.InvalidAttribute, "{s} takes names as symbols or strings, such as {s}(:size)", .{ func_name, func_name });
+                const name_str = self.tree.getString(self.tree.stringId(arg_node));
+                if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                    try macros.emitAccessor(self, name_str, .reader, is_singleton);
+                }
+                if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                    try macros.emitAccessor(self, name_str, .writer, is_singleton);
                 }
             }
             return true;

@@ -306,6 +306,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `misplaced-splat` | A `*` or `**` outside an array, a hash or a call's arguments. |
 | `outside-loop` | A `break` or `next` outside a loop or block. |
 | `outside-method` | A `yield`, `block_given?` or `super` outside a method. |
+| `invalid-attribute` | An `attr_reader`, `attr_writer` or `attr_accessor` given something other than a name written as a symbol or a string (`attr_reader(size)`; write `attr_reader(:size)`). They define their methods while the script compiles, so a name can't be computed. |
 | `builtin-redefined` | A built-in, such as `cube`, assigned or redefined. |
 | `import-collision` | An import named like a variable of the file. |
 | `export-before-definition` | An `export` of a name the file sets only further down (`export { w }` above `w = 1`): an export reads its names where it stands, so move it below them. |
