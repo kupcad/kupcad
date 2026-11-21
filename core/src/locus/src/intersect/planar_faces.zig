@@ -111,18 +111,100 @@ pub fn pointBefore(p: Vec3, q: Vec3) bool {
 
 /// Whether point `p` comes before `q` along a line of direction `line` (`lineDirection`'s):
 /// by their positions along it, two at one position by the points themselves
-/// (`pointBefore`). Points on two faces lie within the tolerance of the faces' line, not on
-/// it, so two can be at one position and apart across it, and their order decides which
-/// gaps are pieces: by their numbering, a hull's bottom edge on a box's bottom face and the
-/// box's edge on the hull's side, their ends at the box's side 3.2e-5 apart, were joined
-/// one way and not the other with the operands swapped, the union's faces differing (the
-/// locus fuzzer's sessions on 3681979b, 2026-11-19, be).
+/// (`pointBefore`). The first, exact pass of `Along.sort`, which takes positions the same to
+/// rounding as one and orders those across the line.
 pub fn alongBefore(line: Vec3, p: Vec3, q: Vec3) bool {
     const sp = vec.dot(p, line);
     const sq = vec.dot(q, line);
     if (sp != sq) return sp < sq;
     return pointBefore(p, q);
 }
+
+/// The order of points two planar faces share along their line (D28's ties): by their
+/// positions along it; positions the same to rounding (`canonical.sameToRounding`) by their
+/// positions across it, along `line × (n_a + n_b)`, the faces' outward normals summed.
+/// Points on two faces lie within the tolerance of the faces' line, not on it, so two can
+/// be at one position and apart across it, and their order decides which gaps are pieces.
+/// The order does not change when the faces are swapped (the line's direction is the line's
+/// own, `lineDirection`, and the sum is symmetric) nor when they are moved whole: a move
+/// that turns the line's direction over reverses the positions along it and across it
+/// together, so the whole order reverses and the same consecutive pairs are gaps. By their
+/// numbering, which follows the operands', a hull's bottom edge on a box's bottom face and
+/// the box's edge on the hull's side, their ends at the box's side 3.2e-5 apart, were
+/// joined one way round and not the other (the sessions on 3681979b, be); by their
+/// coordinates, which a turn changes, the same two were joined in place and not turned an
+/// eighth about (1, 2, 3), where the two positions are one to rounding only and the line's
+/// direction turned over (audit of the ties, 2026-11-22). Faces facing opposite ways have
+/// no across direction either way round would agree on (their normals summed are noise),
+/// and two at one position along their line are refused (`at_tolerance`); so are two at
+/// one position across it too. Points within `one` of each other are one point, in any
+/// order (the overlap rules' marks, each face's corner on the other's plane once from each
+/// face, before they are merged), and tie with nothing.
+pub const Along = struct {
+    line: Vec3,
+    across: ?Vec3,
+    /// How near two points are one point.
+    one: f64,
+
+    pub fn init(line: Vec3, out_a: Vec3, out_b: Vec3, one: f64, tol: Tolerance) Along {
+        const opposite = vec.dot(out_a, out_b) < 0 and tol.parallel(out_a, out_b);
+        return .{ .line = line, .across = if (opposite) null else vec.normalized(vec.cross(line, vec.add(out_a, out_b))), .one = one };
+    }
+
+    /// Whether `x` and `y` are two points, more than `one` apart.
+    fn two(self: Along, x: Vec3, y: Vec3) bool {
+        return vec.distance(x, y) > self.one;
+    }
+
+    /// Sorts `items`, each a point by `pointOf(context, item)`, in this order; the first two
+    /// that tie, along and across or along with no across, or null when none do. Two tied
+    /// so keep the exact order (`alongBefore`) among themselves.
+    pub fn sort(self: Along, comptime T: type, items: []T, context: anytype, comptime pointOf: fn (@TypeOf(context), T) Vec3) ?[2]T {
+        const Exact = struct {
+            ctx: @TypeOf(context),
+            line: Vec3,
+            fn lessThan(o: @This(), x: T, y: T) bool {
+                return alongBefore(o.line, pointOf(o.ctx, x), pointOf(o.ctx, y));
+            }
+        };
+        std.mem.sort(T, items, Exact{ .ctx = context, .line = self.line }, Exact.lessThan);
+        var scale: f64 = 0;
+        for (items) |item| scale = @max(scale, canonical.magnitude(&.{pointOf(context, item)}));
+        var tie: ?[2]T = null;
+        var i: usize = 0;
+        while (i < items.len) {
+            var j = i + 1;
+            while (j < items.len and canonical.sameToRounding(vec.dot(pointOf(context, items[j - 1]), self.line), vec.dot(pointOf(context, items[j]), self.line), scale)) j += 1;
+            defer i = j;
+            if (j - i < 2) continue;
+            const run = items[i..j];
+            const across = self.across orelse {
+                for (run, 0..) |x, k| for (run[k + 1 ..]) |y| {
+                    if (tie == null and self.two(pointOf(context, x), pointOf(context, y))) tie = .{ x, y };
+                };
+                continue;
+            };
+            // Across, as far to rounding in the exact order (a stable sort of a short run)
+            const Across = struct {
+                ctx: @TypeOf(context),
+                across: Vec3,
+                scale: f64,
+                fn lessThan(o: @This(), x: T, y: T) bool {
+                    const kx = vec.dot(pointOf(o.ctx, x), o.across);
+                    const ky = vec.dot(pointOf(o.ctx, y), o.across);
+                    return kx < ky and !canonical.sameToRounding(kx, ky, o.scale);
+                }
+            };
+            std.sort.insertion(T, run, Across{ .ctx = context, .across = across, .scale = scale }, Across.lessThan);
+            for (run[0 .. run.len - 1], run[1..]) |x, y| {
+                const px = pointOf(context, x);
+                const py = pointOf(context, y);
+                if (tie == null and self.two(px, py) and canonical.sameToRounding(vec.dot(px, across), vec.dot(py, across), scale)) tie = .{ x, y };
+            }
+        }
+        return tie;
+    }
+};
 
 /// What planar faces `fa` of `a` and `fb` of `b` share, the pieces appended to `pieces`
 /// in order along the line. Both faces must be planar.
@@ -138,14 +220,25 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     if (marks.items.len == 0) return .apart;
     const along = lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse return .apart);
 
-    // Along the line, a mark within the zone of the one before it being that one
-    const Order = struct {
-        along: Vec3,
-        fn lessThan(self: @This(), p: Mark, q: Mark) bool {
-            return alongBefore(self.along, p.p, q.p);
-        }
-    };
-    std.mem.sort(Mark, marks.items, Order{ .along = along }, Order.lessThan);
+    // Along the line, a mark within the zone of the one before it being that one. Planes
+    // parallel within the angular tolerance have no line of their own (their normals'
+    // cross product is noise), and what the rules find of such faces is their distance
+    // (`nearest`), so their marks keep the exact order, whatever ties it has
+    const order = Along.init(along, outward(a, fa, frame_a), outward(b, fb, frame_b), tol.zone, tol);
+    if (tol.parallel(frame_a.z, frame_b.z)) {
+        const Exact = struct {
+            fn lessThan(line: Vec3, p: Mark, q: Mark) bool {
+                return alongBefore(line, p.p, q.p);
+            }
+        };
+        std.mem.sort(Mark, marks.items, along, Exact.lessThan);
+    } else {
+        // A body made: two marks at one place along and across the line to rounding (apart
+        // along the normals' sum) keep the exact order, their gaps either way round within
+        // the tolerance of each other; the boolean refuses them when it makes the body
+        // (`boolean/pave.zig`'s face–face)
+        _ = order.sort(Mark, marks.items, {}, markPoint);
+    }
     var kept: usize = 0;
     for (marks.items) |m| {
         if (kept > 0 and tol.samePoint(m.p, marks.items[kept - 1].p)) {
@@ -189,6 +282,15 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
         joined = next_joined;
     }
     return if (pieces.items.len > first) .crossing else .apart;
+}
+
+fn markPoint(_: void, m: Mark) Vec3 {
+    return m.p;
+}
+
+/// Planar face `f`'s outward normal: its plane's, turned by the face's sense.
+pub fn outward(body: *const Body, f: types.FaceIndex, frame: Frame) Vec3 {
+    return if (body.face(f).same_sense) frame.z else vec.neg(frame.z);
 }
 
 /// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives those

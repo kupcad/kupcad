@@ -1848,14 +1848,8 @@ const Filler = struct {
                     continue;
                 },
             };
-            const Order = struct {
-                points: []const Vec3,
-                line: Vec3,
-                fn lessThan(o: @This(), x: u32, y: u32) bool {
-                    return planar_faces.alongBefore(o.line, o.points[x], o.points[y]);
-                }
-            };
-            std.mem.sort(u32, both.items, Order{ .points = p.points.items, .line = line }, Order.lessThan);
+            const order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa, frame_a), planar_faces.outward(self.body(1), fb, frame_b), 0, p.tol);
+            if (order.sort(u32, both.items, p.points.items, mergedPoint)) |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces at one place along the faces' line to rounding, apart across it", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect });
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
                 const in_a = try self.placeIn(0, fa, mid, null);
@@ -2516,4 +2510,9 @@ fn welderError(diag: *Diagnostics, err: grid.Error) Error {
 
 fn corrupt(diag: *Diagnostics) Error {
     return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "an operand" });
+}
+
+/// Merged vertex `v`'s point among `points` (`planar_faces.Along.sort`'s accessor).
+fn mergedPoint(points: []const Vec3, v: u32) Vec3 {
+    return points[v];
 }

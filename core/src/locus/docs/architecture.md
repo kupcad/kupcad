@@ -854,9 +854,13 @@ importing only those before it, which the layering test holds):**
   then each face's merged vertices (its edges' paves and what the face stages found), and
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
   line (pointed by the line alone, its largest component positive, and two at one position
-  by the points themselves, not their numbers, so the operands' order changes neither, as
-  the overlap rules' `planar_faces.meet` sorts; a union's faces differed with the operands
-  swapped, the sessions on 3681979b, be), each gap whose middle is in both a section segment of each face it is inside of
+  to rounding by their positions across it, along the line crossed with the faces' outward
+  normals summed, `planar_faces.Along`, so neither the operands' order nor a move of the
+  solids whole changes which gaps are pieces, as the overlap rules' `planar_faces.meet`
+  sorts; two at one position across it too, or on faces facing opposite ways, refused
+  `at_tolerance`; a union's faces differed with the operands swapped, the sessions on
+  3681979b, be, and by the points' coordinates, which a turn changes, moved whole, the
+  audit of the ties, 2026-11-22), each gap whose middle is in both a section segment of each face it is inside of
   (a gap along a face's boundary is the run of its pave blocks there, OCCT's
   `IsExistingPaveBlock`, and that run's edges go into the result with their lines, D28:
   each line must lie on the other face's plane within `xsect` and the edge's gap at the
