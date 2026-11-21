@@ -969,7 +969,10 @@ importing only those before it, which the layering test holds):**
   2026-11-15 (the M0–M4 review, Leo's order; Hoffmann pp. 86–93, OCCT's builder) the seams
   come first: a fragment with pieces lying clearly on the other operand (along its edges,
   or sections whose middles lie in their faces beyond reach of the faces' boundaries,
-  `in_face.placeWithin`) takes its side from them, clear pieces disagreeing refused
+  `in_face.placeWithin`) takes its side from them (a face of the other in one plane with
+  the fragment's as the paves decided it, `Paves.inOnePlane`, for an edge's wedge as for a
+  section: a hull's top 0.8° off a plate's, its edge under the plate's top, was passed over
+  by angle and the strip beside it left to a ray, 2026-11-22), clear pieces disagreeing refused
   (`unclassified`), and its component takes it by contagion; only a component with no
   clear seam casts rays; a fragment no sample of which is clear of the other's boundary
   takes its side from a ray from a corner of it the paves put on nothing of the other

@@ -474,7 +474,7 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
             // nightly, 2026-11-18)
             var class: ?Class = null;
             for (seams.edgesOfPiece(range)) |e| {
-                const side = (try wedgeSide(paves, body, e, normal, into, diag)) orelse continue;
+                const side = (try wedgeSide(paves, other, e, face, normal, into, diag)) orelse continue;
                 if (side == .inside) return .{ .class = .inside, .clear = true };
                 class = side;
             }
@@ -493,7 +493,7 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
     }
 }
 
-/// The side of `body` that direction `into` leaves its edge `e` towards, in a face of
+/// The side of operand `other` that direction `into` leaves its edge `e` towards, in a face of
 /// normal `normal`: in the material between the edge's two faces, behind both at a convex
 /// edge and behind either at a concave one. A face of the two in one plane with the
 /// fragment's bounds the material along that plane, so the other face decides alone where
@@ -509,9 +509,20 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
 /// 2.1 tolerances tall at 15.5°, within the tolerance of it over the crossing, read the
 /// side's piece inside the hull outside, 2.2° off the hull's face: the 10K session on
 /// 2b26eef1; Leo, 2026-11-17); at the angular tolerance to rounding, refused
-/// (`at_tolerance`, D27). Null for a curved edge, an edge across the plane, `into` running
-/// onto that face (one region with it, the twins' to decide), or both faces in that plane.
-fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+/// (`at_tolerance`, D27). A face of the edge is in one plane with the fragment's face `face`
+/// as the paves decided it (`Paves.inOnePlane`), as for a section (`pieceSide`), not by
+/// the angle between them: a face parallel to the fragment's within the angular tolerance
+/// and not in one plane with it shows its side by the sign of the turn however small,
+/// and a narrow face the paves hold in the plane at any angle is in it (a hull's top
+/// 0.8° off a plate's, its edge 1.8e-4 under the plate's top and the top rising from it
+/// over the plate's side: the strip of the plate's top beside the edge, passed over as in
+/// the top's plane, was left to a ray, which read it outside, the edge with three faces;
+/// bl's configuration with the seam a piece of the hull's edge, the audit of decisions
+/// made twice, 2026-11-22). Null for a curved edge, an edge across the plane, `into`
+/// running onto a face in that plane (one region with it, the twins' to decide) or along
+/// a face to rounding, or both faces in that plane.
+fn wedgeSide(paves: *const Paves, other: u1, e: types.EdgeIndex, face: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+    const body = paves.operands[other];
     const edge = body.edge(e);
     const line = switch (body.geometry.curve(edge.curve)) {
         .line => |l| l,
@@ -525,11 +536,13 @@ fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal:
     const first = edge.coedge;
     const second = body.coedge(first).partner;
     if (first == .none or second == .none) return corrupt(diag);
-    const n1 = in_face.outwardNormal(body, body.loop(body.coedge(first).loop).face, .{ 0, 0 });
-    const n2 = in_face.outwardNormal(body, body.loop(body.coedge(second).loop).face, .{ 0, 0 });
+    const f1 = body.loop(body.coedge(first).loop).face;
+    const f2 = body.loop(body.coedge(second).loop).face;
+    const n1 = in_face.outwardNormal(body, f1, .{ 0, 0 });
+    const n2 = in_face.outwardNormal(body, f2, .{ 0, 0 });
     // Along the first face's loop, each face lying to the left of its own coedge
     const along = vec.scale(line.d, if (body.coedge(first).same_sense) 1 else -1);
-    const in_plane = [2]bool{ paves.tol.parallel(normal, n1), paves.tol.parallel(normal, n2) };
+    const in_plane = [2]bool{ paves.inOnePlane(1 - other, face, @backingInt(f1)), paves.inOnePlane(1 - other, face, @backingInt(f2)) };
     if (in_plane[0] and in_plane[1]) return null;
     if (in_plane[0] or in_plane[1]) {
         const face_n = if (in_plane[0]) n1 else n2;
@@ -538,10 +551,13 @@ fn wedgeSide(paves: *const Paves, body: *const Body, e: types.EdgeIndex, normal:
         if (vec.dot(into, onto) > 0) return null;
         return if (vec.dot(into, other_n) < 0) .inside else .outside;
     }
+    // Along a face to rounding, no side (as a section's, `pieceSide`)
+    const across = [2]f64{ vec.dot(into, n1), vec.dot(into, n2) };
+    if (@abs(across[0]) <= SIDE_ROUNDING or @abs(across[1]) <= SIDE_ROUNDING) return null;
     // Convex when the second face turns behind the first along the first's loop
     const convex = vec.dot(vec.cross(n1, n2), along) > 0;
-    const behind_first = vec.dot(into, n1) < 0;
-    const behind_second = vec.dot(into, n2) < 0;
+    const behind_first = across[0] < 0;
+    const behind_second = across[1] < 0;
     const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
     return if (inside) .inside else .outside;
 }

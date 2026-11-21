@@ -51,6 +51,10 @@ const TURN_PAST_ANGLE: f64 = 0.02;
 const SHALLOW_LIFTS = [_]f64{ 2.0000000063948848e-5, 6e-5, 1e-4, 1.5e-4, 2.5e-4 };
 /// The hull of those tests, as the fuzzer drew it: its top the four points at z = 4.
 pub const SHALLOW_HULL = [_]Vec3{ .{ 0, 3, 1 }, .{ 4, 3, 4 }, .{ 2, 3, 4 }, .{ 0, 1, 1 }, .{ 1, 4, 1 }, .{ 2, 0, 4 }, .{ 0, 1, 4 } };
+/// The hull of the tests of a top that shallow whose two corners under the plate's top are
+/// the ends of one of its edges (the seam a piece of that edge, not a section): its top
+/// from x = 0 to that edge at x = 2, the face beyond the edge sloping down into the plate.
+const EDGE_HULL = [_]Vec3{ .{ 0, 0, 4 }, .{ 2, 0, 4 }, .{ 2, 3, 4 }, .{ 0, 3, 4 }, .{ 4, 0, 2 }, .{ 4, 3, 2 }, .{ 0, 0, 1 }, .{ 0, 3, 1 }, .{ 4, 0, 1 }, .{ 4, 3, 1 } };
 /// The turns of the tests of a prism's face shallow to the face of the other operand its
 /// edge lies in (the ridge): parallel to that face within the angular tolerance and not in
 /// one plane with it (the second the solids fuzzer's turn at the tolerance), and past it.
@@ -5039,5 +5043,31 @@ test "degeneracy: a plate's edge along a hull's sloped face tilted under it, its
     for (SLOPE_TILT_AXES) |axis| for (SLOPE_TILTS) |angle| for (SLOPE_TILT_LIFTS) |lift| {
         errdefer std.debug.print("the hull nudged {e} in z, tilted {e} about {any}\n", .{ lift, angle, axis });
         try expectSlopeTilted(lift, axis, angle);
+    };
+}
+
+test "degeneracy: a hull's top at the angular tolerance to a plate's, an edge of it within the tolerance under the plate's top, takes the plate's strip beside the edge as under it, either way round" {
+    // The bl configuration with the seam a piece of the hull's top edge, not a section of
+    // the two tops: the hull turned about y, its top's edge at x = 2.028 from the
+    // tolerance under the plate's top (zone 1e-4) to over it, its top rising from the edge
+    // over the plate's side at x = 2, the face beyond the edge sloping down into the
+    // plate; turned at the angular tolerance (the tops parallel within it, not in one
+    // plane) and past it, the hull as drawn and mirrored in y
+    var plate = try shallowPlate();
+    defer plate.deinit();
+    for ([_]f64{ TURN_AT_ANGLE, TURN_PAST_ANGLE }) |turn| for (SHALLOW_LIFTS) |lift| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("turned {d}, lifted {e}, mirrored {}\n", .{ turn, lift, mirrored });
+        var points = EDGE_HULL;
+        if (mirrored) for (&points) |*p| {
+            p[1] = 3 - p[1];
+        };
+        var hull = try fuzzHullPlaced(&points, vec.Y3, turn, null, .{ 0, 0.5, 0 }, .{ 2e-5, 0, lift });
+        defer hull.deinit();
+        try expectAllSound(&hull, &plate);
+        var forward = try sound(&hull, &plate, .@"union");
+        defer forward.deinit();
+        var swapped = try sound(&plate, &hull, .@"union");
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
     };
 }
