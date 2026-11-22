@@ -484,6 +484,21 @@ pub fn run(allocator: std.mem.Allocator, a: *const Body, b: *const Body, tol: To
     return p;
 }
 
+/// A pair of edges of the two operands and their lines' nearest points (`edgeEdge`): the
+/// parameters along each, the distance between them and the point halfway.
+const Crossing = struct {
+    ea: types.EdgeIndex,
+    eb: types.EdgeIndex,
+    closest: [2]f64,
+    gap: f64,
+    mid: Vec3,
+
+    /// Nearer first; the sort (a block sort, stable) keeps pairs as near in their order.
+    fn nearer(_: void, x: Crossing, y: Crossing) bool {
+        return x.gap < y.gap;
+    }
+};
+
 const Filler = struct {
     p: *Paves,
     allocator: std.mem.Allocator,
@@ -1056,14 +1071,29 @@ const Filler = struct {
     /// `endStrip` refuses it, never skipped, which left the place to whichever of
     /// edge–face's crossings came first (the locus fuzzer, the same day: a hull's corner
     /// 2.2e-4 from a plate's edge, its edge passing the plate's 9.8e-5 away 2e-4 from the
-    /// corner, made one way round and refused the other).
+    /// corner, made one way round and refused the other). The pairs are taken nearest
+    /// first (by the distance between their lines; pairs as near in their order): which
+    /// crossing becomes the merged vertex, and which others then share it, is the nearest
+    /// meeting's, the least uncertain, never the edges' numbering. In the numbering's
+    /// order a near miss came first and stood for the meeting: a tetrahedron's apex
+    /// 2.5e-5 from a hull's edge, one of its edges crossing that edge exactly and two
+    /// others passing it 6.9e-6 and 1.6e-5 away; the exact crossing first, the others
+    /// shared its vertex and the union was made, the two near misses first (the solids
+    /// mirrored, the hull's edges numbered otherwise), two vertices 2.24e-5 apart and the
+    /// union refused `below_feature_size` (cg's family, cj, 2026-11-22). OCCT merges the
+    /// new vertices whose tolerances meet into one at their box's centre
+    /// (`BOPAlgo_PaveFiller::TreatNewVertices`), growing its tolerance; with the
+    /// tolerance fixed that vertex's gap passed the zone, and both refused.
     fn edgeEdge(self: *Filler) Error!void {
         var pairs = try self.overlapping(&self.edge_tree[0], &self.edge_tree[1]);
         defer pairs.deinit(self.allocator);
+        // Each pair's lines' nearest points, then the pairs taken nearest first
+        var candidates: std.ArrayList(Crossing) = .empty;
+        defer candidates.deinit(self.allocator);
+        try candidates.ensureTotalCapacity(self.allocator, pairs.items.len);
         for (pairs.items) |pair| {
             const ea = self.edges[0][pair[0]];
             const eb = self.edges[1][pair[1]];
-            if (self.sharePave(ea, eb)) continue;
             const va = self.ends(0, ea);
             const vb = self.ends(1, eb);
             const p0 = self.p.point(va[0]);
@@ -1073,8 +1103,16 @@ const Filler = struct {
             const closest = closestOnLines(p0, d0, q0, d1) orelse continue;
             const c0 = vec.addScaled(p0, d0, closest[0]);
             const c1 = vec.addScaled(q0, d1, closest[1]);
-            const gap = vec.distance(c0, c1);
-            const mid = vec.lerp(c0, c1, 0.5);
+            candidates.appendAssumeCapacity(.{ .ea = ea, .eb = eb, .closest = closest, .gap = vec.distance(c0, c1), .mid = vec.lerp(c0, c1, 0.5) });
+        }
+        std.mem.sort(Crossing, candidates.items, {}, Crossing.nearer);
+        for (candidates.items) |candidate| {
+            const ea = candidate.ea;
+            const eb = candidate.eb;
+            if (self.sharePave(ea, eb)) continue;
+            const closest = candidate.closest;
+            const gap = candidate.gap;
+            const mid = candidate.mid;
             const at_a = self.along(0, ea, mid) orelse continue;
             const at_b = self.along(1, eb, mid) orelse continue;
             const off = closest[0] < 0 or closest[0] > 1 or closest[1] < 0 or closest[1] > 1;

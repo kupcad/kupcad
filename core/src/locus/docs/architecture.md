@@ -873,7 +873,10 @@ importing only those before it, which the layering test holds):**
   (`edgesMeet`; by `xsect` alone a box's edge between corners with gaps of 3.5e-5, its
   face in another's plane by them, missed that face's edge crossing it, 2026-11-16; a
   crossing whose vertex would lie past the zone from both refused, `gap_too_large`, as a
-  ball past it is)
+  ball past it is; the pairs taken nearest first, so which crossing a merged vertex stands
+  for, and which others share it, is the nearest meeting's, not the numbering's: a
+  tetrahedron's apex 2.5e-5 from a hull's edge, its edges crossing that edge exactly and
+  6.9e-6 and 1.6e-5 off, made the union one way and refused it mirrored, cj, 2026-11-22)
   (parallel lines skipped: their overlaps
   are made of vertex–edge's paves; two edges with a pave in common skipped, two straight
   edges meeting once, there, however far the computed point is: at a shallow angle they

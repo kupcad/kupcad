@@ -5472,3 +5472,48 @@ test "degeneracy: two pieces in a face's plane the intersection tolerance and a 
         }
     };
 }
+
+/// The outcome of `op` on `a` and `b`: the counts made or the code refused.
+const Outcome = union(enum) { made: Body.Counts, refused: diagnostics.Code };
+
+fn outcomeOf(a: *const Body, b: *const Body, op: pipeline.Op) !Outcome {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var result = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        return .{ .refused = diag.first().?.code };
+    };
+    defer result.deinit();
+    return .{ .made = result.counts() };
+}
+
+test "degeneracy: a tetrahedron's apex beside a hull's edge, its edges crossing that edge, is decided alike mirrored" {
+    // cg's family (2026-11-22, cj): the apex 2.5e-5 from the hull's edge, one of its edges
+    // crossing it exactly and two passing it 6.9e-6 and 1.6e-5 away. The edges' crossings
+    // were taken in the numbering's order; mirrored, the hull's edges numbered otherwise,
+    // the two near misses came first, made two vertices 2.24e-5 apart, and the union was
+    // refused `below_feature_size`, where unmirrored the exact crossing came first, the
+    // others shared its vertex, and it was made. Nearest first, made both ways
+    var plain = try spurSolids(2.5e-5, 0, false);
+    defer for (&plain) |*body| body.deinit();
+    var mirrored = try spurSolids(2.5e-5, 0, true);
+    defer for (&mirrored) |*body| body.deinit();
+    const expected = try outcomeOf(&plain[0], &plain[1], .@"union");
+    try testing.expect(expected == .made);
+    try testing.expectEqual(expected, try outcomeOf(&mirrored[0], &mirrored[1], .@"union"));
+}
+
+test "degeneracy: crossings beside a corner are decided alike in every quarter turn and mirror, union and intersection either way round" {
+    for (SPUR_INSETS) |inset| for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        var outcome: ?Outcome = null;
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("inset {e}, {t}, quarter turns {d}, mirrored {}\n", .{ inset, op, quarter, mirrored });
+            var solids = try spurSolids(inset, quarter, mirrored);
+            defer for (&solids) |*body| body.deinit();
+            // Either way round for the two operations that are the same so
+            if (op != .difference) try expectAlikeEitherWay(&solids[0], &solids[1], op);
+            const this = try outcomeOf(&solids[0], &solids[1], op);
+            if (outcome) |first| try testing.expectEqual(first, this) else outcome = this;
+        };
+    };
+}
