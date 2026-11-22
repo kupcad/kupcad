@@ -594,6 +594,31 @@ const TOUCH_CUT_NUDGE: Vec3 = .{ 5e-6, -2.000000005684342e-5, -2.000000005684342
 const TOUCH_HULL = [_]Vec3{ .{ 3, 3, 3 }, .{ 1, 4, 0 }, .{ 2, 2, 4 }, .{ 3, 0, 0 }, .{ 4, 0, 4 }, .{ 2, 4, 2 }, .{ 2, 2, 2 }, .{ 3, 1, 1 } };
 const TOUCH_HULL_NUDGE_Y: f64 = -2.000000005684342e-5;
 const TOUCH_LIFTS = [_]f64{ -2e-5, 0, 0.5, 1 };
+/// dj: ((hull − wall) ∪ wall) and a box, as the solids fuzzer drew them: the hull's face
+/// crosses the box's bottom and a wall's bottom 1.5e-5 under it.
+const TRACE_HULL = [_]Vec3{ .{ 0, 4, 1 }, .{ 3, 0, 3 }, .{ 4, 0, 1 }, .{ 3, 3, 3 }, .{ 0, 4, 0 }, .{ 0, 1, 2 }, .{ 1, 3, 3 }, .{ 2, 1, 4 } };
+const TRACE_HULL_AXIS: Vec3 = .{ 1, 2, 3 };
+const TRACE_HULL_TURN: f64 = 0.014142253476507214;
+const TRACE_HULL_SCALE: Vec3 = .{ 2, 1, 1 };
+const TRACE_HULL_MOVE: Vec3 = .{ 0, 0, -0.5 };
+const TRACE_HULL_NUDGE: Vec3 = .{ -5e-6, -2e-3, 0 };
+const TRACE_CUT_AT: Vec3 = .{ 3, 4, 2 };
+const TRACE_CUT_LO: Vec3 = .{ 0, 1, 1 };
+const TRACE_CUT_HI: Vec3 = .{ 3, 2, 3 };
+const TRACE_CUT_XSECTS: f64 = 2.5;
+const TRACE_CUT_MOVE: Vec3 = .{ 0, -1, 0 };
+const TRACE_CUT_NUDGE: Vec3 = .{ 1.9999999957367082e-5, 0, -2.000000004263292e-5 };
+const TRACE_WALL_AT: Vec3 = .{ 3, 3, 3 };
+const TRACE_WALL_LO: Vec3 = .{ 0, 1, 1 };
+const TRACE_WALL_HI: Vec3 = .{ 3, 3, 4 };
+const TRACE_WALL_XSECTS: f64 = 3;
+const TRACE_WALL_MOVE: Vec3 = .{ 0.5, -1, 0 };
+const TRACE_WALL_NUDGE: Vec3 = .{ 0, 0, -5e-6 };
+const TRACE_BOX = [2]Vec3{ .{ 0, 1, 2 }, .{ 3, 4, 3 } };
+const TRACE_BOX_TURN: f64 = 0.014142253477512098;
+const TRACE_BOX_SCALE: Vec3 = .{ 1, 0.5, 0.5 };
+const TRACE_BOX_MOVE: Vec3 = .{ -0.5, 0, 0 };
+const TRACE_BOX_NUDGE: Vec3 = .{ 0, -2e-3, -5e-6 };
 /// de: ((plate ∪ plate) − hull) ∩ a plate with a gap, the first plate and the last at a
 /// zone of 1e-4.
 const SPAN_PLATE = [2]Vec3{ .{ -48, -98, 0 }, .{ 102, 52, 2 } };
@@ -5949,4 +5974,47 @@ test "degeneracy: two solids touching along a line through a face's centroid are
         try testing.expectEqual(forward.counts(), swapped.counts());
         try testing.expectEqual(@as(u32, 2), forward.counts().shells);
     };
+}
+
+test "degeneracy: a chain of vertices along two traces a hair apart keeps as many edges whichever operand comes first, the passes deciding it once" {
+    // The ReleaseSafe session's find on ff515852 (dj), as the fuzzer drew it: ((hull −
+    // wall) ∪ wall) ∪ box. The hull's face crosses the box's bottom and a wall's 1.5e-5
+    // under it, a chain of vertices along the two traces, 2.6e-5 apart in the face. The
+    // fewest runs took one vertex away or another, by the chain's order; one way round a
+    // later pass then joined a further vertex away on a line the vertex the first pass
+    // took lay off by more than the tolerance, and the union had a vertex fewer than the
+    // other way round. A joined edge keeps the vertices it took the place of
+    // (`simplify.Absorbed`), and a later pass finds no run the first did not have
+    for (ACROSS_WHOLE) |whole| {
+        errdefer std.debug.print("moved whole {any}\n", .{whole});
+        var cut_shape = try fuzzWall(tol, TRACE_CUT_AT, TRACE_CUT_LO, TRACE_CUT_HI, TRACE_CUT_XSECTS);
+        defer cut_shape.deinit();
+        var wall_shape = try fuzzWall(tol, TRACE_WALL_AT, TRACE_WALL_LO, TRACE_WALL_HI, TRACE_WALL_XSECTS);
+        defer wall_shape.deinit();
+        var drawn = [_]Body{
+            try fuzzHullPlaced(&TRACE_HULL, TRACE_HULL_AXIS, TRACE_HULL_TURN, TRACE_HULL_SCALE, TRACE_HULL_MOVE, TRACE_HULL_NUDGE),
+            try fuzzPlaced(&cut_shape, vec.Z3, 0, null, TRACE_CUT_MOVE, TRACE_CUT_NUDGE),
+            try fuzzPlaced(&wall_shape, vec.Z3, 0, null, TRACE_WALL_MOVE, TRACE_WALL_NUDGE),
+            try fuzzBoxMovedPlaced(),
+        };
+        defer for (&drawn) |*body| body.deinit();
+        var moved: [drawn.len]Body = undefined;
+        for (&drawn, &moved, 0..) |*body, *out, k| out.* = sliverMoved(body, whole) catch |err| {
+            for (moved[0..k]) |*done| done.deinit();
+            return err;
+        };
+        defer for (&moved) |*body| body.deinit();
+        var cut = try helpers.sound(&moved[0], &moved[1], .difference);
+        defer cut.deinit();
+        var joined = try helpers.sound(&cut, &moved[2], .@"union");
+        defer joined.deinit();
+        try expectDecidedEitherWay(&joined, &moved[3]);
+    }
+}
+
+/// dj's box, placed as the fuzzer placed it (turned, scaled, moved, nudged).
+fn fuzzBoxMovedPlaced() !Body {
+    var shape = try helpers.boxAt(tol, TRACE_BOX[0], TRACE_BOX[1]);
+    defer shape.deinit();
+    return fuzzPlaced(&shape, vec.Z3, TRACE_BOX_TURN, TRACE_BOX_SCALE, TRACE_BOX_MOVE, TRACE_BOX_NUDGE);
 }

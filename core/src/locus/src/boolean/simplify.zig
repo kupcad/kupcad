@@ -71,12 +71,14 @@ pub const Log = struct {
 /// Simplifies `body` in place and compacts it, its face merges and renumbering in `log`
 /// when given.
 pub fn run(body: *Body, diag: *Diagnostics, log: ?*Log) Error!void {
+    var absorbed: Absorbed = .{};
+    defer absorbed.deinit(body.allocator);
     var pass: usize = 0;
     while (pass < MAX_PASSES) : (pass += 1) {
         var changed = false;
         changed = try mergeFaces(body, diag, log) or changed;
         changed = try removeInnerEdges(body, diag) or changed;
-        changed = try joinEdges(body, diag) or changed;
+        changed = try joinEdges(body, &absorbed, diag) or changed;
         changed = try collapseShortEdges(body, diag) or changed;
         if (!changed) break;
     }
@@ -103,6 +105,33 @@ pub fn run(body: *Body, diag: *Diagnostics, log: ?*Log) Error!void {
 /// not share: 6e-5 apart at the strip's far end, the two faces lay on each other between
 /// those edges, and the intersection and the difference were bodies whose faces intersect
 /// (`faces_intersect`; the locus session on 5c1e164e, 2026-11-20, br).
+/// The vertices each joined edge took the place of, by edge: where they were and how far
+/// they reached. A line a later pass joins the edge on must hold them as the first did, or
+/// the passes decide a chain twice, the second time without the vertices the first took
+/// away: a hull's face across a box's bottom and a wall's 1.5e-5 under it left a chain of
+/// vertices C, B, A along the two planes' traces, 2.6e-5 apart in the face; a line held C,
+/// B, A and another B, A and the next, the fewest runs either way; one way round the first
+/// pass took B away, and the second joined C away on the higher trace, which B lay off by
+/// more than the tolerance, the edge now 2.6e-5 from where the faces meet and the union a
+/// vertex fewer than the other way round, where the first pass took A (the ReleaseSafe
+/// session on ff515852, dj, 2026-11-22). With them kept a later pass finds no run the
+/// first did not have, and the chain's count is the fewest of its own vertices'.
+const Absorbed = struct {
+    const Point = struct { p: vec.Vec3, gap: f64 };
+
+    of: std.AutoHashMapUnmanaged(types.EdgeIndex, std.ArrayList(Point)) = .empty,
+
+    fn deinit(self: *Absorbed, allocator: std.mem.Allocator) void {
+        var lists = self.of.valueIterator();
+        while (lists.next()) |list| list.deinit(allocator);
+        self.of.deinit(allocator);
+    }
+
+    fn points(self: *const Absorbed, e: types.EdgeIndex) []const Point {
+        return if (self.of.getPtr(e)) |list| list.items else &.{};
+    }
+};
+
 fn sameDomain(body: *const Body, f: types.FaceIndex, g: types.FaceIndex) bool {
     const a = body.face(f);
     const b = body.face(g);
@@ -222,7 +251,7 @@ fn outerFirst(body: *Body, f: types.FaceIndex, diag: *Diagnostics) Error!void {
 /// operands' order (the nightly solids fuzzer, run 43773180777, 2026-11-16: a hull's face
 /// crossing a box's top and a plate's bottom 3e-5 apart left a chain of four vertices on
 /// two lines 8.7e-5 apart, joined whole one way round and to two edges the other).
-fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
+fn joinEdges(body: *Body, absorbed: *Absorbed, diag: *Diagnostics) Error!bool {
     const allocator = body.allocator;
     const uses = try edgeCounts(body);
     defer allocator.free(uses);
@@ -258,8 +287,8 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
     defer runs.deinit(allocator);
     for (chains.items) |*chain| {
         runs.clearRetainingCapacity();
-        try decide(allocator, body, chain, &runs, diag);
-        for (runs.items) |run_| changed = try joinRun(body, chain, run_, diag) or changed;
+        try decide(allocator, body, chain, absorbed, &runs, diag);
+        for (runs.items) |run_| changed = try joinRun(body, chain, run_, absorbed, diag) or changed;
     }
     return changed;
 }
@@ -374,7 +403,7 @@ fn lessPoint(a: vec.Vec3, b: vec.Vec3) bool {
 /// rounding (a band of 4e-9 there) and no run joined (the solids fuzzer, cm, 2026-11-22;
 /// cd, the exact tie, before it). A run held only to rounding (`at_tolerance`) is refused
 /// when the count depends on it, counted either way; else the count without it is taken.
-fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, runs: *std.ArrayList(Run), diag: *Diagnostics) Error!void {
+fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, absorbed: *const Absorbed, runs: *std.ArrayList(Run), diag: *Diagnostics) Error!void {
     const n = chain.edges.items.len;
     if (n < 2) return;
     // The least count of runs to each vertex: without the runs held to rounding, and with
@@ -396,7 +425,7 @@ fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, 
         from[j] = j - 1;
         line[j] = null;
         for (0..j - 1) |i| {
-            switch (try hold(body, chain, i, j)) {
+            switch (try hold(body, chain, absorbed, i, j)) {
                 .held => |curve| {
                     if (without[i] + 1 < without[j]) {
                         without[j] = without[i] + 1;
@@ -440,7 +469,7 @@ const Hold = union(enum) { held: CurveRef, apart, at_tolerance: canonical.Compar
 /// tolerance of 2e-4, joined a notch's edge on that line and took the joined edge 3.6e-4
 /// under the plane at its far end, the tolerance spent twice (the 10K session, 2026-11-15: a plate's top and a notch's ceiling 1.8e-4
 /// under it, the plate first, `edge_off_surface`).
-fn hold(body: *const Body, chain: *const Chain, lo: usize, hi: usize) Error!Hold {
+fn hold(body: *const Body, chain: *const Chain, absorbed: *const Absorbed, lo: usize, hi: usize) Error!Hold {
     const edges = chain.edges.items[lo..hi];
     const first = body.edge(edges[0]).curve;
     for (edges[1..]) |e| {
@@ -451,7 +480,7 @@ fn hold(body: *const Body, chain: *const Chain, lo: usize, hi: usize) Error!Hold
     for (edges) |candidate| {
         const curve = body.edge(candidate).curve;
         if (best) |b| if (@as(u32, @bitCast(curve)) >= @as(u32, @bitCast(b))) continue;
-        switch (try lineHolds(body, body.geometry.curve(curve).line, chain, lo, hi)) {
+        switch (try lineHolds(body, body.geometry.curve(curve).line, chain, absorbed, lo, hi)) {
             .same => best = curve,
             .apart => {},
             .at_tolerance => |c| at = at orelse c,
@@ -463,7 +492,7 @@ fn hold(body: *const Body, chain: *const Chain, lo: usize, hi: usize) Error!Hold
 }
 
 /// `hold`'s measures of `line` against the edges and vertices `lo` to `hi`.
-fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, chain: *const Chain, lo: usize, hi: usize) Error!canonical.Verdict {
+fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, chain: *const Chain, absorbed: *const Absorbed, lo: usize, hi: usize) Error!canonical.Verdict {
     const tol = body.tol;
     var tally: canonical.Tally = .{};
     for (chain.vertices.items[lo .. hi + 1]) |v| {
@@ -471,6 +500,8 @@ fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, ch
         tally.add(canonical.Comparison.distance(canonical.lineOffset(line, p), incidence.reach(tol, body.vertex(v).gap), canonical.magnitude(&.{ p, line.o })));
     }
     for (chain.edges.items[lo..hi]) |e| {
+        // The vertices the edge took the place of in an earlier pass, as the chain's own
+        for (absorbed.points(e)) |was| tally.add(canonical.Comparison.distance(canonical.lineOffset(line, was.p), incidence.reach(tol, was.gap), canonical.magnitude(&.{ was.p, line.o })));
         const edge = body.edge(e);
         const own = body.geometry.curve(edge.curve).line;
         tally.add(canonical.Comparison.angle(1.0 - @abs(vec.dot(line.d, own.d)), tol.angle));
@@ -494,7 +525,7 @@ fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, ch
 /// run's ends, and those ends' gaps raised to the edge's; a run along a line whose height
 /// over a face grows along it took its far piece's gap while its near end kept its own,
 /// smaller, and the result failed the checker's `gap_order`, the audit of 2026-11-22).
-fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!bool {
+fn joinRun(body: *Body, chain: *const Chain, r: Run, absorbed: *Absorbed, diag: *Diagnostics) Error!bool {
     const edges = chain.edges.items[r.lo..r.hi];
     var gap: f64 = 0;
     // Every edge's range on the run's line taken by projection, its own line's too: the
@@ -505,6 +536,18 @@ fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!b
         gap = @max(gap, body.edge(e).gap);
         rebase(body, e, r.line);
     }
+    // The vertices the run's edge takes the place of: those inside the run, and those its
+    // edges took in an earlier pass (`Absorbed`)
+    var taken: std.ArrayList(Absorbed.Point) = .empty;
+    errdefer taken.deinit(body.allocator);
+    for (edges) |e| {
+        if (absorbed.of.fetchRemove(e)) |entry| {
+            var list = entry.value;
+            defer list.deinit(body.allocator);
+            try taken.appendSlice(body.allocator, list.items);
+        }
+    }
+    for (chain.vertices.items[r.lo + 1 .. r.hi]) |v| try taken.append(body.allocator, .{ .p = body.point(v), .gap = body.vertex(v).gap });
     var joined = false;
     for (chain.vertices.items[r.lo + 1 .. r.hi]) |v| {
         // A coedge arriving at the vertex, from the edge that runs into it along the line
@@ -525,6 +568,14 @@ fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!b
             break;
         }
     }
+    // Every edge of the run left keeps them all: where a join was refused the run is more
+    // than one edge still, each on the run's line
+    for (edges) |e| if (!body.edge(e).flags.tombstone) {
+        const entry = try absorbed.of.getOrPut(body.allocator, e);
+        if (!entry.found_existing) entry.value_ptr.* = .empty;
+        try entry.value_ptr.appendSlice(body.allocator, taken.items);
+    };
+    taken.deinit(body.allocator);
     if (joined) for (edges) |e| if (!body.edge(e).flags.tombstone) {
         body.edge(e).gap = gap;
         try cover.coverEdge(body, e, diag);

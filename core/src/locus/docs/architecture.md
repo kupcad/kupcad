@@ -1179,7 +1179,10 @@ importing only those before it, which the layering test holds):**
   a run held only to rounding refused, `at_tolerance`, where the count hangs on it: split
   at the vertex farthest from its chord, Douglas–Peucker, which vertex was farther hung
   on a difference the rounding of the placement could not resolve, two vertices 2.9e-11
-  apart as far, joined in place and not 3e5 out, finds cd and cm, 2026-11-22; each run's
+  apart as far, joined in place and not 3e5 out, finds cd and cm, 2026-11-22; a joined
+  edge keeps the vertices it took the place of, `simplify.Absorbed`, and a later pass's
+  line must hold them too, so the passes decide a chain once: a second pass joined on a
+  line the vertex the first took away lay 2.6e-5 off, find dj, 2026-11-22; each run's
   edges put on its line with their ranges by projection, its own line's edge too, the
   join needing them to meet exactly; vertex by vertex the
   joins hung on the numbering, the operands' order, 2026-11-16); `kevMerge` of an edge no

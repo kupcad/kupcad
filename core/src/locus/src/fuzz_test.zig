@@ -2472,6 +2472,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the circles tangent at their highest points and the ray a rounding below the
         // welded vertex (overlay.weldedEnd)
         "overlay 3 2 0 20 12 4 1 0 0 1 3 23 23 5 22 24 3 24 10 3 1 2 1 2 1 0 1 2 0 2 1 6 16 9 7 20 1 1 21 0 8 22 3 8 16 15 8 13 21 4 1 2 1 1 1 1 3 2 0 1 1 0 1 2 0 2 0 1 0 3 1 8 4 1 1 2 1 5 21 0 1 15 23 3 23 4 7 23 0 5 16 0 8 4 1 1 1 0 0 2 2 0 2 0 1 2 0 0 0 20 3 4 1 0 0 1 0",
+        // The ReleaseSafe session on ff515852 (locus.1, dj): ((hull − wall) ∪ wall) ∪ box, a
+        // chain of vertices along two traces 2.6e-5 apart in a hull's face; a later pass of
+        // simplify joined on a line the vertex an earlier pass took away lay off, and the
+        // union had 90 vertices one way round and 91 the other (simplify.Absorbed: a joined
+        // edge keeps the vertices it took the place of)
+        "solids 1 8 0 4 1 3 0 3 4 0 1 3 3 3 0 4 0 0 1 2 1 3 3 2 1 4 0 3 5 0 2 1 1 4 14 -1 15 3 3 3 1 4 3 0 3 4 1 2 2 1 3 3 9 -2 12 7 1 2 3 1 5 3 0 3 3 1 3 3 1 4 3 1 -2 4 3 0 1 0 0 3 1 4 2 3 0 2 4 0 1 0 0 -1 14 4 16 0",
         // The equal-zone fix's locus_solids run on e83d2a0e (dk): (box − box) ∪ hull, the
         // block touching the hull's face along an edge through the face's centroid; the
         // shells' count sampled there, on two of the block's faces at once, and the sound
