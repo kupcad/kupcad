@@ -341,6 +341,10 @@ const Along = enum { made, sliver_in_common, sliver_in_common_and_rest, edge_too
 /// apart at a tolerance of 2e-5 and the corners 4.15e-5): the second edge inside the
 /// first hull's face or outside it, by the zone and by half of it, level with the first
 /// or to one side, the corners two tolerances apart along the edges or one and a half.
+/// Two of them (the second edge outside by half the zone, the corners two tolerances
+/// apart, to one side or level) have a corner of the intersection at 0.9 of the sliver
+/// limit, refused since the sliver measure walks each curve to its own end: walked from
+/// each curve's start only, it overstated that corner both ways round (2026-11-22).
 const ALONG_CASES = [_]struct { nudge: Vec3, meet: Along }{
     .{ .nudge = .{ -5e-6, 1e-5, -2.000000005684342e-5 }, .meet = .made },
     .{ .nudge = .{ -5e-6, 1e-5, -1e-5 }, .meet = .made },
@@ -348,13 +352,13 @@ const ALONG_CASES = [_]struct { nudge: Vec3, meet: Along }{
     .{ .nudge = .{ -5e-6, 5e-6, -1e-5 }, .meet = .made },
     .{ .nudge = .{ -5e-6, -5e-6, -2.000000005684342e-5 }, .meet = .made },
     .{ .nudge = .{ -5e-6, -5e-6, -1e-5 }, .meet = .sliver_in_common },
-    .{ .nudge = .{ -5e-6, -1e-5, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ -5e-6, -1e-5, -2.000000005684342e-5 }, .meet = .sliver_in_common },
     .{ .nudge = .{ -5e-6, -1e-5, -1e-5 }, .meet = .sliver_in_common },
     .{ .nudge = .{ 0, 1e-5, -2.000000005684342e-5 }, .meet = .edge_too_short },
     .{ .nudge = .{ 0, 1e-5, -1e-5 }, .meet = .below_feature_size },
     .{ .nudge = .{ 0, 5e-6, -2.000000005684342e-5 }, .meet = .made },
     .{ .nudge = .{ 0, 5e-6, -1e-5 }, .meet = .sliver_in_common_and_rest },
-    .{ .nudge = .{ 0, -5e-6, -2.000000005684342e-5 }, .meet = .made },
+    .{ .nudge = .{ 0, -5e-6, -2.000000005684342e-5 }, .meet = .sliver_in_common },
     .{ .nudge = .{ 0, -5e-6, -1e-5 }, .meet = .sliver_in_common_and_rest },
     .{ .nudge = .{ 0, -1e-5, -2.000000005684342e-5 }, .meet = .edge_too_short },
     .{ .nudge = .{ 0, -1e-5, -1e-5 }, .meet = .below_feature_size },
@@ -6017,4 +6021,25 @@ fn fuzzBoxMovedPlaced() !Body {
     var shape = try helpers.boxAt(tol, TRACE_BOX[0], TRACE_BOX[1]);
     defer shape.deinit();
     return fuzzPlaced(&shape, vec.Z3, TRACE_BOX_TURN, TRACE_BOX_SCALE, TRACE_BOX_MOVE, TRACE_BOX_NUDGE);
+}
+
+test "degeneracy: a corner face whose edge ends a hair from its vertex measures alike mirrored, a sliver or not" {
+    // The equal-zone family of by (2026-11-22): the slab's corner triangle has a top edge,
+    // the hull's, ending 1e-4 under the vertex it meets the box's edge at (D28: an edge
+    // keeps its source's line). The checker's sliver measure walked each line short of
+    // its end, cutting that corner one way round the loop and keeping it the other: 0.9956
+    // of the limit unmirrored, refused, and 1.047 of it mirrored, made. Each curve is
+    // measured from its own start to its own end and a step across each gap, the polygon
+    // the volume is measured on (`check.loopMeasure`, `integrals.planarFace`), the same
+    // either way
+    for (TIE_EQUAL_RISES) |rise| for (0..4) |quarter| for ([_]pipeline.Op{ .intersection, .@"union" }) |op| {
+        errdefer std.debug.print("the tops {d} tolerances apart, {d} quarter turns, {t}\n", .{ rise, quarter, op });
+        var outcomes: [2]Outcome = undefined;
+        for ([_]bool{ false, true }, &outcomes) |mirrored, *outcome| {
+            var solids = try tieSolids(.{ TIE_EQUAL_ZONE, TIE_EQUAL_ZONE }, TIE_EQUAL_UNDER + rise * Tolerance.fromZone(TIE_EQUAL_ZONE).xsect, quarter, mirrored);
+            defer for (&solids) |*body| body.deinit();
+            outcome.* = try outcomeOf(&solids[0], &solids[1], op);
+        }
+        try testing.expectEqual(outcomes[0], outcomes[1]);
+    };
 }

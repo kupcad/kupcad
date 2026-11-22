@@ -571,14 +571,18 @@ const Checker = struct {
         }
     }
 
-    /// Loop `l`'s area about `outward` and its length, from the loop's first point: an arc
-    /// its chord from its start, adding its circular segment, `r²/2·(φ − sin φ)`, on the
-    /// side it turns about `outward`, and its length `r·φ`, exact and the same however the
-    /// arc is cut (in one piece or two it measures alike); any other curve, a line among
-    /// them, its samples as `sampleLoop` takes them, the polygon's area and length (a line
-    /// on its vertices is exact to rounding; one whose ends miss them by a gap, as the
-    /// boolean's edges keep their source's lines, D28, is measured along its line to its
-    /// last sample, then across to the next edge's start, as always).
+    /// Loop `l`'s area about `outward` and its length, the polygon `integrals.planarFace`
+    /// measures a face's area on: each curve from its own start to its own end, then a
+    /// straight step across to the next curve's start where the two miss their vertex by a
+    /// gap (D28: the boolean's edges keep their source's lines). An arc is its chord adding
+    /// its circular segment, `r²/2·(φ − sin φ)`, on the side it turns about `outward`, and
+    /// its length `r·φ`, exact and the same however the arc is cut; any other curve, a line
+    /// among them, its samples and its own end. The same polygon whichever way the loop
+    /// runs, so for a face and its mirror image, and wherever the body is moved. The walk
+    /// took each curve's own start and never its own end, so a gapped corner was cut one
+    /// way round and kept the other: a corner triangle whose top edge, a hull's, ended 1e-4
+    /// under the vertex it met a box's edge at measured 0.9956 of the limit, refused, and
+    /// its exact mirror image 1.047 of it, made (the equal-zone family of by, 2026-11-22).
     fn loopMeasure(self: *Checker, l: LoopIndex, outward: Vec3) LoopMeasure {
         const b = self.body;
         var walk: LoopWalk = .{ .outward = outward };
@@ -602,6 +606,8 @@ const Checker = struct {
                     while (k < LOOP_SAMPLES) : (k += 1) walk.step(curve.eval(from + (to - from) * @as(f64, @floatFromInt(k)) / LOOP_SAMPLES), false);
                 },
             }
+            // The curve's own end, from which the step to the next curve's start is taken
+            walk.step(curve.eval(to), false);
         }
         return walk.close();
     }
