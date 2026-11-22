@@ -1155,33 +1155,59 @@ const Provenance = struct {
 
     /// A tied common block's line (`blockLines`: as many faces of each operand's along it)
     /// by the planes its kept faces took (`samePlanes`): where every one took a plane of one
-    /// operand, that operand's edge, the line its faces' planes meet in; else the tie rule's.
-    /// The result's edge lies between those faces, and the plane choice is one decision
-    /// already made for them, by intrinsic measures before the operands' order (D28's tie
-    /// rule, `planar_faces.TieFace.before`); the line by the operands' order alone was a
-    /// second decision of the same thing, and could disagree with the first: a box's top
-    /// and side each one plane with a trimmed plate's, a zone apart, both at zone 1e-5, both
-    /// faces took the box's planes either way round, and the edge between them took the
-    /// plate's line one way round and the box's the other, 1e-5 off its faces' planes along
-    /// an edge 1 long: the intersection's area differed by 1.5e-5 between the two orders
-    /// (find cq, a locus ReleaseSafe run, 2026-11-22). OCCT's edge of a common block takes
-    /// the first argument's and grows its tolerance to cover its faces; Locus keeps the
-    /// tolerance fixed, so its line is the one its faces' planes hold.
+    /// operand, that operand's edge, the line its faces' planes meet in; else, with the
+    /// operands at one zone, the edge of the operand whose line lies in every one of those
+    /// planes, to rounding at the block's two ends; else the tie rule's (the finer zone's,
+    /// then the first operand's). The result's edge lies between those faces, and the plane
+    /// choice is one decision already made for them, by intrinsic measures before the
+    /// operands' order (D28's tie rule, `planar_faces.TieFace.before`); the line by the
+    /// operands' order alone was a second decision of the same thing, and could disagree
+    /// with the first: a box's top and side each one plane with a trimmed plate's, a zone
+    /// apart, both at zone 1e-5, both faces took the box's planes either way round, and the
+    /// edge between them took the plate's line one way round and the box's the other, 1e-5
+    /// off its faces' planes along an edge 1 long: the intersection's area differed by
+    /// 1.5e-5 between the two orders (find cq, a locus ReleaseSafe run, 2026-11-22). Two
+    /// faces of one plane exactly tie in the plane choice to its last step, the first
+    /// operand's record, which says nothing of the geometry, so at one zone the planes are
+    /// read for the line, not the records: a box's side and a hull's both y = 3 took the
+    /// box's record one way round and the hull's the other, the tops the hull's plane both
+    /// ways, and the block took the box's line, 1e-4 off the top's plane, one way round and
+    /// the hull's the other: the intersection made one way round and refused (`sliver_face`)
+    /// the other (the edge matrix's family of find by, zones 1e-4 and 1e-4, the tops half
+    /// and nine tenths of the tolerance apart, 2026-11-22). At two zones the finer's edge,
+    /// stated the more closely, keeps the tie (find by, Leo 2026-11-21). OCCT's edge of a
+    /// common block takes the first argument's and grows its tolerance to cover its faces;
+    /// Locus keeps the tolerance fixed, so its line is the one its faces' planes hold.
     fn tiedLines(self: *Provenance) Error!void {
         const p = self.paves;
+        const one_zone = p.operands[0].tol.zone == p.operands[1].tol.zone;
         for (self.tied.items) |index| {
             const block = p.common.items[index];
-            // The operands whose planes the kept faces along the block took: bit k for k
+            const ends = [2]Vec3{ p.point(block.vertices[0]), p.point(block.vertices[1]) };
+            const lines = [2]curves.Line{ self.edgeLine(0, block.edges[0]), self.edgeLine(1, block.edges[1]) };
+            // The operands whose planes the kept faces along the block took (bit k for k),
+            // and whether each operand's line lies in every one of those planes
             var took: u2 = 0;
+            var holds = [2]bool{ true, true };
             for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
                 if (keep == .drop) continue;
                 if (!self.alongBlock(i, block.vertices)) continue;
                 const chosen = self.plane_of[fragment.operand][fragment.face];
                 took |= @as(u2, 1) << chosen.operand;
+                const taken = planeOf(p.operands[chosen.operand], chosen.face);
+                for (lines, &holds) |line, *held| {
+                    if (!held.*) continue;
+                    for (ends) |end| {
+                        const foot = line.eval(line.project(end));
+                        const scale = canonical.magnitude(&.{ foot, taken.frame.origin });
+                        if (!canonical.sameToRounding(taken.height(foot), 0, scale)) held.* = false;
+                    }
+                }
             }
             const operand: u1 = switch (took) {
                 0b01 => 0,
                 0b10 => 1,
+                0b11 => if (one_zone and holds[0] != holds[1]) (if (holds[0]) 0 else 1) else continue,
                 else => continue,
             };
             self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });

@@ -409,6 +409,13 @@ const TIE_HULL = [_]Vec3{ .{ 2.00005, 0, 0 }, .{ 4.00005, -1, 2 }, .{ 4.00005, 3
 const TIE_DROPS = [_]f64{ 2e-4, 1e-4, 1.5e-4, 2.4e-4 };
 /// The zones of the box and the hull: the find's, and the other way round.
 const TIE_ZONES = [_][2]f64{ .{ 1e-4, 1e-5 }, .{ 1e-5, 1e-4 } };
+/// The one zone of both operands in the tests of a tie at one zone (the edge matrix's
+/// coarse pair), how far the box's top lies under the hull's drawn top, and how far apart
+/// the two tops are, in intersection tolerances: under half of it, the matrix's failing
+/// half and nine tenths, and past it.
+const TIE_EQUAL_ZONE = 1e-4;
+const TIE_EQUAL_UNDER = 5e-5;
+const TIE_EQUAL_RISES = [_]f64{ 0.25, 0.5, 0.75, 0.9, 1.1 };
 /// The solids of the tests of a chain of edges along two parallel lines (the first
 /// ReleaseSafe session's find of 2026-11-22, cd, as the solids fuzzer drew them): a hull
 /// whose face toward -x is crossed by a box's bottom (zone 1e-5) at z = 2 less the box's
@@ -5584,5 +5591,24 @@ test "degeneracy: a hull's ridge a hair over a box's bottom, its end within the 
         var solids = try peakSolids(rise, past, turn, move);
         defer for (&solids) |*b| b.deinit();
         try expectDecidedEitherWay(&solids[0], &solids[1]);
+    };
+}
+
+test "degeneracy: a common block tied between operands of one zone, its faces' planes one exactly, takes the line those planes hold whichever operand comes first" {
+    // The edge matrix's family of find by (2026-11-22): with the box and the hull at one
+    // zone, their sides y = 3 are one plane exactly and tie in the plane choice to its
+    // last step, the first operand's record, while the tops take the hull's plane both
+    // ways round. The tied block's line went by which operand's record each face took:
+    // the box's line one way round (1e-4 off the top's plane, made) and the hull's the
+    // other (a corner a sliver, refused). It goes by which operand's line lies in the
+    // planes the faces took, the hull's both ways round
+    for (TIE_EQUAL_RISES) |rise| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the tops {d} tolerances apart, {d} quarter turns, mirrored {}\n", .{ rise, quarter, mirrored });
+        var solids = try tieSolids(.{ TIE_EQUAL_ZONE, TIE_EQUAL_ZONE }, TIE_EQUAL_UNDER + rise * Tolerance.fromZone(TIE_EQUAL_ZONE).xsect, quarter, mirrored);
+        defer for (&solids) |*body| body.deinit();
+        for ([_]pipeline.Op{ .intersection, .@"union" }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            try expectAlikeEitherWay(&solids[0], &solids[1], op);
+        }
     };
 }
