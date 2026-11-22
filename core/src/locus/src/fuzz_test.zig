@@ -2418,6 +2418,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // seams against the hull's other faces' (classify.departure: the side read where the
         // face has left the piece past the tolerance while over the face)
         "solids 3 0 5 2 1 4 2 2 4 2 1 4 1 -1 10 3 4 3 1 1 4 2 3 4 4 3 2 3 4 3 2 4 4 1 1 5 3 1 0 1 4 4 3 4 1 4 0 3 0 4 1 2 2 0 13 0 11 1",
+        // The nightly on ff515852 (run 45002725035, locus_solids, cy): (a box ∪ a wall) ∩
+        // a hull, all at zone 1e-5, the box's top and the hull's 1.5e-5 apart; the slab's
+        // corner triangle a sliver on the hull's line and not on the box's, and the tied
+        // block at one zone took the first operand's: made one way round, refused
+        // `sliver_face` the other (Provenance.tiedLines: the line in its faces' planes)
+        "solids 0 1 2 2 4 1 2 2 1 8 3 2 14 3 1 3 1 5 2 3 4 3 1 2 0 0 4 1 0 2 4 2 0 1 1 7 4 0 2 0 1 4 4 1 1 4 4 4 2 4 4 3 4 2 3 2 0 1 2 3 -2 10 5 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
