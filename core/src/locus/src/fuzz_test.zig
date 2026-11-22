@@ -2375,6 +2375,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // apart in its plane, either side of the band by the operands' order (pave.pointGap:
         // from the piece's lesser end)
         "solids 1 6 3 1 3 1 3 2 0 4 3 0 3 3 1 4 0 2 4 3 0 0 1 3 5 -1 12 11 2 1 1 6 4 3 1 3 4 3 4 1 0 3 1 3 0 1 1 1 1 2 1 3 3 6 -2 10 2",
+        // Batch E's locus 100K run (2026-11-22, cq): a plate cut by a box and trimmed to a
+        // slab, joined with a box whose top and side lie a hair from the slab's; the edge
+        // where the slab's top meets its side took the slab's line one way round and the
+        // box's the other, its faces the box's planes either way (Provenance.tiedLines: the
+        // line its faces' planes meet in)
+        "solids 3 0 5 3 0 3 2 1 3 2 0 4 1 -2 3 4 15 3 1 0 2 3 2 4 0 3 1 3 14 11 6 12 2 0 0 -1 1 9 4 2 0 0 2 1 3 1 2 3 3 6 11 7 4 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

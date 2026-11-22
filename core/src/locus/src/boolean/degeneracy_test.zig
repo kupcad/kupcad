@@ -440,6 +440,18 @@ const SHARED_B_FROM: f64 = 1;
 const SHARED_B_TOP: f64 = 1.5;
 const SHARED_B_ENDS = [_]f64{ 2.5, 3, 3.5 };
 const SHARED_GAPS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+/// The boxes of the tests of a common block between two regions of both operands, both
+/// at one zone (find cq, 2026-11-22, the fuzzer's trimmed plate as the slab): the slab's
+/// top, side and far end each in one plane with the box's, a hair apart, so the edge where
+/// the slab's top meets its side is a block of an edge of each, with a region of both on
+/// either side. The box's side `CORNER_SIDES` inside the slab's (at x = 2), its top
+/// `CORNER_TOPS` under the slab's (at 2.000025).
+const CORNER_SLAB = [2]Vec3{ .{ 1.998, 2.00002, 1.999965 }, .{ 2, 3.000005, 2.000025 } };
+const CORNER_BOX = [2]Vec3{ .{ -1e-5, 1.00002, 1.00002 }, .{ 1.99999, 3.00002, 2.00002 } };
+const CORNER_SIDES = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+const CORNER_TOPS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+/// The least length of an edge `longLines` compares: the slab's edges along its length 1.
+const CORNER_LONG: f64 = 0.5;
 /// The hulls of the tests of a gap measured between two pieces in a face's plane (find co,
 /// 2026-11-22), placed as the solids fuzzer placed them: the first turned a half turn
 /// about x through the grid's middle (2, 2, 2), moved (0, -0.5, 0) and nudged
@@ -5348,6 +5360,82 @@ fn expectMeshedWhole(body: *const Body) !void {
         try testing.expectEqual(@import("../mesh/tessellate.zig").Status.ok, range.status);
     }
 }
+/// The slab and the box of the common-block tests, the box's side `side` inside the slab's
+/// and its top `top` under it, both turned and mirrored (`tieMove`).
+fn cornerBoxes(side: f64, top: f64, quarter: usize, mirrored: bool) ![2]Body {
+    const box_hi: Vec3 = .{ CORNER_SLAB[1][0] - side, CORNER_BOX[1][1], CORNER_SLAB[1][2] - top };
+    return .{ try sharedBox(CORNER_SLAB, quarter, mirrored), try sharedBox(.{ CORNER_BOX[0], box_hi }, quarter, mirrored) };
+}
+
+/// The longest edges' lines of the common-block tests: each edge longer than
+/// `CORNER_LONG`, its line's origin and direction (the direction's first non-zero
+/// coordinate positive), sorted. A line is one operand's record, copied, so two results
+/// whose edges took the same records give the same rows exactly.
+fn longLines(body: *const Body) ![][6]f64 {
+    var rows: std.ArrayList([6]f64) = .empty;
+    errdefer rows.deinit(testing.allocator);
+    for (body.edges.items) |e| {
+        if (e.t1 - e.t0 <= CORNER_LONG) continue;
+        const line = body.geometry.curve(e.curve).line;
+        var d = line.d;
+        const first = if (d[0] != 0) d[0] else if (d[1] != 0) d[1] else d[2];
+        if (first < 0) d = vec.scale(d, -1);
+        try rows.append(testing.allocator, .{ line.o[0], line.o[1], line.o[2], d[0], d[1], d[2] });
+    }
+    std.mem.sort([6]f64, rows.items, {}, struct {
+        fn lessThan(_: void, x: [6]f64, y: [6]f64) bool {
+            for (x, y) |p, q| if (p != q) return p < q;
+            return false;
+        }
+    }.lessThan);
+    return rows.toOwnedSlice(testing.allocator);
+}
+
+/// `op` of `a` and `b` and of `b` and `a` alike (`expectAlikeEitherWay`) and, made, with the
+/// same planes and the same lines for their long edges: an edge between two faces takes the
+/// line their planes meet in either way round. (The merged vertices may still differ by the
+/// operands' order, a corner the first operand's point, within the tolerance.)
+fn expectSameLines(a: *const Body, b: *const Body, op: pipeline.Op) !void {
+    try expectAlikeEitherWay(a, b, op);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var forward = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return,
+    };
+    defer forward.deinit();
+    var swapped = try pipeline.boolean(testing.allocator, b, a, op, .{}, &diag, null);
+    defer swapped.deinit();
+    try expectSamePlanes(&forward, &swapped);
+    const lines = [2][][6]f64{ try longLines(&forward), try longLines(&swapped) };
+    defer for (lines) |list| testing.allocator.free(list);
+    try testing.expectEqualSlices([6]f64, lines[0], lines[1]);
+}
+
+test "degeneracy: a slab's corner edge in one plane with a box's along both its faces takes the line those faces' planes meet in, whichever operand comes first" {
+    // The ReleaseSafe find cq (2026-11-22): a slab's top and side each one plane with a
+    // box's, both at zone 1e-5. The edge where they meet is a block of an edge of each
+    // with a region of both on either side, a tie the operands' order broke: both faces
+    // took the box's planes either way round (D28's tie rule) and the edge the slab's line
+    // one way round, 1e-5 off them along its length 1, so the intersection's area differed
+    // by 1.5e-5 between the orders. The line follows the planes its faces took
+    var solids = try cornerBoxes(1e-5, 5e-6, 0, false);
+    defer for (&solids) |*body| body.deinit();
+    try expectSameLines(&solids[0], &solids[1], .intersection);
+}
+
+test "degeneracy: a slab's corner edge tied between two operands follows its faces' planes at every offset, turned and mirrored" {
+    for (CORNER_SIDES) |side| for (CORNER_TOPS) |top| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("side {e}, top {e}, quarter turns {d}, mirrored {}\n", .{ side, top, quarter, mirrored });
+        var solids = try cornerBoxes(side, top, quarter, mirrored);
+        defer for (&solids) |*body| body.deinit();
+        for ([_]pipeline.Op{ .intersection, .@"union" }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            try expectSameLines(&solids[0], &solids[1], op);
+        }
+    };
+}
+
 /// The hulls of the gap tests, the first nudged `nudge_x` in x and down `drop`, placed as
 /// the fuzzer places them (the turn, the move and the nudge one affine map).
 fn gapHulls(nudge_x: f64, drop: f64) ![2]Body {

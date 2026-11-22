@@ -1055,6 +1055,10 @@ const Provenance = struct {
     plane_of: [2][]Face = .{ &.{}, &.{} },
     /// Each piece between two merged vertices (the smaller first): its source.
     line_of: std.AutoHashMapUnmanaged([2]u32, Source) = .empty,
+    /// The common blocks whose faces along them were as many of each operand's
+    /// (`blockLines`), each by its index in the paves' list: their lines follow the planes
+    /// their faces take (`tiedLines`).
+    tied: std.ArrayList(u32) = .empty,
     /// The records copied into the result, by source.
     planes: std.AutoHashMapUnmanaged(Copy, geometry.SurfaceRef) = .empty,
     lines: std.AutoHashMapUnmanaged(Copy, geometry.CurveRef) = .empty,
@@ -1090,8 +1094,10 @@ const Provenance = struct {
             if (!entry.found_existing) entry.value_ptr.* = .{ .section = section.value_ptr.* };
         }
         try self.blockLines(classes);
-        // Then the planes, which must hold the pieces on their lines
+        // Then the planes, which must hold the pieces on their lines, and the tied blocks'
+        // lines by the planes their faces took
         try self.samePlanes(diag);
+        try self.tiedLines();
         return self;
     }
 
@@ -1138,11 +1144,60 @@ const Provenance = struct {
         }
         // With as many of each, the operand built at the finer zone
         const finer: u1 = @intFromBool(p.operands[1].tol.zone < p.operands[0].tol.zone);
-        for (p.common.items) |block| {
+        for (p.common.items, 0..) |block, i| {
             const count = own.get(block.vertices).?;
             const operand: u1 = if (count[0] == count[1]) finer else @intFromBool(count[1] > count[0]);
             self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });
+            if (count[0] == count[1]) try self.tied.append(self.allocator, @intCast(i));
         }
+    }
+
+    /// A tied common block's line (`blockLines`: as many faces of each operand's along it)
+    /// by the planes its kept faces took (`samePlanes`): where every one took a plane of one
+    /// operand, that operand's edge, the line its faces' planes meet in; else the tie rule's.
+    /// The result's edge lies between those faces, and the plane choice is one decision
+    /// already made for them, by intrinsic measures before the operands' order (D28's tie
+    /// rule, `planar_faces.TieFace.before`); the line by the operands' order alone was a
+    /// second decision of the same thing, and could disagree with the first: a box's top
+    /// and side each one plane with a trimmed plate's, a zone apart, both at zone 1e-5, both
+    /// faces took the box's planes either way round, and the edge between them took the
+    /// plate's line one way round and the box's the other, 1e-5 off its faces' planes along
+    /// an edge 1 long: the intersection's area differed by 1.5e-5 between the two orders
+    /// (find cq, a locus ReleaseSafe run, 2026-11-22). OCCT's edge of a common block takes
+    /// the first argument's and grows its tolerance to cover its faces; Locus keeps the
+    /// tolerance fixed, so its line is the one its faces' planes hold.
+    fn tiedLines(self: *Provenance) Error!void {
+        const p = self.paves;
+        for (self.tied.items) |index| {
+            const block = p.common.items[index];
+            // The operands whose planes the kept faces along the block took: bit k for k
+            var took: u2 = 0;
+            for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
+                if (keep == .drop) continue;
+                if (!self.alongBlock(i, block.vertices)) continue;
+                const chosen = self.plane_of[fragment.operand][fragment.face];
+                took |= @as(u2, 1) << chosen.operand;
+            }
+            const operand: u1 = switch (took) {
+                0b01 => 0,
+                0b10 => 1,
+                else => continue,
+            };
+            self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });
+        }
+    }
+
+    /// Whether fragment `i`'s loops run along the piece between merged vertices `ends`
+    /// (the smaller first).
+    fn alongBlock(self: *const Provenance, i: usize, ends: [2]u32) bool {
+        for (self.fragments.loopsOf(i)) |loop| {
+            const vertices = self.fragments.loopVertices(loop);
+            for (vertices, 0..) |x, j| {
+                const y = vertices[(j + 1) % vertices.len];
+                if (@min(x, y) == ends[0] and @max(x, y) == ends[1]) return true;
+            }
+        }
+        return false;
     }
 
     /// The line of edge `e` of `operand`.
@@ -1154,6 +1209,7 @@ const Provenance = struct {
     fn deinit(self: *Provenance) void {
         for (self.plane_of) |list| self.allocator.free(list);
         self.line_of.deinit(self.allocator);
+        self.tied.deinit(self.allocator);
         self.planes.deinit(self.allocator);
         self.lines.deinit(self.allocator);
         self.points.deinit(self.allocator);
