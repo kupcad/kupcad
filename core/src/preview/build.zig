@@ -191,9 +191,18 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
     // handles, the ones the GLB was built from
     const provisional = try arena.alloc(bool, grouping.parts.len);
     @memset(provisional, false);
+    // Whether a face of a part could not be meshed and is filled roughly in the picture:
+    // the part's author is told, once a part, since an export refuses it
+    const damaged = try arena.alloc(bool, grouping.parts.len);
+    @memset(damaged, false);
     for (grouping.copies, solids) |copy, solid| {
         try nodes[copy.part].append(arena, try names.next(arena, copy));
-        if (kernel.previewIsProvisional(try vm.ensureConcrete(solid))) provisional[copy.part] = true;
+        const handle = try vm.ensureConcrete(solid);
+        if (kernel.previewIsProvisional(handle)) provisional[copy.part] = true;
+        if (kernel.previewIsDamaged(handle)) damaged[copy.part] = true;
+    }
+    for (nodes, damaged) |part_nodes, is_damaged| {
+        if (is_damaged) vm.warn("part {s}: a face could not be meshed at its resolution; the preview fills it roughly and an export refuses the part", .{part_nodes.items[0]});
     }
     const out = try arena.alloc(frame.Part, grouping.parts.len);
     for (grouping.parts, nodes, provisional, out) |part, part_nodes, is_provisional, *o| {

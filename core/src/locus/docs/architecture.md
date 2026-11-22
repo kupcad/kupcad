@@ -1396,7 +1396,11 @@ same, and a fuzz target shapes random ellipses and NURBS curves and checks each 
 chord densely. The driver's `getMesh` and `numTris` build the mesh at the part's
 resolution (`supports(.mesh)` since 2026-11-11), once per part and kept (a body never
 changes); a free-form edge no chord certifies refuses the whole mesh, so no export writes
-a hole. **A bounded provisional mesh** for the viewer while a part is being edited
+a hole, and so does a `.failed` face (its lenient fan is a picture, not a mesh: an export, a
+measure or a count of the part is refused with the face's finding, as OCCT leaves such a
+face unmeshed with a failure status; the driver dropped the status and an export wrote
+the fan until the mesher audit of 2026-11-22). The preview keeps the picture and the
+preview frame's run warns of the part (`kernel.previewIsDamaged`). **A bounded provisional mesh** for the viewer while a part is being edited
 (research/solidcraft.md §2, 2026-11-11): `tessellateWithin(body, resolution, Budget)`
 caps the interior points per edge (resampled evenly at the cap), per face (the grid
 thinned, refinement stopped) and per body (the edges' total, then the faces' share of

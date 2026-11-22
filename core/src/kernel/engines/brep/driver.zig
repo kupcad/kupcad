@@ -269,6 +269,7 @@ pub const driver = struct {
     pub const getPreviewMeshFn = getPreviewMeshImpl;
     pub const getMeshMergedFn = getMeshMergedImpl;
     pub const previewIsProvisionalFn = previewIsProvisionalImpl;
+    pub const previewIsDamagedFn = previewIsDamagedImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;
@@ -990,10 +991,45 @@ fn previewIsProvisionalImpl(handle: geom.GeometryHandle) bool {
     return src.mesh == null and src.preview != null;
 }
 
-/// The solid's mesh at its resolution, built on the first ask and kept.
+/// The solid's mesh at its resolution, built on the first ask and kept; null, the reason
+/// remembered, when a face of it could not be meshed: the tessellator fills such a face
+/// leniently (a fan of its outer loop, holes left out, triangles that may overlap), a
+/// picture a preview may show but no file, measure or count may take (OCCT leaves such a
+/// face unmeshed with a failure status for its caller to read; the mesher audit,
+/// 2026-11-22: the driver dropped the status, and an export wrote the fan).
 fn fullMesh(src: *BrepSolid) ?*const locus.mesh.tessellate.Mesh {
     if (src.mesh == null) src.mesh = meshWithin(src, locus.mesh.tessellate.Budget.unbounded) orelse return null;
+    if (failedFace(&src.mesh.?)) |range| {
+        rememberFailedFace(range);
+        return null;
+    }
     return &src.mesh.?;
+}
+
+/// The first face of `mesh` the tessellator could not mesh (`.failed`, filled leniently).
+fn failedFace(mesh: *const locus.mesh.tessellate.Mesh) ?locus.mesh.tessellate.FaceRange {
+    for (mesh.faces) |range| if (range.status == .failed) return range;
+    return null;
+}
+
+/// Remembers why the mesh is refused: face `range`'s polygon, as the tessellator found it.
+fn rememberFailedFace(range: locus.mesh.tessellate.FaceRange) void {
+    var diag = locus.Diagnostics.init(backend_allocator);
+    defer diag.deinit();
+    diag.add(.{ .code = range.reason orelse .not_simple, .entity = .of(.face, @backingInt(range.face)), .label = "the mesh of a face (its polygon at the part's resolution)" }) catch return;
+    remember(&diag);
+}
+
+/// Whether the preview mesh the part has at hand has a face the tessellator could not
+/// mesh, filled leniently: the preview shows it and says so; an export refuses it.
+pub fn previewIsDamaged(handle: geom.GeometryHandle) bool {
+    return previewIsDamagedImpl(handle);
+}
+
+fn previewIsDamagedImpl(handle: geom.GeometryHandle) bool {
+    const src = solidOf(handle.ptr);
+    const mesh = if (src.mesh) |*m| m else if (src.preview) |*m| m else return false;
+    return failedFace(mesh) != null;
 }
 
 /// Locus's mesh of the solid within `budget`, in the backend's memory; null with the

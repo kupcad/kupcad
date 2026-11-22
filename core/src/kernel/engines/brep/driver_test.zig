@@ -737,3 +737,52 @@ test "Driver: Locus's parallel loop runs on oneTBB whenever the build has it" {
     driver.parallel.forRange(0, 1024, Meeting, &meeting, Meeting.visit);
     try std.testing.expect(meeting.met.load(.acquire));
 }
+
+/// A square sheet with a notch from its top whose tip reaches `past` beyond its bottom
+/// edge, within the tolerance: a sheet the checker takes (the tip on the edge within the
+/// zone), whose face's polygon crosses itself in exact UV at every resolution (straight
+/// edges only, nothing to refine), so the tessellator fails the face and fills it.
+fn notchedSheet(past: f64) !*driver.BrepSolid {
+    const allocator = std.heap.c_allocator;
+    var diag = locus.Diagnostics.init(allocator);
+    defer diag.deinit();
+    var b = try locus.construct.primitives.Builder.init(allocator, locus.Tolerance.fromZone(1e-5), .sheet, &diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const points = [_][3]f64{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 10, 10, 0 }, .{ 6, 10, 0 }, .{ 5, -past, 0 }, .{ 4, 10, 0 }, .{ 0, 10, 0 } };
+    var v: [points.len]locus.topology.types.VertexIndex = undefined;
+    for (points, 0..) |p, k| v[k] = try b.vertex(p);
+    var edges: [points.len]locus.construct.sew.EdgeSpec = undefined;
+    for (0..points.len) |k| edges[k] = try b.straight(v[k], v[(k + 1) % points.len]);
+    const plane = try b.plane(locus.geometry.types.Frame.world, &.{});
+    const body = try b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, -past }, .max = .{ 10, 10 } } }}, .sheet);
+    return driver.BrepSolid.create(body, .{ .limits = .{}, .resolution = .{} });
+}
+
+test "Driver: a part with a face the mesher could not mesh is refused for a file, a measure and a count, the reason naming the face; its preview shows the rough fill and says so" {
+    // The mesher audit (2026-11-22, finding 1): the tessellator fills a face it cannot
+    // mesh with a fan of its outer loop for the picture, and the driver passed that mesh
+    // on to an export, which wrote it
+    const solid = try notchedSheet(5e-6);
+    const handle: geom.GeometryHandle = .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    defer driver.driver.destructFn(handle);
+    try std.testing.expect(driver.driver.getMeshFn(std.testing.allocator, handle) == null);
+    const why = driver.driver.takeFailureFn() orelse return error.NoReason;
+    try std.testing.expect(std.mem.indexOf(u8, why, "(face 0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "is not simple") != null);
+    try std.testing.expect(driver.driver.getMeshMergedFn(std.testing.allocator, handle) == null);
+    try std.testing.expectEqual(@as(?usize, null), driver.driver.numTrisFn(handle));
+    // The preview: the picture, and the flag a viewer warns by
+    const preview = driver.driver.getPreviewMeshFn(std.testing.allocator, handle) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(preview.vert_props);
+    defer std.testing.allocator.free(preview.tri_verts);
+    try std.testing.expect(preview.tri_verts.len > 0);
+    try std.testing.expect(driver.previewIsDamaged(handle));
+    // A sound part is neither
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    const cube_mesh = driver.driver.getPreviewMeshFn(std.testing.allocator, cube) orelse return error.KernelFailed;
+    defer std.testing.allocator.free(cube_mesh.vert_props);
+    defer std.testing.allocator.free(cube_mesh.tri_verts);
+    try std.testing.expect(!driver.previewIsDamaged(cube));
+}

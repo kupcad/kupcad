@@ -583,6 +583,13 @@ pub inline fn previewIsProvisional(handle: geom.GeometryHandle) bool {
     return dispatch("previewIsProvisionalFn", handle, .{});
 }
 
+/// Whether the preview mesh the engine has at hand for `handle` has a face the engine could
+/// not mesh, filled roughly for the picture: `getMesh` refuses that part (a file, a
+/// measure), the preview shows it and should say so.
+pub inline fn previewIsDamaged(handle: geom.GeometryHandle) bool {
+    return dispatch("previewIsDamagedFn", handle, .{});
+}
+
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
     return brep_driver.exportStep(allocator, handles);
 }

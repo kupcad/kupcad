@@ -758,6 +758,12 @@ fn previewIsProvisionalImpl(handle: geom.GeometryHandle) bool {
     return false;
 }
 
+/// A mesh engine's part is its mesh: never a face it could not mesh.
+fn previewIsDamagedImpl(handle: geom.GeometryHandle) bool {
+    std.debug.assert(handle.engine == .manifold);
+    return false;
+}
+
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .manifold);
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
@@ -890,6 +896,7 @@ pub const driver = struct {
     pub const getPreviewMeshFn = getMeshImpl;
     pub const getMeshMergedFn = getMeshMergedImpl;
     pub const previewIsProvisionalFn = previewIsProvisionalImpl;
+    pub const previewIsDamagedFn = previewIsDamagedImpl;
     pub const containsPointFn = containsPointImpl;
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;
