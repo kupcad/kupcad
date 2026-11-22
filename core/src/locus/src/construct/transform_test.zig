@@ -10,10 +10,28 @@ const primitives = @import("primitives.zig");
 const transform = @import("transform.zig");
 const bbox = @import("../topology/bbox.zig");
 const body_json = @import("../io/body_json.zig");
+const pipeline = @import("../boolean/pipeline.zig");
+const overlap = @import("../query/overlap.zig");
 const Affine = mat.Affine;
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
+/// How high over a box's top a second box rests in the tests of a union scaled: within the
+/// intersection tolerance (the union holds its bottom's outline in the first box's top, up
+/// to that far off its plane, with no gap), and the factors it is scaled by.
+const STACK_LIFTS = [_]f64{ 1e-5, 1.5e-5, 1.9e-5 };
+const STACK_SCALES = [_]f64{ 2, 3, 0.5 };
+/// A tetrahedron on the unit right triangle, its apex `LOW_RISE` over (0.3, 0.3): sound
+/// (past twice the intersection tolerance), and the factors along z that bring it under the
+/// tolerance (its sides then in its base's plane) or keep it past.
+const LOW_RISE: f64 = 5e-5;
+const LOW_SQUASH_THIN = [_]f64{ 0.3, 0.38 };
+const LOW_SQUASH_APART = [_]f64{0.5};
+/// A C-shaped sheet whose slit is `C_SLIT` across (past the zone), and the factors across
+/// the slit that close it under the zone or keep it open.
+const C_SLIT: f64 = 3e-5;
+const C_SQUASH_SHUT = [_]f64{0.25};
+const C_SQUASH_OPEN = [_]f64{0.8};
 
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
@@ -162,5 +180,90 @@ test "transform: every face keeps its attribute through a move, a turn, a scale 
         defer moved.deinit();
         try testing.expectEqual(box.faces.items.len, moved.faces.items.len);
         for (box.faces.items, moved.faces.items) |a, b| try testing.expectEqual(a.attribute, b.attribute);
+    }
+}
+
+/// Box `size` placed with its least corner at `at`.
+fn boxAt(at: Vec3, size: Vec3, diag: *Diagnostics) !Body {
+    var b = try primitives.box(testing.allocator, tol, size[0], size[1], size[2], false, diag);
+    defer b.deinit();
+    return transform.transform(testing.allocator, &b, &Affine.translate(at), .{}, diag);
+}
+
+test "transform: a union with a box resting within the tolerance, scaled, keeps every relation at the scaled tolerance" {
+    // A uniform scale multiplies every gap by its factor and kept the body's tolerance: the
+    // union holds the upper box's bottom outline in the lower's top up to the intersection
+    // tolerance off its plane with no gap, and scaled by 2 those edges lay 3e-5 off it
+    // against 2e-5 (`edge_off_surface`). OCCT's BRepTools_TrsfModification scales every
+    // tolerance with the shape: so the scaled body's
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try boxAt(.{ 0, 0, 0 }, .{ 2, 2, 2 }, &diag);
+    defer a.deinit();
+    for (STACK_LIFTS) |lift| {
+        var b = try boxAt(.{ 1, 0, 2 + lift }, .{ 2, 2, 2 - lift }, &diag);
+        defer b.deinit();
+        var joined = try pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag, null);
+        defer joined.deinit();
+        for (STACK_SCALES) |k| {
+            errdefer std.debug.print("lift {e}, scale {d}: {any}\n", .{ lift, k, diag.first() });
+            var scaled = try transform.transform(testing.allocator, &joined, &Affine.scaleBy(.{ k, k, k }), .{}, &diag);
+            defer scaled.deinit();
+            try expectValid(&scaled);
+            try testing.expectApproxEqRel(k * tol.zone, scaled.tol.zone, 1e-12);
+            try testing.expectApproxEqRel(k * tol.xsect, scaled.tol.xsect, 1e-12);
+        }
+    }
+}
+
+/// The low tetrahedron's points, its triangles wound outward.
+const LOW_TRIANGLES = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ 2, 0, 3 } };
+
+test "transform: a stretch that brings a solid's faces within the tolerance of each other is refused below the feature size" {
+    // A non-uniform scale keeps the body's tolerance and changes distances unevenly: a
+    // tetrahedron 5e-5 high squashed to 1.5e-5 has its sides in its base's plane, faces on
+    // each other, which every operation making a solid refuses (`overlap.refuseMade`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0.3, 0.3, LOW_RISE } };
+    var low = try primitives.polyhedron(testing.allocator, tol, &points, &LOW_TRIANGLES, &diag);
+    defer low.deinit();
+    for (LOW_SQUASH_THIN) |k| {
+        errdefer std.debug.print("squash {d}\n", .{k});
+        try testing.expectError(error.Degenerate, transform.transform(testing.allocator, &low, &Affine.scaleBy(.{ 1, 1, k }), .{}, &diag));
+        try testing.expectEqual(.below_feature_size, diag.first().?.code);
+        diag.deinit();
+        diag = Diagnostics.init(testing.allocator);
+    }
+    for (LOW_SQUASH_APART) |k| {
+        var squashed = try transform.transform(testing.allocator, &low, &Affine.scaleBy(.{ 1, 1, k }), .{}, &diag);
+        defer squashed.deinit();
+        try expectValid(&squashed);
+        try overlap.check(testing.allocator, &squashed, .{}, &diag);
+    }
+}
+
+test "transform: a stretch that closes a sheet's slit under the zone is refused, as the overlay's sheets cannot be" {
+    // A sheet is otherwise always the overlay's, which keeps its edges past the zone; a
+    // stretch across a slit 3e-5 wide to a quarter left it 7.5e-6, edges of one sheet
+    // within the zone that a later overlay would weld shut without a word
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    // The slit's end askew, so that no squash makes it an edge shorter than a sheet's
+    const c = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 0.5, 1 }, .{ 0.6, 1 + C_SLIT }, .{ 2, 1 + C_SLIT }, .{ 2, 2 }, .{ 0, 2 } };
+    var sheet = try primitives.polygon(testing.allocator, tol, &c, &diag);
+    defer sheet.deinit();
+    for (C_SQUASH_SHUT) |k| {
+        errdefer std.debug.print("squash {d}: {any}\n", .{ k, diag.first() });
+        // Its slit's corners within the zone of each other (`vertices_too_close`), or its
+        // edges (`below_feature_size`), whichever is found first
+        try testing.expectError(error.Degenerate, transform.transform(testing.allocator, &sheet, &Affine.scaleBy(.{ 1, k, 1 }), .{}, &diag));
+        diag.deinit();
+        diag = Diagnostics.init(testing.allocator);
+    }
+    for (C_SQUASH_OPEN) |k| {
+        var squashed = try transform.transform(testing.allocator, &sheet, &Affine.scaleBy(.{ 1, k, 1 }), .{}, &diag);
+        defer squashed.deinit();
+        try overlap.check(testing.allocator, &squashed, .{}, &diag);
     }
 }

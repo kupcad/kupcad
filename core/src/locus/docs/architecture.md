@@ -293,7 +293,15 @@ their descriptions.
 All geometry is parametric, in millimetres and radians, with STEP Part 42's
 parameterizations so that export is a transliteration and import a lookup (usd-brep's
 schema keeps the same convention). Right-handed, column vectors, counter-clockwise
-positive; normals transform by the inverse transpose; a mirror flips `same_sense`.
+positive; normals transform by the inverse transpose; a mirror flips `same_sense`. A
+similarity scales the body's length tolerances with it (`Tolerance.scaled`: `zone`,
+`xsect`, `approx`; `angle` and the relative `param` kept), as OCCT's
+`BRepTools_TrsfModification` scales a shape's tolerances, so every relation the body held
+holds at the scale (a union holding a box's bottom 1.5e-5 off another's top, no gap,
+scaled by 2, had it 3e-5 off against an unscaled 2e-5; audit of 2026-11-22). A general
+map keeps the tolerance and changes distances unevenly: its result is refused where it
+brought features under the minimum (`below_feature_size` for a solid's faces, a sheet's
+edges within the zone; size findings of the checker as `Degenerate`).
 
 | Kind | Form | Domain, period |
 |---|---|---|

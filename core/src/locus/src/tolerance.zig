@@ -52,6 +52,16 @@ pub const Tolerance = struct {
         return fromZone(zone);
     }
 
+    /// The tolerance of a body scaled by `k` (its absolute value): the lengths (`zone`,
+    /// `xsect`, `approx`) scaled with it, as OCCT's BRepTools_TrsfModification scales every
+    /// tolerance of a shape with its scale factor, so that every relation the body held
+    /// holds at the scale. `angle` has no size, and `param` is relative (the sweeps compare
+    /// it with angles): both kept.
+    pub fn scaled(self: Tolerance, k: f64) Tolerance {
+        const a = @abs(k);
+        return .{ .zone = self.zone * a, .xsect = self.xsect * a, .approx = self.approx * a, .angle = self.angle, .param = self.param };
+    }
+
     /// The tolerance of an operation on two bodies: the looser of each field.
     pub fn merge(a: Tolerance, b: Tolerance) Tolerance {
         return .{

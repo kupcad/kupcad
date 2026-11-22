@@ -6,6 +6,16 @@
 //! left" rule hold on the mirror image. Edge ranges and pcurves scale where a line's or an
 //! extrusion's length parameter does. Under a general map (a non-uniform scale) a body
 //! whose faces are all planes maps exactly; a curved face is `error.NotRepresentable`.
+//!
+//! A similarity scales the body's tolerance with it (`Tolerance.scaled`, as OCCT's
+//! BRepTools_TrsfModification does), so every relation the body held, a gap, a vertex on
+//! an edge or a face within the intersection tolerance, holds at the scale: a union
+//! holding a box's bottom outline 1.5e-5 off another's top with no gap, scaled by 2, had it
+//! 3e-5 off against an unscaled 2e-5 (audit of 2026-11-22). A general map keeps the
+//! tolerance and changes distances unevenly, so its result is a made solid like any other
+//! (`overlap.refuseMade`: faces brought within the tolerance of each other, refused below
+//! the feature size), or a sheet the overlay could not have made (edges within the zone
+//! of each other, refused alike; `sketch/overlap.check`).
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -17,6 +27,8 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const check = @import("../topology/check.zig");
+const overlap = @import("../query/overlap.zig");
+const sketch_overlap = @import("../sketch/overlap.zig");
 const trace = @import("../io/trace.zig");
 const Body = body_mod.Body;
 const Affine = mat.Affine;
@@ -36,6 +48,7 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const
     var out = body.clone(allocator) catch |e| return mapError(diag, e);
     errdefer out.deinit();
     const g = &out.geometry;
+    if (shape == .similarity) out.tol = body.tol.scaled(shape.similarity.scale);
 
     // Points, with the gaps scaled by a similarity's factor
     const factor: f64 = switch (shape) {
@@ -173,11 +186,35 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const
     if (affine.determinant() < 0) try mirrorTopology(&out);
     try trace.phase(allocator, &options, &out, "transform", "mapped");
 
-    var report = check.run(allocator, &out, .geometric) catch return error.OutOfMemory;
+    var report = check.run(allocator, &out, if (out.kind == .sheet) .global else .geometric) catch return error.OutOfMemory;
     defer report.deinit(allocator);
-    if (report.first()) |f| return diag.fail(error.NotValid, f);
+    if (report.first()) |f| return diag.fail(if (report.onlySizes()) error.Degenerate else error.NotValid, f);
+    if (shape == .general) try refuseStretched(allocator, &out, options, diag);
     try trace.phase(allocator, &options, &out, "transform", "checked");
     return out;
+}
+
+/// A body under a general map, which kept its tolerance and changed its distances unevenly:
+/// a solid through the rules of a made solid, a sheet through the overlay's own rule (its
+/// edges past the zone of each other), each refused below the feature size where the map
+/// brought features too near (a tetrahedron 5e-5 high squashed to 1.5e-5, its sides in its
+/// base's plane; a slit 3e-5 across squashed to 7.5e-6).
+fn refuseStretched(allocator: std.mem.Allocator, out: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+    var held = options;
+    held.tolerance = out.tol;
+    if (out.kind == .solid) {
+        _ = try overlap.refuseMade(allocator, out, "faces of the stretched solid, within its features nearer than the minimum feature size,", held, diag);
+        return;
+    }
+    var scratch = Diagnostics.init(allocator);
+    defer scratch.deinit();
+    sketch_overlap.check(allocator, out, &scratch) catch |e| switch (e) {
+        error.NotValid => return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = scratch.first().?.entity, .label = "edges of the stretched sheet, within the zone of each other,", .measured = scratch.first().?.measured, .threshold = out.tol.zone }),
+        else => {
+            for (scratch.findings.items) |f| try diag.add(f);
+            return e;
+        },
+    };
 }
 
 /// The UV box of a planar face from its loops' points, after the plane got new axes.
