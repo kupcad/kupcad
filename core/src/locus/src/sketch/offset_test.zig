@@ -38,6 +38,22 @@ const SEAM_OFFSETS = [2]f64{ 1, 1.5 };
 const SEAM_PLATE: f64 = 40;
 /// How near a twice-offset sheet's area is to its closed form, and to the control's.
 const SEAM_AREA_CLOSE: f64 = 1e-9;
+/// The cusp family (the spandrel's cusps grown with miters, turned and moved out): the
+/// offsets (the find's 2e-5 leaves the spandrel's bands under the sheet's size rules and is
+/// refused; the miter's reach, δ over the tangents' cross, goes by the cross at any δ);
+/// the miter limits, the least and past any cusp's reach (the 2D chain fuzzer's
+/// find dh drew `floatMax`); the moves, as the chain fuzzer moves a sheet whole (a turn
+/// about z, then a shift), the find's first; and how near each area is to the closed form.
+const CUSP_OFFSETS = [_]f64{ 1e-3, 0.5 };
+const CUSP_LIMITS = [_]f64{ 2, 1e3, std.math.floatMax(f64) };
+const CUSP_MOVES = [_]struct { angle: f64, shift: Vec2 }{
+    .{ .angle = 0.014142253477512098, .shift = .{ 1e5, -2e5 } },
+    .{ .angle = 0, .shift = .{ 0, 0 } },
+    .{ .angle = 0, .shift = .{ 1e5, -2e5 } },
+    .{ .angle = 0.3, .shift = .{ 0, 0 } },
+    .{ .angle = 0.3, .shift = .{ 1e5, -2e5 } },
+};
+const CUSP_AREA_CLOSE: f64 = 1e-9;
 
 fn areaOf(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
@@ -588,4 +604,33 @@ test "offset: a segment of a disc grown with bevels, then with each join, is the
             }
         }
     }
+}
+
+test "offset: a cusp's miter is a cap however the sheet is turned, mirrored or moved, whatever the limit (the find dh)" {
+    // The 2D chain fuzzer's find dh (2026-11-22): at a cusp, an arc arriving tangent to the
+    // line it leaves by, the offset lines are parallel and the miter is capped; moved 2e5
+    // out and turned 0.014, the tangents' cross was a rounding of 1e-11, the lines met
+    // 4.1e6 away, and with no limit to speak of that was the miter. The spandrel's two
+    // cusps (the cusp test's square less a quarter disc), grown by δ: the sheet, its sides'
+    // bands, the annular sector inside its arc, δ² at the square corner and 2δ² at each
+    // cusp, wherever it is and whichever way round
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const spandrel = [_]RingPoint{ .{ .p = .{ 0, 0 } }, .{ .p = .{ 2, 0 } }, .{ .p = .{ 2, 2 }, .bulge = -1, .ccw = false } };
+    var sheet = try bulged(&.{&spandrel}, &diag);
+    defer sheet.deinit();
+    for (CUSP_MOVES) |move| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        const turn = mat.Affine.rotate(vec.Z3, move.angle + @as(f64, @floatFromInt(quarter)) * PI / 2);
+        const mirror = if (mirrored) mat.Affine.mirror(vec.X3) else mat.Affine.translate(.{ 0, 0, 0 });
+        const place = mat.Affine.translate(.{ move.shift[0], move.shift[1], 0 }).compose(&turn).compose(&mirror);
+        var moved = try transform.transform(testing.allocator, &sheet, &place, .{}, &diag);
+        defer moved.deinit();
+        for (CUSP_OFFSETS) |delta| for (CUSP_LIMITS) |limit| {
+            errdefer std.debug.print("turned {d} and {d} quarters, mirrored {}, shifted {any}; grown {d} with the limit {e}\n", .{ move.angle, quarter, mirrored, move.shift, delta, limit });
+            var g = try offset.offset(testing.allocator, &moved, delta, .miter, limit, .{}, &diag);
+            defer g.deinit();
+            const want = 4 - PI + 4 * delta + PI / 4.0 * (4 - (2 - delta) * (2 - delta)) + 5 * delta * delta;
+            try testing.expectApproxEqRel(want, try areaOf(&g), CUSP_AREA_CLOSE);
+        };
+    };
 }

@@ -1233,7 +1233,9 @@ the band its boundary sweeps, each edge's sweep (a rectangle, an annular sector,
 about a centre the offset passes) and each opening corner's join (round, miter, bevel,
 square) a simple region the overlay counts as a second input (D25), a miter whose reach is
 within the zone of the limit within it (a corner exactly at the limit was mitered or capped
-by a rounding a turn moved; the fuzzer, 2026-11-18); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
+by a rounding a turn moved; the fuzzer, 2026-11-18), a corner whose tangents are opposite
+within the angular tolerance a cusp, capped (an exact one was, and the sheet moved 2e5 out
+and turned met its offset lines 4.1e6 away by the tangents' rounding; dh, 2026-11-22); hull is the convex hull of all vertices and arc extreme points as a polygon (arcs
 are left out of the hull's boundary; documented, and the driver refuses a sketch with arcs
 as `curved_hull`, D24, until the hull keeps its arcs); `query.contours` outputs closed polylines at a
 `Resolution` (the mesh engine's polygon: lofts, sweeps) and `query.outlines` the same loops with

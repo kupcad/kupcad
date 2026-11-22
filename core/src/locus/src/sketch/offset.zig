@@ -54,7 +54,7 @@ pub fn offset(allocator: std.mem.Allocator, sheet: *const Body, delta: f64, join
     _ = o.addInput() catch |e| return boolean.mapError(diag, e);
     try boolean.addSheet(&o, sheet, diag);
     _ = o.addInput() catch |e| return boolean.mapError(diag, e);
-    var band: Band = .{ .o = &o, .delta = delta, .join = join, .miter_limit = @max(miter_limit, LEAST_MITER_LIMIT), .zone = tol.zone, .diag = diag };
+    var band: Band = .{ .o = &o, .delta = delta, .join = join, .miter_limit = @max(miter_limit, LEAST_MITER_LIMIT), .zone = tol.zone, .angle = tol.angle, .diag = diag };
     var pieces = std.ArrayList(Piece).empty;
     defer pieces.deinit(allocator);
     var shells = traverse.Shells.init(sheet);
@@ -135,6 +135,9 @@ const Band = struct {
     join: Join,
     miter_limit: f64,
     zone: f64,
+    /// The angular tolerance (`Tolerance.angle`, as `1 − cos`): a corner whose tangents are
+    /// opposite within it turns back on itself, a cusp (`corner`'s miter).
+    angle: f64,
     diag: *Diagnostics,
 
     /// The sweeps of a loop's pieces and the joins at its corners.
@@ -224,8 +227,15 @@ const Band = struct {
                 // reach within the zone of the limit is within it, as any two lengths that
                 // close are one: a corner whose miter reaches exactly the limit (a third of a
                 // turn with the limit 2) is otherwise mitered or capped by a rounding, which
-                // a turn of the sheet moves (the fuzzer, 2026-11-18: 124.04 against 124.48)
-                if (linesMeet(end1, t1, start2, t2)) |meet| {
+                // a turn of the sheet moves (the fuzzer, 2026-11-18: 124.04 against 124.48).
+                // A corner whose tangents are opposite within the angular tolerance turns back
+                // on itself, a cusp: no meeting point, capped. Its offset lines are 2·delta
+                // apart, so the zone's early return does not catch it, and their meeting point
+                // went by the rounding of the tangents: an exact reversal capped in place, and
+                // the sheet turned 0.014 and moved 2e5 out mitered 4.1e6 long (its tangents'
+                // cross 1e-11, past `PARALLEL`), the 2D chain fuzzer's find dh, 2026-11-22
+                const cusp = 1 + vec.dot2(t1, t2) <= self.angle;
+                if (if (cusp) null else linesMeet(end1, t1, start2, t2)) |meet| {
                     if (vec.distance2(meet, v) <= self.miter_limit * @abs(delta) + self.zone) {
                         try self.region(&.{ .{ .a = v, .b = end1 }, .{ .a = end1, .b = meet }, .{ .a = meet, .b = start2 }, .{ .a = start2, .b = v } }, forward);
                         return;

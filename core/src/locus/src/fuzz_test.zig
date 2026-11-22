@@ -2429,6 +2429,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // measured the long arc's 2π − 0.32 about the point as −0.32, the whole and a half
         // agreeing (in_face.sweptAngle: a piece taken whole only with both halves small)
         "chain 1 3 4 2 4 2 2 3 3 1 3 1 1 0 1 3 1 8 1 1 2 3 6",
+        // The same session (locus.4, dh): a sheet of three rings grown 2e-5 with no miter
+        // limit, moved whole 2e5 out and turned 0.014; at a cusp, an arc arriving tangent to
+        // the line it leaves by, the tangents' cross was a rounding of 1e-11 and the miter
+        // 4.1e6 long, the face no mesh could hold (offset: a corner whose tangents are
+        // opposite within the angular tolerance is a cusp, capped)
+        "chain 3 3 4 1 3 3 0 6 2 4 2 7 4 6 6 2 6 1 4 3 3 5 4 1 1 6 4 3 2 2 4 2 4 8 4 1 0 4 3 3 6 4 3 0 4 4 3 5 0 1 4 3 2 4 2 1 0 1 1 2 0 4 2 1 1 10 1 3 3 5 4 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
