@@ -965,7 +965,7 @@ importing only those before it, which the layering test holds):**
   point here: the paves clip sections to their face and snap their ends onto its edges'
   paves, so the set is planar before the overlay sees it.
 - `classify.zig`: per fragment a point strictly inside it, the triangle centroid of its
-  triangulation (spurs taken out) furthest from its edges, spurs included (a centroid once
+  triangulation (spurs and slits taken out, `triangulate.splitSlits`) furthest from its edges, spurs included (a centroid once
   fell on a slit's tip, where the other operand touched the face); inside a coplanar face
   of the other operand it is `on_same` or `on_opposite` by their outward normals, else
   inside or outside by `point_in_body`; a sample on the other's boundary gives way to the
@@ -1590,7 +1590,7 @@ splits no face; a vertex loop could record it, once the mesher and the STEP writ
 one), and a face passing through or lying on another does not (`faces_intersect`);
 and each shell lies where the other shells' winding numbers sum to 0 for an outer shell
 and 1 for a void, at a point inside one of its faces (`shell_overlaps`; each face's solid
-angle summed over its own triangulation, spurs taken out, never a fan from one corner,
+angle summed over its own triangulation, spurs and slits taken out (`triangulate.splitSlits`: a step the loop runs both ways bounds nothing, a bridge from the outer loop to a hole as much as a spur; a bridge was handed to the triangulator whole and refused, find cp, 2026-11-22), never a fan from one corner,
 whose triangles overlap outside a face that is not convex and cancel there only by the
 signs of their rounding: a sample in the plane of another shell's notched face wound 1,
 the 10K fuzz session, 2026-11-14): voids inside an
@@ -1628,7 +1628,7 @@ until the mesher audit of 2026-11-22). A spike is where the ring turns back on i
 neighbours one mesh vertex, or two along one ray from it to rounding, D27's band at the
 ring's coordinates, `tessellate.foldsBack`: two arcs from one vertex to points of one line
 through it, each one chord, fell onto the line, and the region between them had a polygon
-of three points of one line and one triangle of no area, find cf, 2026-11-22.) The edge findings name their
+of three points of one line and one triangle of no area, find cf, 2026-11-22. Before a ring is pruned, its loop's spurs and slits, an edge it runs both ways where another solid touches the face along a line, are taken out, `triangulate.splitSlits` (a seam, its two sides apart in UV, never; a bridge from the outer loop to a hole was handed to the triangulator whole and the face failed, find cp, 2026-11-22), and a topological spur no longer counts as a spike that refines the arcs.) The edge findings name their
 condition (`edge_coedge_count`: irregular; `partner_same_sense`: regular, not oriented;
 `open_edge_in_closed_shell`: oriented, not closed).
 

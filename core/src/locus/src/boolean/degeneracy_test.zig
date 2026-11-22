@@ -537,6 +537,26 @@ const FIN_HULL_C_NUDGE: Vec3 = .{ 1e-5, 0, 0 };
 const FIN_HULL_D = [_]Vec3{ .{ 3, 3, 2 }, .{ 0, 0, 2 }, .{ 4, 3, 0 }, .{ 0, 0, 0 }, .{ 3, 1, 2 }, .{ 0, 3, 0 } };
 const FIN_NUDGE: Vec3 = .{ 1e-5, 2e-3, 0 };
 const FIN_DROPS = [_]f64{ 5e-6, 0, 2.5e-6, 7.5e-6, 1e-5 };
+/// The plate of the tests of a solid touching a face along a line through a pocket's mouth
+/// (find cp): its side x = 2 the face, the pocket a box through it, its mouth the square y
+/// and z from 1 to 2 in that face.
+const KEYHOLE_PLATE = [2]Vec3{ .{ 0, -1, 0 }, .{ 2, 4, 4 } };
+const KEYHOLE_POCKET = [2]Vec3{ .{ 1, 1, 1 }, .{ 3, 2, 2 } };
+/// The touching solid's edge in the face, from beyond the plate's top: through the mouth's
+/// corner (2, 2, 2) and on into the face (a bridge to the mouth and a spur past it, the
+/// find's), ending at the corner (the bridge alone), beside the mouth (a slit, no hole:
+/// the spur the overlap rules took out already), and across the face to beyond its bottom
+/// (the face's two sides of it).
+const KEYHOLE_EDGES = [_][2]Vec3{
+    .{ .{ 2, 0.5, 5 }, .{ 2, 2.5, 1 } },
+    .{ .{ 2, 0.5, 5 }, .{ 2, 2, 2 } },
+    .{ .{ 2, 1, 5 }, .{ 2, 3, 1 } },
+    .{ .{ 2, 2.5, 5 }, .{ 2, 3.5, -1 } },
+};
+/// How far the touching solid's other two corners stand off the face, either side of the
+/// edge's middle in y.
+const KEYHOLE_STANDOFF: f64 = 1;
+const KEYHOLE_SPREAD: f64 = 1;
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -5241,4 +5261,75 @@ test "degeneracy: a hull's fin cut about a hair under its tip is decided, howeve
         defer hull.deinit();
         try expectDecidedEitherWay(&fin, &hull);
     };
+}
+
+test "degeneracy: a solid touching a face along a line through a pocket's mouth, the face's loop bridged to the mouth, is made, sound and meshed either way round" {
+    // The locus target's ReleaseSafe find of 2026-11-22 (cp): a hull's edge lay in a
+    // plate's side, from beyond its top through a corner of a pocket's mouth and on into
+    // the side; the union's face ran its loop along the edge to the mouth's corner, round
+    // the mouth, out to the edge's end and back (a bridge and a spur), which the checker
+    // takes, and the overlap rules and the mesher, which took out spurs alone, handed the
+    // triangulator a bridge's two passages along one segment, refused as not simple
+    // (`triangulate.splitSlits` takes out any step run both ways)
+    for (KEYHOLE_EDGES, 0..) |edge, e| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("edge {d}, {d} quarter turns, mirrored {}\n", .{ e, quarter, mirrored });
+        try expectKeyholeSound(edge, quarter, mirrored);
+    };
+}
+
+/// The plate less the pocket and the solid touching its side along `edge`, turned and
+/// mirrored (`tieMove`): their union either way round and the plate less the solid made,
+/// sound (the checker and the overlap rules), and meshed with every face meshed.
+fn expectKeyholeSound(edge: [2]Vec3, quarter: usize, mirrored: bool) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var plate = try movedBox(KEYHOLE_PLATE, quarter, mirrored);
+    defer plate.deinit();
+    var pocket = try movedBox(KEYHOLE_POCKET, quarter, mirrored);
+    defer pocket.deinit();
+    var pocketed = try helpers.sound(&plate, &pocket, .difference);
+    defer pocketed.deinit();
+    const middle = vec.scale(vec.add(edge[0], edge[1]), 0.5);
+    const corners = [4]Vec3{
+        edge[0],
+        edge[1],
+        .{ middle[0] + KEYHOLE_STANDOFF, middle[1] + KEYHOLE_SPREAD, middle[2] },
+        .{ middle[0] + KEYHOLE_STANDOFF, middle[1] - KEYHOLE_SPREAD, middle[2] },
+    };
+    var points: [4]Vec3 = undefined;
+    for (corners, &points) |p, *q| q.* = tieMove(p, quarter, mirrored);
+    var touching = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    defer touching.deinit();
+    for ([_][2]*const Body{ .{ &pocketed, &touching }, .{ &touching, &pocketed } }) |operands| {
+        var joined = try helpers.sound(operands[0], operands[1], .@"union");
+        defer joined.deinit();
+        try expectMeshedWhole(&joined);
+    }
+    var less = try helpers.sound(&pocketed, &touching, .difference);
+    defer less.deinit();
+    try expectMeshedWhole(&less);
+}
+
+/// The box between `corners` turned and mirrored (`tieMove`).
+fn movedBox(corners: [2]Vec3, quarter: usize, mirrored: bool) !Body {
+    const moved = [2]Vec3{ tieMove(corners[0], quarter, mirrored), tieMove(corners[1], quarter, mirrored) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(moved[0][k], moved[1][k]);
+        hi[k] = @max(moved[0][k], moved[1][k]);
+    }
+    return helpers.boxAt(tol, lo, hi);
+}
+
+/// `body`'s mesh with every face meshed, none refused or pruned.
+fn expectMeshedWhole(body: *const Body) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var mesh = try @import("../mesh/tessellate.zig").tessellate(testing.allocator, body, .{}, .{}, &diag);
+    defer mesh.deinit(testing.allocator);
+    for (mesh.faces, 0..) |range, f| {
+        errdefer std.debug.print("face {d}: {s}\n", .{ f, @tagName(range.status) });
+        try testing.expectEqual(@import("../mesh/tessellate.zig").Status.ok, range.status);
+    }
 }

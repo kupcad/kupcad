@@ -36,6 +36,9 @@ const AREA_SLACK: f64 = 1e-9;
 /// The most cells along each side of the grid the rings' edges are bucketed in to find a
 /// crossing (`expectNoCrossing`): about the square root of the edge count, this at most.
 const MAX_CROSSING_GRID: usize = 1024;
+/// A step `splitSlits` never takes for a slit: a seam's, which a face runs both ways at
+/// its two sides, apart in the face's parameters.
+pub const NOT_A_SLIT: u32 = std.math.maxInt(u32);
 
 /// A polygon with holes as closed rings of points.
 pub const Polygon = struct {
@@ -54,6 +57,100 @@ pub const Polygon = struct {
         return self.points[self.starts[i]..self.starts[i + 1]];
     }
 };
+
+/// A loop's rings with its slits taken out, appended to `order` as indices into `ids` (its
+/// points' vertices, in the loop's order), each ring's start in `order` to `starts`. A step
+/// the loop runs both ways, from `a` to `b` and elsewhere from `b` to `a` (along one edge,
+/// where `steps` gives the edge each point's step runs along), has the face on both sides
+/// and bounds no region of it: a spur out to a point where another solid touches the face
+/// along a line, a slit along a line through it, a bridge from the outer loop to a hole.
+/// The loop is split at such a pair into the two rings either side of it, the one through
+/// the loop's continuation first, until no pair is left; a spur's tip is left out, its side
+/// empty. A ring of fewer than three points the split leaves (a lens of two chords from two
+/// edges, which the tessellator refines) is the caller's to leave out or act on. OCCT leaves such an edge out of the face's boundary
+/// (`TopAbs_INTERNAL`), as the boolean already does where it pairs a slit's two uses as one
+/// edge (`pipeline.pairTouching`) and classifies a fragment by its seams (`classify`). A
+/// step from a vertex to itself (a pole's) and a step `NOT_A_SLIT` (a seam's) never pair.
+/// A face whose loop ran from its outer boundary along a line to a hole's corner and back
+/// was refused as not simple by the triangulator, which a bridge's two passages along one
+/// segment leave no wedge to reweave (find cp, 2026-11-22).
+pub fn splitSlits(allocator: std.mem.Allocator, ids: []const u32, steps: ?[]const u32, order: *std.ArrayList(u32), starts: *std.ArrayList(u32)) Error!void {
+    var work: std.ArrayList(std.ArrayList(u32)) = .empty;
+    defer {
+        for (work.items) |*ring| ring.deinit(allocator);
+        work.deinit(allocator);
+    }
+    try work.append(allocator, .empty);
+    try work.items[0].ensureTotalCapacity(allocator, ids.len);
+    for (0..ids.len) |i| work.items[0].appendAssumeCapacity(@intCast(i));
+    var seen: std.AutoHashMapUnmanaged(Step, u32) = .empty;
+    defer seen.deinit(allocator);
+    var w: usize = 0;
+    while (w < work.items.len) {
+        const ring = work.items[w].items;
+        const n = ring.len;
+        if (try slitIn(allocator, ids, steps, ring, &seen)) |pair| {
+            // Without the steps `k` (from `a` to `b`) and `j` (back): from `a` round to `a`,
+            // and from `b` round to `b`
+            var through = try cyclicRun(allocator, ring, (pair[1] + 1) % n, pair[0]);
+            errdefer through.deinit(allocator);
+            var beyond = try cyclicRun(allocator, ring, (pair[0] + 1) % n, pair[1]);
+            errdefer beyond.deinit(allocator);
+            try work.insert(allocator, w + 1, beyond);
+            work.items[w].deinit(allocator);
+            work.items[w] = through;
+            continue;
+        }
+        if (n > 0) {
+            try starts.append(allocator, @intCast(order.items.len));
+            try order.appendSlice(allocator, ring);
+        }
+        w += 1;
+    }
+}
+
+/// A step of a loop: its two vertices and the edge it runs along (0 where none is given).
+const Step = struct { from: u32, to: u32, along: u32 };
+
+/// The first step `k` of `ring` (positions into `ids`) whose way back, step `j`, the ring
+/// also runs, as `.{ k, j }`; null when there is none.
+fn slitIn(allocator: std.mem.Allocator, ids: []const u32, steps: ?[]const u32, ring: []const u32, seen: *std.AutoHashMapUnmanaged(Step, u32)) Error!?[2]usize {
+    const n = ring.len;
+    if (n < 2) return null;
+    seen.clearRetainingCapacity();
+    try seen.ensureTotalCapacity(allocator, @intCast(n));
+    for (0..n) |k| {
+        const step = stepOf(ids, steps, ring, k) orelse continue;
+        seen.putAssumeCapacity(step, @intCast(k));
+    }
+    for (0..n) |k| {
+        const step = stepOf(ids, steps, ring, k) orelse continue;
+        const j = seen.get(.{ .from = step.to, .to = step.from, .along = step.along }) orelse continue;
+        return .{ k, j };
+    }
+    return null;
+}
+
+/// Step `k` of `ring`, or null when it can never be a slit's.
+fn stepOf(ids: []const u32, steps: ?[]const u32, ring: []const u32, k: usize) ?Step {
+    const from = ids[ring[k]];
+    const to = ids[ring[(k + 1) % ring.len]];
+    if (from == to) return null;
+    const along = if (steps) |s| s[ring[k]] else 0;
+    if (along == NOT_A_SLIT) return null;
+    return .{ .from = from, .to = to, .along = along };
+}
+
+/// `ring`'s positions from `from` up to `to`, not including it, round the end.
+fn cyclicRun(allocator: std.mem.Allocator, ring: []const u32, from: usize, to: usize) Error!std.ArrayList(u32) {
+    const n = ring.len;
+    var run: std.ArrayList(u32) = .empty;
+    errdefer run.deinit(allocator);
+    try run.ensureTotalCapacity(allocator, (to + n - from) % n);
+    var k = from;
+    while (k != to) : (k = (k + 1) % n) run.appendAssumeCapacity(ring[k]);
+    return run;
+}
 
 /// The triangles of `polygon`, counter-clockwise, as indices into its points; owned by
 /// `allocator`. The rings must not cross; a polygon whose rings do, a ring of fewer than

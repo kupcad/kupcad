@@ -21,6 +21,13 @@ const CROSSED_CAP = [_]Vec2{ .{ 6, 0 }, .{ 4, 3 }, .{ 3.75, 3.1666666666666665 }
 /// One ring round a square whose closing edges dip through its first edge and come back
 /// up, crossing it twice far from any vertex.
 const BOW_TIE = [_]Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 4 }, .{ 0, 4 }, .{ 2, -1 }, .{ 2, 1 } };
+/// A square's loop bridged to a hole (find cp's face): round the square from (0, 0), along
+/// the bridge from (0, 4) to the hole's corner (1, 3), clockwise round the hole and back
+/// along the bridge; vertex 3 and vertex 4 each passed twice.
+const KEYHOLE_POINTS = [_]Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 4 }, .{ 0, 4 }, .{ 1, 3 }, .{ 2, 3 }, .{ 2, 1 }, .{ 1, 1 } };
+const KEYHOLE_LOOP = [_]u32{ 0, 1, 2, 3, 4, 5, 6, 7, 4, 3 };
+/// The keyhole's region: the square less the hole.
+const KEYHOLE_AREA: f64 = 16 - 2;
 
 /// About the ring's first point: about the origin, a ring far from it sums terms far
 /// larger than its area.
@@ -438,4 +445,73 @@ test "triangulate: rings whose edges cross, the region between them wound twice,
     };
     // Two edges crossing far from any vertex, as a bow tie: refused as well
     try expectRefused(&BOW_TIE, &.{ 0, BOW_TIE.len }, .not_simple);
+}
+
+/// `splitSlits` of the loop `ids` (and `steps`), as the rings of vertices it makes.
+fn expectSplit(ids: []const u32, steps: ?[]const u32, rings: []const []const u32) !void {
+    var order: std.ArrayList(u32) = .empty;
+    defer order.deinit(testing.allocator);
+    var starts: std.ArrayList(u32) = .empty;
+    defer starts.deinit(testing.allocator);
+    try triangulate.splitSlits(testing.allocator, ids, steps, &order, &starts);
+    try testing.expectEqual(rings.len, starts.items.len);
+    for (rings, 0..) |ring, r| {
+        const to = if (r + 1 < starts.items.len) starts.items[r + 1] else order.items.len;
+        const got = order.items[starts.items[r]..to];
+        try testing.expectEqual(ring.len, got.len);
+        for (ring, got) |v, k| try testing.expectEqual(v, ids[k]);
+    }
+}
+
+test "triangulate: a loop's slits taken out split it into the rings either side, a spur's tip left out" {
+    // A bridge to a hole: the square and the hole, the loop's continuation first
+    try expectSplit(&KEYHOLE_LOOP, null, &.{ &.{ 3, 0, 1, 2 }, &.{ 4, 5, 6, 7 } });
+    // A spur out to a point and back, of one step and of two: its tip goes, the rest is one
+    // ring
+    try expectSplit(&.{ 0, 1, 2, 3, 4, 3 }, null, &.{&.{ 3, 0, 1, 2 }});
+    try expectSplit(&.{ 0, 1, 2, 3, 4, 5, 4, 3 }, null, &.{&.{ 3, 0, 1, 2 }});
+    // A slit across the face from one side (vertex 0) to the other (3): the face whole
+    try expectSplit(&.{ 0, 1, 2, 3, 0, 3, 4, 5 }, null, &.{&.{ 3, 4, 5, 0, 1, 2 }});
+    // A loop through a point twice with no step run both ways (a pinch) is one ring
+    try expectSplit(&.{ 0, 1, 2, 0, 3, 4 }, null, &.{&.{ 0, 1, 2, 0, 3, 4 }});
+    // Along two edges between the same two vertices (a lens), and a pole's step from a
+    // vertex to itself: no slit
+    try expectSplit(&.{ 0, 1, 2, 3, 2, 1 }, &.{ 7, 8, 9, 10, 11, 12 }, &.{&.{ 0, 1, 2, 3, 2, 1 }});
+    try expectSplit(&.{ 0, 0, 1, 2 }, null, &.{&.{ 0, 0, 1, 2 }});
+    // A lens of two edges each one chord is a ring of two points, left to the caller (the
+    // tessellator refines such a face's arcs)
+    try expectSplit(&.{ 0, 1 }, &.{ 7, 8 }, &.{&.{ 0, 1 }});
+    // A cylinder's loop: the bottom circle, up the seam, the top circle back, down the seam.
+    // The seam run both ways is its two sides, apart in the face's parameters: marked, the
+    // loop is whole; taken for a slit, it would fall apart into the two circles
+    const seam = triangulate.NOT_A_SLIT;
+    const cylinder = [_]u32{ 0, 10, 11, 0, 1, 20, 21, 1 };
+    try expectSplit(&cylinder, &.{ 1, 1, 1, seam, 2, 2, 2, seam }, &.{&cylinder});
+    try expectSplit(&cylinder, &.{ 1, 1, 1, 5, 2, 2, 2, 5 }, &.{ &.{ 0, 10, 11 }, &.{ 1, 20, 21 } });
+}
+
+test "triangulate: a face's loop bridged to a hole triangulates once its bridge is taken out, refused as it was" {
+    // Find cp: the triangulator rightly refuses a bridge's two passages along one segment,
+    // which leave no wedge to reweave; split, the square and its hole triangulate to the
+    // region's area
+    var points: [KEYHOLE_LOOP.len]Vec2 = undefined;
+    for (KEYHOLE_LOOP, &points) |v, *p| p.* = KEYHOLE_POINTS[v];
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.InvalidInput, triangulate.triangulate(testing.allocator, .{ .points = &points, .starts = &.{ 0, points.len } }, &diag));
+    var order: std.ArrayList(u32) = .empty;
+    defer order.deinit(testing.allocator);
+    var starts: std.ArrayList(u32) = .empty;
+    defer starts.deinit(testing.allocator);
+    try triangulate.splitSlits(testing.allocator, &KEYHOLE_LOOP, null, &order, &starts);
+    var rings: [KEYHOLE_LOOP.len]Vec2 = undefined;
+    for (order.items, 0..) |k, i| rings[i] = KEYHOLE_POINTS[KEYHOLE_LOOP[k]];
+    try starts.append(testing.allocator, @intCast(order.items.len));
+    const polygon: Polygon = .{ .points = rings[0..order.items.len], .starts = starts.items };
+    try testing.expectApproxEqAbs(KEYHOLE_AREA, polygonArea(polygon), CLOSE);
+    const triangles = try triangulate.triangulate(testing.allocator, polygon, &diag);
+    defer testing.allocator.free(triangles);
+    var area: f64 = 0;
+    for (triangles) |t| area += vec.cross2(vec.sub2(polygon.points[t[1]], polygon.points[t[0]]), vec.sub2(polygon.points[t[2]], polygon.points[t[0]])) / 2;
+    try testing.expectApproxEqAbs(KEYHOLE_AREA, area, CLOSE * KEYHOLE_AREA);
 }

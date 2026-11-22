@@ -2362,6 +2362,13 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // whose edges did not pair (`edge_coedge_count`; refuseLyingOnOwn: refused
         // `below_feature_size`, the fragments over the same pieces)
         "solids 1 6 4 1 2 2 4 0 0 0 0 4 1 0 3 0 0 2 1 4 3 2 0 12 5 16 3 1 1 6 3 4 3 2 2 4 1 4 4 4 4 2 4 0 2 2 1 2 3 0 0 0 2 -1 12 0 16 0 1 1 7 3 4 3 2 1 0 1 3 0 3 2 0 2 3 0 1 0 3 4 1 4 0 1 1 3 5 -1 0 14 1 1 1 6 3 3 2 0 0 2 4 3 0 0 0 0 3 1 2 0 3 0 2 1 5 13 3 10 2",
+        // The ReleaseSafe audit batch B's locus 100K run (2026-11-22, cp): a plate less a
+        // hull, joined with a hull whose edge lay in the plate's side x = 2, from beyond its
+        // top through a corner of the pocket's mouth and on; the face's loop ran along the
+        // edge to the mouth, round it and back (a bridge and a spur), which the overlap
+        // rules and the mesher handed the triangulator whole: refused as not simple
+        // (triangulate.splitSlits: any step run both ways taken out)
+        "solids 2 1 2 0 3 0 4 1 1 0 6 4 8 3 2 1 4 4 0 3 4 4 2 1 0 4 4 0 2 1 2 0 2 -2 2 1 2 2 3 4 0 3 1 4 1 1 10 7 -2 14 1 2 1 4 2 3 1 4 0 3 1 4 0 1 2 4 3 2 2 -2 2 3 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -228,6 +228,13 @@ const Builder = struct {
     ring_uv: std.ArrayList(Vec2) = .empty,
     ring_id: std.ArrayList(u32) = .empty,
     starts: std.ArrayList(u32) = .empty,
+    /// Scratch: a loop's points before its slits are taken out, the edge each one's step
+    /// runs along, and the rings `triangulate.splitSlits` makes of it.
+    loop_uv: std.ArrayList(Vec2) = .empty,
+    loop_id: std.ArrayList(u32) = .empty,
+    loop_step: std.ArrayList(u32) = .empty,
+    loop_order: std.ArrayList(u32) = .empty,
+    loop_split: std.ArrayList(u32) = .empty,
     /// Scratch: the rings scaled near-isometric, the interior points, their mesh vertices.
     scaled: std.ArrayList(Vec2) = .empty,
     extra: std.ArrayList(Vec2) = .empty,
@@ -248,6 +255,11 @@ const Builder = struct {
         self.ring_uv.deinit(self.allocator);
         self.ring_id.deinit(self.allocator);
         self.starts.deinit(self.allocator);
+        self.loop_uv.deinit(self.allocator);
+        self.loop_id.deinit(self.allocator);
+        self.loop_step.deinit(self.allocator);
+        self.loop_order.deinit(self.allocator);
+        self.loop_split.deinit(self.allocator);
         self.scaled.deinit(self.allocator);
         self.extra.deinit(self.allocator);
         self.extra_scaled.deinit(self.allocator);
@@ -265,9 +277,11 @@ const Builder = struct {
     /// The face's loops as rings in UV (`ring_uv`, `ring_id`, `starts`): each coedge's
     /// points the coedge's way, its last left to the next coedge, through the pcurve at
     /// the points' parameters, or projected onto a plane; a degenerate edge (a pole, an
-    /// apex) its pcurve's start, so the ring runs along the pole line. Spikes pruned,
-    /// rings of fewer than three points left out, every ring counter-clockwise about the
-    /// face's outward normal.
+    /// apex) its pcurve's start, so the ring runs along the pole line. A loop's spurs and
+    /// slits (an edge it runs both ways, where another solid touches the face along a
+    /// line; not a seam, whose two sides lie apart in UV) bound nothing and are taken out
+    /// (`triangulate.splitSlits`), spikes pruned, rings of fewer than three points left
+    /// out, every ring counter-clockwise about the face's outward normal.
     fn collectRings(self: *Builder, f: types.FaceIndex, surface: surfaces.Surface, diag: *Diagnostics) Error!void {
         const body = self.body;
         const face = body.face(f);
@@ -279,16 +293,20 @@ const Builder = struct {
         try self.starts.append(self.allocator, 0);
         var loops = traverse.Loops.init(body, f);
         while (loops.next() catch return corrupt(diag)) |l| {
-            const ring_start = self.ring_uv.items.len;
+            self.loop_uv.clearRetainingCapacity();
+            self.loop_id.clearRetainingCapacity();
+            self.loop_step.clearRetainingCapacity();
             var coedges = traverse.Coedges.init(body, l);
             while (coedges.next() catch return corrupt(diag)) |c| {
                 const coedge = body.coedge(c);
                 const e = body.edge(coedge.edge);
+                const along = if (e.flags.seam) triangulate.NOT_A_SLIT else @backingInt(coedge.edge);
                 if (e.flags.degenerate) {
                     if (coedge.pcurve.isNone()) continue;
                     const t = if (coedge.same_sense) e.t0 else e.t1;
-                    try self.ring_uv.append(self.allocator, body.geometry.pcurve(coedge.pcurve).eval(t));
-                    try self.ring_id.append(self.allocator, self.idOf(e.start, shell));
+                    try self.loop_uv.append(self.allocator, body.geometry.pcurve(coedge.pcurve).eval(t));
+                    try self.loop_id.append(self.allocator, self.idOf(e.start, shell));
+                    try self.loop_step.append(self.allocator, along);
                     continue;
                 }
                 const pts = self.edge_points.of(coedge.edge);
@@ -297,30 +315,49 @@ const Builder = struct {
                     const k = if (coedge.same_sense) step else pts.len - 1 - step;
                     const id = if (k == 0) self.idOf(e.start, shell) else if (k == pts.len - 1) self.idOf(e.end, shell) else self.interior_start[@backingInt(coedge.edge)] + @as(u32, @intCast(k - 1));
                     const uv = if (coedge.pcurve.isNone()) surface.project(pts[k], body.tol.approx, geometry.PROJECT_STEPS) else body.geometry.pcurve(coedge.pcurve).eval(params[k]);
-                    try self.ring_uv.append(self.allocator, uv);
-                    try self.ring_id.append(self.allocator, id);
+                    try self.loop_uv.append(self.allocator, uv);
+                    try self.loop_id.append(self.allocator, id);
+                    try self.loop_step.append(self.allocator, along);
                 }
             }
-            // A lens thinner than its chords (a line and a slight arc between two
-            // vertices, the arc's polyline fallen onto the line; two arcs from one vertex
-            // to points of one line, their chords fallen onto it) is a spike of no area in
-            // the polygon: pruned, its area within the chords' error, and the face's arcs
-            // refined. A loop that is all spike at this resolution is left out
-            if (pruneSpikes(&self.ring_uv, &self.ring_id, ring_start)) self.spiked = true;
-            if (self.ring_uv.items.len - ring_start < 3) {
-                if (self.ring_uv.items.len > ring_start) self.spiked = true;
-                self.ring_uv.shrinkRetainingCapacity(ring_start);
-                self.ring_id.shrinkRetainingCapacity(ring_start);
-                continue;
+            self.loop_order.clearRetainingCapacity();
+            self.loop_split.clearRetainingCapacity();
+            try triangulate.splitSlits(self.allocator, self.loop_id.items, self.loop_step.items, &self.loop_order, &self.loop_split);
+            for (self.loop_split.items, 0..) |from, r| {
+                const to = if (r + 1 < self.loop_split.items.len) self.loop_split.items[r + 1] else self.loop_order.items.len;
+                const ring_start = self.ring_uv.items.len;
+                for (self.loop_order.items[from..to]) |k| {
+                    try self.ring_uv.append(self.allocator, self.loop_uv.items[k]);
+                    try self.ring_id.append(self.allocator, self.loop_id.items[k]);
+                }
+                try self.finishRing(face.same_sense, ring_start);
             }
-            // Loops run counter-clockwise in UV about the surface's normal (`du × dv`)
-            // when the outward normal is the surface's; the triangulator wants them so
-            if (!face.same_sense) {
-                std.mem.reverse(Vec2, self.ring_uv.items[ring_start..]);
-                std.mem.reverse(u32, self.ring_id.items[ring_start..]);
-            }
-            try self.starts.append(self.allocator, @intCast(self.ring_uv.items.len));
         }
+    }
+
+    /// The ring from `ring_start` to the end of `ring_uv` and `ring_id`, a loop's or a
+    /// part of one between its slits: its spikes pruned, left out when fewer than three
+    /// points are left, run counter-clockwise, and its end recorded in `starts`.
+    fn finishRing(self: *Builder, same_sense: bool, ring_start: usize) Error!void {
+        // A lens thinner than its chords (a line and a slight arc between two vertices, the
+        // arc's polyline fallen onto the line; two arcs from one vertex to points of one
+        // line, their chords fallen onto it) is a spike of no area in the polygon: pruned,
+        // its area within the chords' error, and the face's arcs refined. A ring that is
+        // all spike at this resolution is left out
+        if (pruneSpikes(&self.ring_uv, &self.ring_id, ring_start)) self.spiked = true;
+        if (self.ring_uv.items.len - ring_start < 3) {
+            if (self.ring_uv.items.len > ring_start) self.spiked = true;
+            self.ring_uv.shrinkRetainingCapacity(ring_start);
+            self.ring_id.shrinkRetainingCapacity(ring_start);
+            return;
+        }
+        // Loops run counter-clockwise in UV about the surface's normal (`du × dv`) when the
+        // outward normal is the surface's; the triangulator wants them so
+        if (!same_sense) {
+            std.mem.reverse(Vec2, self.ring_uv.items[ring_start..]);
+            std.mem.reverse(u32, self.ring_id.items[ring_start..]);
+        }
+        try self.starts.append(self.allocator, @intCast(self.ring_uv.items.len));
     }
 
     /// The interior points of a curved face: the tensor grid of the rings' distinct `u`

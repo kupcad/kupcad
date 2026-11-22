@@ -725,12 +725,18 @@ pub const FaceTriangles = struct {
     /// One face's rings in its plane, kept between faces.
     const Rings = struct {
         ring: std.ArrayList(u32) = .empty,
+        steps: std.ArrayList(u32) = .empty,
+        order: std.ArrayList(u32) = .empty,
+        split: std.ArrayList(u32) = .empty,
         points: std.ArrayList(Vec2) = .empty,
         vertices: std.ArrayList(types.VertexIndex) = .empty,
         starts: std.ArrayList(u32) = .empty,
 
         fn deinit(self: *Rings, allocator: std.mem.Allocator) void {
             self.ring.deinit(allocator);
+            self.steps.deinit(allocator);
+            self.order.deinit(allocator);
+            self.split.deinit(allocator);
             self.points.deinit(allocator);
             self.vertices.deinit(allocator);
             self.starts.deinit(allocator);
@@ -744,25 +750,35 @@ pub const FaceTriangles = struct {
             var loops = traverse.Loops.init(body, f);
             while (loops.next() catch return corrupt(diag)) |l| {
                 self.ring.clearRetainingCapacity();
+                self.steps.clearRetainingCapacity();
                 var it = traverse.Coedges.init(body, l);
-                while (it.next() catch return corrupt(diag)) |c| try self.ring.append(allocator, @backingInt(body.coedgeStart(c)));
-                // A spur (the loop out to a vertex and back, where another solid touches the
-                // face along a line) bounds nothing, nor does a loop of one vertex
-                withoutSpurs(&self.ring);
-                if (self.ring.items.len == 0) continue;
-                try self.starts.append(allocator, @intCast(self.points.items.len));
-                for (self.ring.items) |i| {
-                    const v = types.VertexIndex.of(i);
-                    try self.points.append(allocator, planar_faces.flat(frame, body.point(v)));
-                    try self.vertices.append(allocator, v);
+                while (it.next() catch return corrupt(diag)) |c| {
+                    try self.ring.append(allocator, @backingInt(body.coedgeStart(c)));
+                    try self.steps.append(allocator, @backingInt(body.coedge(c).edge));
+                }
+                // A spur or a slit (the loop along an edge both ways, where another solid
+                // touches the face along a line) bounds nothing, nor does a loop of one vertex
+                self.order.clearRetainingCapacity();
+                self.split.clearRetainingCapacity();
+                try triangulate.splitSlits(allocator, self.ring.items, self.steps.items, &self.order, &self.split);
+                for (self.split.items, 0..) |from, r| {
+                    const to = if (r + 1 < self.split.items.len) self.split.items[r + 1] else self.order.items.len;
+                    if (to - from < 3) continue;
+                    try self.starts.append(allocator, @intCast(self.points.items.len));
+                    for (self.order.items[from..to]) |k| {
+                        const v = types.VertexIndex.of(self.ring.items[k]);
+                        try self.points.append(allocator, planar_faces.flat(frame, body.point(v)));
+                        try self.vertices.append(allocator, v);
+                    }
                 }
             }
             if (self.starts.items.len == 0) return &.{};
             try self.starts.append(allocator, @intCast(self.points.items.len));
-            // The triangulator takes the outer ring counter-clockwise: mirrored when it runs
-            // the other way, so the triangles run in the loops' sense either way
+            // The triangulator takes the outer ring counter-clockwise: mirrored when the
+            // region runs the other way (by all its rings: a split loop's hole may come
+            // first), so the triangles run in the loops' sense either way
             const points = self.points.items;
-            if (ringArea(points[self.starts.items[0]..self.starts.items[1]]) < 0) for (points) |*q| {
+            if (regionArea(points, self.starts.items) < 0) for (points) |*q| {
                 q[1] = -q[1];
             };
             var scratch = Diagnostics.init(allocator);
@@ -804,15 +820,36 @@ pub fn facePoint(allocator: std.mem.Allocator, body: *const Body, f: types.FaceI
     defer points.deinit(allocator);
     var starts: std.ArrayList(u32) = .empty;
     defer starts.deinit(allocator);
+    var ring: std.ArrayList(u32) = .empty;
+    defer ring.deinit(allocator);
+    var steps: std.ArrayList(u32) = .empty;
+    defer steps.deinit(allocator);
+    var order: std.ArrayList(u32) = .empty;
+    defer order.deinit(allocator);
+    var split: std.ArrayList(u32) = .empty;
+    defer split.deinit(allocator);
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
-        try starts.append(allocator, @intCast(points.items.len));
+        ring.clearRetainingCapacity();
+        steps.clearRetainingCapacity();
         var it = traverse.Coedges.init(body, l);
         while (it.next() catch return corrupt(diag)) |c| {
             if (body.edge(body.coedge(c).edge).curve.kind != .line) return null;
-            try points.append(allocator, planar_faces.flat(frame, body.point(body.coedgeStart(c))));
+            try ring.append(allocator, @backingInt(body.coedgeStart(c)));
+            try steps.append(allocator, @backingInt(body.coedge(c).edge));
+        }
+        // Its spurs and slits bound nothing (`triangulate.splitSlits`)
+        order.clearRetainingCapacity();
+        split.clearRetainingCapacity();
+        try triangulate.splitSlits(allocator, ring.items, steps.items, &order, &split);
+        for (split.items, 0..) |from, r| {
+            const to = if (r + 1 < split.items.len) split.items[r + 1] else order.items.len;
+            if (to - from < 3) continue;
+            try starts.append(allocator, @intCast(points.items.len));
+            for (order.items[from..to]) |k| try points.append(allocator, planar_faces.flat(frame, body.point(types.VertexIndex.of(ring.items[k]))));
         }
     }
+    if (starts.items.len == 0) return null;
     try starts.append(allocator, @intCast(points.items.len));
     return interiorPoint(allocator, frame, points.items, starts.items, &.{});
 }
@@ -846,8 +883,9 @@ pub fn interiorPoint(allocator: std.mem.Allocator, frame: geometry.Frame, points
 /// same day). None when the triangulator refuses the rings.
 pub fn interiorPoints(allocator: std.mem.Allocator, frame: geometry.Frame, points: []Vec2, starts: []const u32, avoid: []const [2]Vec2, out: *std.ArrayList(Vec3)) Error!void {
     if (starts.len < 2) return;
-    // Counter-clockwise outer ring: mirrored when it runs the other way
-    const mirror = ringArea(points[starts[0]..starts[1]]) < 0;
+    // Counter-clockwise outer ring: mirrored when the region runs the other way (by all
+    // its rings, the outer one not always first)
+    const mirror = regionArea(points, starts) < 0;
     if (mirror) for (points) |*q| {
         q[1] = -q[1];
     };
@@ -935,29 +973,12 @@ fn segmentDistance(p: Vec2, a: Vec2, b: Vec2) f64 {
     return vec.distance2(p, vec.addScaled2(a, d, s));
 }
 
-/// The cycle `ring` (vertices) with every spur taken out: wherever it runs `a b a` (out to
-/// `b` and back), `b` and one `a` go, until none is left; empty when fewer than three are.
-/// A spur bounds no area, and the triangulator, rightly, takes it for a ring touching
-/// itself (the classifier's samples and the winding number's triangles take them out).
-pub fn withoutSpurs(ring: *std.ArrayList(u32)) void {
-    var changed = true;
-    while (changed and ring.items.len >= 3) {
-        changed = false;
-        const n = ring.items.len;
-        for (0..n) |k| {
-            const before = ring.items[(k + n - 1) % n];
-            const after = ring.items[(k + 1) % n];
-            if (before != after) continue;
-            // Drop the tip and the vertex after it (one of the two visits of `a`)
-            const first = @min(k, (k + 1) % n);
-            const second = @max(k, (k + 1) % n);
-            _ = ring.orderedRemove(second);
-            _ = ring.orderedRemove(first);
-            changed = true;
-            break;
-        }
-    }
-    if (ring.items.len < 3) ring.clearRetainingCapacity();
+/// Twice the signed area of the region of the rings (`starts` as `triangulate.Polygon`'s):
+/// positive when its outer rings run counter-clockwise, its holes the other way.
+fn regionArea(points: []const Vec2, starts: []const u32) f64 {
+    var area: f64 = 0;
+    for (0..starts.len - 1) |r| area += ringArea(points[starts[r]..starts[r + 1]]);
+    return area;
 }
 
 fn ringArea(ring: []const Vec2) f64 {

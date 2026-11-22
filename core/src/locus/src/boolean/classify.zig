@@ -33,6 +33,7 @@ const in_face = @import("../query/in_face.zig");
 const index_mod = @import("../query/index.zig");
 const point_in_body = @import("../query/point_in_body.zig");
 const overlap = @import("../query/overlap.zig");
+const triangulate = @import("../mesh/triangulate.zig");
 const planar_faces = @import("../intersect/planar_faces.zig");
 const canonical = @import("../geometry/canonical.zig");
 const traverse = @import("../topology/traverse.zig");
@@ -867,13 +868,20 @@ pub fn sample(allocator: std.mem.Allocator, paves: *const Paves, fragments: *con
         const vertices = fragments.loopVertices(loop);
         for (vertices, 0..) |v, k| try edges.append(allocator, .{ planar_faces.flat(frame, paves.point(v)), planar_faces.flat(frame, paves.point(vertices[(k + 1) % vertices.len])) });
     }
+    // Its spurs and slits (a piece run both ways) bound nothing (`triangulate.splitSlits`)
+    var split: std.ArrayList(u32) = .empty;
+    defer split.deinit(allocator);
     for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
         ring.clearRetainingCapacity();
-        try ring.appendSlice(allocator, fragments.loopVertices(loop));
-        overlap.withoutSpurs(&ring);
-        if (ring.items.len < 3) continue;
-        try starts.append(allocator, @intCast(points.items.len));
-        for (ring.items) |v| try points.append(allocator, planar_faces.flat(frame, paves.point(v)));
+        split.clearRetainingCapacity();
+        try triangulate.splitSlits(allocator, vertices, null, &ring, &split);
+        for (split.items, 0..) |from, r| {
+            const to = if (r + 1 < split.items.len) split.items[r + 1] else ring.items.len;
+            if (to - from < 3) continue;
+            try starts.append(allocator, @intCast(points.items.len));
+            for (ring.items[from..to]) |k| try points.append(allocator, planar_faces.flat(frame, paves.point(vertices[k])));
+        }
     }
     if (starts.items.len == 0) return;
     try starts.append(allocator, @intCast(points.items.len));
