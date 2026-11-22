@@ -309,10 +309,18 @@ jobs:
             core_task: test:core:safe
             locus_task: test:locus:safe
             wasm_task: test:wasm:safe
-          # Apple arm64: allocator, unwinding and libc differ from Linux.
+          # Apple arm64: allocator, unwinding and libc differ from Linux. Debug for the
+          # unwinding (the testing allocator's stack traces), on the slowest runner: the core
+          # (about 45 minutes, with the desktop app's native side) and Locus (about 25) as two
+          # jobs side by side, one after the other they outgrew the job's 60 (2026-11-22).
           - name: macos debug
             os: macos-latest
             core_task: test:core
+            locus_task: ""
+            wasm_task: ""
+          - name: macos debug locus
+            os: macos-latest
+            core_task: ""
             locus_task: test:locus
             wasm_task: ""
           # Windows, in the mode its release is built in: drive letters in file URIs, the
@@ -345,11 +353,13 @@ jobs:
           use-cache: ${{ env.ZIG_CACHE }}
 
       - name: Run lib tests
+        if: matrix.core_task != ''
         run: pnpm ${{ matrix.core_task }}
 
       # Locus is a package of its own (core/src/locus): it must build and test alone, with
       # nothing of the core's
       - name: Run Locus's tests standalone
+        if: matrix.locus_task != ''
         run: pnpm ${{ matrix.locus_task }}
 
       - name: Check the fuzz corpus is formatted and lint-clean
