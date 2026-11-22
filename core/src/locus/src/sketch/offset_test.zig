@@ -54,6 +54,16 @@ const CUSP_MOVES = [_]struct { angle: f64, shift: Vec2 }{
     .{ .angle = 0.3, .shift = .{ 1e5, -2e5 } },
 };
 const CUSP_AREA_CLOSE: f64 = 1e-9;
+/// The radius of the rounded corner of the square whose arc's end is given off its
+/// circle, and how far inside the circle the end is given, in zones (the overlay welds an
+/// end within the zone; an outline is taken with one).
+const OFF_CIRCLE_RADIUS: f64 = 5e-5;
+const OFF_CIRCLE_INSIDE = [_]f64{ 0, 0.5, 0.9, -0.9 };
+/// How far that square is grown, and how close its grown area comes to the closed form of
+/// the square's (the corner's rounding and the end's shift are within the zone times the
+/// perimeter).
+const OFF_CIRCLE_GROWTHS = [_]f64{ 1, 5 };
+const OFF_CIRCLE_CLOSE: f64 = 1e-3;
 
 fn areaOf(body: *const Body) !f64 {
     var diag = Diagnostics.init(testing.allocator);
@@ -632,5 +642,44 @@ test "offset: a cusp's miter is a cap however the sheet is turned, mirrored or m
             const want = 4 - PI + 4 * delta + PI / 4.0 * (4 - (2 - delta) * (2 - delta)) + 5 * delta * delta;
             try testing.expectApproxEqRel(want, try areaOf(&g), CUSP_AREA_CLOSE);
         };
+    };
+}
+
+test "offset: an arc whose end lies off its circle within the zone moves to the moved circle, not by the circle's growth times its error" {
+    // The audit of 2026-11-22 (kind 8, C3): an arc's moved ends were its ends scaled about
+    // the centre by the moved radius over the radius. An end 9e-6 inside a circle of
+    // radius 5e-5, grown by 1, landed 0.18 inside the moved circle, and the band's region
+    // was drawn with an arc that far off its end. The moved end is the moved circle's
+    // point on the ray through the end
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const r = OFF_CIRCLE_RADIUS;
+    for (OFF_CIRCLE_INSIDE) |inside| for (OFF_CIRCLE_GROWTHS) |delta| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("{d} zones inside, grown {d}, mirrored {}\n", .{ inside, delta, mirrored });
+        const end: Vec2 = .{ 1 - inside * tol.zone, r };
+        var edges = [_]primitives.OutlineEdge{
+            .{ .a = .{ 0, 0 }, .b = .{ 1 - r, 0 } },
+            .{ .a = .{ 1 - r, 0 }, .b = end, .arc = .{ .c = .{ 1 - r, r }, .r = r, .ccw = true } },
+            .{ .a = end, .b = .{ 1, 1 } },
+            .{ .a = .{ 1, 1 }, .b = .{ 0, 1 } },
+            .{ .a = .{ 0, 1 }, .b = .{ 0, 0 } },
+        };
+        if (mirrored) {
+            // Mirrored in the y axis and run the other way round, a region still
+            var turned: [edges.len]primitives.OutlineEdge = undefined;
+            for (edges, 0..) |e, k| {
+                turned[edges.len - 1 - k] = .{ .a = .{ -e.b[0], e.b[1] }, .b = .{ -e.a[0], e.a[1] } };
+                if (e.arc) |arc| turned[edges.len - 1 - k].arc = .{ .c = .{ -arc.c[0], arc.c[1] }, .r = arc.r, .ccw = true };
+            }
+            edges = turned;
+        }
+        var sheet = try primitives.outlines(testing.allocator, tol, &.{&edges}, &diag);
+        defer sheet.deinit();
+        var round = try grown(&sheet, delta, .round, &diag);
+        defer round.deinit();
+        try testing.expectApproxEqAbs(1 + 4 * delta + PI * delta * delta, try areaOf(&round), OFF_CIRCLE_CLOSE);
+        var back = try grown(&round, -delta, .round, &diag);
+        defer back.deinit();
+        try testing.expectApproxEqAbs(@as(f64, 1), try areaOf(&back), OFF_CIRCLE_CLOSE);
     };
 }

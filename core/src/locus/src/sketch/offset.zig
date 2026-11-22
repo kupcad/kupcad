@@ -162,8 +162,12 @@ const Band = struct {
             // The region is inside a counter-clockwise arc's circle, outside a clockwise
             // one's; the moved radius is signed, negative past the centre
             const radius = if (arc.ccw) arc.r + delta else arc.r - delta;
-            const a_moved = vec.addScaled2(arc.c, vec.sub2(piece.a, arc.c), radius / arc.r);
-            const b_moved = vec.addScaled2(arc.c, vec.sub2(piece.b, arc.c), radius / arc.r);
+            // Each end moves along its own ray from the centre onto the moved circle: an end
+            // is within the zone of its circle, not on it, and scaled by the circle's growth
+            // its error grows as much (an end 9e-6 off a circle of radius 5e-5, grown by 1,
+            // landed 0.18 off the moved circle; the audit of 2026-11-22)
+            const a_moved = vec.addScaled2(arc.c, vec.sub2(piece.a, arc.c), radius / vec.distance2(piece.a, arc.c));
+            const b_moved = vec.addScaled2(arc.c, vec.sub2(piece.b, arc.c), radius / vec.distance2(piece.b, arc.c));
             if (radius > self.zone) {
                 try self.region(&.{
                     .{ .a = piece.a, .b = piece.b, .arc = arc },
