@@ -2472,6 +2472,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the circles tangent at their highest points and the ray a rounding below the
         // welded vertex (overlay.weldedEnd)
         "overlay 3 2 0 20 12 4 1 0 0 1 3 23 23 5 22 24 3 24 10 3 1 2 1 2 1 0 1 2 0 2 1 6 16 9 7 20 1 1 21 0 8 22 3 8 16 15 8 13 21 4 1 2 1 1 1 1 3 2 0 1 1 0 1 2 0 2 0 1 0 3 1 8 4 1 1 2 1 5 21 0 1 15 23 3 23 4 7 23 0 5 16 0 8 4 1 1 1 0 0 2 2 0 2 0 1 2 0 0 0 20 3 4 1 0 0 1 0",
+        // The 2D chain diagnosis's locus run on e83d2a0e (dl): (hull ∪ plate) ∪ wall, a
+        // section segment's middle outside the hull's face and the tolerance to rounding
+        // from the wall's edge; made the hull first, refused `at_tolerance` the wall first
+        // (pave.placeInBoth: outside either settles it)
+        "solids 1 6 1 4 4 3 4 1 2 1 2 2 0 1 0 1 4 4 4 1 0 2 7 3 -1 6 6 12 3 0 0 1 0 7 8 1 3 0 3 0 3 4 2 2 4 2 1 3 0 2 2 11 4 2 9 0 3 3 1 3 2 3 4 2 2 4 3 1 3 2 13 6 11 10 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -954,7 +954,10 @@ importing only those before it, which the layering test holds):**
   line within the angular tolerance, the solids' own angle, not to rounding, a band at the
   coordinates' size that a move far out widens ten thousand times: a hull's corner and a
   merged vertex 7e-10 along the line and 2.7e-5 across were two places in place and one
-  moved to 3e5, cx), each gap whose middle is in both a section segment of each face it is inside of
+  moved to 3e5, cx), each gap whose middle is in both (the two faces asked before either
+  refuses, outside one settling it whatever the other, `pave.placeInBoth`: a middle outside
+  a hull's face and the tolerance to rounding from a wall's edge was no segment the hull
+  first and `at_tolerance` the wall first, find dl, 2026-11-22) a section segment of each face it is inside of
   (a gap along a face's boundary is the run of its pave blocks there, OCCT's
   `IsExistingPaveBlock`, and that run's edges go into the result with their lines, D28:
   each line must lie on the other face's plane within `xsect` and the edge's gap at the

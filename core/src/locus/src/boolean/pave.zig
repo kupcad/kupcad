@@ -855,13 +855,40 @@ const Filler = struct {
     /// between the zone and the tolerance of an edge was the edge's pave and "inside" the
     /// face, a touch (the research review, 2026-11-14: one decision, one place).
     fn placeIn(self: *Filler, k: usize, f: types.FaceIndex, q: Vec3, v: ?u32) Error!in_face.Place {
-        if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
-        return switch (try in_face.placeWithin(self.p.decide, self.body(k), f, q, if (v) |m| self.p.gaps.items[m] else 0, try self.edgesOf(k, f), self.diag)) {
+        return switch (try self.placedIn(k, f, q, v)) {
             .inside => .inside,
             .outside => .outside,
             .boundary => .boundary,
             .at_tolerance => |c| self.atTolerance(c.measured, c.limit, .of(.face, @backingInt(f))),
         };
+    }
+
+    /// `placeIn`'s answer not yet taken: at the tolerance a verdict, for a decision of two
+    /// faces to settle together (`placeInBoth`).
+    fn placedIn(self: *Filler, k: usize, f: types.FaceIndex, q: Vec3, v: ?u32) Error!in_face.Placed {
+        if (v) |m| if (self.paveOfFace(k, f, m)) return .boundary;
+        return in_face.placeWithin(self.p.decide, self.body(k), f, q, if (v) |m| self.p.gaps.items[m] else 0, try self.edgesOf(k, f), self.diag);
+    }
+
+    /// Where `q` lies against face `fa` of the first operand and face `fb` of the second,
+    /// or null when it is outside either: outside one settles it whatever the other, at the
+    /// tolerance too, so the two are asked before either refuses and the answer is the same
+    /// whichever operand comes first (Kleene's strong "and", as `canonical.both`). A section
+    /// segment's middle lay outside a hull's face and the tolerance to rounding from an edge
+    /// of a wall's: the hull first, it was no part of where the two meet; the wall first,
+    /// the union was refused `at_tolerance` (the ReleaseSafe session on e83d2a0e, dl,
+    /// 2026-11-22).
+    fn placeInBoth(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, q: Vec3) Error!?[2]in_face.Place {
+        const placed = [2]in_face.Placed{ try self.placedIn(0, fa, q, null), try self.placedIn(1, fb, q, null) };
+        if (placed[0] == .outside or placed[1] == .outside) return null;
+        var places: [2]in_face.Place = undefined;
+        for (placed, [2]types.FaceIndex{ fa, fb }, &places) |one, f, *place| place.* = switch (one) {
+            .inside => .inside,
+            .boundary => .boundary,
+            .outside => unreachable,
+            .at_tolerance => |c| return self.atTolerance(c.measured, c.limit, .of(.face, @backingInt(f))),
+        };
+        return places;
     }
 
     /// Where merged vertex `v` lies on face `f` of operand `k` (`plane` its plane): null
@@ -1917,10 +1944,8 @@ const Filler = struct {
             };
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
-                const in_a = try self.placeIn(0, fa, mid, null);
-                if (in_a == .outside) continue;
-                const in_b = try self.placeIn(1, fb, mid, null);
-                if (in_b == .outside) continue;
+                // Outside either face it is no part of where the two meet, whatever the other
+                const in_a, const in_b = try self.placeInBoth(fa, fb, mid) orelse continue;
                 const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
                 // Beside either face it is no part of where the two meet
                 const lies_a = try self.lies(0, fa, u, w, mid, in_a, .{ .operand = 1, .face = @backingInt(fb) });

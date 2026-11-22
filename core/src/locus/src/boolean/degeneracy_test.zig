@@ -562,6 +562,27 @@ const ACROSS_WHOLE = [_]@TypeOf(SLIVER_TURNS[0]){
     .{ .axis = vec.Z3, .angle = 0.3, .shift = vec.ZERO3 },
     SLIVER_TURNS[1],
 };
+/// dl: (hull ∪ a plate with a gap) and a wall with a gap, as the solids fuzzer drew them:
+/// a section segment's middle outside the hull's face and the tolerance to rounding from an
+/// edge of the wall's.
+const BESIDE_HULL = [_]Vec3{ .{ 1, 4, 4 }, .{ 3, 4, 1 }, .{ 2, 1, 2 }, .{ 2, 0, 1 }, .{ 0, 1, 4 }, .{ 4, 4, 1 } };
+const BESIDE_HULL_TURN: f64 = 1e-6;
+const BESIDE_HULL_MOVE: Vec3 = .{ -0.5, 0, 0 };
+const BESIDE_HULL_NUDGE: Vec3 = .{ 0, -1e-5, -1e-5 };
+const BESIDE_PLATE_AT: Vec3 = .{ 0, 2, 2 };
+const BESIDE_GAP_LO: Vec3 = .{ 3, 2, 1 };
+const BESIDE_GAP_HI: Vec3 = .{ 4, 4, 3 };
+const BESIDE_GAP_XSECTS: f64 = 2.1;
+const BESIDE_PLATE_TURN: f64 = 0.7853981633974483;
+const BESIDE_PLATE_MOVE: Vec3 = .{ 0, 0, 1 };
+const BESIDE_PLATE_NUDGE: Vec3 = .{ 2.0000000068616077e-5, -5e-6, 0 };
+const BESIDE_WALL_AT: Vec3 = .{ 2, 2, 3 };
+const BESIDE_WALL_NUDGE_XY = [2]f64{ 2e-3, -1e-5 };
+/// The wall's nudge in z: the find's, the intersection tolerance and D27's band, and
+/// steps of 2^-51 either side of it, across the band's edge.
+const BESIDE_WALL_NUDGE_Z: f64 = 2.000000005684342e-5;
+const BESIDE_STEP: f64 = 0x1p-51;
+const BESIDE_STEPS = [_]f64{ 0, -3, -2, -1, 1, 2, 3 };
 /// de: ((plate ∪ plate) − hull) ∩ a plate with a gap, the first plate and the last at a
 /// zone of 1e-4.
 const SPAN_PLATE = [2]Vec3{ .{ -48, -98, 0 }, .{ 102, 52, 2 } };
@@ -5857,4 +5878,32 @@ test "degeneracy: a section piece of a coarse plate running across the line its 
         defer cut.deinit();
         try expectDecidedEitherWay(&cut, &moved[3]);
     };
+}
+
+test "degeneracy: a section segment's middle outside one face and the tolerance to rounding from the other's edge is no part of where they meet, whichever operand comes first" {
+    // The ReleaseSafe session's find on e83d2a0e (dl), as the fuzzer drew it: (hull ∪ a
+    // plate with a gap) ∪ a wall with a gap, the wall nudged the tolerance and D27's band.
+    // A section segment's middle lay outside the hull's face and the tolerance to rounding
+    // from an edge of the wall's face; face–face asked the first operand's face first and
+    // stopped at "outside", or refused `at_tolerance` at the wall's before asking the
+    // hull's. Outside either settles it whatever the other (`pave.placeInBoth`)
+    var hull_drawn = try fuzzHullPlaced(&BESIDE_HULL, vec.Z3, BESIDE_HULL_TURN, null, BESIDE_HULL_MOVE, BESIDE_HULL_NUDGE);
+    defer hull_drawn.deinit();
+    var plate_shape = try fuzzGapPlate(tol, BESIDE_PLATE_AT, BESIDE_GAP_LO, BESIDE_GAP_HI, BESIDE_GAP_XSECTS);
+    defer plate_shape.deinit();
+    var plate = try fuzzPlaced(&plate_shape, vec.Z3, BESIDE_PLATE_TURN, null, BESIDE_PLATE_MOVE, BESIDE_PLATE_NUDGE);
+    defer plate.deinit();
+    var joined = try helpers.sound(&hull_drawn, &plate, .@"union");
+    defer joined.deinit();
+    var wall_shape = try fuzzWall(tol, BESIDE_WALL_AT, BESIDE_GAP_LO, BESIDE_GAP_HI, BESIDE_GAP_XSECTS);
+    defer wall_shape.deinit();
+    for (BESIDE_STEPS) |steps| {
+        errdefer std.debug.print("the wall {d} steps of 2^-51 past the find's nudge\n", .{steps});
+        var wall = try fuzzPlaced(&wall_shape, vec.Z3, 0, null, vec.ZERO3, .{ BESIDE_WALL_NUDGE_XY[0], BESIDE_WALL_NUDGE_XY[1], BESIDE_WALL_NUDGE_Z + steps * BESIDE_STEP });
+        defer wall.deinit();
+        for ([_]pipeline.Op{ .@"union", .intersection }) |op| {
+            errdefer std.debug.print("{t}\n", .{op});
+            try testing.expectEqual(try outcomeOf(&joined, &wall, op), try outcomeOf(&wall, &joined, op));
+        }
+    }
 }
