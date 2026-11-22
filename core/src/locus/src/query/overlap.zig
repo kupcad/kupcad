@@ -188,11 +188,16 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
     // Straight edges in a tree, each box grown by half the reach and its ends' gaps
     var edges: std.ArrayList(types.EdgeIndex) = .empty;
     defer edges.deinit(allocator);
+    // Each tree edge's two ends, side by side, for the many candidates that end at the
+    // vertex asked about or share one with the other edge
+    var ends: std.ArrayList([2]types.VertexIndex) = .empty;
+    defer ends.deinit(allocator);
     var boxes: std.ArrayList(geometry.Box3) = .empty;
     defer boxes.deinit(allocator);
     for (body.edges.items, 0..) |e, i| {
         if (e.flags.tombstone or e.flags.degenerate or e.coedge == .none or e.curve.kind != .line) continue;
         try edges.append(allocator, types.EdgeIndex.of(i));
+        try ends.append(allocator, .{ e.start, e.end });
         var box = geometry.Box3.ofPoint(body.point(e.start));
         box.grow(body.point(e.end));
         try boxes.append(allocator, box.inflated(reach / 2 + @max(body.vertex(e.start).gap, body.vertex(e.end).gap) + band / 2));
@@ -223,10 +228,10 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         tree.query(geometry.Box3.ofPoint(p).inflated(reach / 2 + v.gap + band), &near, Collect.visit);
         if (near.failed) return error.OutOfMemory;
         for (near.out.items) |item| {
-            const e = body.edge(edges.items[item]);
-            if (e.start == vertex or e.end == vertex) continue;
+            const e = ends.items[item];
+            if (e[0] == vertex or e[1] == vertex) continue;
             const d = in_face.edgeDistance(body, edges.items[item], p);
-            try closer(&best, d, within + incidence.edgeGap(body.vertex(e.start).gap, body.vertex(e.end).gap), band, .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
+            try closer(&best, d, within + incidence.edgeGap(body.vertex(e[0]).gap, body.vertex(e[1]).gap), band, .of(.vertex, vi), .of(.edge, @backingInt(edges.items[item])));
         }
         // A vertex and a face it is not on
         near.out.clearRetainingCapacity();
@@ -235,9 +240,12 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
         for (near.out.items) |item| {
             const f = index.faces[item];
             const frame = planar_faces.frameOf(body, f) orelse continue;
-            if (try onFace(body, f, vertex, diag)) continue;
             const plane = planar_faces.planeOf(frame);
             const h = plane.height(p);
+            // A point is no nearer a planar face than its plane: past the limit by its
+            // height, the face is no candidate, and needs no placing in it
+            if (!(@abs(h) < within + band)) continue;
+            if (try onFace(body, f, vertex, diag)) continue;
             const foot = vec.addScaled(p, plane.n, -h);
             const d = if (try in_face.classify(body, f, foot, in_face.uvOf(body, f, foot), 0, diag) == .inside) @abs(h) else try in_face.boundaryDistance(body, f, p, diag);
             try closer(&best, d, within, band, .of(.vertex, vi), .of(.face, @backingInt(f)));
@@ -246,10 +254,14 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
     // Two edges sharing no vertex
     const Pairs = struct {
         allocator: std.mem.Allocator,
+        ends: []const [2]types.VertexIndex,
         out: std.ArrayList([2]u32) = .empty,
         failed: bool = false,
         fn visit(c: *@This(), i: u32, j: u32) bool {
-            if (i >= j) return true;
+            // Two edges sharing a vertex are no pair: left out before the sort
+            const x = c.ends[i];
+            const y = c.ends[j];
+            if (x[0] == y[0] or x[0] == y[1] or x[1] == y[0] or x[1] == y[1]) return true;
             c.out.append(c.allocator, .{ i, j }) catch {
                 c.failed = true;
                 return false;
@@ -257,15 +269,16 @@ pub fn nearest(allocator: std.mem.Allocator, body: *const Body, index: *const in
             return true;
         }
     };
-    var pairs: Pairs = .{ .allocator = allocator };
+    var pairs: Pairs = .{ .allocator = allocator, .ends = ends.items };
     defer pairs.out.deinit(allocator);
-    tree.queryPairs(&tree, &pairs, Pairs.visit);
+    tree.selfPairs(&pairs, Pairs.visit);
     if (pairs.failed) return error.OutOfMemory;
-    std.mem.sort([2]u32, pairs.out.items, {}, lessPair);
+    // In index order, so that of pairs as near the first is kept; each pair once, so an
+    // unstable sort gives that order too
+    std.sort.pdq([2]u32, pairs.out.items, {}, lessPair);
     for (pairs.out.items) |pair| {
         const x = body.edge(edges.items[pair[0]]);
         const y = body.edge(edges.items[pair[1]]);
-        if (x.start == y.start or x.start == y.end or x.end == y.start or x.end == y.end) continue;
         const d = distance.segmentSegment(body.point(x.start), body.point(x.end), body.point(y.start), body.point(y.end)).distance;
         const gaps = incidence.edgeGap(body.vertex(x.start).gap, body.vertex(x.end).gap) + incidence.edgeGap(body.vertex(y.start).gap, body.vertex(y.end).gap);
         try closer(&best, d, reach + gaps, band, .of(.edge, @backingInt(edges.items[pair[0]])), .of(.edge, @backingInt(edges.items[pair[1]])));
@@ -482,7 +495,6 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
         out: std.ArrayList([2]u32) = .empty,
         failed: bool = false,
         fn visit(self: *@This(), i: u32, j: u32) bool {
-            if (i >= j) return true;
             self.out.append(self.allocator, .{ i, j }) catch {
                 self.failed = true;
                 return false;
@@ -495,9 +507,10 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
     };
     var collect: Collect = .{ .allocator = allocator };
     defer collect.out.deinit(allocator);
-    index.bvh.queryPairs(&index.bvh, &collect, Collect.visit);
+    index.bvh.selfPairs(&collect, Collect.visit);
     if (collect.failed) return error.OutOfMemory;
-    std.mem.sort([2]u32, collect.out.items, {}, Collect.lessThan);
+    // Each pair once, so an unstable sort gives the items' order too
+    std.sort.pdq([2]u32, collect.out.items, {}, Collect.lessThan);
 
     var pieces: std.ArrayList(Piece) = .empty;
     defer pieces.deinit(allocator);

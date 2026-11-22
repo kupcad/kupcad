@@ -837,7 +837,6 @@ fn refuseLyingOnOwn(allocator: std.mem.Allocator, paves: *const pave.Paves, frag
         out: std.ArrayList([2]u32) = .empty,
         failed: bool = false,
         fn visit(self: *@This(), x: u32, y: u32) bool {
-            if (x >= y) return true;
             self.out.append(self.allocator, .{ x, y }) catch {
                 self.failed = true;
                 return false;
@@ -847,9 +846,10 @@ fn refuseLyingOnOwn(allocator: std.mem.Allocator, paves: *const pave.Paves, frag
     };
     var pairs: Pairs = .{ .allocator = allocator };
     defer pairs.out.deinit(allocator);
-    tree.queryPairs(&tree, &pairs, Pairs.visit);
+    tree.selfPairs(&pairs, Pairs.visit);
     if (pairs.failed) return error.OutOfMemory;
-    std.mem.sort([2]u32, pairs.out.items, {}, lessPair);
+    // Each pair once, so an unstable sort gives the index order too
+    std.sort.pdq([2]u32, pairs.out.items, {}, lessPair);
     var samples: std.ArrayList(Vec3) = .empty;
     defer samples.deinit(allocator);
     for (pairs.out.items) |pair| {

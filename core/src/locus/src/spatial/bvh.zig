@@ -188,6 +188,66 @@ pub const Bvh = struct {
         }
     }
 
+    /// Every pair of the tree's items whose boxes overlap, each once, as (lesser, greater):
+    /// the tree against itself, visiting a node with itself by its children's three pairs
+    /// (left with left, right with right, left with right) and two disjoint subtrees as
+    /// `queryPairs` does, so no pair of nodes is visited both ways round and a leaf's items
+    /// are compared once each (RTCD §6.5, a self-test). A caller sorts the pairs when their
+    /// order matters.
+    pub fn selfPairs(self: *const Bvh, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32, u32) bool) void {
+        if (self.nodes.len == 0) return;
+        // A node with itself pushes three pairs, two disjoint subtrees two: depth-first,
+        // the stack holds at most two pairs a level of each kind
+        var stack: [2 * (4 * MAX_DEPTH + 4)]u32 = undefined;
+        var top: usize = 2;
+        stack[0] = 0;
+        stack[1] = 0;
+        while (top > 0) {
+            top -= 2;
+            const ia = stack[top];
+            const ib = stack[top + 1];
+            const a = self.nodes[ia];
+            if (ia == ib) {
+                if (a.isLeaf()) {
+                    var i = a.right;
+                    while (i < a.right + a.count) : (i += 1) {
+                        var j = i + 1;
+                        while (j < a.right + a.count) : (j += 1) {
+                            const x = self.items[i];
+                            const y = self.items[j];
+                            if (self.boxes[x].overlaps(self.boxes[y]) and !visit(ctx, @min(x, y), @max(x, y))) return;
+                        }
+                    }
+                } else {
+                    const left = ia + 1;
+                    const right = a.right;
+                    stack[top..][0..6].* = .{ left, left, right, right, left, right };
+                    top += 6;
+                }
+                continue;
+            }
+            const b = self.nodes[ib];
+            if (!a.box.overlaps(b.box)) continue;
+            if (a.isLeaf() and b.isLeaf()) {
+                var i = a.right;
+                while (i < a.right + a.count) : (i += 1) {
+                    var j = b.right;
+                    while (j < b.right + b.count) : (j += 1) {
+                        const x = self.items[i];
+                        const y = self.items[j];
+                        if (self.boxes[x].overlaps(self.boxes[y]) and !visit(ctx, @min(x, y), @max(x, y))) return;
+                    }
+                }
+            } else if (b.isLeaf() or (!a.isLeaf() and a.box.extent() >= b.box.extent())) {
+                stack[top..][0..4].* = .{ a.right, ib, ia + 1, ib };
+                top += 4;
+            } else {
+                stack[top..][0..4].* = .{ ia, b.right, ia, ib + 1 };
+                top += 4;
+            }
+        }
+    }
+
     pub fn count(self: *const Bvh) usize {
         return self.items.len;
     }

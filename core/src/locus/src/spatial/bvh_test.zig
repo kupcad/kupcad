@@ -96,6 +96,30 @@ test "Bvh: the overlapping pairs of two trees are exactly the linear scan's" {
     try testing.expect(expected.items.len > 0);
 }
 
+test "Bvh: a tree's own overlapping pairs are exactly the linear scan's, each once, lesser first" {
+    var prng = std.Random.DefaultPrng.init(SEED + 2);
+    const random = prng.random();
+    // Sizes about the leaf size, so a leaf with itself, a node with itself and two disjoint
+    // subtrees all arise
+    for ([_]usize{ 1, 2, bvh.LEAF_SIZE, bvh.LEAF_SIZE + 1, 37, 200 }) |n| {
+        const boxes = try testing.allocator.alloc(Box3, n);
+        defer testing.allocator.free(boxes);
+        for (boxes) |*x| x.* = randomBox(random);
+        var tree = try bvh.Bvh.build(testing.allocator, boxes);
+        defer tree.deinit(testing.allocator);
+        var got = Pairs{ .allocator = testing.allocator };
+        defer got.found.deinit(testing.allocator);
+        tree.selfPairs(&got, Pairs.visit);
+        for (got.found.items) |p| try testing.expect(p[0] < p[1]);
+        std.mem.sort([2]u32, got.found.items, {}, Pairs.lessThan);
+        var expected = std.ArrayList([2]u32).empty;
+        defer expected.deinit(testing.allocator);
+        for (boxes, 0..) |x, i| for (boxes[i + 1 ..], i + 1..) |y, j| if (x.overlaps(y)) try expected.append(testing.allocator, .{ @intCast(i), @intCast(j) });
+        errdefer std.debug.print("{d} boxes\n", .{n});
+        try testing.expectEqualSlices([2]u32, expected.items, got.found.items);
+    }
+}
+
 test "Bvh: a segment visits exactly the boxes it meets, by slab tests, axis-parallel and skew" {
     const allocator = testing.allocator;
     // A row of unit boxes along x, at x = 0, 2, 4, …, 18
