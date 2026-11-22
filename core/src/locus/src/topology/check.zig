@@ -145,6 +145,35 @@ pub fn pcurveLift(b: *const Body, c: CoedgeIndex) f64 {
     return most;
 }
 
+/// A loop's area about its face's outward normal and its length (`Checker.loopMeasure`).
+const LoopMeasure = struct { area: f64, perimeter: f64 };
+
+/// The polygon of a loop's points taken one by one, its area from its first point and its
+/// length, a step from a point that starts an arc counted by the arc's own length (added
+/// with its segment by the caller), not its chord.
+const LoopWalk = struct {
+    outward: Vec3,
+    area: f64 = 0,
+    perimeter: f64 = 0,
+    first: ?Vec3 = null,
+    last: Vec3 = .{ 0, 0, 0 },
+    last_arc: bool = false,
+
+    fn step(self: *LoopWalk, p: Vec3, starts_arc: bool) void {
+        if (self.first) |origin| {
+            self.area += vec.dot(vec.cross(vec.sub(self.last, origin), vec.sub(p, origin)), self.outward) / 2;
+            if (!self.last_arc) self.perimeter += vec.distance(self.last, p);
+        } else self.first = p;
+        self.last = p;
+        self.last_arc = starts_arc;
+    }
+
+    fn close(self: *LoopWalk) LoopMeasure {
+        if (self.first) |origin| self.step(origin, false);
+        return .{ .area = self.area, .perimeter = self.perimeter };
+    }
+};
+
 const Checker = struct {
     allocator: std.mem.Allocator,
     body: *const Body,
@@ -513,15 +542,15 @@ const Checker = struct {
     /// `w/2` times its perimeter), its sides as near each other as vertices this checker
     /// finds too close, or a face a couple of zones across. The area is its loops' about
     /// the outward normal (the surface's, by `same_sense`), holes taking theirs away, each
-    /// from its first point. A face of no area at all is a lamina or a spur mid-
+    /// from its first point, and the perimeter their length, an arc's share exact
+    /// (`loopMeasure`): sampled, it went by how many edges an arc was cut into, and a lune
+    /// 0.95 of the limit, its arc cut at its circle's seam in two of the eight
+    /// quarter turns and mirrors, was made there and refused in the other six (batch E's
+    /// probe, cs, 2026-11-22). A face of no area at all is a lamina or a spur mid-
     /// construction, as for the windings; curved faces are M5's (their boundary's polygon
     /// is not their area).
     fn slivers(self: *Checker) Error!void {
         const b = self.body;
-        var uv = std.ArrayList(Vec2).empty;
-        defer uv.deinit(self.allocator);
-        var xyz = std.ArrayList(Vec3).empty;
-        defer xyz.deinit(self.allocator);
         for (b.faces.items, 0..) |face, i| {
             if (face.flags.tombstone or face.surface.kind != .plane) continue;
             const n = b.geometry.surface(face.surface).normal(0, 0);
@@ -531,18 +560,49 @@ const Checker = struct {
             var loops = traverse.Loops.init(b, types.FaceIndex.of(i));
             while (loops.next() catch return) |l| {
                 if (b.loop(l).first == .none) continue;
-                _ = try self.sampleLoop(l, &uv, &xyz);
-                const from = xyz.items[0];
-                for (xyz.items, 0..) |p, k| {
-                    const q = xyz.items[(k + 1) % xyz.items.len];
-                    area += vec.dot(vec.cross(vec.sub(p, from), vec.sub(q, from)), outward) / 2;
-                    perimeter += vec.distance(p, q);
-                }
+                const m = self.loopMeasure(l, outward);
+                area += m.area;
+                perimeter += m.perimeter;
             }
             if (@abs(area) <= b.tol.param * b.tol.param) continue;
             const least = b.tol.zone * perimeter / 2;
             if (!(area > least)) try self.add(.sliver_face, .of(.face, i), area, least);
         }
+    }
+
+    /// Loop `l`'s area about `outward` and its length, from the loop's first point: an arc
+    /// its chord from its start, adding its circular segment, `r²/2·(φ − sin φ)`, on the
+    /// side it turns about `outward`, and its length `r·φ`, exact and the same however the
+    /// arc is cut (in one piece or two it measures alike); any other curve, a line among
+    /// them, its samples as `sampleLoop` takes them, the polygon's area and length (a line
+    /// on its vertices is exact to rounding; one whose ends miss them by a gap, as the
+    /// boolean's edges keep their source's lines, D28, is measured along its line to its
+    /// last sample, then across to the next edge's start, as always).
+    fn loopMeasure(self: *Checker, l: LoopIndex, outward: Vec3) LoopMeasure {
+        const b = self.body;
+        var walk: LoopWalk = .{ .outward = outward };
+        var it = traverse.Coedges.init(b, l);
+        while (it.next() catch return .{ .area = 0, .perimeter = 0 }) |c| {
+            const coedge = b.coedge(c);
+            const e = b.edge(coedge.edge);
+            const curve = b.geometry.curve(e.curve);
+            const from: f64 = if (coedge.same_sense) e.t0 else e.t1;
+            const to: f64 = if (coedge.same_sense) e.t1 else e.t0;
+            switch (curve) {
+                .circle => |circle| {
+                    const sweep = @abs(to - from);
+                    const turn: f64 = if ((vec.dot(circle.normal(), outward) > 0) == (to > from)) 1 else -1;
+                    walk.area += turn * circle.r * circle.r / 2 * (sweep - @sin(sweep));
+                    walk.perimeter += circle.r * sweep;
+                    walk.step(curve.eval(from), true);
+                },
+                else => {
+                    var k: usize = 0;
+                    while (k < LOOP_SAMPLES) : (k += 1) walk.step(curve.eval(from + (to - from) * @as(f64, @floatFromInt(k)) / LOOP_SAMPLES), false);
+                },
+            }
+        }
+        return walk.close();
     }
 
     /// Every loop runs counter-clockwise in UV about its face's outward normal when it is

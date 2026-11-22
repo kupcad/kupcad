@@ -3,7 +3,8 @@ const testing = std.testing;
 const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
-const Diagnostics = @import("../diagnostics.zig").Diagnostics;
+const diagnostics_mod = @import("../diagnostics.zig");
+const Diagnostics = diagnostics_mod.Diagnostics;
 const types = @import("../topology/types.zig");
 const Body = @import("../topology/body.zig").Body;
 const traverse = @import("../topology/traverse.zig");
@@ -32,6 +33,14 @@ const LOW_APART = [_]f64{ 2.5, 3, 5 };
 /// nearly one: their corners 1.73 and 2.6 zones apart, past the zone the hull welds at,
 /// about the intersection tolerance.
 const WELD_NUDGES = [_]f64{ 1e-5, 1.5e-5 };
+/// Lunes of two circles through one vertex, the second's tangent there tilted toward the
+/// first by the angle (degrees, under the angular tolerance): batch E's probe's (cs, radii
+/// 10 and 2 at 0.2°, 1.015 of the least area of no sliver), and neighbours on either side
+/// of that least area.
+const LUNE_FIND_RADII = [2]f64{ 10, 2 };
+const LUNE_FIND_TILT = 0.2;
+const LUNE_RADII = [_][2]f64{ .{ 10, 2 }, .{ 8, 2 }, .{ 10, 3 } };
+const LUNE_TILTS = [_]f64{ 0.15, 0.18, 0.2, 0.22, 0.3 };
 
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
@@ -570,4 +579,69 @@ test "hull: two cubes nudged apart by less than the intersection tolerance give 
         diag.deinit();
         diag = Diagnostics.init(testing.allocator);
     }
+}
+
+/// The lune inside the circle of radius `radii[0]` and outside the circle of `radii[1]`,
+/// both through the origin, the first's centre on +y, the second's tangent there tilted
+/// `degrees` toward it; every point turned `turn` quarter turns about the origin, mirrored
+/// in x first or not (exact for the turns).
+fn tiltedLune(radii: [2]f64, degrees: f64, turn: usize, mirrored: bool, diag: *Diagnostics) !Body {
+    const at = struct {
+        fn place(p: Vec2, quarters: usize, mirror: bool) Vec2 {
+            var q: Vec2 = if (mirror) .{ -p[0], p[1] } else p;
+            for (0..quarters) |_| {
+                const turned: Vec2 = .{ -q[1], q[0] };
+                q = turned;
+            }
+            return q;
+        }
+    };
+    const angle = -degrees * PI / 180;
+    const a_centre: Vec2 = .{ 0, radii[0] };
+    const b_centre = vec.scale2(.{ -@sin(angle), @cos(angle) }, radii[1]);
+    // The circles' second meeting: the origin reflected in the line of the centres
+    const along = vec.sub2(b_centre, a_centre);
+    const t = -vec.dot2(a_centre, along) / vec.dot2(along, along);
+    const far = vec.scale2(vec.add2(a_centre, vec.scale2(along, t)), 2);
+    const v = at.place(.{ 0, 0 }, turn, mirrored);
+    const p = at.place(far, turn, mirrored);
+    const lune = [_]primitives.OutlineEdge{
+        .{ .a = v, .b = p, .arc = .{ .c = at.place(a_centre, turn, mirrored), .r = radii[0], .ccw = !mirrored } },
+        .{ .a = p, .b = v, .arc = .{ .c = at.place(b_centre, turn, mirrored), .r = radii[1], .ccw = mirrored } },
+    };
+    return primitives.outlines(testing.allocator, tol, &.{&lune}, diag);
+}
+
+/// The lune's outcome: made, or the code of the finding it was refused with.
+fn luneOutcome(radii: [2]f64, degrees: f64, turn: usize, mirrored: bool) !?diagnostics_mod.Code {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sheet = tiltedLune(radii, degrees, turn, mirrored, &diag) catch |err| switch (err) {
+        error.Degenerate, error.NotValid => return diag.findings.items[diag.findings.items.len - 1].code,
+        else => return err,
+    };
+    sheet.deinit();
+    return null;
+}
+
+test "primitives: a lune of two circles 0.2° apart at their vertex, just wider than a sliver, is made in every quarter turn, mirrored or not (find cs)" {
+    // Batch E's probe (2026-11-22, cs): the sliver rule measured the face by the polygon
+    // of samples along its edges, so by how many edges its arc was cut into; the arc of
+    // radius 2 cut at its circle's seam in two of the eight placements measured 1.03 of the
+    // least area and was made, whole in the other six, 0.95, refused `sliver_face`.
+    // Measured exactly (`check.loopMeasure`) it is 1.015, made in all
+    for (0..4) |turn| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ turn, mirrored });
+        try testing.expectEqual(@as(?diagnostics_mod.Code, null), try luneOutcome(LUNE_FIND_RADII, LUNE_FIND_TILT, turn, mirrored));
+    };
+}
+
+test "primitives: lunes of two circles a fraction of a degree apart at their vertex, either side of a sliver, are made or refused alike in every quarter turn, mirrored or not" {
+    for (LUNE_RADII) |radii| for (LUNE_TILTS) |degrees| {
+        const first = try luneOutcome(radii, degrees, 0, false);
+        for (0..4) |turn| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("radii {any}, {d}°, quarter turns {d}, mirrored {}: in place {any}\n", .{ radii, degrees, turn, mirrored, first });
+            try testing.expectEqual(first, try luneOutcome(radii, degrees, turn, mirrored));
+        };
+    };
 }

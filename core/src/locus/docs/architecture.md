@@ -1567,7 +1567,10 @@ adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`,
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's
 domain; edge length > `δ`; a planar face's area more than `zone` times half its
 perimeter (`sliver_face`: no strip narrower than the zone, nor a face a couple of zones
-across; 2026-11-14, as SMLib and ACIS measure it; a boolean whose result has one refuses
+across; 2026-11-14, as SMLib and ACIS measure it; an arc's share of area and perimeter
+exact, its circular segment and length, `check.loopMeasure`: sampled, they went by
+how many edges an arc was cut into, and a lune at 1.015 of the limit was refused or made
+by where its circle's seam fell, batch E's probe, cs, 2026-11-22; a boolean whose result has one refuses
 it by design, §7.4); no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
