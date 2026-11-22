@@ -43,6 +43,7 @@ const in_face = @import("../query/in_face.zig");
 const canonical = @import("../geometry/canonical.zig");
 const incidence = @import("../geometry/incidence.zig");
 const check = @import("../topology/check.zig");
+const cover = @import("../topology/cover.zig");
 const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
 const CurveRef = @import("../geometry/types.zig").CurveRef;
@@ -526,7 +527,7 @@ fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!b
     }
     if (joined) for (edges) |e| if (!body.edge(e).flags.tombstone) {
         body.edge(e).gap = gap;
-        try coverEdge(body, e, diag);
+        try cover.coverEdge(body, e, diag);
     };
     return joined;
 }
@@ -592,8 +593,8 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
                 else => continue,
             };
             if (other.start == keep) other.t0 = line.project(at) else other.t1 = line.project(at);
-            try coverLine(body, keep, line, .of(.vertex, @backingInt(keep)), "a vertex a short edge collapsed into, off the line of an edge moved to it past the intersection tolerance by", diag);
-            try coverEdge(body, types.EdgeIndex.of(j), diag);
+            try cover.coverLine(body, keep, line, .of(.vertex, @backingInt(keep)), "a vertex a short edge collapsed into, off the line of an edge moved to it past the intersection tolerance by", diag);
+            try cover.coverEdge(body, types.EdgeIndex.of(j), diag);
         }
         changed = true;
     }
@@ -635,68 +636,6 @@ fn farthestLine(body: *const Body, keep: types.VertexIndex, gone: types.VertexIn
         farthest = @max(farthest, canonical.lineOffset(line, p));
     }
     return farthest;
-}
-
-/// Vertex `v`'s gap grown to cover its distance from `line` beyond the intersection
-/// tolerance, as the checker holds an edge's ends to its curve (`vertex_off_curve`) and OCCT
-/// grows a vertex's tolerance to the edges it ends (`UpdateVertex`): the one rule for
-/// whatever puts a vertex at the end of an edge off its line, the boolean's builder (a
-/// pave on an edge by the segment between its merged ends, `Provenance.piece`) and the
-/// short-edge collapse (an edge moved from the vertex gone to the one kept; the 10K session
-/// on 6007ab01: a hull's edge moved to a box's corner 2.0138e-5 off its line, at a
-/// tolerance of 2e-5, with no gap). The gap covers the distance's rounding too (D27's
-/// band): the checker measures from the line at the vertex's projection, a rounding from
-/// `lineOffset` at the coordinates' size, and the offset's excess alone fell 9e-17 short
-/// of it in the same find. Past the zone, refused (`gap_too_large`), naming `entity` with
-/// `label`.
-pub fn coverLine(body: *Body, v: types.VertexIndex, line: @import("../geometry/curves.zig").Line, entity: diagnostics.EntityRef, label: []const u8, diag: *Diagnostics) Error!void {
-    const p = body.point(v);
-    const offset = canonical.lineOffset(line, p);
-    const gap = offset - body.tol.xsect + canonical.Comparison.distance(offset, body.tol.xsect, canonical.magnitude(&.{ p, line.o })).band;
-    if (gap <= body.vertex(v).gap) return;
-    if (gap > body.tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = entity, .label = label, .measured = gap, .threshold = body.tol.zone });
-    body.vertex(v).gap = gap;
-}
-
-/// Edge `e`'s gap grown to cover its line's height over each of its faces' planes past the
-/// intersection tolerance, measured at its two ends (a line's height over a plane is
-/// linear, so its ends bound it), with the height's rounding (D27's band, at the size of
-/// the line's origin, the end and the plane's: the checker measures the same distance
-/// another way, projecting points along the edge onto the face, and a gap of the height as
-/// the plane gave it left an edge 5.5e-16 off its face, find bx), and its end vertices'
-/// gaps grown to the edge's, as the checker orders them (`gap_order`; OCCT's
-/// `UpdateVertex`). The one rule for an edge's gap wherever its line, range or ends are
-/// set: the builder's provenance (`pipeline.coverFaces`, OCCT's `CorrectCurveOnSurface`),
-/// and every later edit of an edge, a run joined into one edge (`joinRun`) and the edges
-/// moved to the vertex a short edge collapsed into (`collapseShortEdges`): measured where
-/// the edge ends up, not carried over from the pieces it came from or the ends it had, as
-/// OCCT re-validates tolerances after `UnifySameDomain` or ShapeFix (the audit of
-/// 2026-11-22: a joined edge took its largest piece's gap while the run's other end kept
-/// its own, smaller, and the boolean's result failed its check). Past the zone, refused
-/// (`gap_too_large`). Other curves and surfaces are left as they are.
-pub fn coverEdge(body: *Body, e: types.EdgeIndex, diag: *Diagnostics) Error!void {
-    const tol = body.tol;
-    const edge = body.edge(e);
-    const line = switch (body.geometry.curve(edge.curve)) {
-        .line => |l| l,
-        else => return,
-    };
-    var gap = edge.gap;
-    for (traverse.coedgesOfEdge(body, e)) |c| {
-        if (c == .none) continue;
-        const face = body.face(body.loop(body.coedge(c).loop).face);
-        if (face.surface.kind != .plane) continue;
-        const plane = body.geometry.planes.items[face.surface.index];
-        for ([_]f64{ edge.t0, edge.t1 }) |t| {
-            const end = line.eval(t);
-            const height = @abs(plane.height(end));
-            const rounding = canonical.Comparison.distance(height, tol.xsect, canonical.magnitude(&.{ line.o, end, plane.frame.origin })).band;
-            gap = @max(gap, height + rounding - tol.xsect);
-        }
-    }
-    if (gap > tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = .of(.edge, @backingInt(e)), .label = "an edge whose line leaves its faces' planes past the intersection tolerance by", .measured = gap, .threshold = tol.zone });
-    edge.gap = gap;
-    for ([_]types.VertexIndex{ edge.start, edge.end }) |v| body.vertex(v).gap = @max(body.vertex(v).gap, gap);
 }
 
 /// The live edges between each pair of vertices: more than one where solids touch along a

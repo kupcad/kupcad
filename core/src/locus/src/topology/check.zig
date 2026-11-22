@@ -115,6 +115,36 @@ pub fn assertStructural(body: *const Body) void {
 /// Samples along an edge for the geometric rules (OCCT uses 23).
 const EDGE_SAMPLES = 7;
 
+/// How far coedge `c`'s pcurve lifts from its edge's curve, the most over the samples the
+/// checker holds it to `approx` plus the edge's gap at (`pcurve_off_edge`: the edge's
+/// `EDGE_SAMPLES` midpoints, and `PCURVE_SAMPLES` from the coedge's start to its end), the
+/// same parameters computed the same way: what a gap that carries a pcurve's lift covers
+/// (`cover.coverEdge`), measured as it is checked. 0 for a coedge with no pcurve.
+pub fn pcurveLift(b: *const Body, c: CoedgeIndex) f64 {
+    const coedge = b.coedge(c);
+    if (coedge.pcurve.isNone()) return 0;
+    const e = b.edge(coedge.edge);
+    const curve = b.geometry.curve(e.curve);
+    const pc = b.geometry.pcurve(coedge.pcurve);
+    const surface = b.geometry.surface(b.face(b.loop(coedge.loop).face).surface);
+    var most: f64 = 0;
+    var k: usize = 0;
+    while (k < EDGE_SAMPLES) : (k += 1) {
+        const t = e.t0 + (e.t1 - e.t0) * (@as(f64, @floatFromInt(k)) + 0.5) / EDGE_SAMPLES;
+        const uv = pc.eval(t);
+        most = @max(most, vec.distance(surface.eval(uv[0], uv[1]), curve.eval(t)));
+    }
+    const from = if (coedge.same_sense) e.t0 else e.t1;
+    const to = if (coedge.same_sense) e.t1 else e.t0;
+    k = 0;
+    while (k < PCURVE_SAMPLES) : (k += 1) {
+        const t = from + (to - from) * @as(f64, @floatFromInt(k)) / (PCURVE_SAMPLES - 1);
+        const uv = pc.eval(t);
+        most = @max(most, vec.distance(surface.eval(uv[0], uv[1]), curve.eval(t)));
+    }
+    return most;
+}
+
 const Checker = struct {
     allocator: std.mem.Allocator,
     body: *const Body,

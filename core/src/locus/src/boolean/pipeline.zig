@@ -53,6 +53,7 @@ const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const check = @import("../topology/check.zig");
+const cover = @import("../topology/cover.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const trace = @import("../io/trace.zig");
 const primitives = @import("../construct/primitives.zig");
@@ -712,7 +713,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
 fn coverFaces(body: *Body, diag: *Diagnostics) Error!void {
     for (body.edges.items, 0..) |edge, i| {
         if (edge.flags.tombstone) continue;
-        try simplify.coverEdge(body, types.EdgeIndex.of(i), diag);
+        try cover.coverEdge(body, types.EdgeIndex.of(i), diag);
     }
 }
 
@@ -1523,7 +1524,7 @@ const Provenance = struct {
         const entry = try self.lines.getOrPut(self.allocator, key);
         if (!entry.found_existing) entry.value_ptr.* = b.body.geometry.addLine(b.allocator, line) catch |e| return b.fail(e);
         for ([_]types.VertexIndex{ u, w }, [_]u32{ x, y }) |v, m| {
-            try simplify.coverLine(&b.body, v, line, .of(.vertex, m), "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", b.diag);
+            try cover.coverLine(&b.body, v, line, .of(.vertex, m), "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", b.diag);
         }
         const ta = line.project(b.body.point(u));
         const tb = line.project(b.body.point(w));

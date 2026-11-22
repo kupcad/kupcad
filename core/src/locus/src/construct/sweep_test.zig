@@ -38,6 +38,12 @@ const ASKEW_L = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 1, 1 }, .{ 1, 2
 /// The directions those profiles are extruded along: each leaves the sheet's plane askew,
 /// one of them downward-leaning, and one rising less than its length.
 const ASKEW_DIRECTIONS = [_]Vec3{ .{ 0, 3, 3 }, .{ 1, 0, 4 }, .{ -2, 1, 0.5 } };
+/// How far the first vertex of a quarter disc's arc lies off the arc's circle, along the
+/// radius, outward positive: within the zone (an outline's ends may be), both ways, at and
+/// past the approximation tolerance a pcurve is held to (find cr).
+const OFF_CIRCLE = [_]f64{ -9.9e-6, -9e-6, -5e-6, 5e-6, 9e-6, 9.9e-6 };
+/// The angles the off-circle sheet is revolved by.
+const OFF_CIRCLE_TURNS = [_]f64{ std.math.pi / 2.0, std.math.pi };
 /// A strip 3 zones wide and 2 long, extruded along a direction rising 1.5 zones over 0.1
 /// across: its caps lie within the intersection tolerance of each other.
 const ASKEW_STRIP = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 3e-5 }, .{ 0, 3e-5 } };
@@ -765,4 +771,66 @@ test "extrude and revolve: solids swept touching along a line or a circle warn s
     var drum = try sweep.extrude(testing.allocator, &ci, .{ 0, 0, 3 }, .{}, &diag);
     defer drum.deinit();
     try testing.expectEqual(@as(usize, 0), warned(&diag, .solids_touch));
+}
+
+/// A quarter of the unit disc about `centre`, from its point on +x, moved `off` along the
+/// radius (outward positive), counter-clockwise to its point on +y, then back by its two
+/// radii; each point turned `turn` quarter turns about the origin, mirrored in x first or
+/// not (exact for these points).
+fn offCircleSheet(centre: vec.Vec2, off: f64, turn: usize, mirrored: bool, diag: *Diagnostics) !Body {
+    const at = struct {
+        fn place(p: vec.Vec2, quarters: usize, mirror: bool) vec.Vec2 {
+            var q: vec.Vec2 = if (mirror) .{ -p[0], p[1] } else p;
+            for (0..quarters) |_| {
+                const turned: vec.Vec2 = .{ -q[1], q[0] };
+                q = turned;
+            }
+            return q;
+        }
+    };
+    const a = at.place(.{ centre[0] + 1 + off, centre[1] }, turn, mirrored);
+    const b = at.place(.{ centre[0], centre[1] + 1 }, turn, mirrored);
+    const c = at.place(centre, turn, mirrored);
+    const ring = [_]primitives.OutlineEdge{
+        .{ .a = a, .b = b, .arc = .{ .c = c, .r = 1, .ccw = !mirrored } },
+        .{ .a = b, .b = c },
+        .{ .a = c, .b = a },
+    };
+    return primitives.outlines(testing.allocator, tol, &.{&ring}, diag);
+}
+
+test "sweep: a sheet whose vertex lies off its arc's circle within the zone extrudes into a valid solid in every quarter turn, mirrored or not (find cr)" {
+    // Batch E's probe (2026-11-22, cr): the edge swept from the vertex ran through it, and
+    // its pcurve on the cylinder, at the arc's end, lifted onto the circle, the vertex's
+    // offset away, past the approximation tolerance with no gap: a valid sheet extruded to
+    // NotValid (`pcurve_off_edge`); the gap carries it now (cover.coverEdge)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (OFF_CIRCLE) |off| for (0..QUARTER_TURNS) |turn| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("off {e}, quarter turns {d}, mirrored {}\n", .{ off, turn, mirrored });
+        var sheet = try offCircleSheet(.{ 0, 0 }, off, turn, mirrored, &diag);
+        defer sheet.deinit();
+        var solid = try sweep.extrude(testing.allocator, &sheet, .{ 0, 0, 1 }, .{}, &diag);
+        defer solid.deinit();
+        try expectValid(&solid);
+        try testing.expectApproxEqAbs(std.math.pi / 4.0, (try mass.mass(&solid, .{}, &diag)).volume, 1e-4);
+    };
+}
+
+test "sweep: a sheet whose vertex lies off its arc's circle within the zone revolves into a valid solid (find cr)" {
+    // The same with the vertex swept round the axis: a circle through it whose pcurve on
+    // the arc's torus, at the arc's end, lifted onto the parallel the vertex's offset away
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (OFF_CIRCLE) |off| for (OFF_CIRCLE_TURNS) |angle| {
+        errdefer std.debug.print("off {e}, angle {d}\n", .{ off, angle });
+        var sheet = try offCircleSheet(.{ 2, 0 }, off, 0, false, &diag);
+        defer sheet.deinit();
+        var solid = try sweep.revolve(testing.allocator, &sheet, .{ 0, 0, 0 }, .{ 0, 1, 0 }, angle, .{}, &diag);
+        defer solid.deinit();
+        try expectValid(&solid);
+        // Pappus: the quarter disc's area times the path of its centroid
+        const centroid = 2.0 + 4.0 / (3.0 * std.math.pi);
+        try testing.expectApproxEqAbs(std.math.pi / 4.0 * centroid * angle, (try mass.mass(&solid, .{}, &diag)).volume, 1e-3);
+    };
 }

@@ -17,6 +17,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const check = @import("../topology/check.zig");
+const cover = @import("../topology/cover.zig");
 const Interner = @import("../spatial/intern.zig").Interner;
 const sew = @import("sew.zig");
 const traverse = @import("../topology/traverse.zig");
@@ -167,6 +168,7 @@ pub const Builder = struct {
     /// not (audit of 2026-11-22).
     pub fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
         _ = sew.sew(&self.body, faces, kind) catch |e| return self.fail(e);
+        try self.covered();
         _ = try self.checked(if (kind == .sheet) .global else .geometric);
         return self.finished();
     }
@@ -177,6 +179,7 @@ pub const Builder = struct {
     pub fn finishWithVoids(self: *Builder, faces: []const sew.FaceSpec) Error!Body {
         _ = sew.sew(&self.body, faces, .outer) catch |e| return self.fail(e);
         try markVoids(&self.body, self.diag);
+        try self.covered();
         _ = try self.checked(.geometric);
         return self.finished();
     }
@@ -188,6 +191,19 @@ pub const Builder = struct {
             _ = try overlap.refuseMade(self.allocator, &self.body, label, self.options, self.diag);
         };
         return self.body;
+    }
+
+    /// The gaps of a solid an operation made of its input (`made` set) grown to where its
+    /// edges lie (`cover.coverEdge`, the boolean's rule): an input within its tolerance
+    /// (a sheet's vertex off its arc's circle within the zone) sweeps edges off their
+    /// faces' surfaces by as much, which the gaps carry, as OCCT's `SameParameter` grows an
+    /// edge's tolerance to its pcurves. The primitives' edges lie on their faces.
+    fn covered(self: *Builder) Error!void {
+        if (self.body.kind != .solid or self.made == null) return;
+        for (self.body.edges.items, 0..) |e, i| {
+            if (e.flags.tombstone) continue;
+            try cover.coverEdge(&self.body, types.EdgeIndex.of(i), self.diag);
+        }
     }
 
     fn checked(self: *Builder, level: check.Level) Error!Body {

@@ -834,8 +834,13 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
    other end needed one within it, the audit of 2026-11-22), the vertex kept given the gap
    that holds the lines moved to it
    (as the builder gives a vertex it puts on an edge; the 10K session, 2026-11-18); every
-   edge it edits covered again where it now ends (`simplify.coverEdge`, the one rule with
-   the builder's `coverFaces`: a run joined into one edge gives the run's ends the joined
+   edge it edits covered again where it now ends (`cover.coverEdge`, the one rule with
+   the builder's `coverFaces` and the builders of what an operation makes of its input,
+   which cover a made solid's edges before its check, a pcurve's lift on a curved face
+   too, measured at the checker's own samples (`check.pcurveLift`; OCCT's
+   `SameParameter`): a sheet's vertex off its arc's circle within the zone, swept, gave
+   an edge through it whose pcurve lifted onto the arc's surface its offset away, and a
+   valid sheet's extrusion or revolution was NotValid, batch E's probe, cr, 2026-11-22; a run joined into one edge gives the run's ends the joined
    edge's gap, and the edges moved to a kept vertex their heights at the new end and the
    vertex their gaps, as OCCT re-validates tolerances after `UnifySameDomain`; a joined
    edge took its largest piece's gap and left its other end its own, smaller, the audit

@@ -12,6 +12,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const Body = @import("../topology/body.zig").Body;
 const check = @import("../topology/check.zig");
+const cover = @import("../topology/cover.zig");
 const primitives = @import("../construct/primitives.zig");
 const sew = @import("../construct/sew.zig");
 const simplify = @import("simplify.zig");
@@ -487,7 +488,7 @@ test "simplify: coverLine's gap holds a vertex to the line as the checker measur
         const round = vec.add(vec.scale(across, @cos(k * 0.37)), vec.scale(up, @sin(k * 0.37)));
         const p = vec.addScaled(line.eval(0.5 + k * 0.01), round, tol.xsect * (1 + k * 1e-4));
         const v = try body.addVertex(.{ .point = try body.geometry.addPoint(testing.allocator, p) });
-        try simplify.coverLine(&body, v, line, .of(.vertex, @backingInt(v)), "the test's vertex", &diag);
+        try cover.coverLine(&body, v, line, .of(.vertex, @backingInt(v)), "the test's vertex", &diag);
         // As `vertex_off_curve` measures and sums it, for an edge with no gap
         try testing.expect(vec.distance(line.eval(line.project(p)), p) <= tol.xsect + 0 + body.vertex(v).gap);
     }
