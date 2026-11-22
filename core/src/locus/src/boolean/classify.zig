@@ -422,7 +422,7 @@ fn bySeam(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, frag
             // both sides and bounds no region of it
             if (fragments.steps(i, y, x)) continue;
             const into = vec.normalized(vec.cross(normal, vec.sub(paves.point(y), paves.point(x)))) orelse continue;
-            const side = (try pieceSide(allocator, paves, seams, other, piece, x, y, fragment.face, normal, into, diag)) orelse continue;
+            const side = (try pieceSide(allocator, paves, seams, fragments, i, other, piece, x, y, normal, into, diag)) orelse continue;
             if (clear_only and !side.clear) continue;
             if (found) |c| {
                 if (c == side.class) continue;
@@ -463,8 +463,18 @@ const Side = struct { class: Class, clear: bool };
 /// hull's top, 0.8° off it and 1.8e-4 under it there, was left to a ray: the planes' own
 /// line ran through the strip 0.0127 from the corners', its points lay either side of
 /// the hull's top within 2.2e-4, and the first of them clear of it, over it, kept the
-/// strip the hull's top covers (`edge_coedge_count`; the session on 6f0faa84, bl).
-fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, other: u1, piece: Seams.Piece, x: u32, y: u32, face: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
+/// strip the hull's top covers (`edge_coedge_count`; the session on 6f0faa84, bl). The
+/// turn is the side only where the fragment reaches it: where every corner of the fragment
+/// off `g`'s plane (past the paves' rounding) lies on one side of it, the fragment lies on
+/// that side whatever the turn (`cornersSide`). A face 1e-9 rad off a box's side and 2e-5
+/// outside it, hinged where its edge lay within the tolerance of the side, turned toward
+/// the box but met its plane 2e4 away: by the turn its fragment was inside, every corner
+/// of it outside, and its seams disagreed with its operand's beyond the box
+/// (`unclassified`; the ReleaseSafe session on a1444371, ci, 2026-11-22). With corners
+/// either side the fragment crosses the plane, and the turn says which way it leaves the
+/// piece (bl).
+fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, fragments: *const Fragments, i: usize, other: u1, piece: Seams.Piece, x: u32, y: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Side {
+    const face = fragments.items.items[i].face;
     const body = paves.operands[other];
     switch (piece) {
         .edges => |range| {
@@ -474,7 +484,7 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
             // nightly, 2026-11-18)
             var class: ?Class = null;
             for (seams.edgesOfPiece(range)) |e| {
-                const side = (try wedgeSide(paves, other, e, face, normal, into, diag)) orelse continue;
+                const side = (try wedgeSide(paves, fragments, i, other, e, normal, into, diag)) orelse continue;
                 if (side == .inside) return .{ .class = .inside, .clear = true };
                 class = side;
             }
@@ -488,9 +498,36 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
             const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
             const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
             const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, try seams.edgesOf(allocator, paves, other, g, diag), diag) == .inside;
-            return .{ .class = if (across < 0) .inside else .outside, .clear = clear };
+            return .{ .class = faceSide(paves, fragments, i, body, g, n_g, normal, across), .clear = clear };
         },
     }
+}
+
+/// The side of face `g` of `body` (outward normal `n_g`) fragment `i` (of a face of normal
+/// `normal`) lies on beyond a piece it leaves `across` = `into`·`n_g` toward: behind it,
+/// inside, by the turn, but a face parallel to the fragment's within the angular tolerance
+/// shows the side its corners lie on where they lie on one side (`cornersSide`), as a
+/// section's (`pieceSide`) and an edge's faces (`wedgeSide`) alike.
+fn faceSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3, normal: Vec3, across: f64) Class {
+    const turned: Class = if (across < 0) .inside else .outside;
+    if (!paves.tol.parallel(normal, n_g)) return turned;
+    return cornersSide(paves, fragments, i, body, g, n_g) orelse turned;
+}
+
+/// The side of face `g` of `body` (outward normal `n_g`) every corner of fragment `i` off
+/// `g`'s plane lies on: outside in front of it, inside behind it; null when its corners
+/// lie on both sides, or none off it past the paves' rounding.
+fn cornersSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3) ?Class {
+    const origin = planar_faces.frameOf(body, g).?.origin;
+    var front = false;
+    var behind = false;
+    for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
+        const height = vec.dot(vec.sub(paves.point(m), origin), n_g);
+        if (@abs(height) <= paves.rounding) continue;
+        if (height > 0) front = true else behind = true;
+    };
+    if (front == behind) return null;
+    return if (front) .outside else .inside;
 }
 
 /// The side of operand `other` that direction `into` leaves its edge `e` towards, in a face of
@@ -520,8 +557,11 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, o
 /// bl's configuration with the seam a piece of the hull's edge, the audit of decisions
 /// made twice, 2026-11-22). Null for a curved edge, an edge across the plane, `into`
 /// running onto a face in that plane (one region with it, the twins' to decide) or along
-/// a face to rounding, or both faces in that plane.
-fn wedgeSide(paves: *const Paves, other: u1, e: types.EdgeIndex, face: u32, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+/// a face to rounding, or both faces in that plane. A face parallel to the fragment's
+/// shows the side the fragment's corners lie on where they lie on one side of it, as a
+/// section's does (`faceSide`; ci).
+fn wedgeSide(paves: *const Paves, fragments: *const Fragments, i: usize, other: u1, e: types.EdgeIndex, normal: Vec3, into: Vec3, diag: *Diagnostics) Error!?Class {
+    const face = fragments.items.items[i].face;
     const body = paves.operands[other];
     const edge = body.edge(e);
     const line = switch (body.geometry.curve(edge.curve)) {
@@ -546,18 +586,19 @@ fn wedgeSide(paves: *const Paves, other: u1, e: types.EdgeIndex, face: u32, norm
     if (in_plane[0] and in_plane[1]) return null;
     if (in_plane[0] or in_plane[1]) {
         const face_n = if (in_plane[0]) n1 else n2;
+        const other_f = if (in_plane[0]) f2 else f1;
         const other_n = if (in_plane[0]) n2 else n1;
         const onto = vec.cross(face_n, if (in_plane[0]) along else vec.scale(along, -1));
         if (vec.dot(into, onto) > 0) return null;
-        return if (vec.dot(into, other_n) < 0) .inside else .outside;
+        return faceSide(paves, fragments, i, body, other_f, other_n, normal, vec.dot(into, other_n));
     }
     // Along a face to rounding, no side (as a section's, `pieceSide`)
     const across = [2]f64{ vec.dot(into, n1), vec.dot(into, n2) };
     if (@abs(across[0]) <= SIDE_ROUNDING or @abs(across[1]) <= SIDE_ROUNDING) return null;
     // Convex when the second face turns behind the first along the first's loop
     const convex = vec.dot(vec.cross(n1, n2), along) > 0;
-    const behind_first = across[0] < 0;
-    const behind_second = across[1] < 0;
+    const behind_first = faceSide(paves, fragments, i, body, f1, n1, normal, across[0]) == .inside;
+    const behind_second = faceSide(paves, fragments, i, body, f2, n2, normal, across[1]) == .inside;
     const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
     return if (inside) .inside else .outside;
 }

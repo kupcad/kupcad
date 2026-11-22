@@ -2350,6 +2350,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // extruded 3, had a cap of three points of one line, meshed as one triangle of no
         // area (tessellate.foldsBack: the fold pruned as a spike, the arcs refined)
         "chain 3 8 0 1 2 5 0 1 3 3 4 3 3 5 5 2 2 0 2 1 0 0 4 2 2 3 4 2 8 2 6 1 5 4 6 1 5 4 4 6 0 4 5 0 4 4 1 0 1 1 3 0 3 1 1 0 4 3 4 4 0 5 1 4 3 0 0 1 1 1 0 3 4 1 2 1 1 3 3",
+        // The first ReleaseSafe session (a1444371, 2026-11-21, locus.3, ci): two hulls
+        // joined, the second turned 1e-9 rad, its face in y = 4 nudged 2e-5 out, then
+        // intersected with a box whose side is y = 4; the face, hinged along its edge where
+        // that lay within the tolerance of the side, read by its turn inside the box,
+        // though every corner of it lay outside (`unclassified`; classify.cornersSide)
+        "solids 1 8 3 3 3 2 1 1 1 0 3 0 3 3 2 2 1 1 0 0 4 4 1 4 1 3 2 0 0 2 1 -2 5 5 9 3 1 1 7 1 3 0 4 3 1 0 4 0 2 4 3 1 4 4 4 1 0 4 4 0 0 3 8 2 2 7 8 7 0 3 0 2 4 2 4 0 4 1 2 1 0 4 14 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

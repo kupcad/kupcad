@@ -500,6 +500,26 @@ const SPUR_HULL_NUDGE: Vec3 = .{ 0, 2e-3, 0 };
 /// D27's band at these coordinates), within the tolerance (the apex on the edge), and
 /// past it to 2.5 times it.
 const SPUR_INSETS = [_]f64{ 2.000000005684342e-5, 1.5e-5, 2.5e-5, 3e-5, 5e-5 };
+/// The solids of the tests of a face a hair off parallel to a box's side, the tolerance
+/// outside it (the first ReleaseSafe session's find on a1444371, ci, as the solids fuzzer
+/// drew it): `OFFSET_HULL_A`, scaled and moved, and `OFFSET_HULL_B`, turned a hair about
+/// `OFFSET_AXIS` and moved, whose face in y = 4 is nudged `OFFSET_LIFTS` out past the
+/// box's side y = 4; the box from x = 2.5 to 4.5, its bottom 5e-6 under z = 0.
+const OFFSET_HULL_A = [_]Vec3{ .{ 3, 3, 3 }, .{ 2, 1, 1 }, .{ 1, 0, 3 }, .{ 0, 3, 3 }, .{ 2, 2, 1 }, .{ 1, 0, 0 }, .{ 4, 4, 1 }, .{ 4, 1, 3 } };
+const OFFSET_HULL_A_SCALE: Vec3 = .{ 0.5, 2, 1 };
+const OFFSET_HULL_A_MOVE: Vec3 = .{ -1, 0, 0 };
+const OFFSET_HULL_A_NUDGE: Vec3 = .{ 0, 1e-5, 1e-5 };
+const OFFSET_HULL_B = [_]Vec3{ .{ 1, 3, 0 }, .{ 4, 3, 1 }, .{ 0, 4, 0 }, .{ 2, 4, 3 }, .{ 1, 4, 4 }, .{ 4, 1, 0 }, .{ 4, 4, 0 } };
+const OFFSET_AXIS: Vec3 = .{ 1, 2, 3 };
+const OFFSET_HULL_B_MOVE: Vec3 = .{ 1, 0, 0 };
+const OFFSET_HULL_B_DROP: f64 = -2e-5;
+const OFFSET_BOX = [2]Vec3{ .{ 2.5, 2, 0 }, .{ 4.5, 4, 4 } };
+const OFFSET_BOX_NUDGE: Vec3 = .{ 0, 0, -5e-6 };
+/// `OFFSET_HULL_B`'s turns about `OFFSET_AXIS`, either way: the find's, and 100 times it.
+const OFFSET_TURNS = [_]f64{ 1e-9, -1e-9, 1e-7, -1e-7 };
+/// How far `OFFSET_HULL_B`'s face in y = 4 is nudged out past the box's side: the find's,
+/// the tolerance, and a hair either way of it.
+const OFFSET_LIFTS = [_]f64{ 2e-5, 1.9999e-5, 2.00002e-5, 2.0001e-5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -5069,5 +5089,82 @@ test "degeneracy: a hull's top at the angular tolerance to a plate's, an edge of
         var swapped = try sound(&plate, &hull, .@"union");
         defer swapped.deinit();
         try testing.expectEqual(forward.counts(), swapped.counts());
+    };
+}
+
+/// Every operation of `a` and `b` either way round decided: made and sound, or refused for
+/// a configuration (never `unclassified` or an edge's faces unpaired, the kernel's own
+/// contradictions); the union and the intersection alike either way round.
+fn expectDecidedEitherWay(a: *const Body, b: *const Body) !void {
+    for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+        errdefer std.debug.print("{t}\n", .{op});
+        for ([2][2]*const Body{ .{ a, b }, .{ b, a } }) |operands| {
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var result = pipeline.boolean(testing.allocator, operands[0], operands[1], op, .{}, &diag, null) catch |err| switch (err) {
+                error.NotValid, error.IntersectionFailed => {
+                    std.debug.print("{f}\n", .{diag.first().?});
+                    return err;
+                },
+                error.OutOfMemory => return err,
+                else => continue,
+            };
+            defer result.deinit();
+            var report = try check.run(testing.allocator, &result, .global);
+            defer report.deinit(testing.allocator);
+            if (report.first()) |f| {
+                std.debug.print("the checker: {f}\n", .{f});
+                return error.ResultNotValid;
+            }
+        }
+        if (op != .difference) try expectAlikeEitherWay(a, b, op);
+    }
+}
+
+/// The solids of the tests of a face a hair off parallel to a box's side: `OFFSET_HULL_B`
+/// turned `turn` and its face lifted `lift` out past the box's side (with `OFFSET_HULL_A`
+/// joined to it when `joined`), and the box; both moved by `move`.
+fn offsetSolids(lift: f64, turn: f64, joined: bool, move: @TypeOf(SLIVER_TURNS[0])) ![2]Body {
+    var b_hull = try fuzzHullPlaced(&OFFSET_HULL_B, OFFSET_AXIS, turn, null, OFFSET_HULL_B_MOVE, .{ 0, lift, OFFSET_HULL_B_DROP });
+    defer b_hull.deinit();
+    var drawn = if (joined) blk: {
+        var a_hull = try fuzzHullPlaced(&OFFSET_HULL_A, vec.Z3, 0, OFFSET_HULL_A_SCALE, OFFSET_HULL_A_MOVE, OFFSET_HULL_A_NUDGE);
+        defer a_hull.deinit();
+        break :blk try helpers.sound(&a_hull, &b_hull, .@"union");
+    } else try b_hull.clone(testing.allocator);
+    defer drawn.deinit();
+    var box_drawn = try fuzzBoxPlaced(tol, OFFSET_BOX[0], OFFSET_BOX[1], vec.Z3, 0, null, OFFSET_BOX_NUDGE);
+    defer box_drawn.deinit();
+    var hull = try sliverMoved(&drawn, move);
+    errdefer hull.deinit();
+    return .{ hull, try sliverMoved(&box_drawn, move) };
+}
+
+test "degeneracy: a face a hair off parallel to a box's side, the tolerance outside it, is decided outside, not by its turn" {
+    // The first ReleaseSafe session's find on a1444371 (2026-11-21, locus, ci), as the
+    // solids fuzzer drew it: two hulls joined, the second turned 1e-9 rad, its face in
+    // y = 4 nudged 2e-5 out, then intersected with a box whose side is y = 4. The face lay
+    // 1.99987e-5 to 2.00021e-5 outside the side, hinged along its edge where that lay
+    // within the tolerance; read by the turn, toward the box but meeting its plane 2e4
+    // away, its fragment was inside, though every corner of it was outside, and its seams
+    // disagreed with its own operand's beyond the box (`unclassified`). Its corners decide
+    var hull, var box_body = try offsetSolids(OFFSET_LIFTS[0], OFFSET_TURNS[0], true, SLIVER_TURNS[0]);
+    defer hull.deinit();
+    defer box_body.deinit();
+    try expectDecidedEitherWay(&hull, &box_body);
+}
+
+test "degeneracy: a face a hair off parallel to a box's side about the tolerance outside it is decided, however turned or moved" {
+    // Around the find above: the face's turn either way and a hundred times larger, its
+    // lift the find's, the tolerance and a hair either way of it, the hull alone or joined
+    // with the first, the solids in place and turned about skew axes (one shifted far
+    // out); every operation either way round decided, what it makes sound, the union and
+    // the intersection alike. 60 of the 160 were unclassified by the turn
+    for (OFFSET_LIFTS) |lift| for (OFFSET_TURNS) |turn| for ([_]bool{ false, true }) |joined| for (SLIVER_TURNS) |move| {
+        errdefer std.debug.print("lifted {e}, turned {e}, joined {}, moved {any}\n", .{ lift, turn, joined, move });
+        var hull, var box_body = try offsetSolids(lift, turn, joined, move);
+        defer hull.deinit();
+        defer box_body.deinit();
+        try expectDecidedEitherWay(&hull, &box_body);
     };
 }
