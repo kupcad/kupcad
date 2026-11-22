@@ -1,8 +1,9 @@
 //! A hashed grid over points for welding (RTCD §7.1.3, §12.1, docs/architecture.md §5.1):
 //! each point goes into the cell its coordinates fall in, cells are chained through
 //! `next`, and a query visits the cells its radius-box overlaps in a fixed order. With a
-//! cell at least `2 · radius` wide a query box overlaps at most eight cells. The grid keeps
-//! only indices; the caller keeps the points and tells the grid what they are.
+//! cell at least `2 · radius` wide a query box overlaps at most eight cells (a welder's
+//! are `WELD_CELL_RADII` radii wide). The grid keeps only indices; the caller keeps the
+//! points and tells the grid what they are.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -19,17 +20,39 @@ pub const Error = error{
 const CELL_SLACK: f64 = 1e-9;
 /// Cells beyond this many from the origin overflow the cell index.
 const MAX_CELL: f64 = 1e15;
+/// A welder's cell, in radii (its reach: the radius and any margin). Twice is the least
+/// that keeps a query to eight cells, and there a query's box is a cell wide and nearly
+/// always straddles two cells on every axis; at eight it straddles two on an axis a
+/// quarter of the time, about two cells a query, and a cell holds more points only where
+/// points come within a few radii of each other, which a weld at the zone keeps rare.
+/// What a query finds does not depend on it: every point within its reach is visited and
+/// measured (a 4,000-face polyhedron's build made 17,858 weld queries, eight lookups each,
+/// a fifth of its time; at four radii 0.6 ms of its 10 less, at eight 0.4 ms more,
+/// 2026-11-22).
+const WELD_CELL_RADII: f64 = 8;
 
 const Cell = struct { x: i64, y: i64, z: i64 };
 
-/// Hashes a cell, and compares them.
+/// Odd constants spreading a cell's three coordinates over 64 bits before they are mixed
+/// (the 64-bit golden ratio and MurmurHash3's two finaliser multipliers).
+const CELL_SPREAD = [3]u64{ 0x9E3779B97F4A7C15, 0xFF51AFD7ED558CCD, 0xC4CEB9FE1A85EC53 };
+
+/// Hashes a cell, and compares them. The coordinates are spread by odd multipliers, summed
+/// and mixed by MurmurHash3's 64-bit finaliser, whose every output bit depends on every
+/// input bit: the map takes its slot from the low bits and its fingerprint from the high
+/// ones. A cell is three small integers, near ones queried together, and a byte hash over
+/// them cost a weld query more than its eight lookups (the welder a fifth of a 4,000-face
+/// polyhedron's build, 2026-11-22). Only where a cell lands depends on it: a query visits
+/// its cells in a fixed order and each chain in insertion order.
 const CellContext = struct {
     pub fn hash(_: CellContext, c: Cell) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(&c.x));
-        h.update(std.mem.asBytes(&c.y));
-        h.update(std.mem.asBytes(&c.z));
-        return h.final();
+        var h = @as(u64, @bitCast(c.x)) *% CELL_SPREAD[0] +% @as(u64, @bitCast(c.y)) *% CELL_SPREAD[1] +% @as(u64, @bitCast(c.z)) *% CELL_SPREAD[2];
+        h ^= h >> 33;
+        h *%= 0xFF51AFD7ED558CCD;
+        h ^= h >> 33;
+        h *%= 0xC4CEB9FE1A85EC53;
+        h ^= h >> 33;
+        return h;
     }
     pub fn eql(_: CellContext, a: Cell, b: Cell) bool {
         return a.x == b.x and a.y == b.y and a.z == b.z;
@@ -122,12 +145,12 @@ pub const PointWelder = struct {
     margin: f64 = 0,
 
     pub fn init(radius: f64) PointWelder {
-        return .{ .grid = Grid.init(2.0 * radius), .radius = radius };
+        return .{ .grid = Grid.init(WELD_CELL_RADII * radius), .radius = radius };
     }
 
     /// A welder whose `atRadius` looks `margin` past `radius`: its cells that much wider.
     pub fn initWithMargin(radius: f64, margin: f64) PointWelder {
-        return .{ .grid = Grid.init(2.0 * (radius + margin)), .radius = radius, .margin = margin };
+        return .{ .grid = Grid.init(WELD_CELL_RADII * (radius + margin)), .radius = radius, .margin = margin };
     }
 
     pub fn deinit(self: *PointWelder, allocator: std.mem.Allocator) void {
