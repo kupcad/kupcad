@@ -2404,6 +2404,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // triangle across the touch of no area in 3D (triangulate.expectNoCrossing: a
         // point within rounding of another edge refused, the arcs refined)
         "chain 1 6 3 2 3 2 3 2 3 5 3 0 1 4 3 4 4 1 1 1 3 4 4 3 4 1 11 2 2 2 0 3 7 3 2 3 2 5 4 4 4 1 2 4 3 4 2 4 1 2 0 2 4 3 4 3 5 0 3 1 6 1 2 2 4 3 4 1 3 0 1 2 0 2 3 1 1 0 3 5 0 6 2 4 4 3 2 3 1 3 5",
+        // The cw diagnosis's locus_solids run (2026-11-22, cx): a hull whose corner lies in a
+        // plate 2.1 tolerances thick, turned 1e-6, joined; the corner and the vertex where the
+        // hull's edge crosses the plate's 2.7e-5 across the faces' line and 7e-10 along it, two
+        // places in place and one to rounding moved far, a sliver made in place only, 27
+        // vertices against 26 (planar_faces.Along: across within the angle, one place)
+        "solids 1 6 1 0 0 4 0 2 2 2 2 1 2 1 2 3 0 0 1 4 3 3 10 12 2 1 0 9 1 3 3 0 3 4 0 2 3 0 3 4 0 4 0 3 7 1 -2 -2 13 0 3 5 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

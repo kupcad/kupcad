@@ -140,15 +140,50 @@ pub fn alongBefore(line: Vec3, p: Vec3, q: Vec3) bool {
 /// one position across it too. Points within `one` of each other are one point, in any
 /// order (the overlap rules' marks, each face's corner on the other's plane once from each
 /// face, before they are merged), and tie with nothing.
+///
+/// With `steep` given (the paves' merged vertices: the sine of the angular tolerance), two
+/// points whose separation lies across the line within that angle (along it at most
+/// `steep` times across it) are at one place along it, ordered across, whatever their
+/// positions round to; a pair at that angle to rounding is refused (`at_tolerance`, D27),
+/// and so is a run ordered across that reverses a pair of it the angle does not join. One
+/// place to rounding alone is a window that moves with the points: rounding at a point's
+/// coordinates, 64 ulps of them, is 1e-13 in place and 4e-9 at 3e5, and a hull's corner
+/// and a plate's merged vertex 2.7e-5 apart across the faces' line and 7e-10 along it were
+/// two places in place and one moved whole, so the gaps differed and a sliver 2.7e-5 wide
+/// was made in place only (the ReleaseSafe session on ff515852, cx). The angle between two
+/// points is the solids' own, the same wherever they are; a fixed distance along the line
+/// would chain (a notch's apex 1.9e-5 along from each of the points either side, those two
+/// 3.8e-5 apart, all three taken for one place).
 pub const Along = struct {
     line: Vec3,
     across: ?Vec3,
     /// How near two points are one point.
     one: f64,
+    /// Along the line at most this many times across it, two points are at one place;
+    /// null: one place to rounding.
+    steep: ?f64 = null,
 
     pub fn init(line: Vec3, out_a: Vec3, out_b: Vec3, one: f64, tol: Tolerance) Along {
         const opposite = vec.dot(out_a, out_b) < 0 and tol.parallel(out_a, out_b);
         return .{ .line = line, .across = if (opposite) null else vec.normalized(vec.cross(line, vec.add(out_a, out_b))), .one = one };
+    }
+
+    /// What `sort` refuses: two points at one place along the line and across it, or along
+    /// it with no across (`at`); or, with `steep`, two whose order hangs on the angle
+    /// between them to rounding, or a run ordered across that reverses a pair of it
+    /// (`steep`, with its comparison).
+    pub fn Refusal(comptime T: type) type {
+        return union(enum) { at: [2]T, steep: struct { pair: [2]T, comparison: canonical.Comparison } };
+    }
+
+    /// Whether `p` and `q` are at one place along the line by `steep` (`ratio`): along it
+    /// at most `ratio` times across it; at that to rounding, the comparison.
+    fn steepPair(self: Along, ratio: f64, across: Vec3, p: Vec3, q: Vec3, scale: f64) union(enum) { yes, no, at: canonical.Comparison } {
+        const along = @abs(vec.dot(vec.sub(q, p), self.line));
+        const limit = ratio * @abs(vec.dot(vec.sub(q, p), across));
+        const c = canonical.Comparison.distance(along, limit, scale);
+        if (@abs(along - limit) <= c.band) return .{ .at = c };
+        return if (along < limit) .yes else .no;
     }
 
     /// Whether `x` and `y` are two points, more than `one` apart.
@@ -156,10 +191,10 @@ pub const Along = struct {
         return vec.distance(x, y) > self.one;
     }
 
-    /// Sorts `items`, each a point by `pointOf(context, item)`, in this order; the first two
-    /// that tie, along and across or along with no across, or null when none do. Two tied
-    /// so keep the exact order (`alongBefore`) among themselves.
-    pub fn sort(self: Along, comptime T: type, items: []T, context: anytype, comptime pointOf: fn (@TypeOf(context), T) Vec3) ?[2]T {
+    /// Sorts `items`, each a point by `pointOf(context, item)`, in this order; what it
+    /// refuses first (`Refusal`), or null. Two tied along and across keep the exact order
+    /// (`alongBefore`) among themselves.
+    pub fn sort(self: Along, comptime T: type, items: []T, context: anytype, comptime pointOf: fn (@TypeOf(context), T) Vec3) ?Refusal(T) {
         const Exact = struct {
             ctx: @TypeOf(context),
             line: Vec3,
@@ -170,17 +205,26 @@ pub const Along = struct {
         std.mem.sort(T, items, Exact{ .ctx = context, .line = self.line }, Exact.lessThan);
         var scale: f64 = 0;
         for (items) |item| scale = @max(scale, canonical.magnitude(&.{pointOf(context, item)}));
-        var tie: ?[2]T = null;
+        var tie: ?Refusal(T) = null;
         var i: usize = 0;
         while (i < items.len) {
             var j = i + 1;
-            while (j < items.len and canonical.sameToRounding(vec.dot(pointOf(context, items[j - 1]), self.line), vec.dot(pointOf(context, items[j]), self.line), scale)) j += 1;
+            while (j < items.len) : (j += 1) {
+                const px = pointOf(context, items[j - 1]);
+                const py = pointOf(context, items[j]);
+                const one_place = if (self.steep) |ratio| if (self.across) |across| switch (self.steepPair(ratio, across, px, py, scale)) {
+                    .yes => true,
+                    .no => false,
+                    .at => |c| return .{ .steep = .{ .pair = .{ items[j - 1], items[j] }, .comparison = c } },
+                } else canonical.sameToRounding(vec.dot(px, self.line), vec.dot(py, self.line), scale) else canonical.sameToRounding(vec.dot(px, self.line), vec.dot(py, self.line), scale);
+                if (!one_place) break;
+            }
             defer i = j;
             if (j - i < 2) continue;
             const run = items[i..j];
             const across = self.across orelse {
                 for (run, 0..) |x, k| for (run[k + 1 ..]) |y| {
-                    if (tie == null and self.two(pointOf(context, x), pointOf(context, y))) tie = .{ x, y };
+                    if (tie == null and self.two(pointOf(context, x), pointOf(context, y))) tie = .{ .at = .{ x, y } };
                 };
                 continue;
             };
@@ -196,10 +240,21 @@ pub const Along = struct {
                 }
             };
             std.sort.insertion(T, run, Across{ .ctx = context, .across = across, .scale = scale }, Across.lessThan);
+            // A run chained by the angle keeps the exact order of each pair of it the angle
+            // does not join: reversed, the order hangs on which pairs chain
+            if (self.steep) |ratio| for (run, 0..) |x, k| for (run[k + 1 ..]) |y| {
+                const px = pointOf(context, x);
+                const py = pointOf(context, y);
+                switch (self.steepPair(ratio, across, px, py, scale)) {
+                    .yes => {},
+                    .no => if (!alongBefore(self.line, px, py)) return .{ .steep = .{ .pair = .{ x, y }, .comparison = canonical.Comparison.distance(@abs(vec.dot(vec.sub(py, px), self.line)), ratio * @abs(vec.dot(vec.sub(py, px), across)), scale) } },
+                    .at => |c| return .{ .steep = .{ .pair = .{ x, y }, .comparison = c } },
+                }
+            };
             for (run[0 .. run.len - 1], run[1..]) |x, y| {
                 const px = pointOf(context, x);
                 const py = pointOf(context, y);
-                if (tie == null and self.two(px, py) and canonical.sameToRounding(vec.dot(px, across), vec.dot(py, across), scale)) tie = .{ x, y };
+                if (tie == null and self.two(px, py) and canonical.sameToRounding(vec.dot(px, across), vec.dot(py, across), scale)) tie = .{ .at = .{ x, y } };
             }
         }
         return tie;

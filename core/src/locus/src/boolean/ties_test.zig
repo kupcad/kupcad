@@ -35,6 +35,14 @@ const MOVES = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
     .{ .axis = .{ 0, 1, 0 }, .angle = 2.0, .shift = vec.ZERO3 },
     .{ .axis = .{ -2, 1, 1 }, .angle = 0.7, .shift = .{ 1e3, -2e3, 500 } },
 };
+/// `MOVES` and the solids fuzzer's own far moves, out to 3e5, where D27's band at the
+/// coordinates (64 ulps of them, 4e-9) is ten thousand times the origin's: a difference
+/// below it there and above it in place is a tie in one place only.
+const FAR_MOVES = MOVES ++ [_]@TypeOf(MOVES[0]){
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.014142253476507214, .shift = .{ 1e5, -2e5, 3e5 } },
+    .{ .axis = .{ 1, 2, 3 }, .angle = std.math.pi / 4.0, .shift = .{ 1e5, -2e5, 3e5 } },
+    .{ .axis = vec.X3, .angle = 0.3, .shift = .{ -3e5, 1e5, 2e5 } },
+};
 const OPS = [_]pipeline.Op{ .@"union", .intersection, .difference };
 /// How far a point of one result may lie from its counterpart in the same result moved
 /// whole and moved back, or made the other way round: the rounding of coordinates up to
@@ -54,6 +62,30 @@ const BE_BOX = [2]Vec3{ .{ -1.748, 2.00002, -1e-5 }, .{ 0.0020299999999999745, 3
 /// be: the two ends across the faces' line 3.2e-5 apart in the find, closer and farther by
 /// half a zone and a zone.
 const BE_SHIFTS = [_]f64{ -1e-5, 0, 1e-5 };
+
+/// The solids of the tests of two merged vertices nearly at one position along two faces'
+/// line, the one across from the other (the ReleaseSafe session's cx, 2026-11-22): a hull
+/// whose corner lies in a thin plate's thickness, and the plate, 2.1 intersection
+/// tolerances thick, as the solids fuzzer drew them (a plate with a gap, turned a hair
+/// about an axis through the grid's middle). The hull's edge down from the corner crosses
+/// the plate's edge 2.7e-5 across the faces' line from the corner and 7e-10 along it.
+const CX_HULL = [_]Vec3{ .{ 1, 0, 0 }, .{ 4, 0, 2 }, .{ 2, 2, 2 }, .{ 1, 2, 1 }, .{ 2, 3, 0 }, .{ 0, 1, 4 } };
+const CX_HULL_MOVE: Vec3 = .{ 0.00001, 0, 1 };
+const CX_HULL_NUDGE: Vec3 = .{ -1.9999999928945728e-5, -2.0000000071054275e-5, 0 };
+const CX_PLATE = [2]Vec3{ .{ 0, 0, 4 }, .{ 2, 3, 4 } };
+/// Half the plate's thickness: 2.1 intersection tolerances at zone 1e-5.
+const CX_PLATE_HALF: f64 = 2.1 * 2e-5 / 2.0;
+const CX_PLATE_AXIS: Vec3 = .{ 1, 2, 3 };
+const CX_PLATE_MIDDLE: Vec3 = .{ 2, 2, 2 };
+const CX_PLATE_MOVE: Vec3 = .{ 0.5, -1, -1 };
+/// The plate's turns in the family: a tenth of the find's (the two 1e-10 apart along the
+/// line, above D27's band in place and under it far out), the find's (7e-10), and ten
+/// times it (1e-8, a tie at no placement). Unturned, the hull's corner is the tolerance
+/// from the plate's side to D27's band, the fuzzer's nudge, refused in place and made once
+/// a turn's rounding takes it past the band, which no tie rule decides.
+const CX_PLATE_TURNS = [_]f64{ 1e-7, 1e-6, 1e-5 };
+/// The hull lifted in z in the family: the find's, and half a zone, the two farther across.
+const CX_HULL_LIFTS = [_]f64{ 0, 5e-6 };
 
 /// What a boolean of two solids gives: a refusal's code, or the made solid's counts, its
 /// shells' kinds and its points (each vertex; each edge's curve at the middle of its range,
@@ -165,6 +197,11 @@ fn moved(body: *const Body, move: @TypeOf(MOVES[0])) !Body {
 /// the intersection alike in kind either way round too (made with the same counts or
 /// refused alike). Every case that differs is printed before the test fails.
 fn expectAlikeSwappedAndMoved(a: *const Body, b: *const Body) !void {
+    return expectAlikeSwappedAndMovedBy(a, b, &MOVES);
+}
+
+/// `expectAlikeSwappedAndMoved` under `moves`, the first in place.
+fn expectAlikeSwappedAndMovedBy(a: *const Body, b: *const Body, moves: []const @TypeOf(MOVES[0])) !void {
     var differing: usize = 0;
     for (OPS) |op| {
         const want = [2]Outcome{ try Outcome.of(a, b, op, null), try Outcome.of(b, a, op, null) };
@@ -175,7 +212,7 @@ fn expectAlikeSwappedAndMoved(a: *const Body, b: *const Body) !void {
             std.debug.print("{s} in place: {f} one way round, {f} the other\n", .{ @tagName(op), want[0], want[1] });
             differing += 1;
         }
-        for (MOVES[1..], 1..) |move, k| {
+        for (moves[1..], 1..) |move, k| {
             var ma = try moved(a, move);
             defer ma.deinit();
             var mb = try moved(b, move);
@@ -282,4 +319,42 @@ test "ties: a chain of edges on two lines within the tolerance of each other is 
         defer plate.deinit();
         try expectAlikeSwappedAndMoved(&joined, &plate);
     }
+}
+
+/// The hull and the plate of cx's tests: the plate turned `turn`, the hull lifted `lift`,
+/// both mirrored in the plane x = 0 when `mirrored`.
+fn cxSolids(turn: f64, lift: f64, mirrored: bool) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var drawn_hull = try degeneracy.fuzzHullPlaced(&CX_HULL, vec.Z3, 0, null, CX_HULL_MOVE, vec.add(CX_HULL_NUDGE, .{ 0, 0, lift }));
+    defer drawn_hull.deinit();
+    var drawn_plate = try helpers.box(vec.sub(CX_PLATE[0], .{ 0, 0, CX_PLATE_HALF }), vec.add(CX_PLATE[1], .{ 0, 0, CX_PLATE_HALF }));
+    defer drawn_plate.deinit();
+    const mirror = if (mirrored) mat.Affine.mirror(vec.X3) else mat.Affine.translate(vec.ZERO3);
+    const place = mirror.compose(&mat.Affine.translate(CX_PLATE_MOVE).compose(&mat.Affine.rotateAbout(CX_PLATE_MIDDLE, vec.normalized(CX_PLATE_AXIS).?, turn)));
+    var hull = try transform.transform(testing.allocator, &drawn_hull, &mirror, .{}, &diag);
+    errdefer hull.deinit();
+    const plate = try transform.transform(testing.allocator, &drawn_plate, &place, .{}, &diag);
+    return .{ hull, plate };
+}
+
+test "ties: a corner and a merged vertex nearly at one position along two faces' line, apart across it, alike swapped and moved far" {
+    // The ReleaseSafe session's cx (2026-11-22): sorted along the hull's face and the
+    // plate's line, the hull's corner and the vertex where the hull's edge crosses the
+    // plate's edge lay 7e-10 apart along it and 2.7e-5 across. Tied to rounding, the two
+    // were two places in place (D27's band 1e-13 there) and one moved to 3e5 (4e-9), so
+    // the gaps differed and the union had a sliver in place only, 27 vertices against 26.
+    // Their separation lies across the line within the angle: one place, wherever they are
+    var solids = try cxSolids(CX_PLATE_TURNS[1], CX_HULL_LIFTS[0], false);
+    defer for (&solids) |*body| body.deinit();
+    try expectAlikeSwappedAndMovedBy(&solids[0], &solids[1], &FAR_MOVES);
+}
+
+test "ties: the family about cx, the plate turned, the hull lifted, mirrored, alike swapped and moved far" {
+    for (CX_PLATE_TURNS) |turn| for (CX_HULL_LIFTS) |lift| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the plate turned {e}, the hull lifted {e}, mirrored {}\n", .{ turn, lift, mirrored });
+        var solids = try cxSolids(turn, lift, mirrored);
+        defer for (&solids) |*body| body.deinit();
+        try expectAlikeSwappedAndMovedBy(&solids[0], &solids[1], &FAR_MOVES);
+    };
 }

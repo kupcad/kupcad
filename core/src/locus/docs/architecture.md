@@ -907,7 +907,11 @@ importing only those before it, which the layering test holds):**
   sorts; two at one position across it too, or on faces facing opposite ways, refused
   `at_tolerance`; a union's faces differed with the operands swapped, the sessions on
   3681979b, be, and by the points' coordinates, which a turn changes, moved whole, the
-  audit of the ties, 2026-11-22), each gap whose middle is in both a section segment of each face it is inside of
+  audit of the ties, 2026-11-22; at one position meaning their separation lies across the
+  line within the angular tolerance, the solids' own angle, not to rounding, a band at the
+  coordinates' size that a move far out widens ten thousand times: a hull's corner and a
+  merged vertex 7e-10 along the line and 2.7e-5 across were two places in place and one
+  moved to 3e5, cx), each gap whose middle is in both a section segment of each face it is inside of
   (a gap along a face's boundary is the run of its pave blocks there, OCCT's
   `IsExistingPaveBlock`, and that run's edges go into the result with their lines, D28:
   each line must lie on the other face's plane within `xsect` and the edge's gap at the

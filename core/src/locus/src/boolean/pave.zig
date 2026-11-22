@@ -1886,8 +1886,14 @@ const Filler = struct {
                     continue;
                 },
             };
-            const order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa, frame_a), planar_faces.outward(self.body(1), fb, frame_b), 0, p.tol);
-            if (order.sort(u32, both.items, p.points.items, mergedPoint)) |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces at one place along the faces' line to rounding, apart across it", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect });
+            var order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa, frame_a), planar_faces.outward(self.body(1), fb, frame_b), 0, p.tol);
+            // Two whose separation lies across the line within the angle are at one place
+            // along it (`Along`)
+            order.steep = p.tol.angleSine();
+            if (order.sort(u32, both.items, p.points.items, mergedPoint)) |refusal| switch (refusal) {
+                .at => |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces at one place along the faces' line, apart across it to rounding", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect }),
+                .steep => |at| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces whose order along the faces' line hangs on the angular tolerance to rounding", .measured = at.comparison.measured, .threshold = at.comparison.limit }),
+            };
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
                 const mid = vec.lerp(p.point(u), p.point(w), 0.5);
                 const in_a = try self.placeIn(0, fa, mid, null);

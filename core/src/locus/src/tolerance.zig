@@ -106,6 +106,12 @@ pub const Tolerance = struct {
         return 1.0 - @abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) <= self.angle;
     }
 
+    /// The sine of the angular tolerance: a direction within `angle` of another leaves it
+    /// by at most this much per unit along it.
+    pub fn angleSine(self: Tolerance) f64 {
+        return @sqrt(self.angle * (2.0 - self.angle));
+    }
+
     /// Whether two parameters of a curve with domain length `span` are the same.
     pub fn sameParam(self: Tolerance, t0: f64, t1: f64, span: f64) bool {
         return @abs(t0 - t1) <= self.param * @max(span, 1.0);
