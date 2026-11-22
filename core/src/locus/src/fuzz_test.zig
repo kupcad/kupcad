@@ -2455,12 +2455,23 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // imprints disagreed (`imprint_unmatched`; pave.passesOut: refused where it meets
         // the face's boundary in the plane, apartInPlane)
         "solids 1 5 2 2 4 1 2 1 0 2 2 0 0 2 4 2 4 3 2 14 0 3 11 3 0 -1 -1 0 1 7 1 3 1 3 2 3 4 2 2 4 2 1 3 0 3 7 14 7 10 9 0",
+        // The nightly of 2026-11-22 (run 45002725035, locus_overlay, da): two circles
+        // internally tangent at their lowest points, welded 4.4e-16 off the smaller's,
+        // stored a rounding below the larger's; an island's ray a rounding above the vertex
+        // took the smaller circle's crossing for the nearer by the circles exactly, and the
+        // island was nested inside the larger circle (overlay.weldedEnd: an extreme within
+        // the zone of its arc's end is that end, by its place in the order there)
+        "overlay 3 2 1 4 2 15 6 0 17 1 2 15 8 17 4 1 4 0 1 1 0 0 4 0 1 4 3 0 0 17 0 1 0 0 0 2 1 3 19 4 2 19 14 1 2 10 6 3 3 0 1 3 1 3 2 0 2 6 20 10 5 11 17 2 21 7 7 19 10 1 9 20 5 21 0 2 2 2 0 4 2 1 1 0 0 1 3 0 2 3 0 3 1 0 2 0 9 12 6 5 1 1 2 8 14 0 7 8 0 7 16 15 6 18 1 8 22 0 3 17 14 5 1 3 6 16 14 8 3 2 1 2 2 0 2 0 1 1 3 1 4 3 0 3 3 0 1 1 1 1 2 0",
         // The local session on ff515852 (locus_overlay.1, db): an arc from a circle's
         // highest point down its west half to the least double east of its lowest point;
         // orient2d of its turn, two products of 5e-324 rounding alike, read a half circle,
         // no cut at the lowest point, and the west half told east (predicates.orient2d:
         // exact in integers near the underflow)
         "overlay 3 2 2 7 20 19 5 15 19 6 12 14 3 2 10 1 16 7 1 7 21 1 5 7 8 1 3 1 3 0 0 1 0 0 4 0 1 4 2 0 1 3 0 2 1 1 1 8 13 14 1 15 16 2 3 2 1 2 16 7 8 24 4 3 2 2 7 0 8 13 19 2 1 0 1 2 3 1 2 0 1 2 3 0 1 1 0 1 3 1 4 3 0 1 1 0 2 1 8 3 15 1 7 2 6 4 13 2 0 15 1 2 19 6 0 10 2 13 8 1 12 12 1 3 2 0 2 1 0 1 3 0 1 2 0 2 0 0 2 3 0 1 3 1 4 0 0 0 9 16 7 0 0 0 2 0 1 3 5 0 0 0 0 0 18 4 1 0 0",
+        // The same session (locus_overlay.2, dc): da's mechanism moved whole a half turn,
+        // the circles tangent at their highest points and the ray a rounding below the
+        // welded vertex (overlay.weldedEnd)
+        "overlay 3 2 0 20 12 4 1 0 0 1 3 23 23 5 22 24 3 24 10 3 1 2 1 2 1 0 1 2 0 2 1 6 16 9 7 20 1 1 21 0 8 22 3 8 16 15 8 13 21 4 1 2 1 1 1 1 3 2 0 1 1 0 1 2 0 2 0 1 0 3 1 8 4 1 1 2 1 5 21 0 1 15 23 3 23 4 7 23 0 5 16 0 8 4 1 1 1 0 0 2 2 0 2 0 1 2 0 0 0 20 3 4 1 0 0 1 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

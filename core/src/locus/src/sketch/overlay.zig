@@ -1437,16 +1437,20 @@ pub fn nestCycles(allocator: std.mem.Allocator, segments: []const Segment, start
             if (s.arc) |arc| {
                 var pieces = ArcPieces.init(s.a, s.b, arc);
                 while (pieces.next()) |piece| {
-                    if ((piece.y0 > v[1]) == (piece.y1 > v[1])) continue;
-                    const where: Crossing = if (v[1] == piece.y0) .{ .point = piece.x0 } else if (v[1] == piece.y1) .{ .point = piece.x1 } else .{ .arc = .{ .c = arc.c, .r = arc.r, .side = piece.side } };
+                    // The piece's ends: the arc's own ends, or extremes of its circle (no
+                    // vertex there), an extreme within the zone of the arc's end taken for
+                    // that end, as the welding has it (`weldedEnd`)
+                    const descending = piece.y0 > piece.y1;
+                    const cut_top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
+                    const cut_bottom: Vec2 = if (descending) .{ piece.x1, piece.y1 } else .{ piece.x0, piece.y0 };
+                    const top = weldedEnd(s, cut_top, zone);
+                    const bottom = weldedEnd(s, cut_bottom, zone);
+                    if ((top[1] > v[1]) == (bottom[1] > v[1])) continue;
+                    const where: Crossing = if (v[1] == bottom[1]) .{ .point = bottom[0] } else .{ .arc = .{ .c = arc.c, .r = arc.r, .side = piece.side } };
                     if (compareCrossings(where, v_at, v[1]) >= 0) continue;
                     // The tangent up from the crossing, and which way the arc bends
                     // going up: a counter-clockwise arc turns left (west)
-                    const descending = piece.y0 > piece.y1;
                     const at: Vec2 = .{ crossingX(where, v[1]), v[1] };
-                    const top: Vec2 = if (descending) .{ piece.x0, piece.y0 } else .{ piece.x1, piece.y1 };
-                    const bottom: Vec2 = if (descending) .{ piece.x1, piece.y1 } else .{ piece.x0, piece.y0 };
-                    // A piece's end is the arc's own end or an extreme (no vertex there)
                     const slot_top = slotAt(s, top);
                     const slot_bottom = slotAt(s, bottom);
                     // Up from an extreme of its circle on the ray (its lowest point): the
@@ -1657,6 +1661,27 @@ fn sharedEnd(ps: [2]Hit.End, qs: [2]Hit.End) ?struct { y: f64, p: u32, q: u32 } 
         if (a.slot != NO_SLOT and b.slot != NO_SLOT and a.at[0] == b.at[0] and a.at[1] == b.at[1]) return .{ .y = a.at[1], .p = a.slot, .q = b.slot };
     };
     return null;
+}
+
+/// A piece's end `cut` of arc segment `s`: the segment's own end when `cut` is an extreme
+/// of its circle (no vertex there) within the zone of that end, else `cut`. The welding
+/// made such an extreme that vertex, as `nestCycles` takes a hole's leftmost point: the
+/// piece runs from the vertex, by its point and its place in the overlay's order there,
+/// never from a point a rounding off it, above or below the ray where the vertex is not.
+/// Two circles internally tangent at their lowest points, welded at a vertex 4.4e-16 from
+/// both, the stored smaller circle a rounding below the larger there: a ray a rounding
+/// above the vertex found the smaller circle's crossing east of the larger's, by the
+/// circles exactly, where the overlay's order about the vertex has the smaller one inside,
+/// and an island beside them was nested between them (the overlay fuzz target's nightly
+/// of 2026-11-22, da; the same moved a half turn, at the circles' highest points, dc). And
+/// a ray at the vertex's height crossed the smaller circle's top 8.9e-16 above the vertex,
+/// which by the welding is the vertex: the island nested inside the larger circle.
+fn weldedEnd(s: Segment, cut: Vec2, zone: f64) Vec2 {
+    if (slotAt(s, cut) != NO_SLOT) return cut;
+    const to_a = vec.distance2(cut, s.a);
+    const to_b = vec.distance2(cut, s.b);
+    if (@min(to_a, to_b) > zone) return cut;
+    return if (to_a <= to_b) s.a else s.b;
 }
 
 /// The slot of segment `s` at its end `at` (exactly `s.a` or `s.b`), or `NO_SLOT` at a

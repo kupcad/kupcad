@@ -78,6 +78,23 @@ const TRIPLE_CORNER: Vec2 = .{ 5.5, 1 };
 /// the two with the line only, or none lies within the zone of the third curve.
 const TRIPLE_LINE_SHIFTS = [_]f64{ -2.5e-5, -1.4e-5, -8e-6, -4e-6, -1.5e-6, 0, 6e-7, 1.7e-6, 8e-6, 3e-5 };
 
+/// The tangent family (the tests of an island beside two circles internally tangent at
+/// their lowest points, the overlay welding them at one vertex a rounding off the smaller
+/// circle's lowest point): the numbers of the overlay fuzz target's nightly find of
+/// 2026-11-22 (da). The larger circle as four quarter arcs, its lowest vertex a rounding
+/// west of its lowest point; the smaller circle's centres and radii, the find's (each a
+/// rounding off (2.25, 2.5) and 2.5, so its lowest point is 8.9e-16 below the larger's)
+/// and the exact ones; the island, its west vertex a rounding above the tangent height as
+/// `r·sin π` puts it, and the heights of that vertex the family draws.
+const TANGENT_LARGE_CENTRE: Vec2 = .{ 2.25, 3 };
+const TANGENT_LARGE_RADIUS: f64 = 3;
+const TANGENT_LARGE_ENDS = [QUARTER_TURNS]Vec2{ .{ 5.25, 3 }, .{ 2.25, 6 }, .{ -0.75, 3.0000000000000004 }, .{ 2.2499999999999996, 0 } };
+const TANGENT_SMALL_CENTRES = [_]Vec2{ .{ 2.2500000000000004, 2.4999999999999996 }, .{ 2.25, 2.5 } };
+const TANGENT_SMALL_RADII = [_]f64{ 2.5000000000000004, 2.5 };
+const TANGENT_ISLAND_CENTRE: Vec2 = .{ 4.250000000000001, 0 };
+const TANGENT_ISLAND_RADIUS: f64 = 0.25;
+const TANGENT_ISLAND_RISES = [_]f64{ 3.061616997868383e-17, 0, -3.061616997868383e-17, 4.440892098500626e-16 };
+
 /// The lowest-point family (the tests of an island whose ray runs through a circle's
 /// lowest point, a vertex of the circle and of a polygon a rounding off that point): the
 /// circle, as the find had it (the overlay fuzz target, 2026-11-20, bo); the vertex's
@@ -1475,4 +1492,82 @@ test "overlay: three curves crossing pairwise near one point, the line moved thr
             if (first) |f| try testing.expectEqual(f, counts) else first = counts;
         };
     }
+}
+
+/// The tangent family's arrangement: the larger circle (input 0, counter-clockwise), the
+/// smaller of variant `small` (input 1, clockwise) and the island with its west vertex
+/// `rise` above the tangent height (input 2, clockwise), mirrored in the y axis when
+/// `mirrored`, then turned `quarter` quarter turns: exact moves. Its discs, moved alike,
+/// into `discs`.
+fn tangentCircles(o: *Overlay, small: usize, rise: f64, quarter: usize, mirrored: bool, discs: *[3]Disc) !void {
+    const turn = EXTREME_ENDS[quarter];
+    const sc = TANGENT_SMALL_CENTRES[small];
+    const sr = TANGENT_SMALL_RADII[small];
+    const small_east: Vec2 = .{ sc[0] + sr, sc[1] };
+    const small_top: Vec2 = .{ sc[0], sc[1] + sr };
+    const island_east: Vec2 = .{ TANGENT_ISLAND_CENTRE[0] + TANGENT_ISLAND_RADIUS, TANGENT_ISLAND_CENTRE[1] };
+    const island_west: Vec2 = .{ TANGENT_ISLAND_CENTRE[0] - TANGENT_ISLAND_RADIUS, rise };
+    const large_arc: overlay.Arc = .{ .c = TANGENT_LARGE_CENTRE, .r = TANGENT_LARGE_RADIUS, .ccw = true };
+    const small_arc: overlay.Arc = .{ .c = sc, .r = sr, .ccw = false };
+    const island_arc: overlay.Arc = .{ .c = TANGENT_ISLAND_CENTRE, .r = TANGENT_ISLAND_RADIUS, .ccw = false };
+    var large: [QUARTER_TURNS]overlay.InputEdge = undefined;
+    for (&large, 0..) |*e, k| e.* = .{ .a = TANGENT_LARGE_ENDS[k], .b = TANGENT_LARGE_ENDS[(k + 1) % QUARTER_TURNS], .arc = large_arc };
+    const rings = [_][]const overlay.InputEdge{
+        &large,
+        &.{ .{ .a = small_east, .b = small_top, .arc = small_arc }, .{ .a = small_top, .b = small_east, .arc = small_arc } },
+        &.{ .{ .a = island_east, .b = island_west, .arc = island_arc }, .{ .a = island_west, .b = island_east, .arc = island_arc } },
+    };
+    for (rings) |ring| {
+        _ = try o.addInput();
+        for (ring) |e| {
+            const m = if (mirrored) mirroredEdge(e) else e;
+            try o.addEdge(movedEdge(m, turn, .{ 0, 0 }));
+        }
+    }
+    const placed = [3]Disc{
+        .{ .input = 0, .c = TANGENT_LARGE_CENTRE, .r = TANGENT_LARGE_RADIUS },
+        .{ .input = 1, .c = sc, .r = sr, .ccw = false },
+        .{ .input = 2, .c = TANGENT_ISLAND_CENTRE, .r = TANGENT_ISLAND_RADIUS, .ccw = false },
+    };
+    for (placed, discs) |d, *out| {
+        const c: Vec2 = if (mirrored) .{ -d.c[0], d.c[1] } else d.c;
+        // A mirror turns a circle the other way round
+        out.* = .{ .input = d.input, .c = movedPoint(c, turn, .{ 0, 0 }), .r = d.r, .ccw = d.ccw != mirrored };
+    }
+}
+
+test "overlay: an island beside two circles tangent at their lowest points, welded a rounding off the smaller's, is nested by the welded vertex's order" {
+    // The overlay fuzz target's nightly find (2026-11-22, da): two circles internally
+    // tangent at their lowest points, the smaller's 8.9e-16 below the larger's, welded at
+    // the larger's lowest vertex 4.4e-16 west of both; an island's west vertex 3.1e-17
+    // above that height. The nesting ray from the island crossed both circles a rounding
+    // above the welded vertex, where the smaller circle, exactly, is east of the larger,
+    // and the island was nested between them, inside the larger circle. The overlay's order
+    // about the welded vertex, which both arcs end at past their lowest points, has the
+    // smaller inside the larger; the island lies outside both
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    var discs: [3]Disc = undefined;
+    try tangentCircles(&o, 0, TANGENT_ISLAND_RISES[0], 0, false, &discs);
+    try o.run();
+    try expectPlanar(&o);
+    try expectDiscWindings(&o, &discs);
+}
+
+test "overlay: an island beside two tangent circles is labelled by its discs in each quarter turn, mirrored, about the tangent height" {
+    // The cases about the find above: the smaller circle a rounding off and exact, the
+    // island's west vertex a rounding above, at, below and a few roundings above the tangent
+    // height, in each quarter turn (the half turn has the circles tangent at their highest
+    // points and the ray a rounding below the welded vertex: the same find moved whole, dc)
+    // and mirrored. Every face's windings against the discs' own count
+    for (0..TANGENT_SMALL_CENTRES.len) |small| for (TANGENT_ISLAND_RISES) |rise| for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("smaller circle {d}, island vertex {e} up, quarter turn {d}, mirrored {}\n", .{ small, rise, quarter, mirrored });
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        var discs: [3]Disc = undefined;
+        try tangentCircles(&o, small, rise, quarter, mirrored, &discs);
+        try o.run();
+        try expectPlanar(&o);
+        try expectDiscWindings(&o, &discs);
+    };
 }

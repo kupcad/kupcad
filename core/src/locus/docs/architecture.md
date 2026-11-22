@@ -609,12 +609,18 @@ line was placed west of it). The ray starts at the cycle's leftmost point, an ar
 when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
 end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
 vertex crossed the ray a rounding to either side, and a component's outer boundary was
-nested in its own face). `orient2d`, which tells an arc's turn, is exact for every finite
-input: where its products or their tails near the underflow it computes in integers
-(2026-11-22, db: an arc from a circle's highest point to the least double east of its
-lowest point, whose turn's two products both rounded to 5e-324, read as a half circle, and
-its lowest point was not cut). A cycle that runs each of its edges both ways bounds
-nothing, its
+nested in its own face), and so is a piece's end at such an extreme for the segments the
+ray crosses, by its point and its place in the order about the vertex (`weldedEnd`,
+2026-11-22, the overlay target's nightly, da, dc: two circles internally tangent at their
+lowest points, welded 4.4e-16 off the smaller's, which was stored a rounding below the
+larger's; a ray a rounding above the vertex took the smaller circle's crossing for the
+nearer by the circles exactly, and one at the vertex's height crossed the smaller's top
+8.9e-16 above it, and an island beside them was nested inside the larger circle).
+`orient2d`, which tells an arc's turn, is exact for every finite input: where its products
+or their tails near the underflow it computes in integers (2026-11-22, db: an arc from a
+circle's highest point to the least double east of its lowest point, whose turn's two
+products both rounded to 5e-324, read as a half circle, and its lowest point was not cut).
+A cycle that runs each of its edges both ways bounds nothing, its
 area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an
