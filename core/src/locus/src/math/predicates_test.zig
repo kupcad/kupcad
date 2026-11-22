@@ -487,6 +487,34 @@ test "orient2d: the sign is the same under cyclic permutation and reversed under
     }
 }
 
+test "orient2d: exact where its products near the underflow, a coordinate the least double off zero" {
+    // The overlay fuzz target's nightly find (2026-11-22, db): a circle's centre (0, 4.375),
+    // its highest point and the least double east of its lowest point. The two products,
+    // 1.25 and 0.625 times 5e-324, both round to 5e-324, and their difference read the
+    // three collinear; they turn clockwise
+    const hair = std.math.floatTrueMin(f64);
+    try testing.expect(orient2d(.{ 0, 4.375 }, .{ 0, 5 }, .{ hair, 3.75 }) < 0);
+    try testing.expect(orient2d(.{ 0, 4.375 }, .{ 0, 5 }, .{ -hair, 3.75 }) > 0);
+    try testing.expectEqual(@as(f64, 0), orient2d(.{ 0, 4.375 }, .{ 0, 5 }, .{ 0, 3.75 }));
+    // A product of two such differences, the other product zero: (0, 0), (ε, 0), (5, ε)
+    try testing.expect(orient2d(.{ 0, 0 }, .{ hair, 0 }, .{ 5, hair }) > 0);
+}
+
+test "orient2d: agrees with big-integer arithmetic on points mixing coordinates near zero and ordinary ones" {
+    // Coordinates the least double and a few off zero, 2^-1000 and 2^-900, and ordinary
+    // values: the products of differences reach below the underflow in every combination
+    const hair = std.math.floatTrueMin(f64);
+    const values = [_]f64{ 0, hair, -hair, 2 * hair, -3 * hair, 0x1p-1000, -0x1p-1000, 0x1p-900, 0.25, -0.625, 1, 1.25, -5 };
+    var prng = std.Random.DefaultPrng.init(SEED);
+    const random = prng.random();
+    for (0..FUZZ_CASES) |_| {
+        var p: [3][2]f64 = undefined;
+        for (&p) |*q| q.* = .{ values[random.uintLessThan(usize, values.len)], values[random.uintLessThan(usize, values.len)] };
+        errdefer std.debug.print("{any}\n", .{p});
+        try testing.expectEqual(try exactOrient2d(testing.allocator, p[0], p[1], p[2]), signOfFloat(orient2d(p[0], p[1], p[2])));
+    }
+}
+
 test "orient2d: agrees with big-integer arithmetic on random near-degenerate points" {
     var prng = std.Random.DefaultPrng.init(SEED);
     const random = prng.random();

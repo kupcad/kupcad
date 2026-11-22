@@ -609,7 +609,12 @@ line was placed west of it). The ray starts at the cycle's leftmost point, an ar
 when the arc bulges past its ends, but an extreme within the zone of its arc's end is that
 end vertex (2026-11-12: from an extreme a rounding below the vertex, the edges leaving the
 vertex crossed the ray a rounding to either side, and a component's outer boundary was
-nested in its own face). A cycle that runs each of its edges both ways bounds nothing, its
+nested in its own face). `orient2d`, which tells an arc's turn, is exact for every finite
+input: where its products or their tails near the underflow it computes in integers
+(2026-11-22, db: an arc from a circle's highest point to the least double east of its
+lowest point, whose turn's two products both rounded to 5e-324, read as a half circle, and
+its lowest point was not cut). A cycle that runs each of its edges both ways bounds
+nothing, its
 area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
 (`backups/locus-plan/research/li-chen-egc.md` §2). What exactness cannot do is put an

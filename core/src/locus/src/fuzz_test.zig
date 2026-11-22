@@ -2455,6 +2455,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // imprints disagreed (`imprint_unmatched`; pave.passesOut: refused where it meets
         // the face's boundary in the plane, apartInPlane)
         "solids 1 5 2 2 4 1 2 1 0 2 2 0 0 2 4 2 4 3 2 14 0 3 11 3 0 -1 -1 0 1 7 1 3 1 3 2 3 4 2 2 4 2 1 3 0 3 7 14 7 10 9 0",
+        // The local session on ff515852 (locus_overlay.1, db): an arc from a circle's
+        // highest point down its west half to the least double east of its lowest point;
+        // orient2d of its turn, two products of 5e-324 rounding alike, read a half circle,
+        // no cut at the lowest point, and the west half told east (predicates.orient2d:
+        // exact in integers near the underflow)
+        "overlay 3 2 2 7 20 19 5 15 19 6 12 14 3 2 10 1 16 7 1 7 21 1 5 7 8 1 3 1 3 0 0 1 0 0 4 0 1 4 2 0 1 3 0 2 1 1 1 8 13 14 1 15 16 2 3 2 1 2 16 7 8 24 4 3 2 2 7 0 8 13 19 2 1 0 1 2 3 1 2 0 1 2 3 0 1 1 0 1 3 1 4 3 0 1 1 0 2 1 8 3 15 1 7 2 6 4 13 2 0 15 1 2 19 6 0 10 2 13 8 1 12 12 1 3 2 0 2 1 0 1 3 0 1 2 0 2 0 0 2 3 0 1 3 1 4 0 0 0 9 16 7 0 0 0 2 0 1 3 5 0 0 0 0 0 18 4 1 0 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

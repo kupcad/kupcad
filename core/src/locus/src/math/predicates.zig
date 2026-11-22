@@ -12,7 +12,10 @@
 //! components of the expansions (about 2^-53 per factor below the products of two
 //! (`orient2d`), three (`orient3d`) or four (`incircle`) coordinate differences), so
 //! coordinates between about 1e-40 and 1e40 (model units, mm) are always safe. KupCAD's
-//! size limits keep models far inside that.
+//! size limits keep models far inside that. `orient2d` is exact for every finite input
+//! besides: where its products near the underflow it computes the determinant in
+//! integers (`orient2dTiny`), since a coordinate the least double off zero is a rounding
+//! the 2D fuzzers draw (the overlay fuzz target, 2026-11-22, db).
 //!
 //! Costs: the certain cases are a few multiplications; the adaptive stages run only near
 //! degeneracy, and the last (exact) stage of `incircle` is a few thousand operations.
@@ -36,6 +39,22 @@ comptime {
 const SPLITTER: f64 = 134217729.0;
 /// 2^-53, the largest relative error of a rounded `f64` operation.
 const EPSILON: f64 = 1.1102230246251565e-16;
+/// Below this sum of `orient2d`'s two products, the expansions' lowest components may be
+/// subnormal or lost (each stage reaches about 2^-106 below the products), and the sign is
+/// decided exactly another way (`orient2dTiny`).
+const ORIENT_UNDERFLOW: f64 = 0x1p-800;
+/// Below this, a nonzero rounding tail of a coordinate difference makes the later stages'
+/// products underflow (a tail times a tail reaches its square, and the products' own
+/// rounding 2^-53 below that), and the sign is decided exactly another way
+/// (`orient2dTiny`): (0.25 + 5e-324) − 0 is 0.25 and a tail of 5e-324, which times 0.25
+/// is nothing, where it is the whole determinant.
+const ORIENT_TAIL_UNDERFLOW: f64 = 0x1p-450;
+/// The bits of a double's significand, as `orient2dTiny` takes it for an integer.
+const SIGNIFICAND_BITS: i32 = 53;
+/// Limbs of a coordinate as an integer at the least exponent of six doubles (53 bits
+/// shifted by up to 971 + 1126), and of a product of two differences of such.
+const TINY_COORDINATE_LIMBS: usize = 36;
+const TINY_PRODUCT_LIMBS: usize = 2 * TINY_COORDINATE_LIMBS + 2;
 
 // The error bounds of the estimates (Shewchuk's, derived in the paper for each stage).
 const RESULT_ERR_BOUND: f64 = (3.0 + 8.0 * EPSILON) * EPSILON;
@@ -378,6 +397,12 @@ fn Accumulator(comptime capacity: usize) type {
 pub fn orient2d(a: [2]f64, b: [2]f64, c: [2]f64) f64 {
     const detleft = (a[0] - c[0]) * (b[1] - c[1]);
     const detright = (a[1] - c[1]) * (b[0] - c[0]);
+    if (@abs(detleft) + @abs(detright) < ORIENT_UNDERFLOW) return orient2dTiny(a, b, c);
+    return orient2dNormal(a, b, c, detleft, detright);
+}
+
+/// `orient2d` where its products are clear of the underflow: Shewchuk's stages.
+fn orient2dNormal(a: [2]f64, b: [2]f64, c: [2]f64, detleft: f64, detright: f64) f64 {
     const det = detleft - detright;
     var detsum: f64 = undefined;
     if (detleft > 0.0) {
@@ -392,6 +417,56 @@ pub fn orient2d(a: [2]f64, b: [2]f64, c: [2]f64) f64 {
     const errbound = CCW_ERR_BOUND_A * detsum;
     if (det >= errbound or -det >= errbound) return det;
     return orient2dAdapt(a, b, c, detsum);
+}
+
+/// `orient2d` where its products near the underflow (a coordinate the least double off
+/// zero: 0.625 times 5e-324 and 1.25 times it both round to 5e-324, and their difference
+/// read collinear three points that turn clockwise; the overlay fuzz target's arc from a
+/// circle's highest point down its west half to the least double east of its lowest point,
+/// read as a half circle and its lowest point not cut, 2026-11-22, db). No scaling of the
+/// points serves: their two products can cancel to the square of a difference 2^1076
+/// times smaller than another, (0, 0), (5e-324, 0), (5, 5e-324). Each coordinate is an
+/// integer times 2 to the least exponent of the six, and the determinant is computed in
+/// those integers, exactly, in fixed buffers (Shewchuk's expansions assume no underflow;
+/// exact integers, as CGAL's filtered predicates fall back to, assume nothing). The value
+/// is the sign times the least double: the determinant is below every area a caller sums.
+fn orient2dTiny(a: [2]f64, b: [2]f64, c: [2]f64) f64 {
+    const Limb = std.math.big.Limb;
+    const Mutable = std.math.big.int.Mutable;
+    const coordinates = [6]f64{ a[0], a[1], b[0], b[1], c[0], c[1] };
+    var least: i32 = std.math.maxInt(i32);
+    for (coordinates) |x| {
+        if (x != 0) least = @min(least, std.math.frexp(x).exponent - SIGNIFICAND_BITS);
+    }
+    if (least == std.math.maxInt(i32)) return 0;
+    var limbs: [6][TINY_COORDINATE_LIMBS]Limb = undefined;
+    var ints: [6]Mutable = undefined;
+    for (coordinates, &limbs, &ints) |x, *buffer, *int| {
+        const parts = std.math.frexp(x);
+        const significand: i64 = @intFromFloat(std.math.ldexp(parts.significand, SIGNIFICAND_BITS));
+        var small: [2]Limb = undefined;
+        const m = Mutable.init(&small, significand);
+        int.* = Mutable.init(buffer, 0);
+        if (x != 0) int.shiftLeft(m.toConst(), @intCast(parts.exponent - SIGNIFICAND_BITS - least));
+    }
+    // The differences acx, acy, bcx, bcy, and the products acx·bcy, acy·bcx
+    var difference_limbs: [4][TINY_COORDINATE_LIMBS + 1]Limb = undefined;
+    var differences: [4]Mutable = undefined;
+    for ([4][2]usize{ .{ 0, 4 }, .{ 1, 5 }, .{ 2, 4 }, .{ 3, 5 } }, &difference_limbs, &differences) |pair, *buffer, *d| {
+        d.* = Mutable.init(buffer, 0);
+        d.sub(ints[pair[0]].toConst(), ints[pair[1]].toConst());
+    }
+    var left_limbs: [TINY_PRODUCT_LIMBS]Limb = undefined;
+    var right_limbs: [TINY_PRODUCT_LIMBS]Limb = undefined;
+    var det_limbs: [TINY_PRODUCT_LIMBS + 1]Limb = undefined;
+    var left = Mutable.init(&left_limbs, 0);
+    var right = Mutable.init(&right_limbs, 0);
+    var det = Mutable.init(&det_limbs, 0);
+    left.mul(differences[0].toConst(), differences[3].toConst(), &.{}, null);
+    right.mul(differences[1].toConst(), differences[2].toConst(), &.{}, null);
+    det.sub(left.toConst(), right.toConst());
+    if (det.toConst().eqlZero()) return 0;
+    return if (det.positive) std.math.floatTrueMin(f64) else -std.math.floatTrueMin(f64);
 }
 
 fn orient2dAdapt(a: [2]f64, b: [2]f64, c: [2]f64, detsum: f64) f64 {
@@ -412,6 +487,9 @@ fn orient2dAdapt(a: [2]f64, b: [2]f64, c: [2]f64, detsum: f64) f64 {
     const acytail = twoDiffTail(a[1], c[1], acy);
     const bcytail = twoDiffTail(b[1], c[1], bcy);
     if (acxtail == 0.0 and acytail == 0.0 and bcxtail == 0.0 and bcytail == 0.0) return det;
+    for ([_]f64{ acxtail, acytail, bcxtail, bcytail }) |tail| {
+        if (tail != 0.0 and @abs(tail) < ORIENT_TAIL_UNDERFLOW) return orient2dTiny(a, b, c);
+    }
 
     errbound = CCW_ERR_BOUND_C * detsum + RESULT_ERR_BOUND * @abs(det);
     det += (acx * bcytail + bcy * acxtail) - (acy * bcxtail + bcx * acytail);

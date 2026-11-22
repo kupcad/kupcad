@@ -40,11 +40,13 @@ const LATTICE_HYPOTENUSE: f64 = 5;
 /// extreme of its circle about the origin): the hair; the radii, whose product with the
 /// hair rounds to nothing (0.25), ties and rounds to nothing (0.5) and is the hair (1);
 /// the arc's other end as a direction from the centre before the quarter turn, a lattice
-/// point; and the probes, as shares of the radius, at heights whose crossings of the circle
-/// are 6.8° or more from every end of the family.
+/// point or the opposite extreme (the arc then half the circle and a hair, its turn a
+/// product with the hair: the nightly of 2026-11-22, db); and the probes, as shares of
+/// the radius, at heights whose crossings of the circle are 6.8° or more from every end
+/// of the family.
 const HAIR: f64 = std.math.floatTrueMin(f64);
 const HAIR_RADII = [_]f64{ 0.25, 0.5, 1 };
-const HAIR_OTHER_END: Vec2 = .{ 0.6, -0.8 };
+const HAIR_OTHER_ENDS = [_]Vec2{ .{ 0.6, -0.8 }, .{ 0, -1 } };
 const HAIR_PROBE_HEIGHTS = [_]f64{ -0.5, 0.5 };
 const HAIR_PROBE_XS = [_]f64{ -2, 0, 2 };
 
@@ -862,10 +864,10 @@ test "overlay: an arc with an end the least double off an extreme of its circle,
     // survives) and, a quarter turn on, above or below the east or west point; the arc
     // leaving that end or arriving at it, either way round. Each ray's crossings are held
     // against a count by the angles of the circle's two points at its height
-    for (HAIR_RADII) |r| for (0..QUARTER_TURNS) |q| for ([_]f64{ HAIR, -HAIR }) |hair| for ([_]bool{ true, false }) |leaves| for ([_]bool{ true, false }) |ccw| {
-        errdefer std.debug.print("radius {d}, quarter turn {d}, the end {e} off the extreme, the arc {s} it, {s}\n", .{ r, q, hair, if (leaves) "leaving" else "arriving at", if (ccw) "counter-clockwise" else "clockwise" });
+    for (HAIR_RADII) |r| for (HAIR_OTHER_ENDS) |other_end| for (0..QUARTER_TURNS) |q| for ([_]f64{ HAIR, -HAIR }) |hair| for ([_]bool{ true, false }) |leaves| for ([_]bool{ true, false }) |ccw| {
+        errdefer std.debug.print("radius {d}, other end {any}, quarter turn {d}, the end {e} off the extreme, the arc {s} it, {s}\n", .{ r, other_end, q, hair, if (leaves) "leaving" else "arriving at", if (ccw) "counter-clockwise" else "clockwise" });
         var near = Vec2{ hair, r };
-        var other = vec.scale2(HAIR_OTHER_END, r);
+        var other = vec.scale2(other_end, r);
         for (0..q) |_| {
             near = vec.perp2(near);
             other = vec.perp2(other);
