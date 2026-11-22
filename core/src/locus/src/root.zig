@@ -172,6 +172,7 @@ test {
     _ = @import("query/faces_test.zig");
     _ = @import("query/overlap_test.zig");
     _ = @import("query/face_edges_test.zig");
+    _ = @import("query/in_face_test.zig");
     _ = @import("intersect/curve_surface_test.zig");
     _ = @import("intersect/surface_surface_test.zig");
     _ = @import("boolean/section_test.zig");

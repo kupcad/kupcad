@@ -1268,8 +1268,13 @@ primitive every query stands on: a point of a face's surface is on the face's bo
 when within the zone of an edge (in space, on the exact curves: `nearestOnEdge`), else
 inside when the face's loops wind about its UV, the winding being the angle each coedge's
 image sweeps about the point (its pcurve; on a plane its curve projected; on a curved face
-without one its curve projected onto the surface), a piece halved until it subtends under
-a quarter radian and its halves agree, so no polyline of the boundary stands in for it and
+without one its curve projected onto the surface), a piece halved until it and both its
+halves subtend under a quarter radian and the halves agree (each angle is measured the short
+way, so a whole and a half off by the same turn agree: a disc's long arc winding 2π − 0.32
+about a point inside read −0.32, and the queries' ray missed its caps; the 2D chain fuzzer,
+dg, 2026-11-22; about a point inside a conic the angle is monotone, and a half of under half
+a turn of parameter subtends under one and a half turns, so a half measured small is its
+true angle), so no polyline of the boundary stands in for it and
 lines, circles, ellipses and NURBS are one case; periodic parameters are moved by whole
 periods into the face's box. A planar face with straight edges takes the same answer from
 the exact crossing count of a ray in its plane (`orient2d`, half-open at vertices), with

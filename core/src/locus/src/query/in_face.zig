@@ -33,8 +33,9 @@ const Error = diagnostics.Error;
 
 /// How many times a coedge's piece may be halved while its swept angle is measured.
 const MAX_DEPTH: u8 = 40;
-/// A piece's swept angle is taken from its chord when below this (radians) and when its
-/// halves' angles sum to the chord's within `AGREE`.
+/// A piece's swept angle is taken from its chord when it and both its halves subtend
+/// below this (radians) and the halves' angles sum to the chord's within `AGREE`
+/// (`sweptAngle`).
 const PIECE_ANGLE: f64 = 0.25;
 const AGREE: f64 = 1e-9;
 /// The Newton bound of the free-form kinds' projections in the queries.
@@ -371,7 +372,17 @@ const Image = struct {
 };
 
 /// The angle the image sweeps about the origin from parameter `ta` (at `a`) to `tb` (at
-/// `b`), halving the piece until it subtends under `PIECE_ANGLE` and its halves agree.
+/// `b`), halving the piece until it and both its halves subtend under `PIECE_ANGLE` and
+/// the halves agree with it. Each angle is measured the short way, in (−π, π], so a
+/// measure is off by a whole turn exactly when the image it measures winds past a half
+/// turn; the whole piece and one half off by the same turn agree all the same (a disc's
+/// cap of two arcs, the long one winding 2π − 0.2 about a point 0.76 inside the rim,
+/// measured −0.2 whole and by its halves, the point found outside its own cap: the 2D
+/// chain fuzzer's find dg, 2026-11-22, since 9ce2e7e5). Both halves small rules that
+/// out for a conic's piece: about a point inside a circle or ellipse the angle is
+/// monotone along it, and a piece of under half a turn of its parameter subtends under
+/// one and a half turns, so a half measured under `PIECE_ANGLE` is its true angle, and
+/// so is the whole that agrees with the two.
 fn sweptAngle(image: Image, ta: f64, tb: f64, a: Vec2, b: Vec2, depth: u8) f64 {
     const whole = angleBetween(a, b);
     if (depth >= MAX_DEPTH) return whole;
@@ -379,7 +390,8 @@ fn sweptAngle(image: Image, ta: f64, tb: f64, a: Vec2, b: Vec2, depth: u8) f64 {
     const m = image.at(tm);
     const left = angleBetween(a, m);
     const right = angleBetween(m, b);
-    if (@abs(whole) <= PIECE_ANGLE and @abs(left + right - whole) <= AGREE) return whole;
+    const small = @abs(whole) <= PIECE_ANGLE and @abs(left) <= PIECE_ANGLE and @abs(right) <= PIECE_ANGLE;
+    if (small and @abs(left + right - whole) <= AGREE) return whole;
     return sweptAngle(image, ta, tm, a, m, depth + 1) + sweptAngle(image, tm, tb, m, b, depth + 1);
 }
 

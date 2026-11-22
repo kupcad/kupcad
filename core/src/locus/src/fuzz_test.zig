@@ -2424,6 +2424,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // block at one zone took the first operand's: made one way round, refused
         // `sliver_face` the other (Provenance.tiedLines: the line in its faces' planes)
         "solids 0 1 2 2 4 1 2 2 1 8 3 2 14 3 1 3 1 5 2 3 4 3 1 2 0 0 4 1 0 2 4 2 0 1 1 7 4 0 2 0 1 4 4 1 1 4 4 4 2 4 4 3 4 2 3 2 0 1 2 3 -2 10 5 1",
+        // The ReleaseSafe session on ff515852 (2026-11-22, locus.2, dg): a circle of two
+        // arcs grown 0.5 and extruded 6; the ray across it missed both caps, whose winding
+        // measured the long arc's 2π − 0.32 about the point as −0.32, the whole and a half
+        // agreeing (in_face.sweptAngle: a piece taken whole only with both halves small)
+        "chain 1 3 4 2 4 2 2 3 3 1 3 1 1 0 1 3 1 8 1 1 2 3 6",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
