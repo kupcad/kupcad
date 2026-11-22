@@ -118,6 +118,10 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
     defer partners.deinit(allocator);
     var samples: std.ArrayList(Vec3) = .empty;
     defer samples.deinit(allocator);
+    // A fragment's corners off the other operand (`byCorner`), apart from its samples, which
+    // the last ray takes after them
+    var corners: std.ArrayList(Vec3) = .empty;
+    defer corners.deinit(allocator);
 
     // Every fragment's pieces, sorted: a fragment of the other operand over the same pieces
     // between merged vertices is its twin, the same region within the tolerance whatever
@@ -214,9 +218,18 @@ pub fn run(allocator: std.mem.Allocator, paves: *const Paves, fragments: *const 
             continue;
         }
         try samplesOf(allocator, paves, fragments, i, &samples, diag);
-        const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, options, diag)) orelse
-            (try byCorner(allocator, paves, &indexes, fragments, i, on, &samples, options, diag)) orelse
+        // A ray from a sample clear of the other operand by the intersection tolerance, the
+        // band within which the paves put points on its faces; else from a corner the paves
+        // put on nothing of it; else by every seam (a fragment within the tolerance of the
+        // other's boundary all over, its pieces on it agreeing, as OCCT's `IsInternalFace`
+        // reads a split face by the wedge at its section edge); last a ray from a sample
+        // clear by the zone (a sliver narrower than the tolerance beside a face of the
+        // other, whose pieces say nothing)
+        const zone = paves.operands[1 - fragment.operand].tol.zone;
+        const class = (try byRay(allocator, paves, &indexes, fragment, samples.items, paves.tol.xsect, options, diag)) orelse
+            (try byCorner(allocator, paves, &indexes, fragments, i, on, &corners, options, diag)) orelse
             (try bySeam(allocator, paves, &seams, fragments, i, false, diag)) orelse
+            (try byRay(allocator, paves, &indexes, fragment, samples.items, zone, options, diag)) orelse
             return diag.fail(error.IntersectionFailed, .{ .code = .unclassified, .entity = .of(.face, fragment.face), .label = if (fragment.operand == 0) "a face of the first operand, classified against the second" else "a face of the second operand, classified against the first" });
         stats.rays += 1;
         classes[i].class = class;
@@ -240,13 +253,20 @@ fn samplesOf(allocator: std.mem.Allocator, paves: *const Paves, fragments: *cons
 }
 
 /// Inside or outside the other operand, by rays from the first of `samples` off its
-/// boundary (in a sliver one tolerance wide the clearest sample is within the zone of the
-/// other's face that bounds it, and the next is not; 2026-11-13); null when every sample
-/// lies on it.
-fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
+/// boundary, the band `band` wide about it (in a sliver one tolerance wide the clearest
+/// sample is within the zone of the other's face that bounds it, and the next is not;
+/// 2026-11-13); null when every sample lies on it. The first rays take the band the paves
+/// put points on the other's faces within, the intersection tolerance: a hull's face at a
+/// box's corner, its ridge 4e-5 over the box's bottom and the ridge's end and the edge
+/// down from it on the box's side by the paves (2e-5 past it), lay within the tolerance of
+/// the bottom and the side all over; its first sample past the zone lay 1.5e-5 outside the
+/// side, where the paves had the face on it, and the ray kept the face over the bottom,
+/// inside the box, its seams reading it inside (`edge_coedge_count`; the locus_solids
+/// ReleaseSafe find cv, 2026-11-22).
+fn byRay(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [2]index_mod.FaceIndex, fragment: imprint.Fragment, samples: []const Vec3, band: f64, options: diagnostics.Options, diag: *Diagnostics) Error!?Class {
     const other = 1 - fragment.operand;
     for (samples) |p| {
-        switch (try point_in_body.classify(allocator, paves.operands[other], &indexes[other], p, options, diag)) {
+        switch (try point_in_body.classifyWithin(allocator, paves.operands[other], &indexes[other], p, band, options, diag)) {
             .inside => return .inside,
             .outside => return .outside,
             .boundary => continue,
@@ -272,7 +292,7 @@ fn byCorner(allocator: std.mem.Allocator, paves: *const Paves, indexes: *const [
     for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |v| {
         if (on[v] & other_bit == 0) try out.append(allocator, paves.point(v));
     };
-    return byRay(allocator, paves, indexes, fragment, out.items, options, diag);
+    return byRay(allocator, paves, indexes, fragment, out.items, paves.operands[1 - fragment.operand].tol.zone, options, diag);
 }
 
 /// Which operands each merged vertex lies on, as bits (`1 << operand`): its own, and those

@@ -43,8 +43,13 @@ const TABLE = [_]Vec3{
 
 /// Inside, outside, or on the boundary of `body` within its zone.
 pub fn classify(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error!Place {
+    return classifyWithin(allocator, body, index, p, body.tol.zone, options, diag);
+}
+
+/// Inside, outside, or on the boundary of `body`, the boundary taken as the band `zone`
+/// wide about its faces and edges (`classify`: the body's zone).
+pub fn classifyWithin(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, zone: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Place {
     try options.checkCancel();
-    const zone = body.tol.zone;
     if (index.box.isEmpty() or !index.box.inflated(zone).contains(p)) return .outside;
 
     // On the boundary: within the zone of a face's surface inside the face, or of an edge

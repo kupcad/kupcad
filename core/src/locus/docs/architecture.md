@@ -1021,14 +1021,23 @@ importing only those before it, which the layering test holds):**
   section: a hull's top 0.8° off a plate's, its edge under the plate's top, was passed over
   by angle and the strip beside it left to a ray, 2026-11-22), clear pieces disagreeing refused
   (`unclassified`), and its component takes it by contagion; only a component with no
-  clear seam casts rays; a fragment no sample of which is clear of the other's boundary
-  takes its side from a ray from a corner of it the paves put on nothing of the other
+  clear seam casts rays, from samples clear of the other's boundary by the intersection
+  tolerance, the band within which the paves put points on its faces (a sample between
+  the zone and the tolerance off a face is on it to the paves, and a ray from it may
+  contradict them); a fragment no such sample of which is clear takes its side from a ray
+  from a corner of it the paves put on nothing of the other
   (`classify.byCorner`, OCCT's `ComputeState` by an edge not on the other solid before a
   point inside: a face 0.4° off a box's face, a corner of it its zone off its plane, the
   piece cut off there within the zone of the box's face all over, its corner past the
-  tolerance, 2026-11-17), and the reading of every piece is the last resort for a fragment
-  no ray decides (a piece along a face's boundary is unclear: there the face's neighbour
-  bounds the material too). A section shows no side only of a face in one plane with the
+  tolerance, 2026-11-17), then from the reading of every piece (a fragment within the
+  tolerance of the other's boundary all over, its pieces on the other agreeing: OCCT's
+  `IsInternalFace` reads a split face by the wedge at its section edge; a hull's face at a
+  box's corner, its ridge 4e-5 over the box's bottom and its end on the box's side, its
+  seams on the bottom and the side both inside but neither clear, was kept by a ray from a
+  sample 1.5e-5 outside the side, cv, 2026-11-22), and last from a ray from samples clear
+  by the zone (a sliver between the zone and the tolerance wide beside a face of the
+  other, whose pieces say nothing) (a piece along a face's boundary is unclear: there the
+  face's neighbour bounds the material too). A section shows no side only of a face in one plane with the
   fragment's as the paves decided it (`Paves.inOnePlane`, the twins' to decide), or when
   the way into the fragment runs along the face to rounding; a face parallel to the
   fragment's within the angular tolerance and not in one plane with it shows its side as

@@ -584,6 +584,26 @@ const KEYHOLE_EDGES = [_][2]Vec3{
 /// edge's middle in y.
 const KEYHOLE_STANDOFF: f64 = 1;
 const KEYHOLE_SPREAD: f64 = 1;
+/// The hull of the tests of a ridge standing a hair over a box's bottom by its side (the
+/// locus_solids ReleaseSafe find cv, 2026-11-22): its ridge from (0, 0, 3) to (4, 3, 3), its
+/// face (4, 4, 1), (4, 3, 3), (1, 0, 1) running from the ridge's end down and back across
+/// the box's corner, and the box over it, its bottom z = 3 and its side x = 4 through the
+/// ridge's end.
+const PEAK_HULL = [_]Vec3{ .{ 4, 4, 1 }, .{ 1, 0, 1 }, .{ 4, 3, 3 }, .{ 0, 0, 3 }, .{ 3, 3, 1 } };
+const PEAK_BOX = [2]Vec3{ .{ 1, 2, 3 }, .{ 4, 5, 4 } };
+/// How far the ridge stands over the box's bottom: the find's 4e-5, and nearer and farther,
+/// each past the intersection tolerance.
+const PEAK_RISES = [_]f64{ 4e-5, 3e-5, 6e-5 };
+/// How far the ridge's end is moved past the box's side, within the intersection tolerance
+/// (on the side by the paves' decision) and so far past the zone that a point of the face
+/// beside it lies outside the side by more than the zone: the find's (the tolerance and
+/// D27's band), and nearer.
+const PEAK_PASTS = [_]f64{ 2.000000005684342e-5, 1.9e-5, 1.75e-5 };
+/// How far the hull is turned about `PEAK_TURN_AXIS` through the fuzzer's grid middle
+/// before it is moved: the find's 1e-9 and more (unturned, the ridge's face meets the
+/// box's corner square and its seams decide it clearly).
+const PEAK_TURNS = [_]f64{ 1e-9, 1e-7, 1e-6 };
+const PEAK_TURN_AXIS: Vec3 = .{ 1, 2, 3 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -5515,5 +5535,46 @@ test "degeneracy: crossings beside a corner are decided alike in every quarter t
             const this = try outcomeOf(&solids[0], &solids[1], op);
             if (outcome) |first| try testing.expectEqual(first, this) else outcome = this;
         };
+    };
+}
+
+/// The hull and the box of the ridge tests: the hull turned `turn` about `PEAK_TURN_AXIS`,
+/// then moved `past` along x and `rise` along z, and the box; both moved whole by `move`.
+fn peakSolids(rise: f64, past: f64, turn: f64, move: @TypeOf(SLIVER_TURNS[0])) ![2]Body {
+    var drawn_hull = try fuzzHullPlaced(&PEAK_HULL, PEAK_TURN_AXIS, turn, null, vec.ZERO3, .{ past, 0, rise });
+    defer drawn_hull.deinit();
+    var drawn_box = try helpers.boxAt(tol, PEAK_BOX[0], PEAK_BOX[1]);
+    defer drawn_box.deinit();
+    var hull = try sliverMoved(&drawn_hull, move);
+    errdefer hull.deinit();
+    return .{ hull, try sliverMoved(&drawn_box, move) };
+}
+
+test "degeneracy: a hull's ridge a hair over a box's bottom, its end on the box's side, keeps none of its faces over the bottom in the union, either way round" {
+    // The locus_solids ReleaseSafe find (2026-11-22, cv), as the fuzzer drew it: the hull's
+    // ridge 4e-5 over the box's bottom, its end and the edge down from it on the box's side
+    // by the paves (2e-5 past it, the tolerance less its turn's 3e-10). Of the hull's faces
+    // over the bottom, inside the box, one is a triangle at the box's corner within the
+    // tolerance of its bottom and side all over; its seams there read it inside, but neither
+    // clearly (within reach of the box's bottom edge), and its ray took a sample past the
+    // zone outside the side, where the paves had its corner on it: kept, it left an edge
+    // of the union with three faces (`edge_coedge_count`)
+    var hull = try fuzzHullPlaced(&PEAK_HULL, .{ 1, 2, 3 }, 1e-9, null, vec.ZERO3, .{ 2.000000005684342e-5, -1.9999999943156583e-5, 1.9999999943156583e-5 });
+    defer hull.deinit();
+    var over = try fuzzBoxPlaced(tol, PEAK_BOX[0], PEAK_BOX[1], vec.Z3, 0, null, .{ 0, 0, -2e-5 });
+    defer over.deinit();
+    try expectDecidedEitherWay(&hull, &over);
+}
+
+test "degeneracy: a hull's ridge a hair over a box's bottom, its end within the tolerance of the box's side, is decided alike either way round and moved whole" {
+    // The family of find cv: the hull turned `PEAK_TURNS`, its ridge `PEAK_RISES` over
+    // the box's bottom and its end `PEAK_PASTS` past the box's side, in place and moved
+    // whole (`SLIVER_TURNS`): every operation in either order decided (made and sound, or
+    // refused for its own reason), union and intersection alike either way round
+    for (PEAK_TURNS) |turn| for (PEAK_PASTS) |past| for (PEAK_RISES) |rise| for (SLIVER_TURNS) |move| {
+        errdefer std.debug.print("turn {e}, past {e}, rise {e}, moved {any}\n", .{ turn, past, rise, move });
+        var solids = try peakSolids(rise, past, turn, move);
+        defer for (&solids) |*b| b.deinit();
+        try expectDecidedEitherWay(&solids[0], &solids[1]);
     };
 }

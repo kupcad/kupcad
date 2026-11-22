@@ -2390,6 +2390,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the local session (2026-11-22, cu): a box ∪ a hull ∪ two plates, moved whole 0.3
         // about y and 3e5 out, 47 vertices against 48: the same chain's runs
         "solids 0 0 2 2 3 2 4 3 0 1 0 1 3 13 8 6 3 3 1 7 2 3 3 2 1 1 4 2 1 3 1 4 2 1 3 3 0 1 1 3 4 1 1 9 4 14 10 0 3 2 3 4 0 2 1 2 1 2 -1 5 4 16 0 2 2 0 4 0 2 2 3 0 0 8 1 14 2 6 6 0 1 3 2",
+        // The cp fork's locus_solids ReleaseSafe run (2026-11-22, cv): a hull turned 1e-9,
+        // its ridge 4e-5 over a box's bottom and its end and the edge down from it on the
+        // box's side by the paves (2e-5 past it); the face at the box's corner, within the
+        // tolerance of the bottom and the side all over, its seams there inside but neither
+        // clear, was kept by a ray from a sample 1.5e-5 outside the side, an edge of the union
+        // with three faces (classify: rays from samples clear by the intersection tolerance,
+        // then the seams, then by the zone)
+        "solids 1 5 4 4 1 1 0 1 4 3 3 0 0 3 3 3 1 0 3 8 1 11 10 9 16 3 0 0 -1 0 4 5 3 0 1 4 1 4 3 4 1 2 0 2 8 8 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
