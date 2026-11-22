@@ -135,8 +135,8 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
                     const pa = sheet.geometry.point(sheet.vertex(va).point);
                     const pb = sheet.geometry.point(sheet.vertex(vb).point);
                     const curve = sheet.geometry.curve(edge.curve);
-                    const low = try copyCurve(&b, curve, &Affine.identity, pa, pb, coedge.same_sense);
-                    const high = try copyCurve(&b, curve, &Affine.translate(direction), vec.add(pa, direction), vec.add(pb, direction), coedge.same_sense);
+                    const low = try copyCurve(&b, curve, edge.t1 - edge.t0, &Affine.identity, pa, pb, coedge.same_sense);
+                    const high = try copyCurve(&b, curve, edge.t1 - edge.t0, &Affine.translate(direction), vec.add(pa, direction), vec.add(pb, direction), coedge.same_sense);
                     const ends = Ends{ .bottom_a = bottom[@backingInt(va)], .bottom_b = bottom[@backingInt(vb)], .top_a = top[@backingInt(va)], .top_b = top[@backingInt(vb)], .passage_a = passageAt(c), .passage_b = passageAt(coedge.next) };
                     cap_edges[ci] = .{ .start = ends.bottom_a, .end = ends.bottom_b, .curve = low.curve, .t0 = low.t0, .t1 = low.t1, .forward = low.forward };
                     cap_edges[counts.coedges + ci] = .{ .start = ends.top_a, .end = ends.top_b, .curve = high.curve, .t0 = high.t0, .t1 = high.t1, .forward = high.forward };
@@ -171,8 +171,10 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
 
 /// The sheet turned about the axis through `origin` along `axis`, which must lie in the
 /// sheet's plane, by `angle` radians (counter-clockwise seen from the axis's tip; negative
-/// the other way; a full turn at ±2π): a solid. The sheet must lie on one side of the
-/// axis; a point on it is allowed (an apex, a pole), an edge along it too (it sweeps
+/// the other way; a full turn at ±2π, or short of it by no more than the zone at the
+/// profile's largest radius): a solid. A wedge no thicker than the intersection tolerance
+/// at that radius is refused (`below_feature_size`). The sheet must lie on one side of
+/// the axis; a point on it is allowed (an apex, a pole), an edge along it too (it sweeps
 /// nothing). The input is untouched.
 pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, axis: Vec3, angle: f64, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
     for (origin) |c| try diagnostics.input.finite(diag, "the axis origin", c);
@@ -183,9 +185,18 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
     if (input.kind != .sheet or input.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
     const tol = options.tolerance orelse input.tol;
     const z = vec.normalized(axis) orelse return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the axis's length" });
-    if (!(@abs(angle) > tol.param)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the angle", .measured = @abs(angle) });
-    const turn = Turn.of(angle, tol);
+    if (!(@abs(angle) > 0)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the angle", .measured = @abs(angle) });
     const frame = try profileFrame(input, origin, z, tol, diag);
+    // The angle by what it opens at the profile's largest radius, a length: a wedge no
+    // thicker there than the intersection tolerance is below a solid's feature size (its
+    // caps would lie on each other), and a turn short of the full one by no more than the
+    // zone there is the full one. Not by the angle against the parametric tolerance, 1e-5
+    // taken as radians whatever the radius: at a radius of 100 a turn 8e-6 short leaves a
+    // gap 8e-4 wide and was closed, and at 1000 a wedge 8e-3 thick was no angle (the audit
+    // of 2026-11-22)
+    const reach = profileReach(input, frame);
+    if (@abs(angle) * reach <= tol.xsect) return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .{ .kind = .argument }, .label = "the wedge the angle opens at the profile's largest radius", .measured = @abs(angle) * reach, .threshold = tol.xsect });
+    const turn = Turn.of(angle, reach, tol);
 
     // The profile with every arc across its torus's seam split there (D7)
     var profile = try splitAtTorusSeams(allocator, input, frame, tol, diag);
@@ -286,7 +297,7 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
                         const at: f64 = if (on_axis) 0 else turn.placeOf(k);
                         const qa = b.body.point(verts[k * n_vertices + ia]);
                         const qb = b.body.point(verts[k * n_vertices + ib]);
-                        gens[k * counts.coedges + ci] = try copyCurve(&b, curve, &Affine.rotateAbout(origin, z, at), qa, qb, coedge.same_sense);
+                        gens[k * counts.coedges + ci] = try copyCurve(&b, curve, edge.t1 - edge.t0, &Affine.rotateAbout(origin, z, at), qa, qb, coedge.same_sense);
                     }
                     if (caps) |*cap| {
                         const last = turn.splits - 1;
@@ -360,8 +371,11 @@ const Turn = struct {
     splits: usize,
     middle: ?f64,
 
-    fn of(angle: f64, tol: Tolerance) Turn {
-        const full = @abs(angle) >= geometry.TWO_PI - tol.param;
+    /// `reach`: the profile's largest radius, at which a turn short of the full one by no
+    /// more than the zone is the full one. The split of a long turn in two is a
+    /// construction's choice, not a verdict: its slack is the parametric tolerance.
+    fn of(angle: f64, reach: f64, tol: Tolerance) Turn {
+        const full = (geometry.TWO_PI - @abs(angle)) * reach <= tol.zone;
         if (full) return .{ .start = 0, .end = geometry.TWO_PI, .full = true, .splits = 2, .middle = std.math.pi };
         const start: f64 = if (angle > 0) 0 else geometry.TWO_PI + angle;
         const end: f64 = if (angle > 0) angle else geometry.TWO_PI;
@@ -488,6 +502,24 @@ fn profileFrame(sheet: *const Body, origin: Vec3, z: Vec3, tol: Tolerance, diag:
         if (lowest < -tol.zone) return diag.fail(error.NotRepresentable, .{ .code = .not_implemented, .entity = .of(.edge, i), .label = "a profile crossing the axis", .measured = lowest });
     }
     return fr;
+}
+
+/// The profile's largest distance from the axis: over its vertices, and over the corners
+/// of the boxes of its edges that are not lines (a bound on an arc's bulge).
+fn profileReach(sheet: *const Body, frame: ProfileFrame) f64 {
+    var reach: f64 = 0;
+    for (sheet.vertices.items) |v| {
+        if (v.tombstone) continue;
+        reach = @max(reach, @abs(frame.place(sheet.geometry.point(v.point)).radius));
+    }
+    for (sheet.edges.items) |e| {
+        if (e.flags.tombstone or e.curve.kind == .line) continue;
+        const box = sheet.geometry.curve(e.curve).bounds(e.t0, e.t1);
+        for ([_]f64{ box.min[0], box.max[0] }) |x| for ([_]f64{ box.min[1], box.max[1] }) |y| for ([_]f64{ box.min[2], box.max[2] }) |zc| {
+            reach = @max(reach, @abs(frame.place(.{ x, y, zc }).radius));
+        };
+    }
+    return reach;
 }
 
 /// A face's outward normal: its plane's normal by its sense (the sheet's loops run
@@ -733,10 +765,11 @@ fn passageAt(c: types.CoedgeIndex) u32 {
 /// A curve of the sheet in the new body under `map` (a move, a turn), as the edge from
 /// `pa` to `pb` (already mapped) runs it: `t0 < t1` its range, `forward` whether the edge
 /// runs from `t0` to `t1` (`pa` at `t0`). A line is the one through the mapped ends; a
-/// circle, an ellipse and a free-form curve are the records mapped.
+/// circle, an ellipse and a free-form curve are the records mapped. `sweep` is the
+/// sheet's edge's own range, `t1 − t0`, which a closed curve's copy keeps (`arcOn`).
 const Copied = struct { curve: geometry.CurveRef, t0: f64, t1: f64, forward: bool };
 
-fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb: Vec3, same_sense: bool) Error!Copied {
+fn copyCurve(b: *Builder, curve: curves.Curve, sweep: f64, map: *const Affine, pa: Vec3, pb: Vec3, same_sense: bool) Error!Copied {
     const g = &b.body.geometry;
     switch (curve) {
         .line => {
@@ -748,11 +781,11 @@ fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb:
         },
         .circle => |c| {
             const ref = b.interner.circle(b.allocator, g, .{ .c = map.point(c.c), .x = map.vector(c.x), .y = map.vector(c.y), .r = c.r }) catch |e| return b.fail(e);
-            return arcOn(ref, g.curve(ref), pa, pb, same_sense, b.body.tol);
+            return arcOn(ref, g.curve(ref), sweep, pa, pb, same_sense, b.body.tol);
         },
         .ellipse => |e| {
             const ref = g.addEllipse(b.allocator, .{ .c = map.point(e.c), .x = map.vector(e.x), .y = map.vector(e.y), .a = e.a, .b = e.b }) catch |err| return b.fail(err);
-            return arcOn(ref, g.curve(ref), pa, pb, same_sense, b.body.tol);
+            return arcOn(ref, g.curve(ref), sweep, pa, pb, same_sense, b.body.tol);
         },
         .nurbs => |n| {
             // The control points under the map, the knots as they are
@@ -768,19 +801,20 @@ fn copyCurve(b: *Builder, curve: curves.Curve, map: *const Affine, pa: Vec3, pb:
     }
 }
 
-/// The arc of a closed curve the edge from `pa` to `pb` covers: counter-clockwise from
-/// `pa` when the edge runs the curve forward, from `pb` otherwise; the same point twice
-/// is the full turn (a circle of one edge).
-fn arcOn(ref: geometry.CurveRef, curve: curves.Curve, pa: Vec3, pb: Vec3, same_sense: bool, tol: Tolerance) Copied {
-    const ta = curve.project(pa, tol.approx, geometry.PROJECT_STEPS);
-    const tb = curve.project(pb, tol.approx, geometry.PROJECT_STEPS);
-    const period = curve.domain().span();
-    if (same_sense) {
-        const end = if (tb <= ta + tol.param) tb + period else tb;
-        return .{ .curve = ref, .t0 = ta, .t1 = end, .forward = true };
-    }
-    const end = if (ta <= tb + tol.param) ta + period else ta;
-    return .{ .curve = ref, .t0 = tb, .t1 = end, .forward = false };
+/// The arc of a closed curve the edge from `pa` to `pb` covers: from the parameter of the
+/// end it starts at (`pa` when the edge runs the curve forward, `pb` otherwise), found on
+/// the copy (an interned circle may be an equal one with its own start), over `sweep`, the
+/// sheet's edge's own range. A rigid map keeps a curve's parameter lengths, so the sweep
+/// is the sheet's decision carried over, a full turn where the sheet's edge was one. Not
+/// re-derived from the two ends' angles: that read an end within the parametric tolerance
+/// (1e-5, taken as radians) past the start as the start again, a turn further on, and an
+/// arc piece 2.5e-5 long on a radius of 2.5, a legal edge, ran the long way round its
+/// circle between its two vertices (the sew found the side faces not manifold; the audit
+/// of 2026-11-22). OCCT's edge is closed when its vertices are one, never by a small
+/// parameter difference.
+fn arcOn(ref: geometry.CurveRef, curve: curves.Curve, sweep: f64, pa: Vec3, pb: Vec3, same_sense: bool, tol: Tolerance) Copied {
+    const start = curve.project(if (same_sense) pa else pb, tol.approx, geometry.PROJECT_STEPS);
+    return .{ .curve = ref, .t0 = start, .t1 = start + sweep, .forward = same_sense };
 }
 
 /// The face swept by one edge: a plane for a line, a cylinder for an arc swept along its

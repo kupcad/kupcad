@@ -44,6 +44,30 @@ const ASKEW_DIRECTIONS = [_]Vec3{ .{ 0, 3, 3 }, .{ 1, 0, 4 }, .{ -2, 1, 0.5 } };
 const OFF_CIRCLE = [_]f64{ -9.9e-6, -9e-6, -5e-6, 5e-6, 9e-6, 9.9e-6 };
 /// The angles the off-circle sheet is revolved by.
 const OFF_CIRCLE_TURNS = [_]f64{ std.math.pi / 2.0, std.math.pi };
+/// The sheet of the tests of a short arc swept: a pentagon whose top corner, `SHORT_ARC_TOP`,
+/// is cut by an arc piece from it, `SHORT_ARC_LENGTHS` long (past the shortest edge a sheet
+/// may have) or sweeping `SHORT_ARC_SWEEPS` radians (either side of the parametric
+/// tolerance, 1e-5, the sweep once took for a full turn), on a circle of each of
+/// `SHORT_ARC_RADII` bulging out of the sheet or into it.
+const SHORT_ARC_BASE = [_]vec.Vec2{ .{ -3, 4 }, .{ -3, 0 }, .{ 3, 0 }, .{ 3, 4 } };
+const SHORT_ARC_TOP: vec.Vec2 = .{ 0, 5 };
+const SHORT_ARC_RADII = [_]f64{ 2.5, 5, 100, 1e4 };
+const SHORT_ARC_LENGTHS = [_]f64{ 2.5e-5, 4e-5 };
+const SHORT_ARC_SWEEPS = [_]f64{ 0.9e-5, 1.1e-5 };
+/// How far along x the sheet is put for its revolution about the y axis, and the angle.
+const SHORT_ARC_OUT: f64 = 10;
+const SHORT_ARC_TURN: f64 = std.math.pi / 2.0;
+/// The same at a zone of 1e-4, whose parametric tolerance is 1e-4: the radius and the
+/// pieces' lengths.
+const COARSE_ARC_RADIUS: f64 = 5;
+const COARSE_ARC_LENGTHS = [_]f64{ 2.5e-4, 3e-4, 4.5e-4, 5.5e-4 };
+/// The profiles of the tests of a revolution's angle by its size: a unit square stood up
+/// with its far side at each radius; the turn short of a full one, and the thin wedge's
+/// angle, by the same 8e-6 rad, which at these radii opens 8e-4 and 8e-3 (far past a
+/// solid's feature size) and at a radius of 1 opens 8e-6, within the zone.
+const TURN_RADII = [_]f64{ 100, 1000 };
+const TURN_SHORT: f64 = 8e-6;
+const TURN_NEAR_RADIUS: f64 = 1;
 /// A strip 3 zones wide and 2 long, extruded along a direction rising 1.5 zones over 0.1
 /// across: its caps lie within the intersection tolerance of each other.
 const ASKEW_STRIP = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 3e-5 }, .{ 0, 3e-5 } };
@@ -833,4 +857,142 @@ test "sweep: a sheet whose vertex lies off its arc's circle within the zone revo
         const centroid = 2.0 + 4.0 / (3.0 * std.math.pi);
         try testing.expectApproxEqAbs(std.math.pi / 4.0 * centroid * angle, (try mass.mass(&solid, .{}, &diag)).volume, 1e-3);
     };
+}
+
+/// The short-arc sheet: `SHORT_ARC_BASE` closed over `SHORT_ARC_TOP` by an arc piece
+/// `length` long from it, on a circle of radius `r` through it, its centre below (`bulging`
+/// out of the sheet) or above; shifted `out` along x, then turned and mirrored. With the
+/// polygon's area and its centroid's x (the arc's segment, r·φ³/12, is nothing).
+const ShortArc = struct { sheet: Body, area: f64, centroid_x: f64 };
+
+fn shortArcSheet(t: Tolerance, r: f64, length: f64, bulging: bool, out: f64, turn: usize, mirrored: bool, diag: *Diagnostics) !ShortArc {
+    const at = struct {
+        fn place(p: vec.Vec2, quarters: usize, mirror: bool) vec.Vec2 {
+            var q: vec.Vec2 = if (mirror) .{ -p[0], p[1] } else p;
+            for (0..quarters) |_| {
+                const turned: vec.Vec2 = .{ -q[1], q[0] };
+                q = turned;
+            }
+            return q;
+        }
+    };
+    const phi = length / r;
+    const side: f64 = if (bulging) 1 else -1;
+    const centre: vec.Vec2 = .{ SHORT_ARC_TOP[0] + out, SHORT_ARC_TOP[1] - side * r };
+    // From the top, leftward along the circle: counter-clockwise about a centre below
+    const end: vec.Vec2 = .{ centre[0] - r * @sin(phi), centre[1] + side * r * @cos(phi) };
+    const points = [_]vec.Vec2{
+        .{ SHORT_ARC_BASE[0][0] + out, SHORT_ARC_BASE[0][1] }, .{ SHORT_ARC_BASE[1][0] + out, SHORT_ARC_BASE[1][1] },
+        .{ SHORT_ARC_BASE[2][0] + out, SHORT_ARC_BASE[2][1] }, .{ SHORT_ARC_BASE[3][0] + out, SHORT_ARC_BASE[3][1] },
+        .{ SHORT_ARC_TOP[0] + out, SHORT_ARC_TOP[1] },         end,
+    };
+    var edges: [points.len]primitives.OutlineEdge = undefined;
+    for (points, 0..) |p, k| edges[k] = .{ .a = at.place(p, turn, mirrored), .b = at.place(points[(k + 1) % points.len], turn, mirrored) };
+    edges[4].arc = .{ .c = at.place(centre, turn, mirrored), .r = r, .ccw = bulging != mirrored };
+    var twice: f64 = 0;
+    var moment: f64 = 0;
+    for (points, 0..) |p, k| {
+        const q = points[(k + 1) % points.len];
+        const cross = vec.cross2(p, q);
+        twice += cross;
+        moment += (p[0] + q[0]) * cross;
+    }
+    return .{ .sheet = try primitives.outlines(testing.allocator, t, &.{&edges}, diag), .area = twice / 2, .centroid_x = moment / (3 * twice) };
+}
+
+fn expectShortArcSwept(t: Tolerance, r: f64, length: f64) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_]bool{ true, false }) |bulging| {
+        for (0..QUARTER_TURNS) |turn| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("radius {d}, piece {e} long, bulging {}, quarter turns {d}, mirrored {}\n", .{ r, length, bulging, turn, mirrored });
+            var drawn = try shortArcSheet(t, r, length, bulging, 0, turn, mirrored, &diag);
+            defer drawn.sheet.deinit();
+            var solid = try sweep.extrude(testing.allocator, &drawn.sheet, .{ 0, 0, 2 }, .{}, &diag);
+            defer solid.deinit();
+            try expectValid(&solid);
+            try testing.expectApproxEqAbs(2 * drawn.area, (try mass.mass(&solid, .{}, &diag)).volume, 1e-6);
+        };
+        errdefer std.debug.print("radius {d}, piece {e} long, bulging {}, revolved\n", .{ r, length, bulging });
+        var drawn = try shortArcSheet(t, r, length, bulging, SHORT_ARC_OUT, 0, false, &diag);
+        defer drawn.sheet.deinit();
+        var solid = try sweep.revolve(testing.allocator, &drawn.sheet, .{ 0, 0, 0 }, .{ 0, 1, 0 }, SHORT_ARC_TURN, .{}, &diag);
+        defer solid.deinit();
+        try expectValid(&solid);
+        // Pappus: the area times the path of its centroid
+        try testing.expectApproxEqAbs(drawn.area * drawn.centroid_x * SHORT_ARC_TURN, (try mass.mass(&solid, .{}, &diag)).volume, 1e-5);
+    }
+}
+
+test "sweep: an arc piece sweeping less than the parametric tolerance is swept as itself, not as its whole circle" {
+    // The audit of 2026-11-22: the copy of a sheet's arc took its range from its ends'
+    // angles and read an end no more than the parametric tolerance (1e-5, as radians) past
+    // the start as the start again, a full turn: a piece 2.5e-5 long on a radius of 2.5,
+    // a legal edge, ran the long way round its circle in the solid
+    for (SHORT_ARC_RADII) |r| {
+        for (SHORT_ARC_LENGTHS) |length| try expectShortArcSwept(tol, r, length);
+        for (SHORT_ARC_SWEEPS) |phi| try expectShortArcSwept(tol, r, phi * r);
+    }
+}
+
+test "sweep: an arc piece sweeping less than a coarse zone's parametric tolerance is swept as itself" {
+    // At a zone of 1e-4 the window was ten times wider: pieces up to 5e-4 long on a radius of 5
+    for (COARSE_ARC_LENGTHS) |length| try expectShortArcSwept(Tolerance.fromZone(1e-4), COARSE_ARC_RADIUS, length);
+}
+
+/// A unit square stood up in the xz-plane, its far side `radius` from the z axis.
+fn squareAt(radius: f64, diag: *Diagnostics) !Body {
+    const transform = @import("transform.zig");
+    const mat = @import("../math/mat.zig");
+    var sq = try primitives.square(testing.allocator, tol, 1, 1, false, diag);
+    defer sq.deinit();
+    var shifted = try transform.transform(testing.allocator, &sq, &mat.Affine.translate(.{ radius - 1, 0, 0 }), .{}, diag);
+    defer shifted.deinit();
+    return stoodUp(&shifted, diag);
+}
+
+test "revolve: a turn short of a full one by an angle that opens past the feature size at the profile's radius has caps; a wedge that thick is made" {
+    // The audit of 2026-11-22: the angle was compared with the parametric tolerance (1e-5,
+    // as radians) whatever the profile's radius: 2π − 8e-6 at a radius of 100 leaves a gap
+    // 8e-4 wide and was closed, a ring; 8e-6 at a radius of 1000 is a wedge 8e-3 thick and
+    // was refused as no angle. The opening at the profile's largest radius decides
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (TURN_RADII) |radius| {
+        errdefer std.debug.print("radius {d}\n", .{radius});
+        var profile = try squareAt(radius, &diag);
+        defer profile.deinit();
+        const centroid = radius - 0.5;
+        for ([_]f64{ 1, -1 }) |way| {
+            const most = way * (2.0 * std.math.pi - TURN_SHORT);
+            var open = try revolved(&profile, most, &diag);
+            defer open.deinit();
+            try expectValid(&open);
+            // Four sides in three spans, and two caps
+            try testing.expectEqual(@as(usize, 10), open.counts().faces);
+            try testing.expectApproxEqRel(centroid * @abs(most), (try mass.mass(&open, .{}, &diag)).volume, 1e-9);
+
+            var wedge = try revolved(&profile, way * TURN_SHORT, &diag);
+            defer wedge.deinit();
+            try expectValid(&wedge);
+            try testing.expectEqual(@as(usize, 6), wedge.counts().faces);
+            try testing.expectApproxEqRel(centroid * TURN_SHORT, (try mass.mass(&wedge, .{}, &diag)).volume, 1e-6);
+        }
+    }
+}
+
+test "revolve: a turn short of a full one by an opening within the zone at the profile's radius is the full turn; a wedge that thin is refused below the feature size" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var profile = try squareAt(TURN_NEAR_RADIUS, &diag);
+    defer profile.deinit();
+    var ring = try revolved(&profile, 2.0 * std.math.pi - TURN_SHORT, &diag);
+    defer ring.deinit();
+    try expectValid(&ring);
+    // A cylinder: three sides in two spans (the side on the axis sweeps nothing), no caps
+    try testing.expectEqual(@as(usize, 6), ring.counts().faces);
+    try testing.expectError(error.Degenerate, sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, TURN_SHORT, .{}, &diag));
+    try testing.expectEqual(@import("../diagnostics.zig").Code.below_feature_size, diag.findings.items[diag.findings.items.len - 1].code);
+    // No angle at all is the argument's fault
+    try testing.expectError(error.InvalidInput, sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 0, .{}, &diag));
 }

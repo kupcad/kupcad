@@ -661,10 +661,20 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
   cylinder, any other curve a linear-extrusion surface; around an axis a line parallel to
   it gives a cylinder, oblique a cone, an arc a torus or sphere, any other curve a
   revolution surface; a generator vertex on the axis gives a degenerate edge and no face.
-  The topology is the Euler sequence `mev; (mev, mef)*; mef` (S p.144).
+  The topology is the Euler sequence `mev; (mev, mef)*; mef` (S p.144). The copy of a
+  sheet's arc keeps the sheet's edge's own sweep, from its start's parameter on the copy
+  (`arcOn`): whether an edge is a full turn is the sheet's decision (its two vertices are
+  one), not a small difference of its ends' angles, which read an arc piece sweeping
+  under the parametric tolerance (1e-5, as radians: 2.5e-5 long on a radius of 2.5, a
+  legal edge) as a turn and a bit, and its extrusion was not manifold (2026-11-22, audit).
 - Revolve builds in one step from exact periodic surfaces, split at the seam per D7; a
   partial angle adds two planar end faces; a full turn is closed by exact face matching,
-  never by stepping around the circle (S p.142, 758).
+  never by stepping around the circle (S p.142, 758). The angle is read by what it opens
+  at the profile's largest radius, a length: a turn short of the full one by no more than
+  the zone there is the full one, and a wedge no thicker there than the intersection
+  tolerance is refused (`below_feature_size`); against the parametric tolerance as
+  radians, a turn 8e-6 short at a radius of 100, a gap 8e-4 wide, was closed, and a wedge
+  8e-3 thick at 1000 was no angle (2026-11-22, audit).
 - A profile's regions may touch at a vertex (an outline crossing itself): the line or
   circle swept from it bounds two solids, each with an edge of its own there, one per
   passage of the profile through the vertex (`sew.EdgeSpec.copy`), never one edge of
