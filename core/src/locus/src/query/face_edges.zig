@@ -11,7 +11,7 @@
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
-const predicates = @import("../math/predicates.zig");
+const ray_crossing = @import("../math/ray_crossing.zig");
 const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
@@ -162,11 +162,7 @@ pub const FaceEdges = struct {
         uv: Vec2,
         inside: bool = false,
         fn visit(r: *@This(), item: u32) bool {
-            const a = r.segments[item][0];
-            const b = r.segments[item][1];
-            if ((a[1] > r.uv[1]) == (b[1] > r.uv[1])) return true;
-            // East of the point: left of an edge going up, right of one going down
-            if ((predicates.orient2d(a, b, r.uv) > 0) == (b[1] > a[1])) r.inside = !r.inside;
+            if (ray_crossing.line(r.segments[item][0], r.segments[item][1], r.uv)) r.inside = !r.inside;
             return true;
         }
     };

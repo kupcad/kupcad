@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vec = @import("../math/vec.zig");
+const ray_crossing = @import("../math/ray_crossing.zig");
 const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
 const types = @import("types.zig");
@@ -607,7 +608,12 @@ const Checker = struct {
 
     /// Every loop runs counter-clockwise in UV about its face's outward normal when it is
     /// the outer one, clockwise when a hole (what `same_sense` and the surface's own
-    /// orientation make of "the face to the left"); and the loops of a closed shell are
+    /// orientation make of "the face to the left"): on a plane by the loop's area as the
+    /// sliver rule measures it, an arc's share exact; elsewhere by the polygon of its
+    /// samples in UV. The samples' polygon of a planar loop went by how its arcs were cut:
+    /// an arc of 180° in one edge lost far more area to its four chords than the arc
+    /// beside it in two edges lost to its eight, and a C ring 0.3 wide between them read
+    /// as wound backwards (`loop_winding`; the audit of 2026-11-22). And the loops of a closed shell are
     /// wound outward: the signed volume they enclose (`integrals.shellSense`, the one
     /// measure of it, which `markVoids` takes a shell's kind from) is positive for an
     /// outer shell, negative for a void.
@@ -628,6 +634,15 @@ const Checker = struct {
                 var outer = true;
                 while (loops.next() catch return) |l| : (outer = false) {
                     if (b.loop(l).first == .none) continue;
+                    // A planar loop by its area about the outward normal, an arc's share
+                    // exact (`loopMeasure`, the sliver rule's measure): positive for the
+                    // outer loop, negative for a hole
+                    if (face.surface.kind == .plane) {
+                        const n = b.geometry.surface(face.surface).normal(0, 0);
+                        const area = self.loopMeasure(l, if (face.same_sense) n else vec.neg(n)).area;
+                        if (@abs(area) > b.tol.param * b.tol.param and (area > 0) != outer) try self.add(.loop_winding, .of(.loop, @backingInt(l)), area, 0);
+                        continue;
+                    }
                     if (!try self.sampleLoop(l, &uv, &xyz)) continue;
                     const area = shoelace(uv.items);
                     const want_ccw = outer == face.same_sense;
@@ -647,6 +662,39 @@ const Checker = struct {
                 .sheet => {},
             }
         }
+    }
+
+    /// Whether loop `l`, of a planar face, holds the point `p` of the face's UV: the parity
+    /// of the crossings of the ray from `p` to +x with its edges, exact
+    /// (`math/ray_crossing.zig`), each edge from its coedge's start vertex to its end, an
+    /// arc about its circle's centre. Null for a loop on any other surface or with an edge
+    /// that is neither a line nor a circle's arc (the caller's sampled polygon answers).
+    /// The polygon of four samples a coedge answered for every loop once: a half circle is
+    /// half an octagon, 0.924 of the radius between its samples, and a round hole 0.3
+    /// inside a disc's rim there was outside its outer loop (`hole_outside_outer`; the
+    /// audit of 2026-11-22).
+    fn planarLoopHolds(self: *Checker, l: LoopIndex, p: Vec2) ?bool {
+        const b = self.body;
+        const face = b.face(b.loop(l).face);
+        if (face.surface.kind != .plane) return null;
+        const plane = b.geometry.planes.items[face.surface.index];
+        const up = vec.cross(plane.frame.x, plane.frame.y);
+        var inside = false;
+        var it = traverse.Coedges.init(b, l);
+        while (it.next() catch return null) |c| {
+            const coedge = b.coedge(c);
+            const from = plane.project(b.point(b.coedgeStart(c)));
+            const to = plane.project(b.point(b.coedgeEnd(c)));
+            const crosses = switch (b.geometry.curve(b.edge(coedge.edge).curve)) {
+                .line => ray_crossing.line(from, to, p),
+                // Counter-clockwise in UV when its circle turns the plane's way and the
+                // coedge runs the circle's way, or neither
+                .circle => |circle| ray_crossing.arc(from, to, plane.project(circle.c), circle.r, (vec.dot(circle.normal(), up) > 0) == coedge.same_sense, p),
+                else => return null,
+            };
+            if (crosses) inside = !inside;
+        }
+        return inside;
     }
 
     /// The loop as a polygon of `LOOP_SAMPLES` points per coedge, in space and in the
@@ -821,6 +869,8 @@ const Checker = struct {
         defer outer_uv.deinit(self.allocator);
         var hole_points = std.ArrayList(Vec2).empty;
         defer hole_points.deinit(self.allocator);
+        var hole_loops = std.ArrayList(LoopIndex).empty;
+        defer hole_loops.deinit(self.allocator);
         var hole_polygons = std.ArrayList([]Vec2).empty;
         defer {
             for (hole_polygons.items) |poly| self.allocator.free(poly);
@@ -837,14 +887,21 @@ const Checker = struct {
             hole_polygons.clearRetainingCapacity();
             var loops = traverse.Loops.init(b, types.FaceIndex.of(fi));
             _ = loops.next() catch return;
+            hole_loops.clearRetainingCapacity();
             while (loops.next() catch return) |l| {
                 if (!try self.sampleLoop(l, &uv, &xyz)) continue;
                 if (uv.items.len == 0) continue;
-                if (!insidePolygon(outer_uv.items, uv.items[0])) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
-                for (hole_polygons.items, hole_points.items) |poly, point| {
-                    if (insidePolygon(poly, uv.items[0]) or insidePolygon(uv.items, point)) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
+                // A planar loop of lines and arcs holds a point or not exactly
+                // (`planarLoopHolds`); any other by the polygon of its samples
+                const in_outer = self.planarLoopHolds(face.first_loop, uv.items[0]) orelse insidePolygon(outer_uv.items, uv.items[0]);
+                if (!in_outer) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
+                for (hole_polygons.items, hole_points.items, hole_loops.items) |poly, point, other| {
+                    const in_other = self.planarLoopHolds(other, uv.items[0]) orelse insidePolygon(poly, uv.items[0]);
+                    const holds_other = self.planarLoopHolds(l, point) orelse insidePolygon(uv.items, point);
+                    if (in_other or holds_other) try self.add(.hole_outside_outer, .of(.loop, @backingInt(l)), 0, 0);
                 }
                 try hole_points.append(self.allocator, uv.items[0]);
+                try hole_loops.append(self.allocator, l);
                 try hole_polygons.ensureUnusedCapacity(self.allocator, 1);
                 hole_polygons.appendAssumeCapacity(try self.allocator.dupe(Vec2, uv.items));
             }

@@ -217,7 +217,7 @@ locus/
   build.zig  build.zig.zon
   src/
     root.zig          public API: Body, Tolerance, Resolution, ops, results, check, io
-    math/             vec.zig mat.zig predicates.zig (exact orient/incircle) solve.zig (Newton, LM, Jacobi)
+    math/             vec.zig mat.zig predicates.zig (exact orient/incircle) ray_crossing.zig (point in a loop of lines and arcs) solve.zig (Newton, LM, Jacobi)
     tolerance.zig     Tolerance, Resolution
     geometry/         types.zig curves.zig pcurves.zig surfaces.zig nurbs.zig arena.zig
     topology/         types.zig body.zig euler.zig traverse.zig check.zig tags.zig bbox.zig integrals.zig
@@ -1309,10 +1309,19 @@ dg, 2026-11-22; about a point inside a conic the angle is monotone, and a half o
 a turn of parameter subtends under one and a half turns, so a half measured small is its
 true angle), so no polyline of the boundary stands in for it and
 lines, circles, ellipses and NURBS are one case; periodic parameters are moved by whole
-periods into the face's box. A planar face with straight edges takes the same answer from
-the exact crossing count of a ray in its plane (`orient2d`, half-open at vertices), with
-no angle per piece: a boolean's paves ask it of every vertex near a face, and on a
-1000-sided face the angles took most of a second (2026-11-13). `raycast.zig`: the candidates are the meetings of the line
+periods into the face's box. A planar face whose edges are lines and circles' arcs takes
+the same answer from the exact crossing parity of a ray in its plane
+(`math/ray_crossing.zig`: `orient2d` and `inCircle`, half-open at vertices, an arc by its
+sector and its two radii, a point on an edge answered as the point a hair east of it for
+every edge alike), with no angle per piece: a boolean's paves ask it of every vertex near a
+face, and on a 1000-sided face the angles took most of a second (2026-11-13); and the
+angle's acceptance by halves is certain for a circle only, not for a thin ellipse, whose
+whole and half can both be a turn off about a point near its end (the audit of 2026-11-22),
+so the angles are left to faces with elliptic or free-form edges and curved faces. The same
+parity is the one "point in a planar loop": the sketch's `contains?` (`sketch/query.zig`,
+which cut an arc into pieces with their ends' heights from a sine, a rounding off the
+vertices the lines beside it read: a point level with a rounded rectangle's corner, 6 to
+its west, was in it) and the checker's hole rule (below) ask it too. `raycast.zig`: the candidates are the meetings of the line
 with every face's surface whose box the segment meets, in closed form for planes,
 cylinders, cones, spheres and tori (`math/poly.zig`: the roots of the implicit equation
 along the line, degree 1, 2 or 4, by derivative isolation and bisection, the parameter
@@ -1612,7 +1621,10 @@ outer one; each face in exactly one shell; shells connected; `V − E + F − (L
 G)` with `G` a whole number ≥ 0 per shell; flagged degenerate edges have `start == end`,
 no other edge does.
 *Orientation*: adjacent faces agree (the two coedges of each edge are opposite);
-outer loops counter-clockwise and holes clockwise in UV; `same_sense` consistent with the
+outer loops counter-clockwise and holes clockwise in UV (a planar loop by its area as the
+sliver rule measures it, an arc's share exact, `check.loopMeasure`; by its samples' polygon
+an arc of 180° in one edge beside one in two, a C ring 0.3 wide, read as wound backwards,
+`loop_winding`, the audit of 2026-11-22; a curved face's loop by its samples in UV); `same_sense` consistent with the
 outward normal by one ray test per shell, and the cheap cross-check that the signed
 volume (divergence theorem, `integrals.shellSense`: the measure `mass` takes, as
 `markVoids` takes it, its curved faces integrated only as finely as the sign needs, a coarse
@@ -1674,7 +1686,11 @@ signs of their rounding: a sample in the plane of another shell's notched face w
 the 10K fuzz session, 2026-11-14): voids inside an
 outer shell and not inside each other, shells apart, any nesting right; run on every
 boolean result in the tests and on the fuzzer's extruded solids; curved face pairs M5);
-hole loops inside their outer loop and not inside each other; the point at infinity is
+hole loops inside their outer loop and not inside each other (a planar loop of lines and
+arcs by the exact ray parity, `math/ray_crossing.zig`; any other by the polygon of four
+samples a coedge, which answered for all once: a half circle is half an octagon, and a
+round hole 0.3 inside a disc's rim between two samples was outside its outer loop,
+`hole_outside_outer`; the audit of 2026-11-22); the point at infinity is
 outside every outer shell; void shells inside the outer shell and not inside each other; singular vertices of a solid (its faces about a
 vertex not one fan, a solid touching itself at a point) as warnings; and OpenGeometry's two pcurve rules
 (research/opengeometry.md §6, 2026-11-11): every coedge's pcurve, at nine parameters from

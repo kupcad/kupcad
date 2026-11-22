@@ -42,6 +42,28 @@ const LUNE_FIND_TILT = 0.2;
 const LUNE_RADII = [_][2]f64{ .{ 10, 2 }, .{ 8, 2 }, .{ 10, 3 } };
 const LUNE_TILTS = [_]f64{ 0.15, 0.18, 0.2, 0.22, 0.3 };
 
+/// The disc and the round hole near its rim of the hole rule's tests (the audit of
+/// 2026-11-22): the hole's centre at `RIM_HOLE_AT` from the disc's, on rays every
+/// `RIM_HOLE_STEP` degrees from `RIM_HOLE_FIRST` (between the points a half circle sampled
+/// four times is a polygon of: 22.5°, where the octagon is 0.924 of the radius).
+const RIM_DISC: f64 = 10;
+const RIM_HOLE: f64 = 0.2;
+const RIM_HOLE_AT: f64 = 9.5;
+const RIM_HOLE_OUT: f64 = 10.5;
+const RIM_HOLE_FIRST: f64 = 22.5;
+const RIM_HOLE_STEP: f64 = 11.25;
+const RIM_HOLE_RAYS: usize = 32;
+/// C rings for the winding rule's tests: the outer arc's sweep in degrees about −x, the
+/// inner radius as a share of the outer (`C_OUTER`), and how many edges the inner arc is in
+/// (a tooth touching it at each cut).
+const C_OUTER: f64 = 10;
+const C_SWEEPS = [_]f64{ 90, 180, 270, 340 };
+const C_SHARES = [_]f64{ 0.85, 0.9, 0.93, 0.97 };
+const C_CUTS = [_]usize{ 1, 2, 3, 5 };
+/// How far back from the inner arc a tooth's base is, and half its width.
+const C_TOOTH = [2]f64{ 1, 0.3 };
+const MAX_C_TEETH: usize = 4;
+
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
 }
@@ -643,5 +665,122 @@ test "primitives: lunes of two circles a fraction of a degree apart at their ver
             errdefer std.debug.print("radii {any}, {d}°, quarter turns {d}, mirrored {}: in place {any}\n", .{ radii, degrees, turn, mirrored, first });
             try testing.expectEqual(first, try luneOutcome(radii, degrees, turn, mirrored));
         };
+    };
+}
+
+/// A circle about `c` as an outline's two half turns from its east point, the way round
+/// `ccw` says.
+fn circleOutline(c: Vec2, r: f64, ccw: bool) [2]primitives.OutlineEdge {
+    const east: Vec2 = .{ c[0] + r, c[1] };
+    const west: Vec2 = .{ c[0] - r, c[1] };
+    return .{ .{ .a = east, .b = west, .arc = .{ .c = c, .r = r, .ccw = ccw } }, .{ .a = west, .b = east, .arc = .{ .c = c, .r = r, .ccw = ccw } } };
+}
+
+/// The disc with its hole on the ray at `degrees`, `at` from the centre, the hole's
+/// outline mirrored in the x axis when `mirrored`: made, or the code it was refused with.
+fn rimHoleOutcome(at: f64, degrees: f64, mirrored: bool) !?diagnostics_mod.Code {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const angle = degrees * PI / 180.0;
+    const centre: Vec2 = .{ at * @cos(angle), if (mirrored) -at * @sin(angle) else at * @sin(angle) };
+    const disc = circleOutline(.{ 0, 0 }, RIM_DISC, true);
+    const hole = circleOutline(centre, RIM_HOLE, false);
+    var sheet = primitives.outlines(testing.allocator, tol, &.{ &disc, &hole }, &diag) catch |err| switch (err) {
+        error.Degenerate, error.NotValid => return diag.findings.items[diag.findings.items.len - 1].code,
+        else => return err,
+    };
+    defer sheet.deinit();
+    // A hole: the disc less it; a second disc beside the first: both
+    const expected = PI * (RIM_DISC * RIM_DISC + (if (at < RIM_DISC) -RIM_HOLE * RIM_HOLE else RIM_HOLE * RIM_HOLE));
+    try testing.expectApproxEqAbs(expected, (try mass.mass(&sheet, .{}, &diag)).area, 1e-9);
+    try testing.expectEqual(@as(usize, if (at < RIM_DISC) 1 else 2), sheet.counts().faces);
+    return null;
+}
+
+test "primitives: a disc with a round hole near its rim is made wherever round the rim the hole is" {
+    // The audit of 2026-11-22: the checker's hole rule asked the hole's first point of the
+    // outer loop's polygon of four samples a coedge, a half circle's an octagon's half,
+    // and a hole 0.3 inside the rim between two samples was outside it (`hole_outside_outer`)
+    for (0..RIM_HOLE_RAYS) |k| for ([_]bool{ false, true }) |mirrored| {
+        const degrees = RIM_HOLE_FIRST + RIM_HOLE_STEP * @as(f64, @floatFromInt(k));
+        errdefer std.debug.print("the hole at {d}°, mirrored {}\n", .{ degrees, mirrored });
+        try testing.expectEqual(@as(?diagnostics_mod.Code, null), try rimHoleOutcome(RIM_HOLE_AT, degrees, mirrored));
+        // Past the rim it is no hole: a second disc
+        try testing.expectEqual(@as(?diagnostics_mod.Code, null), try rimHoleOutcome(RIM_HOLE_OUT, degrees, mirrored));
+    };
+}
+
+/// A C ring about the origin: the outer arc of `C_OUTER` sweeping `sweep` degrees about
+/// −x in one edge, the inner arc of `share` of it back, two radial lines between; and
+/// `cuts − 1` small triangles inside the C, each a corner on the inner arc, which leave it
+/// in `cuts` edges (consecutive pieces of one circle are one edge but at a vertex another
+/// region touches). Turned and mirrored. Made, or the code it was refused with.
+fn cRingOutcome(sweep: f64, share: f64, cuts: usize, turn: usize, mirrored: bool) !?diagnostics_mod.Code {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const at = struct {
+        fn polar(r: f64, degrees: f64) Vec2 {
+            const a = degrees * PI / 180.0;
+            return .{ r * @cos(a), r * @sin(a) };
+        }
+        fn place(p: Vec2, quarter: usize, mirror: bool) Vec2 {
+            var q = p;
+            for (0..quarter) |_| {
+                // Not in place: the second coordinate reads the first
+                const turned: Vec2 = .{ -q[1], q[0] };
+                q = turned;
+            }
+            return if (mirror) .{ -q[0], q[1] } else q;
+        }
+        fn on(r: f64, degrees: f64, quarter: usize, mirror: bool) Vec2 {
+            return place(polar(r, degrees), quarter, mirror);
+        }
+    };
+    const inner = C_OUTER * share;
+    const from = 180.0 - sweep / 2.0;
+    const to = 180.0 + sweep / 2.0;
+    const centre: Vec2 = .{ 0, 0 };
+    const ring = [_]primitives.OutlineEdge{
+        .{ .a = at.on(C_OUTER, from, turn, mirrored), .b = at.on(C_OUTER, to, turn, mirrored), .arc = .{ .c = centre, .r = C_OUTER, .ccw = !mirrored } },
+        .{ .a = at.on(C_OUTER, to, turn, mirrored), .b = at.on(inner, to, turn, mirrored) },
+        .{ .a = at.on(inner, to, turn, mirrored), .b = at.on(inner, from, turn, mirrored), .arc = .{ .c = centre, .r = inner, .ccw = mirrored } },
+        .{ .a = at.on(inner, from, turn, mirrored), .b = at.on(C_OUTER, from, turn, mirrored) },
+    };
+    var teeth: [MAX_C_TEETH][3]primitives.OutlineEdge = undefined;
+    var contours: [MAX_C_TEETH + 1][]const primitives.OutlineEdge = undefined;
+    contours[0] = &ring;
+    for (1..cuts) |k| {
+        const degrees = from + sweep * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(cuts));
+        const apex = at.polar(inner, degrees);
+        const back = at.polar(inner - C_TOOTH[0], degrees);
+        const across = vec.scale2(vec.perp2(vec.normalized2(apex).?), C_TOOTH[1]);
+        const corners = [3]Vec2{ at.place(apex, turn, mirrored), at.place(vec.add2(back, across), turn, mirrored), at.place(vec.sub2(back, across), turn, mirrored) };
+        for (0..3) |c| teeth[k - 1][c] = .{ .a = corners[c], .b = corners[(c + 1) % 3] };
+        contours[k] = &teeth[k - 1];
+    }
+    var sheet = primitives.outlines(testing.allocator, tol, contours[0..cuts], &diag) catch |err| switch (err) {
+        error.Degenerate, error.NotValid => return diag.findings.items[diag.findings.items.len - 1].code,
+        else => return err,
+    };
+    defer sheet.deinit();
+    // The inner arc in as many edges as asked, with the outer (each in one more where
+    // the placement puts its circle's seam on it)
+    var arcs: usize = 0;
+    for (sheet.edges.items) |e| {
+        if (e.curve.kind == .circle) arcs += 1;
+    }
+    try testing.expect(arcs >= cuts + 1);
+    const expected = sweep * PI / 360.0 * (C_OUTER * C_OUTER - inner * inner) + @as(f64, @floatFromInt(cuts - 1)) * C_TOOTH[0] * C_TOOTH[1];
+    try testing.expectApproxEqAbs(expected, (try mass.mass(&sheet, .{}, &diag)).area, 1e-9);
+    return null;
+}
+
+test "primitives: a C ring is made however many edges its inner arc is in, in every quarter turn, mirrored or not" {
+    // The audit of 2026-11-22: the checker took a loop's winding from the polygon of four
+    // samples a coedge; an arc of 270° in one edge lost far more area to its chords than
+    // the inner arc in two, and a ring 0.7 wide read as wound backwards (`loop_winding`)
+    for (C_SWEEPS) |sweep| for (C_SHARES) |share| for (C_CUTS) |cuts| for (0..4) |turn| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("sweep {d}°, inner {d} of the outer, in {d} edges, quarter turns {d}, mirrored {}\n", .{ sweep, share, cuts, turn, mirrored });
+        try testing.expectEqual(@as(?diagnostics_mod.Code, null), try cRingOutcome(sweep, share, cuts, turn, mirrored));
     };
 }

@@ -132,6 +132,7 @@ test {
     _ = @import("math/vec_test.zig");
     _ = @import("math/mat_test.zig");
     _ = @import("math/predicates_test.zig");
+    _ = @import("math/ray_crossing_test.zig");
     _ = @import("math/interval_test.zig");
     _ = @import("math/solve_test.zig");
     _ = @import("math/trig_test.zig");

@@ -15,6 +15,7 @@
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const predicates = @import("../math/predicates.zig");
+const ray_crossing = @import("../math/ray_crossing.zig");
 const trig = @import("../math/trig.zig");
 const geometry = @import("../geometry/types.zig");
 const canonical = @import("../geometry/canonical.zig");
@@ -290,35 +291,51 @@ fn nearestAlongEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) struct { poi
     return if (vec.distance(a, p) <= vec.distance(b, p)) .{ .point = a, .end = .start } else .{ .point = b, .end = .end };
 }
 
-/// Whether the loops of face `f` wind about `uv`: the angle they sweep about it, a whole
-/// number of turns, is not zero (holes wind back).
-/// `winds` for a planar face with straight edges, by the exact crossing count of the ray from
-/// `uv` to +x (`orient2d`, the half-open rule at vertices): the same answer for a point off
-/// the boundary, without an angle per piece (a boolean's paves ask it of every vertex near a
-/// face; on a 1000-sided face the angles took most of a second, 2026-11-12). Null for any
-/// other face.
+/// Whether the loops of face `f` hold `uv`, for a planar face whose edges are lines and
+/// circles' arcs: the parity of the crossings of the ray from `uv` to +x with its edges,
+/// exact (`math/ray_crossing.zig`: `orient2d` and `inCircle`, the half-open rule at
+/// vertices, each edge from its coedge's start vertex to its end). The same answer as
+/// the winding for a point off the boundary, without an angle per piece (a boolean's
+/// paves ask it of every vertex near a face; on a 1000-sided face the angles took most of
+/// a second, 2026-11-12), and with nothing to accept an arc's angle by: a cap of two arcs
+/// asked through its angles put a point 0.63 of the radius in outside it (find dg), and
+/// the rule that mended that is a circle's, not an ellipse's (the audit of 2026-11-22).
+/// Null for any other face (`winds`).
 fn windsPlanar(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!?bool {
     const face = body.face(f);
     if (face.surface.kind != .plane) return null;
     const frame = body.geometry.planes.items[face.surface.index].frame;
+    const up = vec.cross(frame.x, frame.y);
     var inside = false;
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
         var it = traverse.Coedges.init(body, l);
         while (it.next() catch return corrupt(diag)) |c| {
-            if (body.edge(body.coedge(c).edge).curve.kind != .line) return null;
+            const coedge = body.coedge(c);
             const a3 = frame.toLocal(body.point(body.coedgeStart(c)));
             const b3 = frame.toLocal(body.point(body.coedgeEnd(c)));
             const a: Vec2 = .{ a3[0], a3[1] };
             const b: Vec2 = .{ b3[0], b3[1] };
-            if ((a[1] > uv[1]) == (b[1] > uv[1])) continue;
-            // East of the point: left of an edge going up, right of one going down
-            if ((predicates.orient2d(a, b, uv) > 0) == (b[1] > a[1])) inside = !inside;
+            const crosses = switch (body.geometry.curve(body.edge(coedge.edge).curve)) {
+                .line => ray_crossing.line(a, b, uv),
+                .circle => |circle| arc: {
+                    const centre = frame.toLocal(circle.c);
+                    // Counter-clockwise in UV when the circle turns the plane's way and
+                    // the coedge runs the circle's way, or neither
+                    const ccw = (vec.dot(circle.normal(), up) > 0) == coedge.same_sense;
+                    break :arc ray_crossing.arc(a, b, .{ centre[0], centre[1] }, circle.r, ccw, uv);
+                },
+                else => return null,
+            };
+            if (crosses) inside = !inside;
         }
     }
     return inside;
 }
 
+/// Whether the loops of face `f` wind about `uv`: the angle they sweep about it, a whole
+/// number of turns, is not zero (holes wind back). For a face `windsPlanar` does not
+/// answer: a curved one, or a planar one with an elliptic or free-form edge.
 fn winds(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!bool {
     const face = body.face(f);
     const surface = body.geometry.surface(face.surface);

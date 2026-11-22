@@ -18,6 +18,16 @@ const Vec2 = vec.Vec2;
 const tol = tolerance.Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 
+/// Rounded rectangles for the containment tests about a vertex's height: width, height and
+/// corner radius, each from the origin (the corners' arcs start and end at heights a line
+/// ends at too: 4 × 3 with corners of 0.5 is the audit's, 2026-11-22).
+const ROUNDED = [_][3]f64{ .{ 4, 3, 0.5 }, .{ 4, 3, 0.1 }, .{ 4, 3, 0.3 }, .{ 4, 3, 0.7 }, .{ 10, 6, 1.5 } };
+/// How far beside a vertex, at its height and at the doubles next above and below it, the
+/// containment is asked.
+const BESIDE = [_]f64{ 0.25, 1, 3, 10 };
+/// A point this near the outline is left out: its closed form is rounding's.
+const OUTLINE_CLEAR: f64 = 1e-9;
+
 test "contours: a square is its corners, a circle its segments at the resolution, a hole runs clockwise" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
@@ -215,4 +225,71 @@ test "query: a sketch with a reflex cusp is not convex: an arc ending tangent to
     defer cusp.deinit();
     try testing.expectEqual(@as(usize, 1), cusp.counts().faces);
     try testing.expect(!try query.isConvex(&cusp, &diag));
+}
+
+/// Point `p` turned `quarter` quarter turns about the origin, then mirrored in the y axis
+/// when `mirrored`: exact.
+fn placed(p: Vec2, quarter: usize, mirrored: bool) Vec2 {
+    var q = p;
+    for (0..quarter) |_| {
+        // Not in place: the second coordinate reads the first
+        const turned: Vec2 = .{ -q[1], q[0] };
+        q = turned;
+    }
+    return if (mirrored) .{ -q[0], q[1] } else q;
+}
+
+/// The rounded rectangle `shape` (`ROUNDED`'s) as an outline, placed.
+fn roundedOutline(shape: [3]f64, quarter: usize, mirrored: bool) [8]primitives.OutlineEdge {
+    const w = shape[0];
+    const h = shape[1];
+    const r = shape[2];
+    const corners = [4]Vec2{ .{ w - r, r }, .{ w - r, h - r }, .{ r, h - r }, .{ r, r } };
+    // Each corner's arc from its start to its end, counter-clockwise, then the side to the next
+    const starts = [4]Vec2{ .{ w - r, 0 }, .{ w, h - r }, .{ r, h }, .{ 0, r } };
+    const ends = [4]Vec2{ .{ w, r }, .{ w - r, h }, .{ 0, h - r }, .{ r, 0 } };
+    var edges: [8]primitives.OutlineEdge = undefined;
+    for (0..4) |k| {
+        edges[2 * k] = .{ .a = placed(starts[k], quarter, mirrored), .b = placed(ends[k], quarter, mirrored), .arc = .{ .c = placed(corners[k], quarter, mirrored), .r = r, .ccw = !mirrored } };
+        edges[2 * k + 1] = .{ .a = placed(ends[k], quarter, mirrored), .b = placed(starts[(k + 1) % 4], quarter, mirrored) };
+    }
+    return edges;
+}
+
+/// How far `p` is outside the rounded rectangle `shape` (negative inside): the closed form.
+fn roundedDistance(shape: [3]f64, p: Vec2) f64 {
+    const r = shape[2];
+    const qx = @abs(p[0] - shape[0] / 2) - (shape[0] / 2 - r);
+    const qy = @abs(p[1] - shape[1] / 2) - (shape[1] / 2 - r);
+    return vec.length2(.{ @max(qx, 0), @max(qy, 0) }) + @min(@max(qx, qy), 0) - r;
+}
+
+test "contains: a point at a vertex's height, beside it, is in a rounded rectangle just when its closed form says" {
+    // The audit of 2026-11-22: an arc's ends' heights were the circle's at the ends' angles,
+    // a line's its vertex's own, a rounding apart about half the time (0.5 + 0.5·sin π is
+    // the double above 0.5), so at a vertex's height the left side and the corner's arc
+    // each counted the vertex, and (−1, 0.5) was in the rectangle
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (ROUNDED) |shape| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        const edges = roundedOutline(shape, quarter, mirrored);
+        var sheet = try primitives.outlines(testing.allocator, tol, &.{&edges}, &diag);
+        defer sheet.deinit();
+        const w = shape[0];
+        const h = shape[1];
+        const r = shape[2];
+        const vertices = [8]Vec2{ .{ w - r, 0 }, .{ w, r }, .{ w, h - r }, .{ w - r, h }, .{ r, h }, .{ 0, h - r }, .{ 0, r }, .{ r, 0 } };
+        for (vertices) |v| for (BESIDE) |k| for ([_]f64{ -k, k }) |dx| for ([_]f64{ -1, 0, 1 }) |dy| for ([_]bool{ false, true }) |along_y| {
+            // Beside the vertex along x and along y, so that every placement asks at a
+            // vertex's own height
+            const step: Vec2 = if (along_y) .{ 0, dx } else .{ dx, 0 };
+            var p = vec.add2(v, step);
+            const k_axis: usize = if (along_y) 0 else 1;
+            if (dy != 0) p[k_axis] = std.math.nextAfter(f64, p[k_axis], if (dy > 0) std.math.inf(f64) else -std.math.inf(f64));
+            const d = roundedDistance(shape, p);
+            if (@abs(d) < OUTLINE_CLEAR) continue;
+            errdefer std.debug.print("{any}, quarter turns {d}, mirrored {}: the point {any}, {e} outside\n", .{ shape, quarter, mirrored, p, d });
+            try testing.expectEqual(d < 0, try query.contains(&sheet, placed(p, quarter, mirrored), 0, &diag));
+        };
+    };
 }

@@ -7,6 +7,7 @@
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const trig = @import("../math/trig.zig");
+const ray_crossing = @import("../math/ray_crossing.zig");
 const curves = @import("../geometry/curves.zig");
 const tolerance = @import("../tolerance.zig");
 const diagnostics = @import("../diagnostics.zig");
@@ -150,10 +151,16 @@ fn walk(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.
 /// How far below a whole number a share of segments may fall and still round down.
 const CEIL_SLACK: f64 = 1e-9;
 
-/// Whether `p` is in the sketch: on an outline within `within` of it, or inside by the
-/// non-zero winding of the outlines about it (holes wind the other way).
+/// Whether `p` is in the sketch: on an outline within `within` of it, or inside its
+/// outlines, by the parity of the crossings of the ray from it to +x with every edge of
+/// every face's loops (`math/ray_crossing.zig`, exact; a sheet's faces lie apart and its
+/// holes inside them, so the parity is the winding's being non-zero). An arc was once cut
+/// into pieces whose ends' heights were the circle's at the ends' angles, a rounding from
+/// the vertices' own, which the lines beside it read: at a vertex's height both counted
+/// the vertex, and a point 6 to the west of a rounded rectangle, level with a corner's
+/// end, was in it (the audit of 2026-11-22).
 pub fn contains(sheet: *const Body, p: Vec2, within: f64, diag: *Diagnostics) Error!bool {
-    var winding: i32 = 0;
+    var inside = false;
     var shells = traverse.Shells.init(sheet);
     while (shells.next() catch return corrupt(diag)) |s| {
         var faces = traverse.Faces.init(sheet, s);
@@ -164,12 +171,13 @@ pub fn contains(sheet: *const Body, p: Vec2, within: f64, diag: *Diagnostics) Er
                 while (it.next() catch return corrupt(diag)) |c| {
                     const edge = try edgeOf(sheet, c, diag);
                     if (distanceTo(edge, p) <= within) return true;
-                    winding += windingTerm(edge, p);
+                    const crosses = if (edge.arc) |arc| ray_crossing.arc(edge.a, edge.b, arc.c, arc.r, arc.ccw, p) else ray_crossing.line(edge.a, edge.b, p);
+                    if (crosses) inside = !inside;
                 }
             }
         }
     }
-    return winding != 0;
+    return inside;
 }
 
 /// Whether the sketch is one convex outline: one face of one loop, every corner turning
@@ -235,56 +243,6 @@ fn distanceTo(edge: Edge, p: Vec2) f64 {
     if (len_sq == 0) return vec.distance2(p, edge.a);
     const t = std.math.clamp(vec.dot2(vec.sub2(p, edge.a), d) / len_sq, 0, 1);
     return vec.distance2(p, vec.addScaled2(edge.a, d, t));
-}
-
-/// The edge's crossings of the ray from `p` to +x, signed by its direction: up +1, down
-/// −1 (the winding's share), by the half-open rule; an arc by its y-monotone pieces.
-fn windingTerm(edge: Edge, p: Vec2) i32 {
-    if (edge.arc) |arc| {
-        // The count's parity and the arc's net direction: each piece crossing adds the
-        // piece's direction
-        return arcWinding(edge, arc, p);
-    }
-    const a = edge.a;
-    const b = edge.b;
-    if ((a[1] > p[1]) == (b[1] > p[1])) return 0;
-    const x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-    if (p[0] >= x) return 0;
-    return if (b[1] > a[1]) 1 else -1;
-}
-
-/// The arc cut at its topmost and bottommost points into y-monotone pieces, each a
-/// crossing of the ray to +x when p's height lies in it and the piece is to the right,
-/// signed by whether the piece rises.
-fn arcWinding(edge: Edge, arc: overlay.Arc, p: Vec2) i32 {
-    const sweep = sweepOf(edge);
-    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
-    const sign: f64 = if (arc.ccw) 1 else -1;
-    var cuts: [4]f64 = .{ 0, sweep, sweep, sweep };
-    var n: usize = 2;
-    for ([_]f64{ std.math.pi / 2.0, -std.math.pi / 2.0 }) |extreme| {
-        const t = @mod(sign * (extreme - start), 2 * std.math.pi);
-        if (t > CEIL_SLACK and t < sweep - CEIL_SLACK) {
-            cuts[n] = t;
-            n += 1;
-        }
-    }
-    std.mem.sort(f64, cuts[0..n], {}, std.sort.asc(f64));
-    var total: i32 = 0;
-    for (0..n - 1) |i| {
-        const t0 = cuts[i];
-        const t1 = cuts[i + 1];
-        if (t1 - t0 <= CEIL_SLACK) continue;
-        const y0 = arc.c[1] + arc.r * @sin(start + sign * t0);
-        const y1 = arc.c[1] + arc.r * @sin(start + sign * t1);
-        if ((y0 > p[1]) == (y1 > p[1])) continue;
-        const mid = start + sign * (t0 + t1) / 2.0;
-        const dy = p[1] - arc.c[1];
-        const dx = @sqrt(@max(arc.r * arc.r - dy * dy, 0));
-        const x = if (@cos(mid) >= 0) arc.c[0] + dx else arc.c[0] - dx;
-        if (p[0] < x) total += if (y1 > y0) 1 else -1;
-    }
-    return total;
 }
 
 /// Whether the corner from `prev` to `next` turns left (or goes straight on, within the
