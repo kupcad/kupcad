@@ -2369,6 +2369,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // rules and the mesher handed the triangulator whole: refused as not simple
         // (triangulate.splitSlits: any step run both ways taken out)
         "solids 2 1 2 0 3 0 4 1 1 0 6 4 8 3 2 1 4 4 0 3 4 4 2 1 0 4 4 0 2 1 2 0 2 -2 2 1 2 2 3 4 0 3 1 4 1 1 10 7 -2 14 1 2 1 4 2 3 1 4 0 3 1 4 0 1 2 4 3 2 2 -2 2 3 2",
+        // Batch B's locus_solids 100K run (2026-11-22, co): two hulls, the first turned a
+        // half turn about x and nudged down the intersection tolerance and D27's band; a
+        // block of the second's face and a section of the first measured 2e-5 and a hair
+        // apart in its plane, either side of the band by the operands' order (pave.pointGap:
+        // from the piece's lesser end)
+        "solids 1 6 3 1 3 1 3 2 0 4 3 0 3 3 1 4 0 2 4 3 0 0 1 3 5 -1 12 11 2 1 1 6 4 3 1 3 4 3 4 1 0 3 1 3 0 1 1 1 1 2 1 3 3 6 -2 10 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

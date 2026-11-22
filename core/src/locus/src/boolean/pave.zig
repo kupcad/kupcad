@@ -2425,8 +2425,19 @@ fn lessSpan(_: void, x: [2]f64, y: [2]f64) bool {
     return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]);
 }
 
-/// The distance from `q` to the segment from `a` to `b` in a plane.
-fn pointGap(q: Vec2, a: Vec2, b: Vec2) f64 {
+/// The distance from `q` to the segment from `a` to `b` in a plane, measured from the
+/// segment's lesser end (by x, then y) whichever end is given first: the same two segments
+/// measure the same to the last bit whichever comes first and whichever way each runs, as
+/// the two operand orders give them. From `a` along `b − a` the rounding went with the
+/// order: a block of one hull's face and a section of another 2e-5 and a hair apart
+/// measured 2.0000000056848476e-5 one way round and 2.0000000056756098e-5 the other, either
+/// side of D27's band about the intersection tolerance, and the intersection was made one
+/// way round and refused `at_tolerance` the other (find co, a locus_solids ReleaseSafe
+/// run, 2026-11-22).
+fn pointGap(q: Vec2, a_given: Vec2, b_given: Vec2) f64 {
+    const swap = b_given[0] < a_given[0] or (b_given[0] == a_given[0] and b_given[1] < a_given[1]);
+    const a = if (swap) b_given else a_given;
+    const b = if (swap) a_given else b_given;
     const d = vec.sub2(b, a);
     const len_sq = vec.lengthSq2(d);
     const s = if (len_sq == 0) 0 else std.math.clamp(vec.dot2(vec.sub2(q, a), d) / len_sq, 0, 1);

@@ -440,6 +440,21 @@ const SHARED_B_FROM: f64 = 1;
 const SHARED_B_TOP: f64 = 1.5;
 const SHARED_B_ENDS = [_]f64{ 2.5, 3, 3.5 };
 const SHARED_GAPS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+/// The hulls of the tests of a gap measured between two pieces in a face's plane (find co,
+/// 2026-11-22), placed as the solids fuzzer placed them: the first turned a half turn
+/// about x through the grid's middle (2, 2, 2), moved (0, -0.5, 0) and nudged
+/// (`GAP_NUDGES_X`, 0, down `GAP_DROPS`), the second moved (0, 0, -1) and nudged (5e-6,
+/// -1e-5, 0). A block of the second's face and a section of the first lie the drop apart
+/// in that face's plane; the drops step by the coordinates' rounding (2^-51 at their size)
+/// across D27's band above the intersection tolerance, the fuzzer's own at its edge.
+const GAP_FIRST = [_]Vec3{ .{ 3, 1, 3 }, .{ 1, 3, 2 }, .{ 0, 4, 3 }, .{ 0, 3, 3 }, .{ 1, 4, 0 }, .{ 2, 4, 3 } };
+const GAP_SECOND = [_]Vec3{ .{ 4, 3, 1 }, .{ 3, 4, 3 }, .{ 4, 1, 0 }, .{ 3, 1, 3 }, .{ 0, 1, 1 }, .{ 1, 1, 2 } };
+const GAP_MIDDLE: Vec3 = .{ 2, 2, 2 };
+const GAP_FIRST_MOVE: Vec3 = .{ 0, -0.5, 0 };
+const GAP_SECOND_MOVE: Vec3 = .{ 0, 0, -1 };
+const GAP_SECOND_NUDGE: Vec3 = .{ 5e-6, -1e-5, 0 };
+const GAP_NUDGES_X = [_]f64{ 1e-5, 5e-6, 0 };
+const GAP_DROPS = [_]f64{ 2.000000005684342e-5, 2e-5 + 8 * 0x1p-51, 2e-5 + 11 * 0x1p-51, 2e-5 + 12 * 0x1p-51, 2e-5 + 13 * 0x1p-51, 2e-5 + 14 * 0x1p-51, 2e-5 + 16 * 0x1p-51 };
 /// The solids of the tests of a thin plate's corner where two solids of a result touch (the
 /// ReleaseSafe session's find on a1444371, 2026-11-21, bz), as the solids fuzzer drew them:
 /// a hull turned a quarter about y, a plate `CORNER_THICKNESSES` intersection tolerances
@@ -5332,4 +5347,40 @@ fn expectMeshedWhole(body: *const Body) !void {
         errdefer std.debug.print("face {d}: {s}\n", .{ f, @tagName(range.status) });
         try testing.expectEqual(@import("../mesh/tessellate.zig").Status.ok, range.status);
     }
+}
+/// The hulls of the gap tests, the first nudged `nudge_x` in x and down `drop`, placed as
+/// the fuzzer places them (the turn, the move and the nudge one affine map).
+fn gapHulls(nudge_x: f64, drop: f64) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const hull = @import("../construct/hull.zig").hull;
+    const transform_fn = @import("../construct/transform.zig").transform;
+    var first = try hull(testing.allocator, tol, &GAP_FIRST, &diag);
+    defer first.deinit();
+    const half_turn = mat.Affine.rotateAbout(GAP_MIDDLE, vec.X3, std.math.pi);
+    const first_place = mat.Affine.translate(.{ nudge_x, 0, -drop }).compose(&mat.Affine.translate(GAP_FIRST_MOVE).compose(&half_turn));
+    var a = try transform_fn(testing.allocator, &first, &first_place, .{}, &diag);
+    errdefer a.deinit();
+    var second = try hull(testing.allocator, tol, &GAP_SECOND, &diag);
+    defer second.deinit();
+    const second_place = mat.Affine.translate(GAP_SECOND_NUDGE).compose(&mat.Affine.translate(GAP_SECOND_MOVE));
+    return .{ a, try transform_fn(testing.allocator, &second, &second_place, .{}, &diag) };
+}
+
+test "degeneracy: two pieces in a face's plane the intersection tolerance and a hair apart are measured alike whichever operand comes first" {
+    // The ReleaseSafe find co (2026-11-22): a block of one hull's face and a section of the
+    // other lay 2e-5 and a hair apart in that face's plane, and the gap was measured from
+    // the pieces' ends in the order the operands gave them: 2.0000000056848476e-5 one way
+    // round, 2.0000000056756098e-5 the other, either side of D27's band, so the
+    // intersection was made one way round and refused `at_tolerance` the other. A point's
+    // distance to a segment is measured from the segment's lesser end
+    for (GAP_NUDGES_X) |nudge_x| for (GAP_DROPS) |drop| {
+        errdefer std.debug.print("nudged {e} in x, down {e}\n", .{ nudge_x, drop });
+        var hulls = try gapHulls(nudge_x, drop);
+        defer for (&hulls) |*body| body.deinit();
+        for ([_]pipeline.Op{ .intersection, .@"union" }) |op| {
+            errdefer std.debug.print("{s}\n", .{@tagName(op)});
+            try expectAlikeEitherWay(&hulls[0], &hulls[1], op);
+        }
+    };
 }

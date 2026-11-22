@@ -508,7 +508,11 @@ tetrahedron's opposite edges both in the face's plane, crossing there); both ref
 `below_feature_size`. A piece left on a face keeps the tolerance from the face's own
 boundary too, in its plane, other than where the paves joined them (`pave.sectionsApart`,
 the one rule for what is laid in a face; two sharing one merged vertex measured by their
-other ends): the paves decide a vertex against an edge's line in space, and the imprint's
+other ends; a point's distance to a piece measured from the piece's lesser end, so the
+same two pieces measure the same to the last bit whichever operand comes first, which
+D27's band needs at its edge: measured from the ends in the order the operands gave
+them, a hull's block and another's section 2e-5 and a hair apart measured either side of
+it, made one way round and refused the other, find co, 2026-11-22): the paves decide a vertex against an edge's line in space, and the imprint's
 overlay cuts the edge between its merged vertices' points in the plane, up to their reach
 off that line. A hull's edge laid in a box's bottom along the bottom's edge at 1e-6 rad,
 its first corner 1.965e-5 from that edge, on it, its second 2.06e-5 from the edge's line,
