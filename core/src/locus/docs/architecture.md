@@ -1000,7 +1000,12 @@ importing only those before it, which the layering test holds):**
   tolerance of it was imprinted alike on both), and a fragment none of whose samples is
   clear of the other's boundary takes its side from the faces about a piece of its
   boundary lying on the other's (OCCT's IsInternalFace: behind the other's face it is a
-  section with, or in the wedge of material between the two faces of the other's edge it
+  section with, read clearly only where the fragment, leaving the piece, is past the
+  tolerance of that face while still over it, as OCCT reads a split face at a point
+  offset from the section edge past the tolerance (a hull's face leaving a plate's end
+  17.5° off it toward the plate's inside, the plate 3 tolerances thick, was never more
+  than 1.8e-5 behind the end and read inside though wholly outside: df, 2026-11-22), or
+  in the wedge of material between the two faces of the other's edge it
   is a piece of, where a face in the fragment's plane leaves the other face to decide
   beyond the edge, and an edge across the fragment's plane, on its face by reach alone,
   bounds no region of it and reads nothing (its faces cut the plane along their own lines:

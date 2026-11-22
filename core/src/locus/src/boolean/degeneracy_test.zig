@@ -534,6 +534,22 @@ const SPUR_HULL_NUDGE: Vec3 = .{ 0, 2e-3, 0 };
 /// D27's band at these coordinates), within the tolerance (the apex on the edge), and
 /// past it to 2.5 times it.
 const SPUR_INSETS = [_]f64{ 2.000000005684342e-5, 1.5e-5, 2.5e-5, 3e-5, 5e-5 };
+/// The solids of the tests of a hull's edge across a plate's end (the ReleaseSafe session's
+/// find on ff515852, df, as the solids fuzzer drew it): a plate from x = 0.5 to 3.5 and y
+/// = 1.99998 to 3.99998, its bottom at z = 1.999975, `END_THICKNESSES` intersection
+/// tolerances thick; and a hull whose edge from (3, 4, 1) to (4, 0, 3) crosses the plane x
+/// = 3.5 at z = 2, inside the plate's thickness, its face toward (3, 1, 0) leaving the
+/// plate's end 17.5° off it toward the plate's inside, moved `END_SHIFTS` in y so the edge
+/// crosses the end that far past y = 2.
+const END_PLATE_LO: Vec3 = .{ 0.5, 1.99998, 1.999975 };
+const END_PLATE_HI_XY = [2]f64{ 3.5, 3.99998 };
+const END_HULL = [_]Vec3{ .{ 1, 4, 4 }, .{ 0, 4, 1 }, .{ 4, 0, 3 }, .{ 3, 4, 1 }, .{ 3, 1, 0 } };
+/// The plate's thickness in intersection tolerances: the find's 3, past the least feature
+/// (2) by a quarter, and thicker.
+const END_THICKNESSES = [_]f64{ 2.5, 3, 4, 6 };
+/// How far past y = 2 the hull's edge crosses the plate's end: the find's (2e-3), nearer
+/// the plate's corner and farther from it.
+const END_SHIFTS = [_]f64{ 2e-3, 5e-4, 2e-2, 0.2 };
 /// The solids of the tests of a face a hair off parallel to a box's side, the tolerance
 /// outside it (the first ReleaseSafe session's find on a1444371, ci, as the solids fuzzer
 /// drew it): `OFFSET_HULL_A`, scaled and moved, and `OFFSET_HULL_B`, turned a hair about
@@ -5610,5 +5626,49 @@ test "degeneracy: a common block tied between operands of one zone, its faces' p
             errdefer std.debug.print("{s}\n", .{@tagName(op)});
             try expectAlikeEitherWay(&solids[0], &solids[1], op);
         }
+    };
+}
+
+/// The plate and the hull of those tests, `thickness` intersection tolerances thick and
+/// moved `shift` in y, both turned `quarter` quarter turns about z and mirrored as
+/// `tieMove` does.
+fn endSolids(thickness: f64, shift: f64, quarter: usize, mirrored: bool) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const top = END_PLATE_LO[2] + thickness * tol.xsect;
+    const corners = [2]Vec3{ tieMove(END_PLATE_LO, quarter, mirrored), tieMove(.{ END_PLATE_HI_XY[0], END_PLATE_HI_XY[1], top }, quarter, mirrored) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(corners[0][k], corners[1][k]);
+        hi[k] = @max(corners[0][k], corners[1][k]);
+    }
+    var plate = try helpers.boxAt(tol, lo, hi);
+    errdefer plate.deinit();
+    var points: [END_HULL.len]Vec3 = undefined;
+    for (END_HULL, &points) |p, *q| q.* = tieMove(.{ p[0], p[1] + shift, p[2] }, quarter, mirrored);
+    const hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    return .{ plate, hull };
+}
+
+test "degeneracy: a hull's edge across a plate's end, its face leaving the end toward the plate's inside, is decided either way round" {
+    // The ReleaseSafe session's find on ff515852 (df): the hull's edge lay on the plate's
+    // end over the plate's thickness (3 tolerances), and its face along the edge left the
+    // end 17.5° off it toward the plate's inside, 1.8e-5 behind the end at most before it
+    // ran out under the plate. The piece's middle was clear of the end's boundary, and the
+    // face read inside the plate behind it though every point of it lay outside: its seams
+    // disagreed with the hull's other faces' (`unclassified`). The side is read where the
+    // face has left the piece past the tolerance while over the end
+    var solids = try endSolids(3, 2e-3, 0, false);
+    defer for (&solids) |*body| body.deinit();
+    try expectDecidedEitherWay(&solids[0], &solids[1]);
+}
+
+test "degeneracy: hulls' edges across plates' ends of several thicknesses, turned and mirrored, are decided either way round" {
+    for (END_THICKNESSES) |thickness| for (END_SHIFTS) |shift| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("{d} tolerances thick, the edge {e} past y = 2, {d} quarter turns, mirrored {}\n", .{ thickness, shift, quarter, mirrored });
+        var solids = try endSolids(thickness, shift, quarter, mirrored);
+        defer for (&solids) |*body| body.deinit();
+        try expectDecidedEitherWay(&solids[0], &solids[1]);
     };
 }

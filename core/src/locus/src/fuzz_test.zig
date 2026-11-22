@@ -2410,6 +2410,14 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // places in place and one to rounding moved far, a sliver made in place only, 27
         // vertices against 26 (planar_faces.Along: across within the angle, one place)
         "solids 1 6 1 0 0 4 0 2 2 2 2 1 2 1 2 3 0 0 1 4 3 3 10 12 2 1 0 9 1 3 3 0 3 4 0 2 3 0 3 4 0 4 0 3 7 1 -2 -2 13 0 3 5 2",
+        // The local ReleaseSafe session on ff515852 (2026-11-22, locus.5, df): a plate 3
+        // tolerances thick less a hull whose edge crossed the plate's end over its
+        // thickness, the hull's face along it leaving the end 17.5° off it toward the plate's
+        // inside, within the tolerance of the end until it ran out under the plate; the
+        // section piece's middle clear of the end's boundary read the face inside, its
+        // seams against the hull's other faces' (classify.departure: the side read where the
+        // face has left the piece past the tolerance while over the face)
+        "solids 3 0 5 2 1 4 2 2 4 2 1 4 1 -1 10 3 4 3 1 1 4 2 3 4 4 3 2 3 4 3 2 4 4 1 1 5 3 1 0 1 4 4 3 4 1 4 0 3 0 4 1 2 2 0 13 0 11 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

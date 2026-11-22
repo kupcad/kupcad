@@ -518,10 +518,33 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, f
             if (@abs(across) <= SIDE_ROUNDING) return null;
             const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
             const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
-            const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, try seams.edgesOf(allocator, paves, other, g, diag), diag) == .inside;
+            const edges = try seams.edgesOf(allocator, paves, other, g, diag);
+            const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, edges, diag) == .inside and
+                try in_face.placeWithin(paves.decide, body, g, departure(body, g, n_g, middle, into, across, paves.tol.xsect + gap), gap, edges, diag) == .inside;
             return .{ .class = faceSide(paves, fragments, i, body, g, n_g, normal, across), .clear = clear };
         },
     }
+}
+
+/// Where fragment `i`, leaving a piece of its section with face `g` (outward normal
+/// `n_g`) at `middle` along `into` (`across` = `into`·`n_g`), has gone `reach` behind or
+/// in front of `g`'s plane, put back on the plane: the foot of the point the fragment's
+/// side is read at. The turn is the side only where the fragment leaves the piece that
+/// far while over `g`; a face the fragment runs off before it is past the tolerance of
+/// `g` bounds nothing there beyond the tolerance, and the fragment's side is another's to
+/// show. OCCT's `IsInternalFace` reads a split face's state at a point of the face
+/// offset from the section edge past the tolerance (`BOPTools_AlgoTools3D::PointNearEdge`).
+/// A hull's edge across a plate's end, the plate 3 tolerances thick, lay on the end over
+/// the plate's thickness, and the hull's face along it left the end 17.5° off it toward the
+/// plate's inside: 1.8e-5 behind the end at most before it ran out under the plate's bottom,
+/// within the tolerance of the end all the while. The piece's middle was 3e-5 from the
+/// end's top and bottom, clear of them, and the face read inside the plate though every
+/// point of it lay outside; its seams disagreed with the hull's other faces'
+/// (`unclassified`; the ReleaseSafe session on ff515852, df, 2026-11-22).
+fn departure(body: *const Body, g: types.FaceIndex, n_g: Vec3, middle: Vec3, into: Vec3, across: f64, reach: f64) Vec3 {
+    const q = vec.addScaled(middle, into, reach / @abs(across));
+    const origin = planar_faces.frameOf(body, g).?.origin;
+    return vec.addScaled(q, n_g, -vec.dot(vec.sub(q, origin), n_g));
 }
 
 /// The side of face `g` of `body` (outward normal `n_g`) fragment `i` (of a face of normal
