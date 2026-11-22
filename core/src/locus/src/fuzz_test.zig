@@ -2344,6 +2344,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // piece of the edge on the face a spur of its fragment, whose two runs read it
         // inside and outside (`unclassified`; classify.bySeam: a spur decides nothing)
         "solids 1 4 2 4 0 3 3 3 0 4 0 0 2 1 1 3 0 1 -2 15 3 3 1 8 1 2 2 1 0 3 1 1 1 4 4 3 3 0 2 3 2 4 3 4 2 1 1 4 1 3 12 13 12 13 0",
+        // The cc fix's locus 100K run (2026-11-22, cf): a sheet of three rings, two arcs
+        // leaving (0, 1) curving the same way, each to a point of the line from (0, 1) to
+        // (3, 3), each one chord along that line; the region between them and the line,
+        // extruded 3, had a cap of three points of one line, meshed as one triangle of no
+        // area (tessellate.foldsBack: the fold pruned as a spike, the arcs refined)
+        "chain 3 8 0 1 2 5 0 1 3 3 4 3 3 5 5 2 2 0 2 1 0 0 4 2 2 3 4 2 8 2 6 1 5 4 6 1 5 4 4 6 0 4 5 0 4 4 1 0 1 1 3 0 3 1 1 0 4 3 4 4 0 5 1 4 3 0 0 1 1 1 0 3 4 1 2 1 1 3 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

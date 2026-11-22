@@ -41,6 +41,7 @@ const edges_mod = @import("edges.zig");
 const triangulate = @import("triangulate.zig");
 const chords = @import("chords.zig");
 const overlap = @import("../query/overlap.zig");
+const canonical = @import("../geometry/canonical.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -289,9 +290,10 @@ const Builder = struct {
                 }
             }
             // A lens thinner than its chords (a line and a slight arc between two
-            // vertices, the arc's polyline fallen onto the line) is a spike of no area in
-            // the polygon: pruned, its area within the chords' error. A loop that is all
-            // spike at this resolution is left out
+            // vertices, the arc's polyline fallen onto the line; two arcs from one vertex
+            // to points of one line, their chords fallen onto it) is a spike of no area in
+            // the polygon: pruned, its area within the chords' error, and the face's arcs
+            // refined. A loop that is all spike at this resolution is left out
             if (pruneSpikes(&self.ring_uv, &self.ring_id, ring_start)) self.spiked = true;
             if (self.ring_uv.items.len - ring_start < 3) {
                 if (self.ring_uv.items.len > ring_start) self.spiked = true;
@@ -709,37 +711,64 @@ fn segmentDistanceSq(a: Vec2, b: Vec2, p: Vec2) f64 {
     return vec.distanceSq2(p, vec.addScaled2(a, ab, t));
 }
 
-/// Removes every spike from the ring at `start`: a point whose neighbours are one mesh
-/// vertex goes with the step back, again until none is left (a spike of several steps
-/// shrinks from its tip). Whether any was.
+/// Removes every spike from the ring at `start`, a point where the ring turns back on
+/// itself: one whose neighbours are one mesh vertex goes with the step back; one whose
+/// neighbours lie along one ray from it to rounding (`foldsBack`) goes alone, the ring
+/// running on from the one neighbour to the other along that ray. Again until none is
+/// left (a spike of several steps shrinks from its tip). Whether any was.
 fn pruneSpikes(ring_uv: *std.ArrayList(Vec2), ring_id: *std.ArrayList(u32), start: usize) bool {
     var any = false;
     var pruned = true;
     while (pruned) {
         pruned = false;
         const ids = ring_id.items[start..];
+        const uvs = ring_uv.items[start..];
         const n = ids.len;
         if (n < 3) return any;
+        var scale: f64 = 0;
+        for (uvs) |p| scale = @max(scale, @max(@abs(p[0]), @abs(p[1])));
         var i: usize = 0;
         while (i < n) : (i += 1) {
-            const before = ids[(i + n - 1) % n];
-            const after = ids[(i + 1) % n];
-            if (before != after) continue;
-            // Drop the tip `i` and the step back to `before`: the later index first
+            const before = (i + n - 1) % n;
+            const after = (i + 1) % n;
             const tip = start + i;
-            const back = start + (i + 1) % n;
-            const hi = @max(tip, back);
-            const lo = @min(tip, back);
-            _ = ring_uv.orderedRemove(hi);
-            _ = ring_id.orderedRemove(hi);
-            _ = ring_uv.orderedRemove(lo);
-            _ = ring_id.orderedRemove(lo);
+            if (ids[before] != ids[after]) {
+                if (!foldsBack(uvs[before], uvs[i], uvs[after], scale)) continue;
+                _ = ring_uv.orderedRemove(tip);
+                _ = ring_id.orderedRemove(tip);
+            } else {
+                // Drop the tip `i` and the step back to `before`: the later index first
+                const back = start + after;
+                const hi = @max(tip, back);
+                const lo = @min(tip, back);
+                _ = ring_uv.orderedRemove(hi);
+                _ = ring_id.orderedRemove(hi);
+                _ = ring_uv.orderedRemove(lo);
+                _ = ring_id.orderedRemove(lo);
+            }
             pruned = true;
             any = true;
             break;
         }
     }
     return any;
+}
+
+/// Whether a ring turns back on itself at `tip`, from `before` to `after`: both lie on
+/// one side of it, the nearer within rounding (D27's band at the ring's coordinates,
+/// `scale`) of the line from the tip through the farther. A lens thinner than its chords
+/// with two different ends: the chords of two arcs leaving one vertex, each to a point
+/// of one line through it, fallen onto that line (a sheet's region between two such arcs
+/// and the line, extruded: its cap's polygon three points of one line, meshed as one
+/// triangle of no area, the 2D chain fuzzer's find cf, 2026-11-22).
+fn foldsBack(before: Vec2, tip: Vec2, after: Vec2, scale: f64) bool {
+    const u = vec.sub2(before, tip);
+    const v = vec.sub2(after, tip);
+    if (!(vec.dot2(u, v) > 0)) return false;
+    const far = if (vec.length2(u) >= vec.length2(v)) u else v;
+    const near = if (vec.length2(u) >= vec.length2(v)) v else u;
+    const off = @abs(vec.cross2(far, near)) / vec.length2(far);
+    return off <= canonical.Comparison.distance(off, 0, scale).band;
 }
 
 fn corrupt(diag: *Diagnostics) Error {

@@ -44,6 +44,29 @@ const WedgePoint = struct { p: Vec2, bulge: ?f64 = null, ccw: bool = false };
 const LUNE_ANGLES = [_]f64{ 1.5, 3, 7.1, 15 };
 const LUNE_RADII = [_]f64{ 2.5, 2 };
 const LUNE_SQUARE = [2]Vec2{ .{ -6, -6 }, .{ 6, 6 } };
+/// The 2D chain fuzzer's sheet of 2026-11-22 (cf), its log's `c` a clockwise arc. Two
+/// arcs leave (0, 1), curving the same way, each to a point of the first ring's line from
+/// (0, 1) to (3, 3) where another edge crosses it; the even-odd sheet keeps the region
+/// between the two arcs and that line, and each arc is one chord, along the line.
+const FOLD_RINGS = [_][]const WedgePoint{
+    &.{ .{ .p = .{ 0, 1 } }, .{ .p = .{ 2, 5 }, .bulge = -1 }, .{ .p = .{ 0, 1 } }, .{ .p = .{ 3, 3 } }, .{ .p = .{ 4, 3 } }, .{ .p = .{ 3, 5 } }, .{ .p = .{ 5, 2 } }, .{ .p = .{ 2, 0 } } },
+    &.{ .{ .p = .{ 2, 6 } }, .{ .p = .{ 1, 5 }, .bulge = -1, .ccw = true }, .{ .p = .{ 4, 6 }, .bulge = 1 }, .{ .p = .{ 1, 5 } }, .{ .p = .{ 4, 4 }, .bulge = -0.5 }, .{ .p = .{ 6, 0 } }, .{ .p = .{ 4, 5 } }, .{ .p = .{ 0, 4 } } },
+    &.{ .{ .p = .{ 0, 5 }, .bulge = -0.5 }, .{ .p = .{ 1, 4 } }, .{ .p = .{ 3, 0 } }, .{ .p = .{ 0, 1 }, .bulge = 0.5, .ccw = true } },
+};
+/// The most rings, and points a ring, of the sheets drawn from `WedgePoint`s.
+const MAX_WEDGE_RINGS = 3;
+const MAX_WEDGE_POINTS = 8;
+/// The region between two arcs leaving one vertex, curving the same way, each to a point
+/// of one line through it, and that line (the configuration of find cf): the line's
+/// directions from the vertex at the origin, the centres' height over the line, and the
+/// two arcs' half-chords along it, the outer's first. Flat enough that an arc is one
+/// chord at some resolution, and then the two chords and the line are one line.
+const FOLD_DIRECTIONS = [_]Vec2{ .{ 3, 2 }, .{ 1, 0 }, .{ 5, 1 } };
+const FOLD_HEIGHTS = [_]f64{ 5, 10, 20 };
+const FOLD_REACHES = [_][2]f64{ .{ 1, 0.5 }, .{ 1.5, 0.25 } };
+/// The resolutions the sheets of these tests are meshed at: the default, and grids of 4,
+/// 8 and 64 segments a circle (the coarse ones leave a flat arc one chord).
+const MESH_RESOLUTIONS = [_]tolerance.Resolution{ .{}, .{ .segments = 4 }, .{ .segments = 8 }, .{ .segments = 64 } };
 
 fn meshOf(body: *const Body, resolution: tolerance.Resolution) !Mesh {
     var diag = Diagnostics.init(testing.allocator);
@@ -675,23 +698,47 @@ fn wedgeMove(p: Vec2, quarter: usize, mirrored: bool) Vec2 {
     return if (mirrored) .{ -q[0], q[1] } else q;
 }
 
-/// The sheet and its extrusion by 1 each meshed with every face triangulated at three
-/// resolutions, the extrusion's mesh closed with no singular vertex (each solid of regions
-/// touching at a corner its own vertices there).
+/// The sheet of `rings`, each point leaving by the arc of its bulge and sense or by a line,
+/// turned `quarter` quarter turns and mirrored when `mirrored` (`wedgeMove`).
+fn wedgeSheet(rings: []const []const WedgePoint, quarter: usize, mirrored: bool, diag: *Diagnostics) !Body {
+    var storage: [MAX_WEDGE_RINGS][MAX_WEDGE_POINTS]primitives.OutlineEdge = undefined;
+    var outlines: [MAX_WEDGE_RINGS][]const primitives.OutlineEdge = undefined;
+    for (rings, 0..) |ring, r| {
+        for (ring, 0..) |point, k| {
+            const a = point.p;
+            const b = ring[(k + 1) % ring.len].p;
+            storage[r][k] = .{ .a = wedgeMove(a, quarter, mirrored), .b = wedgeMove(b, quarter, mirrored) };
+            if (point.bulge) |bulge| {
+                const half = vec.scale2(vec.sub2(b, a), 0.5);
+                const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
+                storage[r][k].arc = .{ .c = wedgeMove(c, quarter, mirrored), .r = vec.distance2(a, c), .ccw = point.ccw != mirrored };
+            }
+        }
+        outlines[r] = storage[r][0..ring.len];
+    }
+    return primitives.outlines(testing.allocator, tol, outlines[0..rings.len], diag);
+}
+
+/// The sheet and its extrusion by 1 each meshed with every face triangulated at
+/// `MESH_RESOLUTIONS`, every triangle of some area, the extrusion's mesh closed with no
+/// singular vertex (each solid of regions touching at a corner its own vertices there).
 fn expectSheetAndSolidMeshed(sheet: *const Body) !void {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    for ([_]tolerance.Resolution{ .{}, .{ .segments = 8 }, .{ .segments = 64 } }) |resolution| {
+    for (MESH_RESOLUTIONS) |resolution| {
+        errdefer std.debug.print("resolution {any}\n", .{resolution});
         var flat = try meshOf(sheet, resolution);
         defer flat.deinit(testing.allocator);
         for (flat.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        try expectNoDegenerate(flat);
         var solid = try sweep.extrude(testing.allocator, sheet, .{ 0, 0, 1 }, .{}, &diag);
         defer solid.deinit();
         var mesh = try meshOf(&solid, resolution);
         defer mesh.deinit(testing.allocator);
         for (mesh.faces) |range| try testing.expectEqual(tessellate.Status.ok, range.status);
+        try expectNoDegenerate(mesh);
         const verdict = try validate.grade(testing.allocator, mesh.triangles, mesh.positions.len);
-        errdefer std.debug.print("resolution {any}: mesh {s}, {d} singular\n", .{ resolution, verdict.grade.condition.word(), verdict.grade.singular_vertices });
+        errdefer std.debug.print("mesh {s}, {d} singular\n", .{ verdict.grade.condition.word(), verdict.grade.singular_vertices });
         try testing.expect(verdict.isManifoldClosed());
     }
 }
@@ -706,22 +753,7 @@ test "tessellate: two arcs leaving a vertex 7° apart, curving the same way, are
     defer diag.deinit();
     for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
         errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ quarter, mirrored });
-        var storage: [WEDGE_RINGS.len][6]primitives.OutlineEdge = undefined;
-        var rings: [WEDGE_RINGS.len][]const primitives.OutlineEdge = undefined;
-        for (WEDGE_RINGS, 0..) |ring, r| {
-            for (ring, 0..) |point, k| {
-                const a = point.p;
-                const b = ring[(k + 1) % ring.len].p;
-                storage[r][k] = .{ .a = wedgeMove(a, quarter, mirrored), .b = wedgeMove(b, quarter, mirrored) };
-                if (point.bulge) |bulge| {
-                    const half = vec.scale2(vec.sub2(b, a), 0.5);
-                    const c = vec.add2(vec.add2(a, half), vec.scale2(vec.perp2(half), bulge));
-                    storage[r][k].arc = .{ .c = wedgeMove(c, quarter, mirrored), .r = vec.distance2(a, c), .ccw = point.ccw != mirrored };
-                }
-            }
-            rings[r] = storage[r][0..ring.len];
-        }
-        var sheet = try primitives.outlines(testing.allocator, tol, &rings, &diag);
+        var sheet = try wedgeSheet(&WEDGE_RINGS, quarter, mirrored, &diag);
         defer sheet.deinit();
         try expectSheetAndSolidMeshed(&sheet);
     };
@@ -760,6 +792,58 @@ test "tessellate: the lune of two circles through a vertex, their tangents there
         };
         const with_square = [_][]const primitives.OutlineEdge{ &square, &lune };
         const alone = [_][]const primitives.OutlineEdge{&lune};
+        var sheet = try primitives.outlines(testing.allocator, tol, if (as_hole) &with_square else &alone, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+test "tessellate: two arcs from one vertex to points of one line, their chords fallen onto it, are refined until the region between them has area, its extrusion closed, in every quarter turn, mirrored or not (fuzz find cf)" {
+    // The 2D chain fuzzer's find (2026-11-22, cf): each arc one chord along the line, the
+    // region's polygon three points of one line, its one triangle of no area; neither
+    // neighbour of the fold one mesh vertex, so the spike went unpruned and its arcs
+    // unrefined
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ quarter, mirrored });
+        var sheet = try wedgeSheet(&FOLD_RINGS, quarter, mirrored, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+test "tessellate: the region between two arcs leaving one vertex to points of one line, and the line, as a sheet or a hole, is meshed with area and its extrusion closed in every quarter turn, mirrored or not" {
+    // The configuration of the find above: both centres over the line, the outer arc to the
+    // farther point; where each arc is one chord, the region's chords are the line's
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (FOLD_DIRECTIONS) |direction| for (FOLD_HEIGHTS) |height| for (FOLD_REACHES) |reach| for ([_]bool{ false, true }) |as_hole| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("direction {any}, height {d}, reach {any}, as a hole {}, quarter turns {d}, mirrored {}\n", .{ direction, height, reach, as_hole, quarter, mirrored });
+        const d = vec.normalized2(direction).?;
+        const n = vec.perp2(d);
+        const v = wedgeMove(.{ 0, 0 }, quarter, mirrored);
+        const outer_end = wedgeMove(vec.scale2(d, 2 * reach[0]), quarter, mirrored);
+        const inner_end = wedgeMove(vec.scale2(d, 2 * reach[1]), quarter, mirrored);
+        const outer_centre = vec.add2(vec.scale2(d, reach[0]), vec.scale2(n, height));
+        const inner_centre = vec.add2(vec.scale2(d, reach[1]), vec.scale2(n, height));
+        // Out along the outer arc, back along the line to the inner arc's end, home along
+        // the inner arc: the region on the left, below the line
+        var region = [_]primitives.OutlineEdge{
+            .{ .a = v, .b = outer_end, .arc = .{ .c = wedgeMove(outer_centre, quarter, mirrored), .r = vec.length2(outer_centre), .ccw = !mirrored } },
+            .{ .a = outer_end, .b = inner_end },
+            .{ .a = inner_end, .b = v, .arc = .{ .c = wedgeMove(inner_centre, quarter, mirrored), .r = vec.length2(inner_centre), .ccw = mirrored } },
+        };
+        const lo = LUNE_SQUARE[0];
+        const hi = LUNE_SQUARE[1];
+        const square = [_]primitives.OutlineEdge{
+            .{ .a = lo, .b = .{ hi[0], lo[1] } },
+            .{ .a = .{ hi[0], lo[1] }, .b = hi },
+            .{ .a = hi, .b = .{ lo[0], hi[1] } },
+            .{ .a = .{ lo[0], hi[1] }, .b = lo },
+        };
+        const with_square = [_][]const primitives.OutlineEdge{ &square, &region };
+        const alone = [_][]const primitives.OutlineEdge{&region};
         var sheet = try primitives.outlines(testing.allocator, tol, if (as_hole) &with_square else &alone, &diag);
         defer sheet.deinit();
         try expectSheetAndSolidMeshed(&sheet);

@@ -1565,7 +1565,11 @@ opposite sides one chain or not) and counts degenerate triangles; `CHECK_EDGE_PA
 `closed` with no singular vertex and nothing degenerate. (A lens thinner than its chords,
 pruned from a ring as a spike, refines the face's arcs like a crossing does, since on a
 solid its two sides would collapse onto one quad; `FaceRange.spikes_pruned` marks a face
-still pruned past the doubling limit.) The edge findings name their
+still pruned past the doubling limit. A spike is where the ring turns back on itself: its
+neighbours one mesh vertex, or two along one ray from it to rounding, D27's band at the
+ring's coordinates, `tessellate.foldsBack`: two arcs from one vertex to points of one line
+through it, each one chord, fell onto the line, and the region between them had a polygon
+of three points of one line and one triangle of no area, find cf, 2026-11-22.) The edge findings name their
 condition (`edge_coedge_count`: irregular; `partner_same_sense`: regular, not oriented;
 `open_edge_in_closed_shell`: oriented, not closed).
 
