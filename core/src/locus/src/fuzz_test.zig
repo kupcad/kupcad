@@ -2356,6 +2356,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // that lay within the tolerance of the side, read by its turn inside the box,
         // though every corner of it lay outside (`unclassified`; classify.cornersSide)
         "solids 1 8 3 3 3 2 1 1 1 0 3 0 3 3 2 2 1 1 0 0 4 4 1 4 1 3 2 0 0 2 1 -2 5 5 9 3 1 1 7 1 3 0 4 3 1 0 4 0 2 4 3 1 4 4 4 1 0 4 4 0 0 3 8 2 2 7 8 7 0 3 0 2 4 2 4 0 4 1 2 1 0 4 14 2",
+        // The cf fix's locus 100K run (25411cf5, 2026-11-22, cl): ((a hull ∪ a hull) less a
+        // hull) with a hull whose top lies 8.2e-5 under a fin's tip; the fin's faces over
+        // the top two fragments of one triangle, both kept by the union, a fin of no volume
+        // whose edges did not pair (`edge_coedge_count`; refuseLyingOnOwn: refused
+        // `below_feature_size`, the fragments over the same pieces)
+        "solids 1 6 4 1 2 2 4 0 0 0 0 4 1 0 3 0 0 2 1 4 3 2 0 12 5 16 3 1 1 6 3 4 3 2 2 4 1 4 4 4 4 2 4 0 2 2 1 2 3 0 0 0 2 -1 12 0 16 0 1 1 7 3 4 3 2 1 0 1 3 0 3 2 0 2 3 0 1 0 3 4 1 4 0 1 1 3 5 -1 0 14 1 1 1 6 3 3 2 0 0 2 4 3 0 0 0 0 3 1 2 0 3 0 2 1 5 13 3 10 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -792,7 +792,7 @@ fn twins(allocator: std.mem.Allocator, fragments: *const Fragments, pieces: []co
 }
 
 /// Two fragments' sorted pieces in lexicographic order.
-fn comparePieces(a: []const [2]u32, b: []const [2]u32) std.math.Order {
+pub fn comparePieces(a: []const [2]u32, b: []const [2]u32) std.math.Order {
     for (a[0..@min(a.len, b.len)], b[0..@min(a.len, b.len)]) |x, y| {
         if (x[0] != y[0]) return std.math.order(x[0], y[0]);
         if (x[1] != y[1]) return std.math.order(x[1], y[1]);
@@ -802,7 +802,7 @@ fn comparePieces(a: []const [2]u32, b: []const [2]u32) std.math.Order {
 
 /// Fragment `i`'s pieces between merged vertices, each as its two vertices (the lesser
 /// first), sorted, appended to `out`: its region by its edges, whichever way it runs.
-fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: usize, out: *std.ArrayList([2]u32)) Error!void {
+pub fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: usize, out: *std.ArrayList([2]u32)) Error!void {
     const start = out.items.len;
     for (fragments.loopsOf(i)) |loop| {
         const vertices = fragments.loopVertices(loop);

@@ -796,14 +796,31 @@ fn pinchedAtPoint(paves: *const pave.Paves, fragments: *const imprint.Fragments,
 /// tolerance of each other, cut off the corner's triangle of the bottom, 0.3 across,
 /// wholly within reach of the top over it; the union kept both and the overlap rules
 /// found its faces on each other (the 10K session on b1053969). A thin band left whole
-/// lies in no other face's plane, its faces reaching past it (an operand's own edge).
+/// lies in no other face's plane, its faces reaching past it (an operand's own edge). Two
+/// kept fragments of one operand over the same pieces between merged vertices are one
+/// region of it, as a fragment and its twin of the other operand are (`classify.twins`):
+/// the paves closed a feature of the operand there below the tolerance, refused alike,
+/// with no point of either needed beyond the reach of the other's boundary. A hull's fin
+/// standing 8.2e-5 over a box's top, its two faces meeting the top along one section
+/// within the tolerance, left two fragments of one triangle facing apart, wholly within
+/// reach of their faces' boundaries; the union kept both, a fin of no volume, and its
+/// edges did not pair (`edge_coedge_count`; the ReleaseSafe fuzz on 25411cf5, cl,
+/// 2026-11-22).
 fn refuseLyingOnOwn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, keeps: []const select.Keep, diag: *Diagnostics) Error!void {
     var kept: std.ArrayList(u32) = .empty;
     defer kept.deinit(allocator);
     var boxes: std.ArrayList(Box3) = .empty;
     defer boxes.deinit(allocator);
+    // Each kept fragment's pieces, sorted, once (`ranges[k]` into `pieces` for `kept[k]`)
+    var pieces: std.ArrayList([2]u32) = .empty;
+    defer pieces.deinit(allocator);
+    var ranges: std.ArrayList([2]u32) = .empty;
+    defer ranges.deinit(allocator);
     for (fragments.items.items, keeps, 0..) |_, keep, i| {
         if (keep == .drop) continue;
+        const start: u32 = @intCast(pieces.items.len);
+        try classify.piecesOf(allocator, fragments, i, &pieces);
+        try ranges.append(allocator, .{ start, @intCast(pieces.items.len) });
         var box = Box3.empty;
         var gap: f64 = 0;
         for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
@@ -841,6 +858,9 @@ fn refuseLyingOnOwn(allocator: std.mem.Allocator, paves: *const pave.Paves, frag
         const fi = fragments.items.items[i];
         const fj = fragments.items.items[j];
         if (fi.operand != fj.operand or fi.face == fj.face) continue;
+        const pi = pieces.items[ranges.items[pair[0]][0]..ranges.items[pair[0]][1]];
+        const pj = pieces.items[ranges.items[pair[1]][0]..ranges.items[pair[1]][1]];
+        if (classify.comparePieces(pi, pj) == .eq) return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, fi.face), .label = if (fi.operand == 0) "two pieces of faces of the first operand over the same edges, a feature of it the cut closed below the tolerance," else "two pieces of faces of the second operand over the same edges, a feature of it the cut closed below the tolerance,", .threshold = paves.tol.xsect });
         const body = paves.operands[fi.operand];
         const n_i = in_face.outwardNormal(body, types.FaceIndex.of(fi.face), .{ 0, 0 });
         const n_j = in_face.outwardNormal(body, types.FaceIndex.of(fj.face), .{ 0, 0 });

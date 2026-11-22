@@ -1053,6 +1053,11 @@ importing only those before it, which the layering test holds):**
   corner at its reach to rounding refused (D27; refused at the first such corner, a
   hull's side piece with another corner eight tolerances off was refused or made by
   where its loop began, which the operands' order changes: the sessions on ab354a0a, bh).
+  Two kept fragments of one operand over the same pieces between merged vertices are one
+  region of it, as twins of the two operands are, and are refused alike with no point of
+  either needed clear of the other's boundary (a hull's fin cut 8.2e-5 under its tip, its
+  two faces one triangle over the cut, wholly within reach of their faces' boundaries:
+  the union kept both, a fin of no volume, `edge_coedge_count`; cl, 2026-11-22).
 - `pipeline.zig`: the kept fragments sewn (one vertex per merged vertex, a flipped
   fragment's loops reversed, coplanar fragments on one interned plane record); an edge
   more than two fragments use, where solids touch along it, is paired by the wedges of

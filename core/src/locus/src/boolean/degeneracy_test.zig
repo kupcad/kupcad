@@ -520,6 +520,23 @@ const OFFSET_TURNS = [_]f64{ 1e-9, -1e-9, 1e-7, -1e-7 };
 /// How far `OFFSET_HULL_B`'s face in y = 4 is nudged out past the box's side: the find's,
 /// the tolerance, and a hair either way of it.
 const OFFSET_LIFTS = [_]f64{ 2e-5, 1.9999e-5, 2.00002e-5, 2.0001e-5 };
+/// The solids of the tests of a hull's fin cut a hair under its tip (the ReleaseSafe fuzz
+/// on 25411cf5, cl, as the solids fuzzer drew it): (`FIN_HULL_A` ∪ `FIN_HULL_B`) less
+/// `FIN_HULL_C`, turned a half turn about y, a fin of the first hull standing over
+/// `FIN_HULL_D`'s top, nudged `FIN_NUDGE` and `FIN_DROPS` in z: the find's 5e-6, its fin's
+/// tip 8.2e-5 over that top, and a quarter of the tolerance either way.
+const FIN_HULL_A = [_]Vec3{ .{ 4, 1, 2 }, .{ 2, 4, 0 }, .{ 0, 0, 0 }, .{ 4, 1, 0 }, .{ 3, 0, 0 }, .{ 2, 1, 4 } };
+const FIN_HULL_A_NUDGE: Vec3 = .{ 0, -2.000000005684342e-5, 1e-5 };
+const FIN_HULL_B = [_]Vec3{ .{ 3, 4, 3 }, .{ 2, 2, 4 }, .{ 1, 4, 4 }, .{ 4, 4, 2 }, .{ 4, 0, 2 }, .{ 2, 1, 2 } };
+const FIN_HULL_B_SCALE: Vec3 = .{ 0.5, 0.5, 2 };
+const FIN_HULL_B_MOVE: Vec3 = .{ -0.5, 0, 0 };
+const FIN_HULL_B_NUDGE: Vec3 = .{ 0, -2.000000011368684e-5, 0 };
+const FIN_HULL_C = [_]Vec3{ .{ 3, 4, 3 }, .{ 2, 1, 0 }, .{ 1, 3, 0 }, .{ 3, 2, 0 }, .{ 2, 3, 0 }, .{ 1, 0, 3 }, .{ 4, 1, 4 } };
+const FIN_HULL_C_MOVE: Vec3 = .{ 0, -0.5, 0 };
+const FIN_HULL_C_NUDGE: Vec3 = .{ 1e-5, 0, 0 };
+const FIN_HULL_D = [_]Vec3{ .{ 3, 3, 2 }, .{ 0, 0, 2 }, .{ 4, 3, 0 }, .{ 0, 0, 0 }, .{ 3, 1, 2 }, .{ 0, 3, 0 } };
+const FIN_NUDGE: Vec3 = .{ 1e-5, 2e-3, 0 };
+const FIN_DROPS = [_]f64{ 5e-6, 0, 2.5e-6, 7.5e-6, 1e-5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -5140,6 +5157,27 @@ fn offsetSolids(lift: f64, turn: f64, joined: bool, move: @TypeOf(SLIVER_TURNS[0
     return .{ hull, try sliverMoved(&box_drawn, move) };
 }
 
+/// The solids of the tests of a hull's fin cut a hair under its tip: (`FIN_HULL_A` ∪
+/// `FIN_HULL_B`) less `FIN_HULL_C`, and `FIN_HULL_D` nudged `drop` more in z; both moved
+/// by `move`.
+fn finSolids(drop: f64, move: @TypeOf(SLIVER_TURNS[0])) ![2]Body {
+    var a = try fuzzHullPlaced(&FIN_HULL_A, vec.Z3, 0, null, vec.ZERO3, FIN_HULL_A_NUDGE);
+    defer a.deinit();
+    var b = try fuzzHullPlaced(&FIN_HULL_B, vec.Z3, 0, FIN_HULL_B_SCALE, FIN_HULL_B_MOVE, FIN_HULL_B_NUDGE);
+    defer b.deinit();
+    var c = try fuzzHullPlaced(&FIN_HULL_C, vec.Y3, std.math.pi, null, FIN_HULL_C_MOVE, FIN_HULL_C_NUDGE);
+    defer c.deinit();
+    var joined = try helpers.sound(&a, &b, .@"union");
+    defer joined.deinit();
+    var finned = try helpers.sound(&joined, &c, .difference);
+    defer finned.deinit();
+    var d = try fuzzHullPlaced(&FIN_HULL_D, vec.Z3, 0, null, vec.ZERO3, vec.add(FIN_NUDGE, .{ 0, 0, drop }));
+    defer d.deinit();
+    var fin = try sliverMoved(&finned, move);
+    errdefer fin.deinit();
+    return .{ fin, try sliverMoved(&d, move) };
+}
+
 test "degeneracy: a face a hair off parallel to a box's side, the tolerance outside it, is decided outside, not by its turn" {
     // The first ReleaseSafe session's find on a1444371 (2026-11-21, locus, ci), as the
     // solids fuzzer drew it: two hulls joined, the second turned 1e-9 rad, its face in
@@ -5166,5 +5204,41 @@ test "degeneracy: a face a hair off parallel to a box's side about the tolerance
         defer hull.deinit();
         defer box_body.deinit();
         try expectDecidedEitherWay(&hull, &box_body);
+    };
+}
+
+test "degeneracy: a hull's fin cut a hair under its tip, its two faces one region over the cut, is refused, not left unpaired" {
+    // The ReleaseSafe fuzz on 25411cf5 (2026-11-22, locus, cl), as the solids fuzzer drew
+    // it: ((a hull ∪ a hull) less a hull turned a half turn) with a hull whose top lies
+    // 8.2e-5 under the tip of a fin of the first. The fin's two faces meet the top along
+    // one section, within the tolerance of each other, so over the top they are two
+    // fragments of one triangle facing apart, wholly within reach of their faces'
+    // boundaries; the union kept both, a fin of no volume, and its edges did not pair
+    // (`edge_coedge_count`). Over the same pieces, they are one region of the operand,
+    // refused as a feature below the tolerance either way round; the intersection drops
+    // them and is made
+    var fin, var hull = try finSolids(FIN_DROPS[0], SLIVER_TURNS[0]);
+    defer fin.deinit();
+    defer hull.deinit();
+    for ([2][2]*const Body{ .{ &fin, &hull }, .{ &hull, &fin } }) |operands| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, operands[0], operands[1], .@"union", .{}, &diag, null));
+        try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+    }
+    try expectDecidedEitherWay(&fin, &hull);
+}
+
+test "degeneracy: a hull's fin cut about a hair under its tip is decided, however moved" {
+    // Around the find above: the cutting hull a quarter of the tolerance higher and lower
+    // and the find's, the solids in place and turned about skew axes (one shifted far
+    // out); every operation either way round decided, what it makes sound, the union and
+    // the intersection alike. 20 of the 25 left the fin's edges unpaired
+    for (FIN_DROPS) |drop| for (SLIVER_TURNS) |move| {
+        errdefer std.debug.print("dropped {e}, moved {any}\n", .{ drop, move });
+        var fin, var hull = try finSolids(drop, move);
+        defer fin.deinit();
+        defer hull.deinit();
+        try expectDecidedEitherWay(&fin, &hull);
     };
 }
