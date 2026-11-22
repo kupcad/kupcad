@@ -514,13 +514,14 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, f
         .section => |g| {
             if (paves.inOnePlane(1 - other, face, @backingInt(g))) return null;
             const n_g = in_face.outwardNormal(body, g, .{ 0, 0 });
-            const across = vec.dot(into, n_g);
+            const leave = sectionInto(paves, x, y, normal, n_g, into) orelse return null;
+            const across = vec.dot(leave.into, n_g);
             if (@abs(across) <= SIDE_ROUNDING) return null;
             const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
             const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
             const edges = try seams.edgesOf(allocator, paves, other, g, diag);
-            const clear = try in_face.placeWithin(paves.decide, body, g, middle, gap, edges, diag) == .inside and
-                try in_face.placeWithin(paves.decide, body, g, departure(body, g, n_g, middle, into, across, paves.tol.xsect + gap), gap, edges, diag) == .inside;
+            const clear = leave.clear and try in_face.placeWithin(paves.decide, body, g, middle, gap, edges, diag) == .inside and
+                try in_face.placeWithin(paves.decide, body, g, departure(body, g, n_g, middle, leave.into, across, paves.tol.xsect + gap), gap, edges, diag) == .inside;
             return .{ .class = faceSide(paves, fragments, i, body, g, n_g, normal, across), .clear = clear };
         },
     }
@@ -545,6 +546,32 @@ fn departure(body: *const Body, g: types.FaceIndex, n_g: Vec3, middle: Vec3, int
     const q = vec.addScaled(middle, into, reach / @abs(across));
     const origin = planar_faces.frameOf(body, g).?.origin;
     return vec.addScaled(q, n_g, -vec.dot(vec.sub(q, origin), n_g));
+}
+
+/// The way a section piece from merged vertex `x` to `y` leaves into its fragment (of a
+/// face of normal `normal`), against the other's face of normal `n_g`: square to the
+/// faces' own line in the fragment's plane, the way the piece runs along that line, as
+/// OCCT reads a section edge by its curve's tangent, not by the chord between its
+/// vertices (`into`, which faces parallel within the angular tolerance keep: their line
+/// is no direction, `faceSide` reads them by the fragment's corners). Both ends lie within
+/// their reach of both planes, so a piece no longer along the line than its ends reach
+/// across it runs any way the vertices' places put it: its side is not clear, as the paves
+/// could not tell which way along the line it runs (a piece 5e-5 long at a tolerance of
+/// 2e-5, its chord along the other face's normal, read the turn of its noise, outside,
+/// where its fragment's piece along the line beside it read inside: the solids chain
+/// moved whole in the nightly on ff515852, cz; a piece 5.4e-4 long at a tolerance of 2e-4,
+/// 87° off the line, the same in the local session on ff515852, de). Null when the piece
+/// runs across the line to rounding.
+const Leave = struct { into: Vec3, clear: bool };
+
+fn sectionInto(paves: *const Paves, x: u32, y: u32, normal: Vec3, n_g: Vec3, into: Vec3) ?Leave {
+    if (paves.tol.parallel(normal, n_g)) return .{ .into = into, .clear = true };
+    const line = vec.normalized(vec.cross(normal, n_g)) orelse return .{ .into = into, .clear = true };
+    const along = vec.dot(vec.sub(paves.point(y), paves.point(x)), line);
+    if (@abs(along) <= paves.rounding) return null;
+    const way = if (along > 0) line else vec.scale(line, -1);
+    const reaches = incidence.reach(paves.tol, paves.gaps.items[x]) + incidence.reach(paves.tol, paves.gaps.items[y]);
+    return .{ .into = vec.normalized(vec.cross(normal, way)) orelse return null, .clear = @abs(along) > reaches };
 }
 
 /// The side of face `g` of `body` (outward normal `n_g`) fragment `i` (of a face of normal

@@ -1020,7 +1020,11 @@ importing only those before it, which the layering test holds):**
   over an edge internal to the face: a tetrahedron's edge in the plane of a hull's face,
   from the face's edge to the apex 2.83e-5 inside it, its faces along it one above the
   plane and one below within the tolerance, read the fragment inside along one run and
-  outside along the other, cg, 2026-11-22),
+  outside along the other, cg, 2026-11-22; a section piece's way is the faces' own line,
+  as OCCT reads a section edge by its curve, not the chord between its merged vertices,
+  and a piece no longer along that line than its two ends reach across it is not clear:
+  a piece 5e-5 long at a tolerance of 2e-5 ran across the line and read the noise of its
+  vertices' places, cz, de, di, 2026-11-22, `classify.sectionInto`),
   `unclassified` only when no piece decides or two disagree. Since
   2026-11-15 (the M0–M4 review, Leo's order; Hoffmann pp. 86–93, OCCT's builder) the seams
   come first: a fragment with pieces lying clearly on the other operand (along its edges,

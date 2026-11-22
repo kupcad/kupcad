@@ -2435,6 +2435,20 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 4.1e6 long, the face no mesh could hold (offset: a corner whose tangents are
         // opposite within the angular tolerance is a cusp, capped)
         "chain 3 3 4 1 3 3 0 6 2 4 2 7 4 6 6 2 6 1 4 3 3 5 4 1 1 6 4 3 2 2 4 2 4 8 4 1 0 4 3 3 6 4 3 0 4 4 3 5 0 1 4 3 2 4 2 1 0 1 1 2 0 4 2 1 1 10 1 3 3 5 4 2",
+        // The nightly on ff515852 (run 45002725035, locus, cz): (box ∪ wall − hull) ∪ hull,
+        // moved whole; a section piece 5e-5 long at a tolerance of 2e-5 ran across the line
+        // its faces meet along, and the side read from its chord was its vertices' noise,
+        // outside, where the piece beside it read inside (`unclassified`;
+        // classify.sectionInto: the faces' own line, and a piece no longer along it than
+        // its ends reach not clear)
+        "solids 0 1 2 2 4 1 3 1 1 8 3 10 14 3 1 3 1 5 2 3 4 3 1 2 0 1 4 1 0 2 4 2 0 1 1 7 4 4 2 2 0 4 4 4 4 4 4 2 0 3 0 0 4 3 4 1 2 1 2 3 14 6 5 1 2 1 5 0 0 4 1 3 1 0 0 0 4 2 4 0 0 2 3 0 1 0 0 3 6 8 2 0 2 3 2",
+        // The ReleaseSafe session on ff515852 (locus_solids, de): ((plate ∪ plate) − hull) ∩
+        // a plate with a gap at a zone of 1e-4; a section piece 5.4e-4 long, 87° off its
+        // faces' line, read outside (the same)
+        "solids 2 1 4 0 3 0 2 2 2 10 10 7 1 1 4 3 2 2 2 3 0 1 1 4 2 0 1 1 2 0 -2 5 4 0 3 1 8 3 1 0 4 2 0 0 1 4 2 4 0 4 3 4 2 2 0 4 3 1 1 4 3 3 1 6 4 3 6 1 2 3 0 3 1 0 4 1 1 3 2 1 4 3 2 3 0 14 2",
+        // The cx diagnosis's solids run on ff515852 (di): hull ∪ wall, − a wall turned 1e-6,
+        // ∪ hull (the same)
+        "solids 1 6 2 0 0 0 0 2 4 3 3 4 0 0 3 0 0 0 2 4 0 0 2 2 -2 -2 0 2 3 1 3 1 4 3 2 4 3 0 2 2 2 3 1 -1 5 5 12 0 1 3 1 3 4 0 2 1 0 4 0 3 4 0 3 7 -1 9 -2 4 1 1 1 8 1 2 4 0 3 1 1 3 0 1 3 0 4 3 3 2 3 1 2 3 3 2 0 4 3 1 5 5 -2 8 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

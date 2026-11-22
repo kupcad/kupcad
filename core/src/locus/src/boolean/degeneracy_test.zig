@@ -519,6 +519,47 @@ const SLIT_DROPS = [_]f64{ 1.999999999431566e-4, 1.5e-4, 2.5e-4 };
 /// this deep, and its cavity inset this far from the box's other sides.
 const FUZZ_WALL_DEPTH: f64 = 1.5;
 const FUZZ_WALL_INSET: f64 = 0.25;
+/// The solids of the tests of a section piece running across the line two faces meet
+/// along (the nightly on ff515852, cz, and the ReleaseSafe session on ff515852, de, as the
+/// fuzzer drew them). cz: (box ∪ wall − hull) ∪ hull, moved whole.
+const ACROSS_BOX = [2]Vec3{ .{ 1, 2, 1 }, .{ 2, 4, 3 } };
+const ACROSS_BOX_NUDGE: Vec3 = .{ -2e-5, 5e-6, -1.9999999943156583e-5 };
+const ACROSS_WALL_AT: Vec3 = .{ 2, 3, 0 };
+const ACROSS_WALL_LO: Vec3 = .{ 3, 1, 1 };
+const ACROSS_WALL_HI: Vec3 = .{ 4, 2, 4 };
+const ACROSS_WALL_XSECTS: f64 = 3;
+const ACROSS_WALL_MOVE: Vec3 = .{ 0, 1, 0 };
+const ACROSS_WALL_NUDGE: Vec3 = .{ 0, 0, -5e-6 };
+const ACROSS_CUT = [_]Vec3{ .{ 4, 4, 2 }, .{ 2, 0, 4 }, .{ 4, 4, 4 }, .{ 4, 4, 2 }, .{ 0, 3, 0 }, .{ 0, 4, 3 }, .{ 4, 1, 2 } };
+const ACROSS_CUT_NUDGE: Vec3 = .{ 5e-6, -2e-3, -1e-5 };
+const ACROSS_JOIN = [_]Vec3{ .{ 0, 0, 4 }, .{ 1, 3, 1 }, .{ 0, 0, 0 }, .{ 4, 2, 4 }, .{ 0, 0, 2 } };
+const ACROSS_JOIN_SCALE: Vec3 = .{ 1, 0.5, 0.5 };
+const ACROSS_JOIN_NUDGE: Vec3 = .{ 5e-6, -1e-5, -2e-5 };
+/// The chain moved whole: in place, the find's move, and two of `SLIVER_TURNS`' turns.
+const ACROSS_WHOLE = [_]@TypeOf(SLIVER_TURNS[0]){
+    .{ .axis = vec.Z3, .angle = 0, .shift = vec.ZERO3 },
+    .{ .axis = vec.Z3, .angle = 0.3, .shift = .{ 1e5, -2e5, 3e5 } },
+    .{ .axis = vec.Z3, .angle = 0.3, .shift = vec.ZERO3 },
+    SLIVER_TURNS[1],
+};
+/// de: ((plate ∪ plate) − hull) ∩ a plate with a gap, the first plate and the last at a
+/// zone of 1e-4.
+const SPAN_PLATE = [2]Vec3{ .{ -48, -98, 0 }, .{ 102, 52, 2 } };
+const SPAN_PLATE_ZONE: f64 = 1e-4;
+const SPAN_PLATE_NUDGE: Vec3 = .{ -1.9999999855049283e-4, -1.9999999855049283e-4, 2e-4 };
+const SPAN_STEP = [2]Vec3{ .{ 2, -98, 1 }, .{ 52, -48, 4 } };
+const SPAN_STEP_SCALE: Vec3 = .{ 1, 1, 2 };
+const SPAN_STEP_MOVE: Vec3 = .{ 0, -1, 0 };
+const SPAN_STEP_NUDGE: Vec3 = .{ 0, 0, 1e-4 };
+const SPAN_CUT = [_]Vec3{ .{ 3, 1, 0 }, .{ 4, 2, 0 }, .{ 0, 1, 4 }, .{ 2, 4, 0 }, .{ 4, 3, 4 }, .{ 2, 2, 0 }, .{ 4, 3, 1 }, .{ 1, 4, 3 } };
+const SPAN_CUT_NUDGE: Vec3 = .{ -1e-4, -5e-5, 5e-5 };
+const SPAN_GAP_AT: Vec3 = .{ 1, 1, 2 };
+const SPAN_GAP_LO: Vec3 = .{ 0, 1, 1 };
+const SPAN_GAP_HI: Vec3 = .{ 4, 3, 4 };
+const SPAN_GAP_XSECTS: f64 = 2.1;
+const SPAN_GAP_MOVE: Vec3 = .{ 1, 0, 0 };
+/// The gap plate's nudge in y: the find's 5e-5, and none and twice it.
+const SPAN_GAP_LIFTS = [_]f64{ 5e-5, 0, 1e-4 };
 /// The solids of the tests of an edge lying in a face from its boundary to an apex inside
 /// it (the cd fork's solids fuzz run, 2026-11-22, cg, as the fuzzer drew them): a
 /// tetrahedron whose apex (3, 3.5, 2) lies on the hull's face in the plane x - z = 1, its
@@ -5153,6 +5194,14 @@ fn slitSolids(drop: f64, turn: @TypeOf(SLIVER_TURNS[0])) !struct { Body, Body } 
 /// to `hi` in y and z; moved by `move` and by `nudge` in one translation, as the fuzzer
 /// places a solid of a tolerance of its own.
 fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move: Vec3, nudge: Vec3) !Body {
+    var wall = try fuzzWall(t, at, lo, hi, xsects);
+    defer wall.deinit();
+    return fuzzPlaced(&wall, vec.Z3, 0, null, move, nudge);
+}
+
+/// The solids fuzzer's wall (`GapShape.wall`), unplaced: a box less a cavity, the wall
+/// `xsects` intersection tolerances of `t` thick about the plane x = `at[0]`.
+fn fuzzWall(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64) !Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const half = xsects * t.xsect / 2;
@@ -5160,10 +5209,29 @@ fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move:
     defer outer.deinit();
     var cavity = try helpers.boxAt(t, .{ at[0] - FUZZ_WALL_DEPTH, lo[1] + FUZZ_WALL_INSET, lo[2] + FUZZ_WALL_INSET }, .{ at[0] - half, hi[1] - FUZZ_WALL_INSET, hi[2] - FUZZ_WALL_INSET });
     defer cavity.deinit();
-    var wall = try pipeline.boolean(testing.allocator, &outer, &cavity, .difference, .{}, &diag, null);
-    defer wall.deinit();
-    const place = mat.Affine.translate(nudge).compose(&mat.Affine.translate(move));
-    return @import("../construct/transform.zig").transform(testing.allocator, &wall, &place, .{}, &diag);
+    return pipeline.boolean(testing.allocator, &outer, &cavity, .difference, .{}, &diag, null);
+}
+
+/// The solids fuzzer's plate with a gap (`GapShape.plate`), unplaced: `xsects`
+/// intersection tolerances of `t` thick about the plane z = `at[2]`, from `lo` to `hi` in
+/// x and y.
+fn fuzzGapPlate(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64) !Body {
+    const half = xsects * t.xsect / 2;
+    return helpers.boxAt(t, .{ lo[0], lo[1], at[2] - half }, .{ hi[0], hi[1], at[2] + half });
+}
+
+/// `shape` placed as the solids fuzzer places a solid: turned by `turn` about `axis`
+/// through its grid middle, scaled by `scale`, moved by `move`, then nudged by `nudge`
+/// (one rounding of each, in its order).
+fn fuzzPlaced(shape: *const Body, axis: Vec3, turn: f64, scale: ?Vec3, move: Vec3, nudge: Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var place = mat.Affine.translate(vec.ZERO3);
+    if (turn != 0) place = mat.Affine.rotateAbout(FUZZ_GRID_MIDDLE, vec.normalized(axis).?, turn).compose(&place);
+    if (scale) |by| place = mat.Affine.scaleBy(by).compose(&place);
+    place = mat.Affine.translate(move).compose(&place);
+    place = mat.Affine.translate(nudge).compose(&place);
+    return @import("../construct/transform.zig").transform(testing.allocator, shape, &place, .{}, &diag);
 }
 
 test "degeneracy: a plate's edge along a hull's sloped face tilted under it, its height changing along the edge, is joined with its ends' gaps holding it either way round" {
@@ -5670,5 +5738,76 @@ test "degeneracy: hulls' edges across plates' ends of several thicknesses, turne
         var solids = try endSolids(thickness, shift, quarter, mirrored);
         defer for (&solids) |*body| body.deinit();
         try expectDecidedEitherWay(&solids[0], &solids[1]);
+    };
+}
+
+test "degeneracy: a section piece running across the line its faces meet along shows no side, the chain decided moved whole" {
+    // The nightly's find on ff515852 (cz), as the fuzzer drew it: (box ∪ wall − hull) ∪
+    // hull, moved whole. A section piece 5e-5 long at a tolerance of 2e-5, its two merged
+    // vertices both within reach of both faces, ran across the line the faces meet along,
+    // and the side read from its chord was the noise of their places: outside, where the
+    // fragment's piece along the line beside it read inside (`unclassified`). A section
+    // piece's way is the faces' own line, and a piece no longer along it than its ends
+    // reach is not clear (`classify.sectionInto`)
+    for (ACROSS_WHOLE) |whole| {
+        errdefer std.debug.print("moved whole {any}\n", .{whole});
+        var box_shape = try helpers.boxAt(tol, ACROSS_BOX[0], ACROSS_BOX[1]);
+        defer box_shape.deinit();
+        var wall_shape = try fuzzWall(tol, ACROSS_WALL_AT, ACROSS_WALL_LO, ACROSS_WALL_HI, ACROSS_WALL_XSECTS);
+        defer wall_shape.deinit();
+        var drawn = [_]Body{
+            try fuzzPlaced(&box_shape, vec.Z3, 0, null, vec.ZERO3, ACROSS_BOX_NUDGE),
+            try fuzzPlaced(&wall_shape, vec.Z3, 0, null, ACROSS_WALL_MOVE, ACROSS_WALL_NUDGE),
+            try fuzzHullPlaced(&ACROSS_CUT, vec.Z3, 0, null, vec.ZERO3, ACROSS_CUT_NUDGE),
+            try fuzzHullPlaced(&ACROSS_JOIN, vec.Z3, 0, ACROSS_JOIN_SCALE, vec.ZERO3, ACROSS_JOIN_NUDGE),
+        };
+        defer for (&drawn) |*body| body.deinit();
+        var moved: [drawn.len]Body = undefined;
+        for (&drawn, &moved, 0..) |*body, *out, k| out.* = sliverMoved(body, whole) catch |err| {
+            for (moved[0..k]) |*done| done.deinit();
+            return err;
+        };
+        defer for (&moved) |*body| body.deinit();
+        var joined = try helpers.sound(&moved[0], &moved[1], .@"union");
+        defer joined.deinit();
+        var cut = try helpers.sound(&joined, &moved[2], .difference);
+        defer cut.deinit();
+        try expectDecidedEitherWay(&cut, &moved[3]);
+    }
+}
+
+test "degeneracy: a section piece of a coarse plate running across the line its faces meet along shows no side, either way round" {
+    // The ReleaseSafe session's find on ff515852 (de), as the fuzzer drew it: ((plate ∪
+    // plate) − hull) ∩ a plate with a gap at a zone of 1e-4. A section piece 5.4e-4 long at
+    // a tolerance of 2e-4 ran 87° off the line its faces meet along and read outside, where
+    // the fragment's other pieces read inside (`unclassified`); with the gap plate a hair
+    // nearer and farther, moved whole
+    const coarse = Tolerance.fromZone(SPAN_PLATE_ZONE);
+    for (SPAN_GAP_LIFTS) |lift| for (SLIVER_TURNS[0..3]) |move| {
+        errdefer std.debug.print("gap plate nudged {e} in y, moved {any}\n", .{ lift, move });
+        var plate_shape = try helpers.boxAt(coarse, SPAN_PLATE[0], SPAN_PLATE[1]);
+        defer plate_shape.deinit();
+        var step_shape = try helpers.boxAt(tol, SPAN_STEP[0], SPAN_STEP[1]);
+        defer step_shape.deinit();
+        var gap_shape = try fuzzGapPlate(coarse, SPAN_GAP_AT, SPAN_GAP_LO, SPAN_GAP_HI, SPAN_GAP_XSECTS);
+        defer gap_shape.deinit();
+        var drawn = [_]Body{
+            try fuzzPlaced(&plate_shape, vec.Z3, 0, null, .{ 0, std.math.floatTrueMin(f64), 0 }, SPAN_PLATE_NUDGE),
+            try fuzzPlaced(&step_shape, vec.Z3, 0, SPAN_STEP_SCALE, SPAN_STEP_MOVE, SPAN_STEP_NUDGE),
+            try fuzzHullPlaced(&SPAN_CUT, vec.Z3, 0, null, vec.ZERO3, SPAN_CUT_NUDGE),
+            try fuzzPlaced(&gap_shape, vec.Z3, 0, null, SPAN_GAP_MOVE, .{ 0, lift, 0 }),
+        };
+        defer for (&drawn) |*body| body.deinit();
+        var moved: [drawn.len]Body = undefined;
+        for (&drawn, &moved, 0..) |*body, *out, k| out.* = sliverMoved(body, move) catch |err| {
+            for (moved[0..k]) |*done| done.deinit();
+            return err;
+        };
+        defer for (&moved) |*body| body.deinit();
+        var joined = try helpers.sound(&moved[0], &moved[1], .@"union");
+        defer joined.deinit();
+        var cut = try helpers.sound(&joined, &moved[2], .difference);
+        defer cut.deinit();
+        try expectDecidedEitherWay(&cut, &moved[3]);
     };
 }
