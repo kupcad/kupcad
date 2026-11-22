@@ -148,9 +148,6 @@ fn walk(allocator: std.mem.Allocator, sheet: *const Body, resolution: tolerance.
     return .{ .points = owned_points, .starts = owned_starts, .arcs = try arcs.toOwnedSlice(allocator) };
 }
 
-/// How far below a whole number a share of segments may fall and still round down.
-const CEIL_SLACK: f64 = 1e-9;
-
 /// Whether `p` is in the sketch: on an outline within `within` of it, or inside its
 /// outlines, by the parity of the crossings of the ray from it to +x with every edge of
 /// every face's loops (`math/ray_crossing.zig`, exact; a sheet's faces lie apart and its
@@ -221,11 +218,7 @@ fn flat(p: vec.Vec3) Vec2 {
 
 /// An arc edge's angle, the way it turns.
 fn sweepOf(edge: Edge) f64 {
-    const arc = edge.arc.?;
-    const start = trig.atan2(edge.a[1] - arc.c[1], edge.a[0] - arc.c[0]);
-    const end = trig.atan2(edge.b[1] - arc.c[1], edge.b[0] - arc.c[0]);
-    const sweep = @mod(if (arc.ccw) end - start else start - end, 2 * std.math.pi);
-    return if (sweep < CEIL_SLACK) 2 * std.math.pi else sweep;
+    return overlay.arcSweep(edge.a, edge.b, edge.arc.?);
 }
 
 /// The distance from `p` to an edge.

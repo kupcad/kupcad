@@ -22,6 +22,15 @@ const tol = Tolerance.fromZone(1e-5);
 const PI = std.math.pi;
 /// The last of the points along the curved side of the shallow-curve test.
 const LAST_ALONG: usize = 40;
+/// Discs whose arcs a narrow strip cuts in pieces of a sweep below any angular slack: the
+/// radius and the strip's width, the piece's sweep their quotient (5e-10, 5e-11, 5e-10 rad).
+const WIDE_DISCS = [_][2]f64{ .{ 1e5, 5e-5 }, .{ 1e6, 5e-5 }, .{ 1e6, 5e-4 } };
+/// How far the disc and the strip are moved along x together.
+const WIDE_SHIFTS = [_]f64{ 0, 3e5 };
+/// How close the moved faces' areas come to the closed form, by the measure's own rounding.
+const WIDE_MOVED_CLOSE: f64 = 1e-3;
+/// How far the strip reaches either side of the disc's top.
+const STRIP_REACH: f64 = 1;
 /// The most rings and points `drawnSheet` takes.
 const MOST_RINGS: usize = 4;
 const MOST_DRAWN: usize = 32;
@@ -390,4 +399,48 @@ fn drawnSheet(rings: []const []const Drawn, diag: *Diagnostics) !Body {
         used += ring.len;
     }
     return primitives.outlines(testing.allocator, tol, outlines[0..rings.len], diag);
+}
+
+test "sketch booleans: a narrow strip across the top of a wide disc keeps a short piece of its arc, not a whole turn" {
+    // The audit of 2026-11-22 (kinds 6 to 8): an arc piece's sweep under 1e-9 rad was
+    // read as a whole turn (the slack that tells a closed circle's ends apart), so a piece
+    // 5e-5 long of a circle of radius 1e5 added the whole disc, 3e10, to its face's area.
+    // A whole turn is two ends that are one vertex; two vertices are a piece however short
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (WIDE_DISCS) |sizes| for ([_]bool{ false, true }) |down| for ([_]bool{ false, true }) |strip_first| for (WIDE_SHIFTS) |shift| {
+        const r = sizes[0];
+        const w = sizes[1];
+        errdefer std.debug.print("radius {e}, width {e}, down {}, the strip first {}, moved {e}\n", .{ r, w, down, strip_first, shift });
+        var disc_drawn = try primitives.circle(testing.allocator, tol, r, &diag);
+        defer disc_drawn.deinit();
+        var disc = try moved(&disc_drawn, shift, 0, &diag);
+        defer disc.deinit();
+        const top: f64 = if (down) -r else r;
+        // Moved, the measure sums terms of the shift times the radius, 3e10 to 3e11, to an
+        // area of 5e-5: its rounding is as large as the area, and far from the disc's 3e10
+        const close: f64 = w * STRIP_REACH * 1e-6 + (if (shift == 0) 0 else WIDE_MOVED_CLOSE);
+        var strip = try primitives.polygon(testing.allocator, tol, &.{ .{ shift - w / 2, top - STRIP_REACH }, .{ shift + w / 2, top - STRIP_REACH }, .{ shift + w / 2, top + STRIP_REACH }, .{ shift - w / 2, top + STRIP_REACH } }, &diag);
+        defer strip.deinit();
+        const operands: [2]*const Body = if (strip_first) .{ &strip, &disc } else .{ &disc, &strip };
+        var both = try boolean.boolean(testing.allocator, &operands, .intersection, .{}, &diag);
+        defer both.deinit();
+        {
+            var report = try check.run(testing.allocator, &both, .global);
+            defer report.deinit(testing.allocator);
+            try testing.expect(report.ok());
+        }
+        // The strip up to the arc: its width times the reach, less the arc's sag (w²/8r each
+        // end of nothing here)
+        try testing.expectApproxEqAbs(w * STRIP_REACH, try areaOf(&both), close);
+        try expectCounts(&both, 4, 4, 1, 1);
+        var rest = try boolean.boolean(testing.allocator, &.{ &strip, &disc }, .difference, .{}, &diag);
+        defer rest.deinit();
+        {
+            var report = try check.run(testing.allocator, &rest, .global);
+            defer report.deinit(testing.allocator);
+            try testing.expect(report.ok());
+        }
+        try testing.expectApproxEqAbs(w * STRIP_REACH, try areaOf(&rest), close);
+    };
 }

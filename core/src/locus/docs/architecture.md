@@ -583,7 +583,11 @@ the exact ray rule. Every decision about a circle is exact too (D26, 2026-11-11)
 line meets, touches or misses a circle and where each crossing lies along the segment
 (`lineCircleDiscriminant`, `lineCircleCrossing`), whether a point lies within an arc's turn
 about its centre (`orient2d` about the centre, never an angle: no seam, no slack, and the
-same answer for a vertex a little off the circle whichever piece of the arc asks), which
+same answer for a vertex a little off the circle whichever piece of the arc asks; an arc
+piece's sweep alike, less than a half turn or more by the side of its far end from the
+radius through its near one, a whole turn only for ends on one ray, never by a slack on
+the angle: under 1e-9 rad was read as a whole turn, which a piece 5e-5 long of a circle of
+radius 1e5 has, 2026-11-22), which
 of two crossings the nesting ray meets first (`compareArcX`, `compareArcXWithLine`,
 `compareLineX`, a point taken as a circle of no radius), but two segments sharing a
 vertex are ordered by the overlay's own order of their half-edges about it, the order the

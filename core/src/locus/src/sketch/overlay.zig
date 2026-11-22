@@ -1170,12 +1170,31 @@ pub fn arcSweep(a: Vec2, b: Vec2, arc: Arc) f64 {
     return arcSpan(a, b, arc).sweep;
 }
 
+/// The arc's span from `a` to `b`. Whether it turns less than a half turn or more is the
+/// side of `b` from the radius through `a`, exact (`orient2d` about the centre), never an
+/// angle's size: the difference of the ends' angles is kept where it agrees, and where
+/// its rounding put a short piece a hair behind its start (or a piece short of a whole
+/// turn a hair past it) the angle between the ends' radii is taken, which is as precise
+/// as they are. Ends on one ray from the centre, the same point among them, are a whole
+/// turn. No slack tells a whole turn from none: a sweep under 1e-9 rad was read as one,
+/// which a piece 5e-5 long of a circle of radius 1e5 has, and its face's area took in the
+/// disc (the audit of 2026-11-22).
 fn arcSpan(a: Vec2, b: Vec2, arc: Arc) Span {
     const start = trig.atan2(a[1] - arc.c[1], a[0] - arc.c[0]);
     const end = trig.atan2(b[1] - arc.c[1], b[0] - arc.c[0]);
-    var sweep = if (arc.ccw) end - start else start - end;
-    sweep = @mod(sweep, 2 * std.math.pi);
-    if (sweep < SPAN_SLACK) sweep = 2 * std.math.pi;
+    var sweep = @mod(if (arc.ccw) end - start else start - end, 2 * std.math.pi);
+    const u = vec.sub2(a, arc.c);
+    const v = vec.sub2(b, arc.c);
+    const turn = predicates.orient2d(arc.c, a, b);
+    if (turn == 0) {
+        sweep = if (vec.dot2(u, v) > 0) 2 * std.math.pi else std.math.pi;
+    } else {
+        const short = (turn > 0) == arc.ccw;
+        if (short != (sweep < std.math.pi)) {
+            const between = trig.atan2(@abs(vec.cross2(u, v)), vec.dot2(u, v));
+            sweep = if (short) between else 2 * std.math.pi - between;
+        }
+    }
     return .{ .start = start, .sweep = sweep, .ccw = arc.ccw };
 }
 

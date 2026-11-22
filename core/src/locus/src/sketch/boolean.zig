@@ -30,9 +30,6 @@ const Error = diagnostics.Error;
 
 pub const Op = enum { @"union", difference, intersection };
 
-/// How far past an arc's start its end may be read and still be a full turn's worth.
-const ANGLE_SLACK: f64 = 1e-9;
-
 /// The union, difference (the first less the others) or intersection of `sheets`, as a
 /// new sheet; the inputs untouched. An empty result is the empty sheet.
 pub fn boolean(allocator: std.mem.Allocator, sheets: []const *const Body, op: Op, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
@@ -398,12 +395,9 @@ fn rangeOf(o: *const Overlay, piece: Piece) [2]f64 {
     const arc = piece.arc.?;
     const pa = o.point(piece.a);
     const pb = o.point(piece.b);
-    const ta = @mod(trig.atan2(pa[1] - arc.c[1], pa[0] - arc.c[0]), geometry.TWO_PI);
-    const tb = @mod(trig.atan2(pb[1] - arc.c[1], pb[0] - arc.c[0]), geometry.TWO_PI);
-    const from = if (arc.ccw) ta else tb;
-    var to = if (arc.ccw) tb else ta;
-    if (to <= from + ANGLE_SLACK) to += geometry.TWO_PI;
-    return .{ from, to };
+    const first = if (arc.ccw) pa else pb;
+    const from = @mod(trig.atan2(first[1] - arc.c[1], first[0] - arc.c[0]), geometry.TWO_PI);
+    return .{ from, from + overlay_mod.arcSweep(pa, pb, arc) };
 }
 
 /// Twice a piece's share of its cycle's area about `from`, a point of the cycle, as the
