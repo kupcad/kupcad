@@ -8,14 +8,19 @@
 //! multiply-add, which `@setFloatMode(.strict)` and the no-`@mulAdd` rule keep (architecture
 //! §6, D6).
 //!
-//! Exactness assumes the arithmetic neither overflows nor underflows, down to the lowest
-//! components of the expansions (about 2^-53 per factor below the products of two
-//! (`orient2d`), three (`orient3d`) or four (`incircle`) coordinate differences), so
-//! coordinates between about 1e-40 and 1e40 (model units, mm) are always safe. KupCAD's
-//! size limits keep models far inside that. `orient2d` is exact for every finite input
-//! besides: where its products near the underflow it computes the determinant in
-//! integers (`orient2dTiny`), since a coordinate the least double off zero is a rounding
-//! the 2D fuzzers draw (the overlay fuzz target, 2026-11-22, db).
+//! The expansions are exact while the arithmetic neither overflows nor underflows, down
+//! to their lowest components (about 2^-53 per factor below the products of two
+//! (`orient2d`), three (`orient3d`) or four (`incircle`, the radical predicates)
+//! coordinate differences): for coordinates that are zero or between 2^-200 and 2^200 in
+//! magnitude (`expansionsHold`; models, in mm, lie far inside). Every predicate here is
+//! exact for every finite input besides, as CGAL's filtered predicates are, a static
+//! filter's range checked and exact numbers behind it: out of that range the same formula
+//! runs on integers times a power of two (`Wide`, for `incircle`, `orient3d` and the
+//! radical predicates; `orient2dTiny` for `orient2d`, which tells its range by its
+//! products). A coordinate the least double off zero is a rounding the 2D fuzzers draw
+//! (the overlay fuzz target, 2026-11-22, db), and a predicate that is exact only in a
+//! range nothing enforces is wrong without a sign of it (the audit of 2026-11-22: a point
+//! the least double beside a circle's top read on it).
 //!
 //! Costs: the certain cases are a few multiplications; the adaptive stages run only near
 //! degeneracy, and the last (exact) stage of `incircle` is a few thousand operations.
@@ -60,6 +65,27 @@ const TINY_COORDINATE_BITS: usize = 53 + 971 + 1126;
 /// of 2026-11-22), and the two limbs more `shiftLeft` asks for.
 const TINY_COORDINATE_LIMBS: usize = (TINY_COORDINATE_BITS + @bitSizeOf(std.math.big.Limb) - 1) / @bitSizeOf(std.math.big.Limb) + 2;
 const TINY_PRODUCT_LIMBS: usize = 2 * TINY_COORDINATE_LIMBS + 2;
+/// The least and the greatest magnitude of a nonzero coordinate the expansions are exact
+/// for: such doubles are whole multiples of 2^-252, a product of four of them or of their
+/// differences' rounding tails a multiple of 2^-1008, which a double holds, and at most
+/// 2^804.
+const EXPANSION_LEAST: f64 = 0x1p-200;
+const EXPANSION_MOST: f64 = 0x1p200;
+/// The bits of a `Wide`: a polynomial of degree four in coordinates of any finite doubles
+/// (each `TINY_COORDINATE_BITS` at most beside another), and room for its sums and small
+/// factors.
+const WIDE_BITS: usize = 4 * TINY_COORDINATE_BITS + 256;
+const WIDE_LIMBS: usize = (WIDE_BITS + @bitSizeOf(std.math.big.Limb) - 1) / @bitSizeOf(std.math.big.Limb) + 2;
+/// Below this computed bound an `Approx` product's error terms may have rounded to less
+/// than they are (a product of two doubles below the least double is nothing), and the
+/// bound takes `FILTER_UNDERFLOW` more: the most four such terms lose, with room.
+const FILTER_FLOOR: f64 = 0x1p-1000;
+const FILTER_UNDERFLOW: f64 = 0x1p-1070;
+/// The magnitudes of an `Approx` quotient's operands and their bounds the quotient's own
+/// bound is computed for: its products and quotients stay clear of the underflow and the
+/// overflow between them.
+const DIVISION_LEAST: f64 = 0x1p-250;
+const DIVISION_MOST: f64 = 0x1p250;
 
 // The error bounds of the estimates (Shewchuk's, derived in the paper for each stage).
 const RESULT_ERR_BOUND: f64 = (3.0 + 8.0 * EPSILON) * EPSILON;
@@ -524,6 +550,7 @@ fn orient2dAdapt(a: [2]f64, b: [2]f64, c: [2]f64, detsum: f64) f64 {
 /// counter-clockwise from above), negative when above, zero when coplanar: the sign of the
 /// 3×3 determinant of `a-d`, `b-d`, `c-d`, always exact.
 pub fn orient3d(a: [3]f64, b: [3]f64, c: [3]f64, d: [3]f64) f64 {
+    if (!expansionsHold(&.{ a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], d[0], d[1], d[2] })) return orient3dWide(a, b, c, d);
     const adx = a[0] - d[0];
     const bdx = b[0] - d[0];
     const cdx = c[0] - d[0];
@@ -705,6 +732,7 @@ fn orient3dAdapt(a: [3]f64, b: [3]f64, c: [3]f64, d: [3]f64, permanent: f64) f64
 /// negative when outside, zero when on it, always exact. With `a`, `b`, `c` clockwise the
 /// sign is reversed.
 pub fn incircle(a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) f64 {
+    if (!expansionsHold(&.{ a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1] })) return incircleWide(a, b, c, d);
     const adx = a[0] - d[0];
     const bdx = b[0] - d[0];
     const cdx = c[0] - d[0];
@@ -945,6 +973,150 @@ fn thirdOrder(fin: *Accumulator(1152), t: *const TailCross, tail: f64, twice: f6
 }
 
 // ---------------------------------------------------------------------------------------
+// The range of the expansions, and exact numbers out of it
+
+/// Whether the expansions are exact on these coordinates: each zero, or between
+/// `EXPANSION_LEAST` and `EXPANSION_MOST` in magnitude.
+inline fn expansionsHold(coordinates: []const f64) bool {
+    var held = true;
+    for (coordinates) |x| {
+        const magnitude = @abs(x);
+        held = held and (magnitude == 0 or (magnitude >= EXPANSION_LEAST and magnitude <= EXPANSION_MOST));
+    }
+    return held;
+}
+
+/// An integer times a power of two, in a fixed buffer: the exact number a predicate's
+/// formula runs on where the expansions do not hold, with the operations of `Exact` (the
+/// formulas are written once over the number type). Any finite double is one; a sum
+/// aligns the two at the lesser exponent; nothing rounds, overflows or underflows. A
+/// thousand times slower than an expansion and reached only out of the expansions'
+/// range. A double that is not finite counts as zero (the predicates take finite input).
+const Wide = struct {
+    limbs: [WIDE_LIMBS]std.math.big.Limb = undefined,
+    len: usize = 1,
+    positive: bool = true,
+    exponent: i32 = 0,
+
+    const Mutable = std.math.big.int.Mutable;
+    const Const = std.math.big.int.Const;
+
+    fn constant(self: *const Wide) Const {
+        return .{ .limbs = self.limbs[0..self.len], .positive = self.positive };
+    }
+
+    fn keep(self: *Wide, m: Mutable) void {
+        self.len = m.len;
+        self.positive = m.positive;
+    }
+
+    fn of(x: f64) Wide {
+        var r: Wide = .{};
+        var m = Mutable.init(&r.limbs, 0);
+        if (x != 0 and std.math.isFinite(x)) {
+            const parts = std.math.frexp(x);
+            const significand: i64 = @intFromFloat(std.math.ldexp(parts.significand, SIGNIFICAND_BITS));
+            m.set(significand);
+            r.exponent = parts.exponent - SIGNIFICAND_BITS;
+        }
+        r.keep(m);
+        return r;
+    }
+
+    fn isZero(self: *const Wide) bool {
+        return self.constant().eqlZero();
+    }
+
+    /// The same number as an integer times 2^`exponent`, `exponent` no greater than its own.
+    fn at(self: *const Wide, exponent: i32) Wide {
+        var r: Wide = .{ .exponent = exponent };
+        var m = Mutable.init(&r.limbs, 0);
+        m.shiftLeft(self.constant(), @intCast(self.exponent - exponent));
+        r.keep(m);
+        return r;
+    }
+
+    fn add(a: Wide, b: Wide) Wide {
+        if (a.isZero()) return b;
+        if (b.isZero()) return a;
+        const exponent = @min(a.exponent, b.exponent);
+        const x = a.at(exponent);
+        const y = b.at(exponent);
+        var r: Wide = .{ .exponent = exponent };
+        var m = Mutable.init(&r.limbs, 0);
+        m.add(x.constant(), y.constant());
+        r.keep(m);
+        return r;
+    }
+
+    fn neg(a: Wide) Wide {
+        var r = a;
+        if (!r.isZero()) r.positive = !r.positive;
+        return r;
+    }
+
+    fn sub(a: Wide, b: Wide) Wide {
+        return a.add(b.neg());
+    }
+
+    fn diff(a: f64, b: f64) Wide {
+        return of(a).sub(of(b));
+    }
+
+    fn mul(a: Wide, b: Wide) Wide {
+        var r: Wide = .{ .exponent = a.exponent + b.exponent };
+        var m = Mutable.init(&r.limbs, 0);
+        m.mul(a.constant(), b.constant(), &.{}, null);
+        r.keep(m);
+        if (r.isZero()) r.exponent = 0;
+        return r;
+    }
+
+    fn square(a: Wide) Wide {
+        return a.mul(a);
+    }
+
+    fn sign(a: Wide) f64 {
+        if (a.isZero()) return 0;
+        return if (a.positive) 1 else -1;
+    }
+};
+
+/// `orient3d` in exact numbers: the determinant of `a − d`, `b − d`, `c − d`.
+fn orient3dWide(a: [3]f64, b: [3]f64, c: [3]f64, d: [3]f64) f64 {
+    const adx = Wide.diff(a[0], d[0]);
+    const ady = Wide.diff(a[1], d[1]);
+    const adz = Wide.diff(a[2], d[2]);
+    const bdx = Wide.diff(b[0], d[0]);
+    const bdy = Wide.diff(b[1], d[1]);
+    const bdz = Wide.diff(b[2], d[2]);
+    const cdx = Wide.diff(c[0], d[0]);
+    const cdy = Wide.diff(c[1], d[1]);
+    const cdz = Wide.diff(c[2], d[2]);
+    const det = adz.mul(bdx.mul(cdy).sub(cdx.mul(bdy)))
+        .add(bdz.mul(cdx.mul(ady).sub(adx.mul(cdy))))
+        .add(cdz.mul(adx.mul(bdy).sub(bdx.mul(ady))));
+    return det.sign() * std.math.floatTrueMin(f64);
+}
+
+/// `incircle` in exact numbers: the determinant of the three points about `d`, lifted.
+fn incircleWide(a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) f64 {
+    const adx = Wide.diff(a[0], d[0]);
+    const ady = Wide.diff(a[1], d[1]);
+    const bdx = Wide.diff(b[0], d[0]);
+    const bdy = Wide.diff(b[1], d[1]);
+    const cdx = Wide.diff(c[0], d[0]);
+    const cdy = Wide.diff(c[1], d[1]);
+    const alift = adx.square().add(ady.square());
+    const blift = bdx.square().add(bdy.square());
+    const clift = cdx.square().add(cdy.square());
+    const det = alift.mul(bdx.mul(cdy).sub(cdx.mul(bdy)))
+        .add(blift.mul(cdx.mul(ady).sub(adx.mul(cdy))))
+        .add(clift.mul(adx.mul(bdy).sub(bdx.mul(ady))));
+    return det.sign() * std.math.floatTrueMin(f64);
+}
+
+// ---------------------------------------------------------------------------------------
 // Radical predicates: the overlay's circles (research/li-chen-egc.md §2, D26)
 
 /// Which crossing of a horizontal line with a circle: `east` is `cx + √…`, `west` is
@@ -960,10 +1132,20 @@ pub const Place = enum { before, start, inside, end, after };
 
 /// A floating-point value with a bound on its absolute error, carried through the
 /// operations by forward error analysis: the filter of the radical predicates. A sign is
-/// certain when the value's magnitude exceeds the bound (or the bound is zero).
+/// certain when the value's magnitude exceeds the bound (or the bound is zero). The bound
+/// holds through an underflow too: a product below the least double is nothing, with no
+/// relative error to show it, and its bound takes an absolute term there (a point the
+/// least double beside a circle's top squared to nothing, and the filter read it on the
+/// circle for certain; the audit of 2026-11-22). An overflow leaves a bound that is not a
+/// number, and no sign is certain.
 const Approx = struct {
     v: f64,
     err: f64,
+
+    /// Zero, and known to be: what a product with it is too.
+    fn exactZero(a: Approx) bool {
+        return a.v == 0 and a.err == 0;
+    }
 
     fn of(x: f64) Approx {
         return .{ .v = x, .err = 0 };
@@ -985,7 +1167,9 @@ const Approx = struct {
 
     fn mul(a: Approx, b: Approx) Approx {
         const v = a.v * b.v;
-        return .{ .v = v, .err = (@abs(a.v) * b.err + @abs(b.v) * a.err + a.err * b.err + ROUNDING * @abs(v)) * ERR_INFLATE };
+        var err = (@abs(a.v) * b.err + @abs(b.v) * a.err + a.err * b.err + ROUNDING * @abs(v)) * ERR_INFLATE;
+        if (err < FILTER_FLOOR and !a.exactZero() and !b.exactZero()) err += FILTER_UNDERFLOW;
+        return .{ .v = v, .err = err };
     }
 
     fn square(a: Approx) Approx {
@@ -997,8 +1181,12 @@ const Approx = struct {
         if (!(@abs(b.v) > b.err)) return null;
         const v = a.v / b.v;
         const least = @abs(b.v) - b.err;
+        // Out of a range its terms neither underflow nor overflow in, no bound is given
+        for ([_]f64{ a.v, a.err, b.v, b.err }) |x| {
+            if (x != 0 and !(@abs(x) >= DIVISION_LEAST and @abs(x) <= DIVISION_MOST)) return null;
+        }
         const err = ((@abs(a.v) * b.err + @abs(b.v) * a.err) / (@abs(b.v) * least) + ROUNDING * @abs(v)) * ERR_INFLATE;
-        return .{ .v = v, .err = err };
+        return .{ .v = v, .err = if (a.exactZero()) 0 else err + FILTER_UNDERFLOW };
     }
 
     /// `√a`, when `a`'s sign is certain; a negative `a` counts as zero (its square root is
@@ -1165,6 +1353,7 @@ pub fn circlePair(c1: [2]f64, r1: f64, c2: [2]f64, r2: f64) CirclePair {
 /// The sign of `|c₂ − c₁|² − (r₁ + s)²`, exact.
 fn signOfGap(c1: [2]f64, c2: [2]f64, r1: f64, s: f64) f64 {
     if (gapIn(Approx, c1, c2, r1, s).sign()) |sign| return sign;
+    if (!expansionsHold(&.{ c1[0], c1[1], c2[0], c2[1], r1, s })) return gapIn(Wide, c1, c2, r1, s).sign();
     return gapIn(Exact(CIRCLE_PAIR_CAP), c1, c2, r1, s).sign();
 }
 
@@ -1175,6 +1364,7 @@ fn gapIn(comptime N: type, c1: [2]f64, c2: [2]f64, r1: f64, s: f64) N {
 
 pub fn inCircle(c: [2]f64, r: f64, p: [2]f64) f64 {
     if (inCircleIn(Approx, c, r, p).sign()) |s| return s;
+    if (!expansionsHold(&.{ c[0], c[1], r, p[0], p[1] })) return inCircleIn(Wide, c, r, p).sign();
     return inCircleIn(Exact(IN_CIRCLE_CAP), c, r, p).sign();
 }
 
@@ -1183,12 +1373,14 @@ pub fn inCircle(c: [2]f64, r: f64, p: [2]f64) f64 {
 /// discriminant of the crossing's parameter, exact. `a` and `b` must differ.
 pub fn lineCircleDiscriminant(a: [2]f64, b: [2]f64, c: [2]f64, r: f64) f64 {
     if (discriminantIn(Approx, a, b, c, r).sign()) |s| return s;
+    if (!expansionsHold(&.{ a[0], a[1], b[0], b[1], c[0], c[1], r })) return discriminantIn(Wide, a, b, c, r).sign();
     return discriminantIn(Exact(DISCRIMINANT_CAP), a, b, c, r).sign();
 }
 
 /// The sign of `(b − a)·(d − c)`, exact.
 fn dotSign(a: [2]f64, b: [2]f64, c: [2]f64, d: [2]f64) f64 {
     if (dotOfDiffs(Approx, a, b, c, d).sign()) |s| return s;
+    if (!expansionsHold(&.{ a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1] })) return dotOfDiffs(Wide, a, b, c, d).sign();
     return dotOfDiffs(Exact(DOT_CAP), a, b, c, d).sign();
 }
 
@@ -1237,7 +1429,11 @@ fn arcXApprox(c: [2]f64, r: f64, side: Side, y: f64) ?Approx {
 /// compared squared, `(e + s₁√b₁)² − b₂ = (e² + b₁ − b₂) + s₁·sign(e)·√(4e²b₁)`.
 pub fn compareArcX(c1: [2]f64, r1: f64, side1: Side, c2: [2]f64, r2: f64, side2: Side, y: f64) f64 {
     if (arcXApprox(c1, r1, side1, y)) |x1| if (arcXApprox(c2, r2, side2, y)) |x2| if (x1.sub(x2).sign()) |s| return s;
-    const N = Exact(COMPARE_ARC_CAP);
+    if (!expansionsHold(&.{ c1[0], c1[1], r1, c2[0], c2[1], r2, y })) return compareArcXIn(Wide, c1, r1, side1, c2, r2, side2, y);
+    return compareArcXIn(Exact(COMPARE_ARC_CAP), c1, r1, side1, c2, r2, side2, y);
+}
+
+fn compareArcXIn(comptime N: type, c1: [2]f64, r1: f64, side1: Side, c2: [2]f64, r2: f64, side2: Side, y: f64) f64 {
     const e = N.diff(c1[0], c2[0]);
     const b1 = radicandIn(N, c1, r1, y);
     const b2 = radicandIn(N, c2, r2, y);
@@ -1272,7 +1468,11 @@ pub fn compareArcXWithLine(c: [2]f64, r: f64, side: Side, y: f64, a: [2]f64, b: 
         const x_line = Approx.of(a[0]).add(along);
         if (x_arc.sub(x_line).sign()) |sign| return sign;
     }
-    const N = Exact(ARC_LINE_CAP);
+    if (!expansionsHold(&.{ c[0], c[1], r, y, a[0], a[1], b[0], b[1] })) return compareArcXWithLineIn(Wide, c, r, s, y, a, b);
+    return compareArcXWithLineIn(Exact(ARC_LINE_CAP), c, r, s, y, a, b);
+}
+
+fn compareArcXWithLineIn(comptime N: type, c: [2]f64, r: f64, s: f64, y: f64, a: [2]f64, b: [2]f64) f64 {
     const h = N.diff(b[1], a[1]);
     const sh = h.sign();
     const lhs = h.mul(N.diff(c[0], a[0])).sub(N.diff(y, a[1]).mul(N.diff(b[0], a[0])));
@@ -1290,7 +1490,11 @@ pub fn compareLineX(y: f64, a1: [2]f64, b1: [2]f64, a2: [2]f64, b2: [2]f64) ?f64
         const along2 = Approx.diff(y, a2[1]).mul(Approx.diff(b2[0], a2[0])).div(Approx.diff(b2[1], a2[1])) orelse break :filter;
         if (Approx.of(a1[0]).add(along1).sub(Approx.of(a2[0]).add(along2)).sign()) |s| return s;
     }
-    const N = Exact(LINE_X_CAP);
+    if (!expansionsHold(&.{ y, a1[0], a1[1], b1[0], b1[1], a2[0], a2[1], b2[0], b2[1] })) return compareLineXIn(Wide, y, a1, b1, a2, b2);
+    return compareLineXIn(Exact(LINE_X_CAP), y, a1, b1, a2, b2);
+}
+
+fn compareLineXIn(comptime N: type, y: f64, a1: [2]f64, b1: [2]f64, a2: [2]f64, b2: [2]f64) f64 {
     const h1 = N.diff(b1[1], a1[1]);
     const h2 = N.diff(b2[1], a2[1]);
     const lhs = h2.mul(lineXNumeratorIn(N, y, a1, b1)).sub(h1.mul(lineXNumeratorIn(N, y, a2, b2)));

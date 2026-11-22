@@ -874,3 +874,90 @@ test "circlePair: how two circles lie, exactly, where the square-rooted distance
     try testing.expect(@sqrt(@as(f64, 2)) == r + r);
     try testing.expectEqual(predicates.CirclePair.crossing, circlePair(.{ 0, 0 }, r, .{ 1, 1 }, r));
 }
+
+/// Coordinates out of the range the expansions are exact in, beside ordinary ones: the
+/// least double and a few of it, powers of two whose products of four underflow or
+/// overflow, and values of a model.
+const OUT_OF_RANGE = [_]f64{ 0, 0x1p-1074, -0x1p-1074, 0x1p-1073, -0x1.8p-1073, 0x1p-1000, -0x1p-1000, 0x1p-900, 0x1p-300, 0.25, -0.625, 1, 1.25, -5, 0x1p300, -0x1p400 };
+
+fn outOfRange(random: std.Random) f64 {
+    return OUT_OF_RANGE[random.uintLessThan(usize, OUT_OF_RANGE.len)];
+}
+
+fn outOfRangePoint(random: std.Random) [2]f64 {
+    return .{ outOfRange(random), outOfRange(random) };
+}
+
+test "radical predicates: a point the least double off a circle or a line is told from one on it" {
+    // The audit of 2026-11-22 (kind 9, B2): the filter took a product rounded to nothing
+    // for a certain zero, and the expansions lost it too. The unit circle and the point
+    // the least double beside its top: outside, by 2.4e-647
+    const hair = std.math.floatTrueMin(f64);
+    for ([_]f64{ 1, 0.25 }) |r| for ([_]f64{ 1, -1 }) |sx| for ([_]f64{ 1, -1 }) |sy| {
+        errdefer std.debug.print("r {d}, signs {d} {d}\n", .{ r, sx, sy });
+        try testing.expectEqual(@as(f64, -1), inCircle(.{ 0, 0 }, r, .{ sx * hair, sy * r }));
+        try testing.expectEqual(@as(f64, -1), inCircle(.{ 0, 0 }, r, .{ sx * r, sy * hair }));
+        try testing.expectEqual(@as(f64, 0), inCircle(.{ 0, 0 }, r, .{ 0, sy * r }));
+        // The crossing at that height against the tangent line x = ±r: inside it
+        try testing.expectEqual(@as(f64, -sx), compareArcXWithLine(.{ 0, 0 }, r, if (sx > 0) .east else .west, sy * hair, .{ sx * r, -1 }, .{ sx * r, 1 }).?);
+        try testing.expectEqual(@as(f64, 0), compareArcXWithLine(.{ 0, 0 }, r, if (sx > 0) .east else .west, 0, .{ sx * r, -1 }, .{ sx * r, 1 }).?);
+    };
+    // A line leaning the least double off the tangent at (1, 0)'s west: it crosses twice
+    try testing.expectEqual(@as(f64, 1), lineCircleDiscriminant(.{ 0, -0.25 }, .{ hair, 1 }, .{ 1, 0 }, 1));
+    try testing.expectEqual(@as(f64, 0), lineCircleDiscriminant(.{ 0, -0.25 }, .{ 0, 1 }, .{ 1, 0 }, 1));
+    try testing.expectEqual(@as(f64, -1), lineCircleDiscriminant(.{ 0, -0.25 }, .{ -hair, 1 }, .{ 1, 0 }, 1));
+}
+
+test "radical predicates: agree with big-integer arithmetic on coordinates out of the expansions' range" {
+    var prng = std.Random.DefaultPrng.init(SEED);
+    const random = prng.random();
+    for (0..FUZZ_CASES) |_| {
+        const c = outOfRangePoint(random);
+        const r = outOfRange(random);
+        const p = outOfRangePoint(random);
+        const q = outOfRangePoint(random);
+        const y = outOfRange(random);
+        const side: Side = if (random.boolean()) .east else .west;
+        errdefer std.debug.print("c {any} r {e} p {any} q {any} y {e} {s}\n", .{ c, r, p, q, y, @tagName(side) });
+        try testing.expectEqual(try exactInCircle(testing.allocator, c, r, p), signOfFloat(inCircle(c, r, p)));
+        if (p[0] != q[0] or p[1] != q[1]) {
+            try testing.expectEqual(try exactDiscriminant(testing.allocator, p, q, c, r), signOfFloat(lineCircleDiscriminant(p, q, c, r)));
+            for ([_]Root{ .first, .second }) |root| try testing.expectEqual(try exactCrossing(testing.allocator, p, q, c, r, root), lineCircleCrossing(p, q, c, r, root));
+        }
+        if (try exactCompareArcXWithLine(testing.allocator, c, r, side, y, p, q)) |expected| {
+            try testing.expectEqual(expected, signOfFloat(compareArcXWithLine(c, r, side, y, p, q).?));
+        } else try testing.expectEqual(@as(?f64, null), compareArcXWithLine(c, r, side, y, p, q));
+        const c2 = outOfRangePoint(random);
+        const r2 = outOfRange(random);
+        const side2: Side = if (random.boolean()) .east else .west;
+        errdefer std.debug.print("c2 {any} r2 {e} {s}\n", .{ c2, r2, @tagName(side2) });
+        try testing.expectEqual(try exactCompareArcX(testing.allocator, c, r, side, c2, r2, side2, y), signOfFloat(compareArcX(c, r, side, c2, r2, side2, y)));
+        if (try exactCompareLineX(testing.allocator, y, p, q, c, c2)) |expected| {
+            try testing.expectEqual(expected, signOfFloat(compareLineX(y, p, q, c, c2).?));
+        } else try testing.expectEqual(@as(?f64, null), compareLineX(y, p, q, c, c2));
+    }
+}
+
+test "incircle and orient3d: agree with big-integer arithmetic on coordinates out of the expansions' range" {
+    // The audit of 2026-11-22 (kind 9, B3): Shewchuk's stages assume no underflow; a
+    // coordinate the least double off another squares to nothing in the lift
+    const hair = std.math.floatTrueMin(f64);
+    try testing.expectEqual(@as(f64, 0), incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, 1 }));
+    try testing.expect(incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ hair, hair }) > 0);
+    try testing.expect(incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ -hair, 0 }) < 0);
+    try testing.expect(incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, -hair }) < 0);
+    try testing.expect(incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, hair }) > 0);
+    try testing.expectEqual(@as(f64, 0), incircle(.{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, 0 }));
+    var prng = std.Random.DefaultPrng.init(SEED);
+    const random = prng.random();
+    for (0..FUZZ_CASES) |_| {
+        var p: [4][2]f64 = undefined;
+        for (&p) |*q| q.* = outOfRangePoint(random);
+        errdefer std.debug.print("{any}\n", .{p});
+        try testing.expectEqual(try exactIncircle(testing.allocator, p[0], p[1], p[2], p[3]), signOfFloat(incircle(p[0], p[1], p[2], p[3])));
+        var s: [4][3]f64 = undefined;
+        for (&s) |*q| q.* = .{ outOfRange(random), outOfRange(random), outOfRange(random) };
+        errdefer std.debug.print("{any}\n", .{s});
+        try testing.expectEqual(try exactOrient3d(testing.allocator, s[0], s[1], s[2], s[3]), signOfFloat(orient3d(s[0], s[1], s[2], s[3])));
+    }
+}

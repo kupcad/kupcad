@@ -628,6 +628,14 @@ nearer by the circles exactly, and one at the vertex's height crossed the smalle
 or their tails near the underflow it computes in integers (2026-11-22, db: an arc from a
 circle's highest point to the least double east of its lowest point, whose turn's two
 products both rounded to 5e-324, read as a half circle, and its lowest point was not cut).
+The other predicates are exact for every finite input too: their static filter's bound
+holds through an underflow, and where a coordinate is out of the range the expansions are
+exact in (zero, or between 2^-200 and 2^200 in magnitude) the same formula runs on
+integers times a power of two (`predicates.Wide`), as CGAL's filtered predicates check
+their filter's range and fall back to exact numbers (the audit of 2026-11-22: a point the
+least double beside a circle's top squared to nothing in the filter and in the expansions,
+and read on the circle; `incircle`'s lift alike, on whose exactness the Delaunay flips
+end).
 A cycle that runs each of its edges both ways bounds nothing, its
 area 0 whatever the sum rounds to. Each such expression has bounded depth and `f64` leaves, so squaring
 removes the roots and Shewchuk expansions evaluate the polynomial
