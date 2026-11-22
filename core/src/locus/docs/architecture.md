@@ -1371,7 +1371,11 @@ side of the other's line, exact turns; candidates by a grid of the edges' boxes,
 rings that cross so that the region between them is wound twice, which the sweep covers
 twice (two arcs leaving a vertex 7° apart, curving the same way, the flatter one's chord
 across the other's polyline; the extrusion's cap left a side used once, the 2D chain
-fuzzer's find bw, 2026-11-21); touching rings are no crossing. After the sweep the
+fuzzer's find bw, 2026-11-21); touching rings are no crossing, but a point of the rings
+inside another of their edges to within rounding (D27's band at the rings' coordinates)
+is refused as a touch, the arcs refined (a crescent's outer chord through the inner arc's
+top to 2.5e-17, meshed with a triangle of no area in 3D: find cw, 2026-11-22; a fold of
+one point's two edges is `foldsBack`'s). After the sweep the
 triangles are checked by their count (Euler), their area and their boundary: each ring
 edge a side of one triangle, run its ring's way, and of none run the other (a ring's
 point on another ring edge, a notch reaching an arc's chord, passes count and area with

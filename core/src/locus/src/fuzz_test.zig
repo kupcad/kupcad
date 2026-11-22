@@ -2398,6 +2398,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // with three faces (classify: rays from samples clear by the intersection tolerance,
         // then the seams, then by the zone)
         "solids 1 5 4 4 1 1 0 1 4 3 3 0 0 3 3 3 1 0 3 8 1 11 10 9 16 3 0 0 -1 0 4 5 3 0 1 4 1 4 3 4 1 2 0 2 8 8 0",
+        // The cr/cs diagnosis's locus run (2026-11-22, cw): a sheet offset 1 with bevel
+        // joins, less a sheet of three rings, extruded 5; the cap's face a crescent 0.05
+        // thick, the outer arc's one chord through the inner arc's top to 2.5e-17, and a
+        // triangle across the touch of no area in 3D (triangulate.expectNoCrossing: a
+        // point within rounding of another edge refused, the arcs refined)
+        "chain 1 6 3 2 3 2 3 2 3 5 3 0 1 4 3 4 4 1 1 1 3 4 4 3 4 1 11 2 2 2 0 3 7 3 2 3 2 5 4 4 4 1 2 4 3 4 2 4 1 2 0 2 4 3 4 3 5 0 3 1 6 1 2 2 4 3 4 1 3 0 1 2 0 2 3 1 1 0 3 5 0 6 2 4 4 3 2 3 1 3 5",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

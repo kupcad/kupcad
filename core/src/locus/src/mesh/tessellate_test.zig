@@ -53,6 +53,18 @@ const FOLD_RINGS = [_][]const WedgePoint{
     &.{ .{ .p = .{ 2, 6 } }, .{ .p = .{ 1, 5 }, .bulge = -1, .ccw = true }, .{ .p = .{ 4, 6 }, .bulge = 1 }, .{ .p = .{ 1, 5 } }, .{ .p = .{ 4, 4 }, .bulge = -0.5 }, .{ .p = .{ 6, 0 } }, .{ .p = .{ 4, 5 } }, .{ .p = .{ 0, 4 } } },
     &.{ .{ .p = .{ 0, 5 }, .bulge = -0.5 }, .{ .p = .{ 1, 4 } }, .{ .p = .{ 3, 0 } }, .{ .p = .{ 0, 1 }, .bulge = 0.5, .ccw = true } },
 };
+/// The face of the 2D chain fuzzer's find cw (2026-11-22), as the chain made it: a
+/// crescent between an outer arc about (1.75, 2.5) and an inner one about (2, 4), closed
+/// by a line and a short arc about (-1, 5), 0.05 thick at x = 2. At the default resolution
+/// the outer arc's chord from its start to its top passes through the inner arc's top to
+/// 2.5e-17. The vertices round the ring from the line's start, and the circles of the
+/// three arcs after it with their senses.
+const CRESCENT_VERTICES = [_]Vec2{ .{ 3.78885438199983, 5.341640786499876 }, .{ 3.447213595499958, 5.894427190999916 }, .{ 0.8892216841632099, 6.196177841329426 }, .{ 1, 6 } };
+const CRESCENT_ARCS = [_]struct { c: Vec2, r: f64, ccw: bool }{
+    .{ .c = .{ 1.75, 2.5 }, .r = 3.7950849718747373, .ccw = true },
+    .{ .c = .{ -1, 5 }, .r = 2.23606797749979, .ccw = false },
+    .{ .c = .{ 2, 4 }, .r = 2.23606797749979, .ccw = false },
+};
 /// The most rings, and points a ring, of the sheets drawn from `WedgePoint`s.
 const MAX_WEDGE_RINGS = 3;
 const MAX_WEDGE_POINTS = 8;
@@ -950,6 +962,31 @@ test "tessellate: a half ellipse's plate with a square hole near its rim, its ch
         defer drawn.deinit();
         const affine = quarterAffine(quarter, mirrored);
         var sheet = try transform.transform(testing.allocator, &drawn, &affine, .{}, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+test "tessellate: a crescent whose outer arc's chord passes through the inner arc's top is refined, its sheet and extrusion meshed with every triangle of some area, in every quarter turn, mirrored or not (fuzz find cw)" {
+    // The 2D chain fuzzer's find (2026-11-22, cw): an offset sheet less another, extruded;
+    // the cap's chorded outline touched itself at the inner arc's top, 2.5e-17 to the
+    // region's side of the outer arc's chord, and the triangulator, simple to the exact
+    // turns, made a triangle across the touch of no area in 3D. A touch within rounding
+    // is refused as not simple (`triangulate.expectNoCrossing`), and the arcs refined
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}\n", .{ quarter, mirrored });
+        var ring: [CRESCENT_VERTICES.len]primitives.OutlineEdge = undefined;
+        for (CRESCENT_VERTICES, 0..) |a, k| {
+            const b = CRESCENT_VERTICES[(k + 1) % CRESCENT_VERTICES.len];
+            ring[k] = .{ .a = wedgeMove(a, quarter, mirrored), .b = wedgeMove(b, quarter, mirrored) };
+            if (k > 0) {
+                const arc = CRESCENT_ARCS[k - 1];
+                ring[k].arc = .{ .c = wedgeMove(arc.c, quarter, mirrored), .r = arc.r, .ccw = arc.ccw != mirrored };
+            }
+        }
+        var sheet = try primitives.outlines(testing.allocator, tol, &.{&ring}, &diag);
         defer sheet.deinit();
         try expectSheetAndSolidMeshed(&sheet);
     };

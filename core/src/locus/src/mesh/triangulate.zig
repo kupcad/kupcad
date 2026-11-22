@@ -19,6 +19,7 @@
 const std = @import("std");
 const vec = @import("../math/vec.zig");
 const predicates = @import("../math/predicates.zig");
+const canonical = @import("../geometry/canonical.zig");
 const diagnostics = @import("../diagnostics.zig");
 const Vec2 = vec.Vec2;
 const Diagnostics = diagnostics.Diagnostics;
@@ -377,7 +378,15 @@ fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) f64 {
 /// overlapping triangles; the 2D chain fuzzer's extrusion, bw). A crossing refused, the
 /// tessellator refines the face's arcs (`tessellate`). Touching (a ring through a point
 /// twice, a hole touching the outer loop, a slit's two passages along one segment) is no
-/// crossing; a point on another edge is `expectRingSides`'s. The edges are bucketed in a
+/// crossing. A point of the rings inside an edge it is not an end of, within rounding of
+/// it (D27's band at the rings' coordinates, `insideTo`), is refused alike: a point
+/// exactly on the edge `expectRingSides` refuses, but a few ulps to the region's side of
+/// it the polygon is simple to the exact turns and is meshed with a triangle across the
+/// touch, its area to rounding and none in 3D (a crescent between two nested arcs 0.05
+/// thick, the outer arc's one chord passing through the inner arc's top to 2.5e-17; the
+/// 2D chain fuzzer's find cw, 2026-11-22); refused, the arcs are refined and the chords
+/// part. Two edges of one point (a ring's turn, `tessellate.foldsBack`'s when it folds
+/// back) are not compared so. The edges are bucketed in a
 /// grid over the rings' bounding box by their own boxes, and only edges sharing a cell are
 /// compared: a cell is found by rounding monotone in the coordinate, so two boxes that
 /// meet share a cell.
@@ -390,6 +399,11 @@ fn expectNoCrossing(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagn
         lo = .{ @min(lo[0], p[0]), @min(lo[1], p[1]) };
         hi = .{ @max(hi[0], p[0]), @max(hi[1], p[1]) };
     }
+    // The rounding a point inside an edge is taken to touch it within, and the edges' boxes
+    // grown by it, so that a point that near an edge shares a cell with it
+    const band = canonical.Comparison.distance(0, 0, @max(@max(@abs(lo[0]), @abs(lo[1])), @max(@abs(hi[0]), @abs(hi[1])))).band;
+    lo = .{ lo[0] - band, lo[1] - band };
+    hi = .{ hi[0] + band, hi[1] + band };
     const side: usize = @max(1, @min(MAX_CROSSING_GRID, std.math.sqrt(n)));
     const next = try allocator.alloc(u32, n);
     defer allocator.free(next);
@@ -402,6 +416,7 @@ fn expectNoCrossing(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagn
         lo: Vec2,
         hi: Vec2,
         side: usize,
+        grow: f64,
 
         fn cell(self: @This(), x: f64, axis: usize) usize {
             const extent = self.hi[axis] - self.lo[axis];
@@ -410,15 +425,15 @@ fn expectNoCrossing(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagn
             return @min(self.side - 1, @as(usize, @intFromFloat(@max(at, 0))));
         }
 
-        /// The cells edge `a b`'s box covers, as ranges along each axis.
+        /// The cells edge `a b`'s box, grown by `grow`, covers, as ranges along each axis.
         fn cells(self: @This(), a: Vec2, b: Vec2) [2][2]usize {
             return .{
-                .{ self.cell(@min(a[0], b[0]), 0), self.cell(@max(a[0], b[0]), 0) },
-                .{ self.cell(@min(a[1], b[1]), 1), self.cell(@max(a[1], b[1]), 1) },
+                .{ self.cell(@min(a[0], b[0]) - self.grow, 0), self.cell(@max(a[0], b[0]) + self.grow, 0) },
+                .{ self.cell(@min(a[1], b[1]) - self.grow, 1), self.cell(@max(a[1], b[1]) + self.grow, 1) },
             };
         }
     };
-    const grid: Grid = .{ .lo = lo, .hi = hi, .side = side };
+    const grid: Grid = .{ .lo = lo, .hi = hi, .side = side, .grow = band };
     // The edges of each cell, by counting: the counts, their running sums as starts, the
     // edges written in
     const starts = try allocator.alloc(u32, side * side + 1);
@@ -446,7 +461,14 @@ fn expectNoCrossing(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagn
     for (0..side * side) |k| {
         const in_cell = members[starts[k]..starts[k + 1]];
         for (in_cell, 0..) |i, at| for (in_cell[at + 1 ..]) |j| {
-            if (cross(points[i], points[next[i]], points[j], points[next[j]])) return notSimpleCount(diag, i, j);
+            const a = points[i];
+            const b = points[next[i]];
+            const c = points[j];
+            const d = points[next[j]];
+            if (cross(a, b, c, d)) return notSimpleCount(diag, i, j);
+            // Two edges of one point, a turn of the ring, are not a touch
+            if (next[i] == j or next[j] == i) continue;
+            if (insideTo(c, a, b, band) or insideTo(d, a, b, band) or insideTo(a, c, d, band) or insideTo(b, c, d, band)) return notSimpleCount(diag, i, j);
         };
     }
 }
@@ -460,6 +482,19 @@ fn cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) bool {
     const a_side = predicates.orient2d(c, d, a);
     const b_side = predicates.orient2d(c, d, b);
     return a_side != 0 and b_side != 0 and (a_side > 0) != (b_side > 0);
+}
+
+/// Whether `p` lies inside segment `a b` to within `band`: within `band` of its line, and
+/// along it more than `band` from either end (a point at an end is a ring through a point
+/// twice, or a hole touching the outer loop, no touch).
+fn insideTo(p: Vec2, a: Vec2, b: Vec2, band: f64) bool {
+    const along = vec.sub2(b, a);
+    const length = vec.length2(along);
+    if (!(length > 2 * band)) return false;
+    const rel = vec.sub2(p, a);
+    const at = vec.dot2(rel, along) / length;
+    if (!(at > band and at < length - band)) return false;
+    return @abs(vec.cross2(along, rel)) / length <= band;
 }
 
 fn validate(polygon: Polygon, diag: *Diagnostics) Error!void {

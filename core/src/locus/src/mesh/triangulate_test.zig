@@ -28,6 +28,16 @@ const KEYHOLE_POINTS = [_]Vec2{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 4 }, .{ 0, 4 }, .{ 1
 const KEYHOLE_LOOP = [_]u32{ 0, 1, 2, 3, 4, 5, 6, 7, 4, 3 };
 /// The keyhole's region: the square less the hole.
 const KEYHOLE_AREA: f64 = 16 - 2;
+/// A square 10 a side with a notch from its top whose tip stands `TOUCH_LIFTS` over the
+/// middle of its bottom edge (find cw's touch: a point of the rings inside another of
+/// their edges, a few ulps to the region's side of it), and a hole whose lowest corner
+/// stands so over that edge. The band a point that near is refused within is D27's at
+/// the rings' coordinates: 64 ulps of 10, 1.4e-13.
+const TOUCH_SQUARE: f64 = 10;
+/// Within the band, the touch refused (one exactly on the edge, and below it, through it).
+const TOUCH_LIFTS_REFUSED = [_]f64{ 0, 1e-15, 1e-14, 1e-13, -1e-15 };
+/// Past it, the polygon triangulated.
+const TOUCH_LIFTS_MESHED = [_]f64{ 1e-12, 1e-9, 1e-6 };
 
 /// About the ring's first point: about the origin, a ring far from it sums terms far
 /// larger than its area.
@@ -514,4 +524,48 @@ test "triangulate: a face's loop bridged to a hole triangulates once its bridge 
     var area: f64 = 0;
     for (triangles) |t| area += vec.cross2(vec.sub2(polygon.points[t[1]], polygon.points[t[0]]), vec.sub2(polygon.points[t[2]], polygon.points[t[0]])) / 2;
     try testing.expectApproxEqAbs(KEYHOLE_AREA, area, CLOSE * KEYHOLE_AREA);
+}
+
+/// The notched square (or, `as_hole`, the square with a triangular hole) of the touch
+/// tests, the tip `lift` over the bottom edge's middle, turned `quarter` quarter turns and
+/// mirrored when `mirrored`, each ring read backwards when mirrored so that the region
+/// stays on its left; `points` and `starts` filled, the counts returned.
+fn touchPolygon(lift: f64, as_hole: bool, quarter: usize, mirrored: bool, points: *[7]Vec2, starts: *[3]u32) struct { points: usize, starts: usize } {
+    const t = TOUCH_SQUARE;
+    const notched = [_]Vec2{ .{ 0, 0 }, .{ t, 0 }, .{ t, t }, .{ 0.6 * t, t }, .{ 0.5 * t, lift }, .{ 0.4 * t, t }, .{ 0, t } };
+    const square = [_]Vec2{ .{ 0, 0 }, .{ t, 0 }, .{ t, t }, .{ 0, t } };
+    const hole = [_]Vec2{ .{ 0.5 * t, lift }, .{ 0.4 * t, 0.5 * t }, .{ 0.6 * t, 0.5 * t } };
+    const rings: []const []const Vec2 = if (as_hole) &.{ &square, &hole } else &.{&notched};
+    var at: usize = 0;
+    for (rings, 0..) |ring, r| {
+        starts[r] = @intCast(at);
+        for (ring, 0..) |p, k| points[at + (if (mirrored) ring.len - 1 - k else k)] = moved(p, quarter, mirrored);
+        at += ring.len;
+    }
+    starts[rings.len] = @intCast(at);
+    return .{ .points = at, .starts = rings.len + 1 };
+}
+
+test "triangulate: a point of the rings inside another of their edges, to within rounding of it, is refused, past it triangulated, in every quarter turn, mirrored or not (fuzz find cw)" {
+    // The 2D chain fuzzer's find (2026-11-22, cw): a crescent between two nested arcs, the
+    // outer arc's one chord passing through the inner arc's top to 2.5e-17. Exactly on the
+    // chord the ring sides refuse the polygon; a few ulps to the region's side of it the
+    // polygon is simple to the exact turns, and was meshed with a triangle across the
+    // touch of no area in 3D. Within D27's band of an edge a point touches it, and the
+    // polygon is refused so that the tessellator refines the arcs; a notch's tip and a
+    // hole's corner alike
+    var points: [7]Vec2 = undefined;
+    var starts: [3]u32 = undefined;
+    for ([_]bool{ false, true }) |as_hole| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        for (TOUCH_LIFTS_REFUSED) |lift| {
+            errdefer std.debug.print("refused: lift {e}, as a hole {}, quarter turns {d}, mirrored {}\n", .{ lift, as_hole, quarter, mirrored });
+            const n = touchPolygon(lift, as_hole, quarter, mirrored, &points, &starts);
+            try expectRefused(points[0..n.points], starts[0..n.starts], .not_simple);
+        }
+        for (TOUCH_LIFTS_MESHED) |lift| {
+            errdefer std.debug.print("meshed: lift {e}, as a hole {}, quarter turns {d}, mirrored {}\n", .{ lift, as_hole, quarter, mirrored });
+            const n = touchPolygon(lift, as_hole, quarter, mirrored, &points, &starts);
+            try expectPolygon(points[0..n.points], starts[0..n.starts]);
+        }
+    };
 }
