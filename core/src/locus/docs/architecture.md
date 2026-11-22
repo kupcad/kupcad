@@ -535,7 +535,9 @@ the tolerance of each other), so the rule was deleted (6120922e); two that meet 
 edge at an angle within the angular tolerance (a knife edge) are not, and a hull's top
 along a flat tetrahedron 2.1 tolerances thick lay within the zone of its upper and lower
 faces at once, unclassified (Leo, 2026-11-16: the rule back, whether the two meet or
-not). A face crossing a thin feature steeply reaches both sides too, along sections the
+not). Within both over a region wider than the zone, the checker's measure of a face
+that is no sliver, not over any positive area: footprints touching along an edge alone met
+in none in place and in a sliver of rounding moved to 3e5 (2026-11-22). A face crossing a thin feature steeply reaches both sides too, along sections the
 paves keep apart: made. The vertex question is asked of edges too: a pave block within
 reach of two faces of one shell of the other operand, parallel within the angular
 tolerance and facing apart, away from where they meet (its stretch within reach of both

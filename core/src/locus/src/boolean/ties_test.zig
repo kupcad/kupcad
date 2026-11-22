@@ -87,6 +87,19 @@ const CX_PLATE_TURNS = [_]f64{ 1e-7, 1e-6, 1e-5 };
 /// The hull lifted in z in the family: the find's, and half a zone, the two farther across.
 const CX_HULL_LIFTS = [_]f64{ 0, 5e-6 };
 
+/// The solids of the tests of a face within the tolerance of a knife pair's two faces only
+/// along a line (the audit of fixed numbers, 2026-11-22): a flat tetrahedron whose bottom
+/// and top meet at 6e-5 rad along its edge on the x axis, and a box beside it, its top in
+/// the bottom's plane (or `KNIFE_DROPS` under it) and its top's edge along the knife edge
+/// (or `KNIFE_OVERS` past it, under the tetrahedron, or short of it).
+const KNIFE_TETRAHEDRON = [_]Vec3{ .{ 0, 0, 0 }, .{ 4, 0, 0 }, .{ 2, 4, 0 }, .{ 2, 4, 2.4e-4 } };
+const KNIFE_BOX = [2]Vec3{ .{ 0, -2, -1 }, .{ 4, 0, 0 } };
+const KNIFE_DROPS = [_]f64{ 0, 5e-6 };
+/// How far the box's top runs past the knife edge: on it, where the footprints only touch
+/// (made), ten zones under the tetrahedron (within the tolerance of both its faces over a
+/// strip that wide: refused), and ten zones short of it (made).
+const KNIFE_OVERS = [_]struct { by: f64, refused: bool }{ .{ .by = 0, .refused = false }, .{ .by = 1e-4, .refused = true }, .{ .by = -1e-4, .refused = false } };
+
 /// What a boolean of two solids gives: a refusal's code, or the made solid's counts, its
 /// shells' kinds and its points (each vertex; each edge's curve at the middle of its range,
 /// which a joined edge's line decides; each planar face's corners' centroid on its plane,
@@ -356,5 +369,32 @@ test "ties: the family about cx, the plate turned, the hull lifted, mirrored, al
         var solids = try cxSolids(turn, lift, mirrored);
         defer for (&solids) |*body| body.deinit();
         try expectAlikeSwappedAndMovedBy(&solids[0], &solids[1], &FAR_MOVES);
+    };
+}
+
+test "ties: a box's top along a flat tetrahedron's knife edge, the footprints only touching, is made alike swapped, mirrored and moved far" {
+    // The audit of fixed numbers (2026-11-22): the sandwich rule refused a face within
+    // the tolerance of two faces facing apart over "a region of positive area", a clipped
+    // polygon's area against 0. The box's top and the tetrahedron's two faces meet along
+    // the knife edge alone: no area in place, and a sliver of the coordinates' rounding
+    // moved to 3e5, positive in two of the far moves, where the same solids were refused
+    // `below_feature_size`. A region is one wider than the zone
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (KNIFE_DROPS) |drop| for (KNIFE_OVERS) |over| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the box's top {e} under the bottom's plane, {e} past the knife edge, mirrored {}\n", .{ drop, over.by, mirrored });
+        var drawn_tetrahedron = try hull_mod.hull(testing.allocator, Tolerance.fromZone(1e-5), &KNIFE_TETRAHEDRON, &diag);
+        defer drawn_tetrahedron.deinit();
+        var drawn_box = try helpers.box(vec.sub(KNIFE_BOX[0], .{ 0, 0, drop }), vec.add(KNIFE_BOX[1], .{ 0, over.by, -drop }));
+        defer drawn_box.deinit();
+        const place = if (mirrored) mat.Affine.mirror(vec.X3) else mat.Affine.translate(vec.ZERO3);
+        var tetrahedron = try transform.transform(testing.allocator, &drawn_tetrahedron, &place, .{}, &diag);
+        defer tetrahedron.deinit();
+        var box = try transform.transform(testing.allocator, &drawn_box, &place, .{}, &diag);
+        defer box.deinit();
+        const joined = try Outcome.of(&tetrahedron, &box, .@"union", null);
+        defer joined.deinit();
+        try testing.expectEqual(@as(?diagnostics.Code, if (over.refused) .below_feature_size else null), joined.code);
+        try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
     };
 }

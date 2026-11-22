@@ -240,6 +240,16 @@ const Convex = struct {
         for (1..self.len - 1) |i| twice += vec.cross2(vec.sub2(self.points[i], self.points[0]), vec.sub2(self.points[i + 1], self.points[0]));
         return twice / 2;
     }
+
+    /// How wide it is: its area over half its perimeter, a strip's width (the measure the
+    /// checker holds a face's against the zone, `check`'s slivers); 0 for none.
+    fn width(self: Convex) f64 {
+        const a = self.area();
+        if (!(a > 0)) return 0;
+        var around: f64 = 0;
+        for (0..self.len) |i| around += vec.length2(vec.sub2(self.points[(i + 1) % self.len], self.points[i]));
+        return a / (around / 2);
+    }
 };
 
 /// `Filler.knifeBlocks`'s scratch: each face's spans of a block's feet inside it, and the
@@ -2272,7 +2282,13 @@ const Filler = struct {
     /// intersection tolerance of the planes of faces `g1` and `g2` of operand `other`, its
     /// feet on them in the faces: the faces' triangles, put in `f`'s plane (`g1`'s and
     /// `g2`'s along their own normals, where a point's foot on them lies), meet in a region
-    /// of positive area within the band of both planes.
+    /// within the band of both planes, one wider than the zone (`Convex.width`, the
+    /// checker's measure of a face that is no sliver; at the zone to rounding refused,
+    /// `at_tolerance`, D27). Not one of any positive area: footprints that only touch along
+    /// an edge meet in none where they are drawn, and in a sliver of the coordinates'
+    /// rounding once the solids are moved whole, positive half the time (a box's top along
+    /// a flat tetrahedron's knife edge, the two beside each other: made in place, refused
+    /// `below_feature_size` moved to 3e5; the audit of fixed numbers, 2026-11-22).
     fn reachesBoth(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame, other: usize, g1: types.FaceIndex, g2: types.FaceIndex, scratch: *Sandwich) Error!bool {
         const p = self.p;
         const xsect = p.tol.xsect;
@@ -2304,7 +2320,12 @@ const Filler = struct {
             for (scratch.g1.items) |t1| {
                 const in_g1 = in_f.clipTriangle(t1);
                 if (!(in_g1.area() > 0)) continue;
-                for (scratch.g2.items) |t2| if (in_g1.clipTriangle(t2).area() > 0) return true;
+                for (scratch.g2.items) |t2| {
+                    // A region wider than the zone: a strip narrower is no region, as a
+                    // face that narrow is none (`check`'s sliver measure)
+                    const width = in_g1.clipTriangle(t2).width();
+                    if (!try self.settle(p.decide.within(width, p.tol.zone), .of(.face, @backingInt(g2)))) return true;
+                }
             }
         }
         return false;
