@@ -1175,7 +1175,11 @@ const Triangulation = struct {
         try self.adjacent.append(allocator, .{ pack(n, 0), across_bc, pack(t, 1) });
         self.adjacent.items[n] = .{ pack(t2, 0), pack(n2, 2), across_db };
         try self.adjacent.append(allocator, .{ pack(t, 0), across_ad, pack(n, 1) });
+        // Every side beyond the point has a new place in its triangle's corners, the two
+        // that stay in `t` and `n` too (third now, whichever they were)
+        self.relink(across_ca, pack(t, 2));
         self.relink(across_bc, pack(t2, 1));
+        self.relink(across_db, pack(n, 2));
         self.relink(across_ad, pack(n2, 1));
         try self.pending.append(allocator, pack(t, 2));
         try self.pending.append(allocator, pack(t2, 1));

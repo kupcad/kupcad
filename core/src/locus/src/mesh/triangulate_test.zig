@@ -569,3 +569,33 @@ test "triangulate: a point of the rings inside another of their edges, to within
         }
     };
 }
+
+test "triangulateWith: points on the sides of triangles turned any way round, the sides beyond them kept paired" {
+    // A point on a side splits the two triangles the side lies between. Each keeps a side
+    // beyond the point, and the triangle across that side must be told its new place in
+    // the split one's corners. It was not: with the side the point lies on not the first
+    // of its triangle, the neighbour kept the old place, and a later point on a side
+    // there read a wrong corner across: the triangle (0, 7, 0), a corner twice (found
+    // writing the audit's tests, 2026-11-22). A square's centre, then a point on each
+    // spoke from it, in every order of the four
+    const square = [_]Vec2{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+    const spokes = [_]Vec2{ .{ 0.25, 0.75 }, .{ 0.75, 0.25 }, .{ 0.25, 0.25 }, .{ 0.75, 0.75 } };
+    for (0..4) |first| for (0..4) |second| for (0..4) |third| for (0..4) |fourth| {
+        if (first == second or first == third or first == fourth or second == third or second == fourth or third == fourth) continue;
+        errdefer std.debug.print("order {d} {d} {d} {d}\n", .{ first, second, third, fourth });
+        try expectInserted(&square, &.{ 0, 4 }, &.{ .{ 0.5, 0.5 }, spokes[first], spokes[second], spokes[third], spokes[fourth] }, 5);
+    };
+}
+
+test "triangulateWith: a corner the least double off the origin, its flips decided exactly and ended" {
+    // The audit of 2026-11-22 (kind 9, B3): the Delaunay flips end because `incircle` is
+    // exact, and it was exact only for coordinates the least double is far below; a
+    // corner that far off the origin squares to nothing in the lift. The square with its
+    // first corner so, either side, and points inside: triangulated, Delaunay
+    const hair = std.math.floatTrueMin(f64);
+    for ([_]Vec2{ .{ hair, hair }, .{ -hair, hair }, .{ hair, -hair }, .{ -hair, -hair }, .{ 0, hair } }) |corner| {
+        errdefer std.debug.print("corner {any}\n", .{corner});
+        const square = [_]Vec2{ corner, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+        try expectInserted(&square, &.{ 0, 4 }, &.{ .{ 0.5, 0.5 }, .{ 0.25, 0.75 }, .{ 0.75, 0.25 }, .{ 0.25, 0.25 } }, 4);
+    }
+}
