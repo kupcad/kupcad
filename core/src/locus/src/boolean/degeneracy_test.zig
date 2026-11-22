@@ -117,7 +117,7 @@ const LIP_HINGE_WINDOW = [_][2]f64{ .{ LIP_OVER, 3e-5 }, .{ 1.5e-4, 8e-5 }, .{ 1
 /// and what meets it, whole: none, and four about skew axes (a point's first rays go to
 /// the faces nearest it by their boxes, which a turn reorders), the first shifted far out
 /// as the edge matrix's move is.
-const SLIVER_TURNS = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
+pub const SLIVER_TURNS = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
     .{ .axis = vec.Z3, .angle = 0, .shift = vec.ZERO3 },
     .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 1e3, -2e3, 500 } },
     .{ .axis = .{ 3, -1, 2 }, .angle = 1.1, .shift = vec.ZERO3 },
@@ -375,12 +375,12 @@ const SLOPE_HULL_NUDGE: Vec3 = .{ -5e-5, 5e-5, 5e-5 };
 /// The hull's nudges in z in the tests about that find (the fuzzer's 5e-5): the plate's
 /// edge from 1.84e-4 under the sloped face's plane (within the intersection tolerance) to
 /// 2.62e-4 under it (past it by 0.62 of the zone), in steps of about 7e-6.
-const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4, 1.2e-4 };
+pub const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4, 1.2e-4 };
 /// How the three operands of those tests are turned together: in place and about three
 /// skew axes (`SLIVER_TURNS` but its far shift, where the box's side and the plate's, 2e-4
 /// apart in place, are the intersection tolerance to rounding and their union is refused
 /// `at_tolerance` before the hull comes).
-const SLOPE_TURNS = [_]@TypeOf(SLIVER_TURNS[0]){ SLIVER_TURNS[0], SLIVER_TURNS[2], SLIVER_TURNS[3], SLIVER_TURNS[4] };
+pub const SLOPE_TURNS = [_]@TypeOf(SLIVER_TURNS[0]){ SLIVER_TURNS[0], SLIVER_TURNS[2], SLIVER_TURNS[3], SLIVER_TURNS[4] };
 /// The hull of those tests tilted alone about an axis through the middle of the plate's
 /// edge along its sloped face (`SLOPE_EDGE_MIDDLE`), so the edge's height over the face's
 /// plane changes along it: about x (along the edge's run, from 4 to 5 in y) and about z,
@@ -4597,7 +4597,7 @@ fn spurSolids(inset: f64, quarter: usize, mirrored: bool) ![2]Body {
 /// The box and the hull of those tests at `zones`, the hull's top `drop` under 4, both
 /// turned `quarter` quarter turns about z through the origin and then mirrored in x = 0
 /// when `mirrored` (exact: coordinates swapped and negated).
-fn tieSolids(zones: [2]f64, drop: f64, quarter: usize, mirrored: bool) ![2]Body {
+pub fn tieSolids(zones: [2]f64, drop: f64, quarter: usize, mirrored: bool) ![2]Body {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
     const corners = [2]Vec3{ tieMove(TIE_BOX[0], quarter, mirrored), tieMove(TIE_BOX[1], quarter, mirrored) };
@@ -4827,6 +4827,19 @@ fn expectSlopeTilted(lift: f64, axis: Vec3, angle: f64) !void {
 }
 
 fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
+    var operands = try slopeOperands(lift, turn);
+    defer for (&operands) |*body| body.deinit();
+    var all = try helpers.sound(&operands[0], &operands[1], .@"union");
+    defer all.deinit();
+    var swapped = try helpers.sound(&operands[1], &operands[0], .@"union");
+    defer swapped.deinit();
+}
+
+/// Find bx's operands, `lift` the hull's nudge in z (the fuzzer's 5e-5) and all three
+/// solids moved by `turn`: the union of the box and the plate, checked (`helpers.sound`),
+/// and the hull whose sloped face the plate's edge runs along. The edge matrix's family
+/// about bx takes them too.
+pub fn slopeOperands(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) ![2]Body {
     var drawn_block = try fuzzBoxPlaced(tol, SLOPE_BOX[0], SLOPE_BOX[1], vec.Z3, 0, null, SLOPE_BOX_MOVE);
     defer drawn_block.deinit();
     var drawn_plate = try fuzzBoxPlaced(Tolerance.fromZone(1e-4), SLOPE_PLATE[0], SLOPE_PLATE[1], vec.Z3, 0, SLOPE_PLATE_SCALE, SLOPE_PLATE_NUDGE);
@@ -4837,14 +4850,9 @@ fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
     defer block.deinit();
     var plate = try sliverMoved(&drawn_plate, turn);
     defer plate.deinit();
-    var hull = try sliverMoved(&drawn_hull, turn);
-    defer hull.deinit();
     var joined = try helpers.sound(&block, &plate, .@"union");
-    defer joined.deinit();
-    var all = try helpers.sound(&joined, &hull, .@"union");
-    defer all.deinit();
-    var swapped = try helpers.sound(&hull, &joined, .@"union");
-    defer swapped.deinit();
+    errdefer joined.deinit();
+    return .{ joined, try sliverMoved(&drawn_hull, turn) };
 }
 
 test "degeneracy: a hull less a box, cut by a plate whose top crosses the hull's face parallel to the box's bottom edge, keeps the same edges moved whole" {

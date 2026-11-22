@@ -12,8 +12,15 @@
 //! refused as an operand. Failures are counted and listed, family by family, so one run
 //! shows them all.
 //!
-//! The fast tier (a ladder's values on either side of each boundary) runs with the suite;
-//! `-Dedge-matrix=true` runs every value, as the nightly does.
+//! Every case made goes a step further (Leo, 2026-11-21: a fix that turns a refusal into a
+//! made result hands the next step a body nothing checked it on, as bp's made the step bt
+//! failed and bm's the sweep bu failed): its union and its difference each meet a box
+//! touching them, a box across a corner of them and the hull of their own vertices, under
+//! the same oracles (`NEXT_STEPS`), counted beside the family's own cases.
+//!
+//! The fast tier (a ladder's values on either side of each boundary, and the next step of
+//! every `NEXT_EVERY_FAST`-th case made) runs with the suite; `-Dedge-matrix=true` runs
+//! every value and every case's next step, as the nightly does.
 
 const std = @import("std");
 const testing = std.testing;
@@ -26,6 +33,7 @@ const hull_mod = @import("../construct/hull.zig");
 const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
 const check = @import("../topology/check.zig");
+const types = @import("../topology/types.zig");
 const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
 const oracle = @import("oracle_test.zig");
@@ -189,6 +197,38 @@ const FAST_WALL_HULL_UP = [_]f64{-1.1};
 /// bp's hull, as the fuzzer drew it.
 const WALL_HULL = [_]Vec3{ .{ 3, 4, 2 }, .{ 2, 2, 4 }, .{ 0, 4, 4 }, .{ 3, 4, 3 }, .{ 0, 3, 0 }, .{ 1, 4, 3 }, .{ 3, 1, 2 } };
 
+/// What a made case's next step does: its result (`from`) under the three operations with
+/// another solid (`with`): a box touching it from beyond its bounds, a box across a corner of
+/// it, or the hull of its own vertices and one point past them, which holds it, its faces on
+/// the hull's own wherever the result is convex there.
+const NextWith = enum { touching_box, corner_box, own_hull };
+const NEXT_STEPS = [_]struct { from: pipeline.Op, with: NextWith }{
+    .{ .from = .@"union", .with = .touching_box },
+    .{ .from = .@"union", .with = .own_hull },
+    .{ .from = .difference, .with = .corner_box },
+};
+/// The fast tier takes the next step of every this many cases made, each family counted
+/// from its first (all of them in the full tier).
+const NEXT_EVERY_FAST = 8;
+/// How far past the result's bounds the boxes and the hull's extra point reach, at least.
+const NEXT_PAST = 0.5;
+
+/// The zones of find by's box and hull (`drawn.tieSolids`): the find's, the other way round,
+/// and alike, either coarse or fine.
+const TIE_ZONE_PAIRS = [_][2]f64{ .{ 1e-4, 1e-5 }, .{ 1e-5, 1e-4 }, .{ 1e-5, 1e-5 }, .{ 1e-4, 1e-4 } };
+const FAST_TIE_ZONE_PAIRS = TIE_ZONE_PAIRS[0..2];
+/// How far the box's top lies under 4 in find by, which the hull's top is dropped from: the
+/// tops' gap is the hull's drop less it.
+const TIE_BOX_TOP_UNDER = 5e-5;
+/// The quarter turns about z by's two solids are drawn in.
+const TIE_QUARTERS = [_]usize{ 0, 1, 2, 3 };
+const FAST_TIE_QUARTERS = [_]usize{0};
+
+/// The hull's lifts in find bx's family (`drawn.SLOPE_LIFTS`, the plate's edge 1.84e-4 to
+/// 2.62e-4 under the hull's sloped face at an intersection tolerance of 2e-4), the fast
+/// tier the find's and one past the tolerance.
+const FAST_SLOPE_LIFTS = [_]f64{ 5e-5, 1e-4 };
+
 fn pick(full: []const f64, fast: []const f64) []const f64 {
     return if (FULL) full else fast;
 }
@@ -237,14 +277,30 @@ const Tally = struct {
     /// The refusals by their code, printed with the full tier's summary: a refusal grown
     /// common shows which decision turns cases away
     codes: std.EnumArray(diagnostics.Code, usize) = .initFill(0),
+    /// The next steps of the cases made (`NEXT_STEPS`), counted alike
+    next: Counts = .{},
 
-    /// Fails the test when any case did, after the family's summary.
+    const Counts = struct {
+        cases: usize = 0,
+        made: usize = 0,
+        refused: usize = 0,
+        unbuilt: usize = 0,
+        failed: usize = 0,
+        codes: std.EnumArray(diagnostics.Code, usize) = .initFill(0),
+    };
+
+    /// Fails the test when any case or next step did, after the family's summary.
     fn finish(self: *const Tally) !void {
         if (FULL or self.failed > 0) {
             std.debug.print("edge matrix, {s}: {d} cases, {d} made, {d} refused, {d} not built, {d} failed\n", .{ self.family, self.cases, self.made, self.refused, self.unbuilt, self.failed });
             for (std.enums.values(diagnostics.Code)) |code| if (self.codes.get(code) > 0) std.debug.print("  refused {t}: {d}\n", .{ code, self.codes.get(code) });
         }
-        if (self.failed > 0) return error.EdgeMatrixFailed;
+        const n = &self.next;
+        if (FULL or n.failed > 0) {
+            std.debug.print("edge matrix, {s}, next step: {d} cases, {d} made, {d} refused, {d} not built, {d} failed\n", .{ self.family, n.cases, n.made, n.refused, n.unbuilt, n.failed });
+            for (std.enums.values(diagnostics.Code)) |code| if (n.codes.get(code) > 0) std.debug.print("  next refused {t}: {d}\n", .{ code, n.codes.get(code) });
+        }
+        if (self.failed > 0 or n.failed > 0) return error.EdgeMatrixFailed;
     }
 };
 
@@ -252,7 +308,8 @@ const Outcome = union(enum) { made, refused: diagnostics.Code };
 
 /// One case: `a` and `b` (null when either could not be built: a construction refusing a
 /// solid is no case), `thin` when one is drawn below the minimum feature size. Its
-/// failure is counted and printed with `name`, never returned.
+/// failure is counted and printed with `name`, never returned; a case made takes its next
+/// step (`nextStep`).
 fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin: bool) !void {
     tally.cases += 1;
     var first = a catch |err| {
@@ -272,14 +329,20 @@ fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin
         return;
     };
     defer second.deinit();
-    const outcome = step(&first, &second, thin, tally.reach) catch |err| {
+    var results: [3]Body = undefined;
+    var made: usize = 0;
+    defer for (results[0..made]) |*r| r.deinit();
+    const outcome = step(&first, &second, thin, tally.reach, &results, &made) catch |err| {
         if (err == error.OutOfMemory) return err;
         tally.failed += 1;
         std.debug.print("edge matrix FAILED, {s}: {s}: {t}\n", .{ tally.family, name, err });
         return;
     };
     switch (outcome) {
-        .made => tally.made += 1,
+        .made => {
+            tally.made += 1;
+            if (FULL or (tally.made - 1) % NEXT_EVERY_FAST == 0) try nextStep(tally, name, &results);
+        },
         .refused => |code| {
             tally.refused += 1;
             tally.codes.getPtr(code).* += 1;
@@ -287,43 +350,117 @@ fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin
     }
 }
 
-/// The fuzzer's step on `a` and `b`, then the step under each of `MOVES`.
-fn step(a: *const Body, b: *const Body, thin: bool, reach: f64) !Outcome {
+/// The fuzzer's step on `a` and `b` (`operate`), then the step under each of `MOVES`; the
+/// results made in `results`, `made` of them, for the caller to free.
+fn step(a: *const Body, b: *const Body, thin: bool, reach: f64, results: *[3]Body, made: *usize) !Outcome {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    var results: [3]Body = undefined;
+    if (try operate(a, b, thin, results, made, &diag)) |code| return .{ .refused = code };
+    for (moves()) |m| {
+        const move = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
+        for (oracle.OPS, results) |op, *result| {
+            const steps = [_]oracle.Step{.{ .other = b.*, .op = op }};
+            try oracle.expectMovedWhole(a, &steps, result, &move, vec.length(m.shift) + reach, &diag);
+        }
+    }
+    return .made;
+}
+
+/// The three operations on `a` and `b` under the fuzzer's oracles: each made and sound, its
+/// report fitting it, and the identities, membership and the operands the other way round;
+/// or the code of the first refused, null when all three are made. The results made are in
+/// `results`, `made` of them, for the caller to free.
+fn operate(a: *const Body, b: *const Body, thin: bool, results: *[3]Body, made: *usize, diag: *Diagnostics) !?diagnostics.Code {
     var shifts: [3]f64 = undefined;
     var gaps: [3]f64 = undefined;
-    var made: usize = 0;
-    defer for (results[0..made]) |*r| r.deinit();
     for (oracle.OPS) |op| {
         var report = pipeline.Report.init(testing.allocator);
         defer report.deinit();
-        results[made] = pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, &report) catch |err| {
+        results[made.*] = pipeline.boolean(testing.allocator, a, b, op, .{}, diag, &report) catch |err| {
             try oracle.clean(err);
             // A solid below the minimum feature size is refused as an operand, never later
             if (thin and report.failed_in != null and report.failed_in.? != .operands) {
                 std.debug.print("a solid below the minimum feature size refused at {t}, not as an operand\n", .{report.failed_in.?});
                 return error.ThinOperandTaken;
             }
-            return .{ .refused = if (diag.first()) |f| f.code else .unclassified };
+            return if (diag.first()) |f| f.code else .unclassified;
         };
-        made += 1;
+        made.* += 1;
         if (thin) return error.ThinOperandTaken;
-        shifts[made - 1] = report.shift;
-        gaps[made - 1] = report.max_gap;
-        try oracle.expectSolid(&results[made - 1], &diag);
-        try helpers.expectReportFits(&report, a, b, &results[made - 1], op);
+        shifts[made.* - 1] = report.shift;
+        gaps[made.* - 1] = report.max_gap;
+        try oracle.expectSolid(&results[made.* - 1], diag);
+        try helpers.expectReportFits(&report, a, b, &results[made.* - 1], op);
     }
-    try oracle.expectStep(a, b, &results, shifts, gaps, &diag);
-    for (moves()) |m| {
-        const move = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
-        for (oracle.OPS, &results) |op, *result| {
-            const steps = [_]oracle.Step{.{ .other = b.*, .op = op }};
-            try oracle.expectMovedWhole(a, &steps, result, &move, vec.length(m.shift) + reach, &diag);
+    try oracle.expectStep(a, b, results, shifts, gaps, diag);
+    return null;
+}
+
+/// A made case's next step (`NEXT_STEPS`): each result named there, when it holds any
+/// solid, under the three operations with the solid named, by `operate`. Counted in
+/// `tally.next`; a failure is printed with the case's `name` and counted, never returned.
+fn nextStep(tally: *Tally, name: []const u8, results: *const [3]Body) !void {
+    for (NEXT_STEPS) |next| {
+        const k = std.mem.indexOfScalar(pipeline.Op, &oracle.OPS, next.from).?;
+        const from = &results[k];
+        if (from.counts().faces == 0) continue;
+        tally.next.cases += 1;
+        var other = nextOperand(from, next.with) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            tally.next.unbuilt += 1;
+            continue;
+        };
+        defer other.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var further: [3]Body = undefined;
+        var made: usize = 0;
+        defer for (further[0..made]) |*r| r.deinit();
+        const refused = operate(from, &other, false, &further, &made, &diag) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            tally.next.failed += 1;
+            std.debug.print("edge matrix FAILED, {s}, next step (the {t} with its {t}): {s}: {t}\n", .{ tally.family, next.from, next.with, name, err });
+            continue;
+        };
+        if (refused) |code| {
+            tally.next.refused += 1;
+            tally.next.codes.getPtr(code).* += 1;
+        } else tally.next.made += 1;
+    }
+}
+
+/// The solid a next step meets `body` with, at `body`'s zone: a box touching its bounds'
+/// high x side over the middle half of them in y and z, a box from their middle past their
+/// high corner, or the hull of `body`'s vertices and a point past that corner.
+fn nextOperand(body: *const Body, with: NextWith) !Body {
+    var lo: Vec3 = @splat(std.math.inf(f64));
+    var hi: Vec3 = @splat(-std.math.inf(f64));
+    for (0..body.vertices.items.len) |i| {
+        const p = body.point(types.VertexIndex.of(i));
+        for (0..3) |k| {
+            lo[k] = @min(lo[k], p[k]);
+            hi[k] = @max(hi[k], p[k]);
         }
     }
-    return .made;
+    const t = Tolerance.fromZone(body.tol.zone);
+    const span = vec.sub(hi, lo);
+    const past = @max(NEXT_PAST, @max(span[0], span[1], span[2]) / 4);
+    const mid = vec.add(lo, vec.scale(span, 0.5));
+    const quarter = vec.scale(span, 0.25);
+    const beyond = vec.add(hi, .{ past, past, past });
+    switch (with) {
+        .touching_box => return helpers.boxAt(t, .{ hi[0], lo[1] + quarter[1], lo[2] + quarter[2] }, .{ hi[0] + past, hi[1] - quarter[1], hi[2] - quarter[2] }),
+        .corner_box => return helpers.boxAt(t, mid, beyond),
+        .own_hull => {
+            const points = try testing.allocator.alloc(Vec3, body.vertices.items.len + 1);
+            defer testing.allocator.free(points);
+            for (points[0 .. points.len - 1], 0..) |*p, i| p.* = body.point(types.VertexIndex.of(i));
+            points[points.len - 1] = beyond;
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            return hull_mod.hull(testing.allocator, t, points, &diag);
+        },
+    }
 }
 
 /// The intersection tolerance of operands at zones `ZONE` and `ZONE · ratio`.
@@ -956,4 +1093,46 @@ fn wallHull(along: f64, up: f64, mirrored: bool) !Body {
         p[1] = 5 - p[1];
     };
     return drawn.fuzzHullPlaced(&points, vec.Z3, 0, null, .{ 0, if (mirrored) 1 else -1, 0 }, .{ along, 0, up });
+}
+
+test "edge matrix: a common block tied between operands of different zones, the tops a ladder apart" {
+    // Find by's box and the hull turned over it (`drawn.tieSolids`): both tops and both sides
+    // one plane each, so the slab the hull cuts off the box's side has its top edge a common
+    // block of an edge of each, a region of both on either side, a tie the finer zone breaks
+    // (1ade5090) and the faces' planes follow (66da2fa1). The tops d tolerances apart, at
+    // each zone pair, in every quarter turn, mirrored or not
+    var tally: Tally = .{ .family = "common block tied between zones" };
+    for (if (FULL) &TIE_ZONE_PAIRS else FAST_TIE_ZONE_PAIRS) |pair| for (distances()) |d| for (if (FULL) &TIE_QUARTERS else &FAST_TIE_QUARTERS) |quarter| for (both()) |mirrored| {
+        const x = Tolerance.merge(Tolerance.fromZone(pair[0]), Tolerance.fromZone(pair[1])).xsect;
+        var name: [160]u8 = undefined;
+        const label = try std.fmt.bufPrint(&name, "zones {e} and {e}, tops {d} tolerances apart, {d} quarter turns{s}", .{ pair[0], pair[1], d, quarter, if (mirrored) ", mirrored" else "" });
+        const solids = drawn.tieSolids(pair, TIE_BOX_TOP_UNDER + d * x, quarter, mirrored) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            tally.cases += 1;
+            tally.unbuilt += 1;
+            continue;
+        };
+        try run(&tally, label, solids[0], solids[1], false);
+    };
+    try tally.finish();
+}
+
+test "edge matrix: a plate's edge along a hull's sloped face, at the tolerance to rounding" {
+    // Find bx's box joined with a plate (zone 1e-4) and the hull whose 45° face the plate's
+    // edge runs along (`drawn.slopeOperands`), the hull lifted so the edge lies from within
+    // the intersection tolerance under the face to past it (`drawn.SLOPE_LIFTS`), all three
+    // turned by `drawn.SLOPE_TURNS`: the edge's gap holds its height's rounding (f493e184)
+    var tally: Tally = .{ .family = "edge along a sloped face", .reach = PLATE_REACH };
+    for (pick(&drawn.SLOPE_LIFTS, &FAST_SLOPE_LIFTS)) |lift| for (if (FULL) &drawn.SLOPE_TURNS else drawn.SLOPE_TURNS[0..1], 0..) |turn, t| {
+        var name: [120]u8 = undefined;
+        const label = try std.fmt.bufPrint(&name, "the hull lifted {e}, turn {d}", .{ lift, t });
+        const operands = drawn.slopeOperands(lift, turn) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            tally.cases += 1;
+            tally.unbuilt += 1;
+            continue;
+        };
+        try run(&tally, label, operands[0], operands[1], false);
+    };
+    try tally.finish();
 }
