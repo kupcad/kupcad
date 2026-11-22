@@ -19,6 +19,19 @@ const Vec2 = vec.Vec2;
 const PI = std.math.pi;
 
 const tol = Tolerance.fromZone(1e-5);
+/// A tetrahedron on the unit right triangle with its apex `LOW_RISES` zones over (0.3,
+/// 0.3): under twice the zone (the intersection tolerance) its sides lie in its base's
+/// plane, faces on each other; past it, near the base but apart. Not the zone or twice it
+/// themselves, where rounding has it either way.
+const LOW_BASE = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } };
+const LOW_APEX: [2]f64 = .{ 0.3, 0.3 };
+const LOW_TRIANGLES = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ 2, 0, 3 } };
+const LOW_THIN = [_]f64{ 1.25, 1.5, 1.9 };
+const LOW_APART = [_]f64{ 2.5, 3, 5 };
+/// How far along each axis a second unit cube is nudged in the tests of a hull of two cubes
+/// nearly one: their corners 1.73 and 2.6 zones apart, past the zone the hull welds at,
+/// about the intersection tolerance.
+const WELD_NUDGES = [_]f64{ 1e-5, 1.5e-5 };
 
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
@@ -476,4 +489,85 @@ test "polyhedron: two tetrahedra meeting at a vertex, a face of each on one plan
     defer report.deinit(testing.allocator);
     try testing.expect(report.ok());
     try testing.expectApproxEqAbs(@as(f64, 2.0 / 6.0), (try mass.mass(&pair, .{}, &diag)).volume, 1e-12);
+}
+
+/// The low tetrahedron's corners with its apex `rise` zones up, turned `quarter` quarter
+/// turns about z and mirrored in x when `mirrored`.
+fn lowPoints(rise: f64, quarter: usize, mirrored: bool) [4]Vec3 {
+    var out: [4]Vec3 = undefined;
+    for (LOW_BASE ++ [_]Vec3{.{ LOW_APEX[0], LOW_APEX[1], rise * tol.zone }}, 0..) |p, i| {
+        var q = p;
+        for (0..quarter) |_| {
+            const turned: Vec3 = .{ -q[1], q[0], q[2] };
+            q = turned;
+        }
+        out[i] = if (mirrored) .{ -q[0], q[1], q[2] } else q;
+    }
+    return out;
+}
+
+/// The low tetrahedron's triangles, wound the other way when mirrored.
+fn lowTriangles(mirrored: bool) [LOW_TRIANGLES.len][3]u32 {
+    var out = LOW_TRIANGLES;
+    if (mirrored) for (&out) |*t| std.mem.swap(u32, &t[1], &t[2]);
+    return out;
+}
+
+test "polyhedron and hull: a tetrahedron lower than the intersection tolerance is refused below the feature size, higher made" {
+    // Its sides lie in its base's plane within the tolerance: faces on each other, which a
+    // boolean refuses of its result and of its operands (find bd's tetrahedron, made by the
+    // constructors directly)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        const triangles = lowTriangles(mirrored);
+        for (LOW_THIN) |rise| {
+            errdefer std.debug.print("rise {d} zones, quarter turns {d}, mirrored {}\n", .{ rise, quarter, mirrored });
+            const points = lowPoints(rise, quarter, mirrored);
+            try testing.expectError(error.Degenerate, primitives.polyhedron(testing.allocator, tol, &points, &triangles, &diag));
+            try testing.expectEqual(.below_feature_size, diag.first().?.code);
+            diag.deinit();
+            diag = Diagnostics.init(testing.allocator);
+            try testing.expectError(error.Degenerate, hull.hull(testing.allocator, tol, &points, &diag));
+            try testing.expectEqual(.below_feature_size, diag.first().?.code);
+            diag.deinit();
+            diag = Diagnostics.init(testing.allocator);
+        }
+        for (LOW_APART) |rise| {
+            errdefer std.debug.print("rise {d} zones, quarter turns {d}, mirrored {}: {any}\n", .{ rise, quarter, mirrored, diag.first() });
+            const points = lowPoints(rise, quarter, mirrored);
+            var p = try primitives.polyhedron(testing.allocator, tol, &points, &triangles, &diag);
+            defer p.deinit();
+            try expectValid(&p);
+            var h = try hull.hull(testing.allocator, tol, &points, &diag);
+            defer h.deinit();
+            try expectValid(&h);
+        }
+    };
+}
+
+test "hull: two cubes nudged apart by less than the intersection tolerance give a hull or a refusal of the input's size, never an invalid body" {
+    // The hull welds its points at the zone (the interner's one decision of sameness): two
+    // corners 1.73 zones apart are two points, and the hull's edge between them is shorter
+    // than the checker allows; a body the input's sizes made, refused as such
+    // (`Degenerate`), where it read as the kernel's fault (`NotValid`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (WELD_NUDGES) |d| {
+        var pts: [16]Vec3 = undefined;
+        var n: usize = 0;
+        for ([_]f64{ 0, 1 }) |x| for ([_]f64{ 0, 1 }) |y| for ([_]f64{ 0, 1 }) |z| {
+            pts[n] = .{ x, y, z };
+            pts[n + 8] = .{ x + d, y + d, z + d };
+            n += 1;
+        };
+        errdefer std.debug.print("nudge {e}: {any}\n", .{ d, diag.first() });
+        if (hull.hull(testing.allocator, tol, &pts, &diag)) |h| {
+            var made = h;
+            defer made.deinit();
+            try expectValid(&made);
+        } else |e| try testing.expectEqual(error.Degenerate, e);
+        diag.deinit();
+        diag = Diagnostics.init(testing.allocator);
+    }
 }

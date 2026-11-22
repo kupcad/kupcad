@@ -315,18 +315,18 @@ pub fn boolean(allocator: std.mem.Allocator, a: *const Body, b: *const Body, op:
         r.max_gap = @max(r.max_gap, v.gap);
     };
     r.max_gap = @max(r.max_gap, made.reach);
-    try warnTouching(allocator, &result, diag);
+    try overlap.warnTouching(allocator, &result, diag);
     var index = try index_mod.FaceIndex.build(allocator, &result, diag);
     defer index.deinit(allocator);
-    r.near = try overlap.nearest(allocator, &result, &index, tol, 0, diag);
     // A result whose features keep the minimum feature size touches itself only where they
     // meet, which the assembly's pinch test reads from the topology (`refusePinched`); one
     // with a pair nearer may touch itself within the tolerance away from them, where only
     // the overlap rules see it: they decide it there, as for any body (the 10K session on
     // d5d78c4b, 2026-11-19: a difference kept a spike whose root was a triangle 2·xsect a
     // side under a plate, a wall thinner than the tolerance, made pinched; Leo: the rules
-    // gated on the result's nearest pair, results with near features still made)
-    if (r.near) |near| try overlap.nearRules(allocator, &result, &index, near, "faces of the result, within its features nearer than the minimum feature size,", common, diag);
+    // gated on the result's nearest pair, results with near features still made; one rule
+    // with every operation that makes a solid, `overlap.refuseMade`)
+    r.near = try overlap.refuseNear(allocator, &result, &index, "faces of the result, within its features nearer than the minimum feature size,", common, diag);
     try trace.data(allocator, &common, "boolean", "report", r.view());
     return result;
 }
@@ -504,25 +504,6 @@ fn refuseInvalid(allocator: std.mem.Allocator, body: *const Body, level: check.L
         if (g.severity == .failure and g.code != .sliver_face) return diag.fail(error.NotValid, g);
     }
     return diag.fail(error.Degenerate, f);
-}
-
-/// A warning (`solids_touch`) for each place the result's solids touch along a line: two
-/// edges between one pair of vertices, one for each solid, the first of them named.
-fn warnTouching(allocator: std.mem.Allocator, body: *const Body, diag: *Diagnostics) Error!void {
-    var seen: std.AutoHashMapUnmanaged([2]u32, struct { edge: u32, warned: bool }) = .empty;
-    defer seen.deinit(allocator);
-    for (body.edges.items, 0..) |e, i| {
-        if (e.flags.tombstone or e.flags.degenerate) continue;
-        const key: [2]u32 = .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) };
-        const entry = try seen.getOrPut(allocator, key);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = .{ .edge = @intCast(i), .warned = false };
-            continue;
-        }
-        if (entry.value_ptr.warned) continue;
-        entry.value_ptr.warned = true;
-        try diag.warn(.{ .code = .solids_touch, .entity = .of(.edge, entry.value_ptr.edge) });
-    }
 }
 
 /// `NotImplemented` naming the first face of `body` that is not planar or has an edge that

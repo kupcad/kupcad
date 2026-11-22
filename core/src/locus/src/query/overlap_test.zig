@@ -183,9 +183,14 @@ test "overlap: a shell folded through itself crosses its own faces, which no rul
         .{ 2, 3, 7 }, .{ 2, 7, 6 }, .{ 3, 0, 4 }, .{ 3, 4, 7 }, // back, left
         .{ 4, 5, 8 }, .{ 5, 6, 8 }, .{ 6, 7, 8 }, .{ 7, 4, 8 }, // the roof, inverted
     };
-    var folded = try primitives.polyhedron(testing.allocator, tol, &points, &triangles, &diag);
-    defer folded.deinit();
-    _ = try expectOverlap(&folded, .faces_intersect, .face);
+    // The rules see it, and polyhedron, which takes a host's triangles, runs them on what it
+    // made: the roof crosses the bottom on the bottom's diagonal edge, two features 0
+    // apart, so the rules run where features come nearer than the minimum feature size
+    // refuse it (`below_feature_size`, the face they found named); a crossing far from
+    // every feature the polyhedron leaves to the caller, as OCCT's makers do
+    try testing.expectError(error.Degenerate, primitives.polyhedron(testing.allocator, tol, &points, &triangles, &diag));
+    try testing.expectEqual(.below_feature_size, diag.first().?.code);
+    try testing.expectEqual(.face, diag.first().?.entity.kind);
 }
 
 test "overlap: two solids crossing, and two lying on each other over part of a face" {

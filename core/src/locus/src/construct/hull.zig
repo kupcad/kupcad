@@ -275,6 +275,10 @@ pub fn hull(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, 
     var b = try primitives.Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
     errdefer b.body.deinit();
+    // A hull thinner than the intersection tolerance somewhere (its points between the zone
+    // and the tolerance of one plane: faces their own records, lying on each other) is
+    // refused as any made solid is (`Builder.finish`, `overlap.refuseMade`)
+    b.made = "faces of the hull, within its features nearer than the minimum feature size,";
 
     // The points as the interner keeps them, one record each
     var records: std.ArrayList(geometry.PointIndex) = .empty;

@@ -662,7 +662,27 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
   zones wide left by an offset and an intersection, its end face in its side's plane by
   its corners, `faces_intersect` from a sweep that asked only for a pinch); a sheet whose
   swept features keep the minimum, or come nearer where the rules find no fault, is swept
-  as it is. Planar faces and straight edges, as the rules are until M5. A full turn of a
+  as it is. Planar faces and straight edges, as the rules are until M5. One entry for
+  every operation that makes a solid, `overlap.refuseMade` (the pinch test, then
+  `refuseNear`: `nearest` and `nearRules`), run by `Builder.finish` on every solid an
+  operation made of its input (`Builder.made`: the sweeps, the hull, polyhedron; not the
+  primitives, whose features keep the minimum by construction, where the rules cost a
+  third more) and by `transform` under a general map; the boolean runs `refuseNear` after
+  its own pinch test (audit of 2026-11-22: the hull and polyhedron made a tetrahedron
+  whose sides lay in its base's plane, a transform squashed one so). Triangles of a
+  polyhedron crossing far from any near feature (a box whose top's fan dips through its
+  bottom) pass: the ungated rules cost 18 times the build of a 2,000-triangle sphere, and
+  OCCT's makers too leave self-interference to the caller's argument check
+  (`BOPAlgo_ArgumentAnalyzer`); the boolean meets one operand with the other, never with
+  itself. A made solid whose solids touch along a line or a curve
+  warns so (`overlap.warnTouching`, two edges along one curve between one pair of
+  vertices), as the boolean's result does. The checker's size findings on what a builder
+  or `transform` made (two vertices within the zone, an edge no longer than twice it, a
+  sliver) are the input's sizes, refused `Degenerate` (`Report.onlySizes`; a hull of two
+  cubes 1e-5 apart along each axis, corners 1.73 zones apart past the zone it welds at,
+  an edge too short: `NotValid` before), any other fault `NotValid`; an extrusion's height
+  is checked against the shortest edge (`check.shortest`, twice the zone), not the zone. A
+  full turn of a
   region with a hole sweeps a cavity, its shell a void (`primitives.markVoids`, the
   boolean's rule: a shell enclosing negative volume).
 - Loft and sweep along a path (later): NURBS skinning (A10, §10.3) and the exact

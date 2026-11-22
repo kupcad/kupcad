@@ -29,8 +29,7 @@ const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
 const sew = @import("sew.zig");
 const primitives = @import("primitives.zig");
-const overlap = @import("../query/overlap.zig");
-const FaceIndex = @import("../query/index.zig").FaceIndex;
+const check = @import("../topology/check.zig");
 const Body = body_mod.Body;
 const Builder = primitives.Builder;
 const Vec3 = vec.Vec3;
@@ -48,7 +47,8 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
     if (sheet.kind != .sheet or sheet.isEmpty()) return diag.fail(error.InvalidInput, .{ .code = .empty_input, .label = "the profile: a sheet" });
     const tol = options.tolerance orelse sheet.tol;
     const height = vec.length(direction);
-    if (!(height > tol.zone)) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the height", .measured = height });
+    // As long as the shortest edge the checker allows: an upright edge is the height long
+    if (!(height > check.shortest(tol))) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .entity = .{ .kind = .argument }, .label = "the height", .measured = height, .threshold = check.shortest(tol) });
     const d_hat = vec.scale(direction, 1.0 / height);
 
     // Sized first: the sheet's loops and coedges, each a cap loop pair and a side face
@@ -58,6 +58,17 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
     var b = try Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
     errdefer b.body.deinit();
+    // A swept solid touching itself is refused, as the boolean refuses its own result
+    // (`Builder.finish`, `overlap.refuseMade`): inside one solid at a shared vertex or
+    // edge, `pinched` (a sheet through a point twice, its hole touching its side, extruded
+    // touches itself along a line, revolved its void touches its outer shell along a
+    // circle; Leo, 2026-11-14); within the tolerance where its features come nearer than a
+    // solid's minimum feature size, `below_feature_size` (a sheet keeps its features apart
+    // past the zone, a solid its faces past the intersection tolerance, twice that, so a
+    // sound sheet's strip between the two wide sweeps a wall whose sides lie on each other;
+    // bv)
+    b.options = options;
+    b.made = "faces of the swept solid, within its features nearer than the minimum feature size,";
 
     // The sheet's vertices at the bottom and the top of the solid
     const bottom = try allocator.alloc(types.VertexIndex, sheet.vertices.items.len);
@@ -153,10 +164,9 @@ pub fn extrude(allocator: std.mem.Allocator, sheet: *const Body, direction: Vec3
             fi += 2;
         }
     }
-    // The builder's body, which its errdefer frees on a refusal
-    const solid = try b.finish(specs, .outer);
-    try refuseTouching(allocator, &solid, options, diag);
-    return solid;
+    // The builder's body, which its errdefer frees on a refusal, through the rules of a
+    // made solid (`Builder.finish`)
+    return b.finish(specs, .outer);
 }
 
 /// The sheet turned about the axis through `origin` along `axis`, which must lie in the
@@ -188,6 +198,17 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
     var b = try Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
     errdefer b.body.deinit();
+    // A swept solid touching itself is refused, as the boolean refuses its own result
+    // (`Builder.finish`, `overlap.refuseMade`): inside one solid at a shared vertex or
+    // edge, `pinched` (a sheet through a point twice, its hole touching its side, extruded
+    // touches itself along a line, revolved its void touches its outer shell along a
+    // circle; Leo, 2026-11-14); within the tolerance where its features come nearer than a
+    // solid's minimum feature size, `below_feature_size` (a sheet keeps its features apart
+    // past the zone, a solid its faces past the intersection tolerance, twice that, so a
+    // sound sheet's strip between the two wide sweeps a wall whose sides lie on each other;
+    // bv)
+    b.options = options;
+    b.made = "faces of the swept solid, within its features nearer than the minimum feature size,";
     const g = &b.body.geometry;
 
     // The sheet's vertices at each split angle, with their place about the axis; a
@@ -319,32 +340,9 @@ pub fn revolve(allocator: std.mem.Allocator, input: *const Body, origin: Vec3, a
             }
         }
     }
-    // The builder's body, which its errdefer frees on a refusal
-    const solid = try b.finishWithVoids(specs[0..fi]);
-    try refuseTouching(allocator, &solid, options, diag);
-    return solid;
-}
-
-/// A swept solid touching itself refused, as the boolean refuses its own result, by the
-/// overlap rules. Inside one solid at a shared vertex or edge (`pinched`,
-/// `overlap.refusePinched`): a sheet through a point twice (its hole touching its side)
-/// extruded touches itself along a line, revolved its void touches its outer shell along
-/// a circle (Leo, 2026-11-14). And within the tolerance where its features come nearer
-/// than a solid's minimum feature size (`below_feature_size`, `overlap.nearRules`): a
-/// sheet keeps its features apart past the zone, a solid its faces past the intersection
-/// tolerance, twice that, so a sound sheet's strip between the two wide sweeps a wall whose
-/// sides lie on each other. A sheet whose swept features keep the minimum feature size, or
-/// come nearer where the rules find no fault, is swept as it is.
-fn refuseTouching(allocator: std.mem.Allocator, solid: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!void {
-    {
-        var solids = try overlap.Solids.init(allocator, solid, options, diag);
-        defer solids.deinit(allocator);
-        try overlap.refusePinched(allocator, solid, &solids, diag);
-    }
-    var index = try FaceIndex.build(allocator, solid, diag);
-    defer index.deinit(allocator);
-    const near = try overlap.nearest(allocator, solid, &index, options.tolerance orelse solid.tol, 0, diag) orelse return;
-    try overlap.nearRules(allocator, solid, &index, near, "faces of the swept solid, within its features nearer than the minimum feature size,", options, diag);
+    // The builder's body, which its errdefer frees on a refusal, through the rules of a
+    // made solid (`Builder.finishWithVoids`)
+    return b.finishWithVoids(specs[0..fi]);
 }
 
 /// Edges per side face at most (three on a plane whose inner arc is a point).

@@ -62,6 +62,23 @@ pub const Report = struct {
         return null;
     }
 
+    /// Whether every failure is of a size (two vertices within the zone, an edge no longer
+    /// than twice it, a face narrower than it): what an operation's input brings about
+    /// when its features are too small for the tolerance, refused as such
+    /// (`Degenerate`) by the builders and `transform`, where any other failure is the body's
+    /// fault (`NotValid`). The boolean's own rule differs: its simplification collapses
+    /// short edges, so only slivers are by design there (`pipeline.refuseInvalid`).
+    pub fn onlySizes(self: *const Report) bool {
+        for (self.findings.items) |f| {
+            if (f.severity != .failure) continue;
+            switch (f.code) {
+                .vertices_too_close, .edge_too_short, .sliver_face => {},
+                else => return false,
+            }
+        }
+        return true;
+    }
+
     pub fn warnings(self: *const Report) usize {
         var n: usize = 0;
         for (self.findings.items) |f| n += @intFromBool(f.severity == .warning);

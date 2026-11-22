@@ -114,6 +114,61 @@ pub fn nearRules(allocator: std.mem.Allocator, body: *const Body, index: *const 
     };
 }
 
+/// The rules every operation that makes a solid of what it is given runs on what it made
+/// (a sweep, a hull, a polyhedron, a primitive, a transform that is no rigid move; the
+/// boolean runs `refuseNear` after its own pinch test, before which its simplification
+/// needs a structurally valid body): a pinch refused (`refusePinched`), then the rules
+/// wherever features come nearer than the minimum feature size (`refuseNear`). One entry
+/// for every producer, so that a solid none of them would refuse as a result is all any
+/// consumer is given: the sweeps had it (bv, 2752b855), the hull, polyhedron and transform
+/// did not, and made a tetrahedron whose sides lay in its base's plane (audit of
+/// 2026-11-22). The nearest pair it found, or null. Planar faces and straight edges, as the
+/// rules are until M5.
+pub fn refuseMade(allocator: std.mem.Allocator, body: *const Body, label: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!?Near {
+    if (body.kind != .solid or body.isEmpty()) return null;
+    {
+        var solids = try Solids.init(allocator, body, options, diag);
+        defer solids.deinit(allocator);
+        try refusePinched(allocator, body, &solids, diag);
+    }
+    var index = try index_mod.FaceIndex.build(allocator, body, diag);
+    defer index.deinit(allocator);
+    const near = try refuseNear(allocator, body, &index, label, options, diag);
+    try warnTouching(allocator, body, diag);
+    return near;
+}
+
+/// A warning (`solids_touch`) for each place the body's solids touch along a line or a
+/// curve: two edges between one pair of vertices along one curve (`alongOneCurve`), one for
+/// each solid, the first of them named; a circle's two halves between the same two
+/// vertices are one solid's boundary. The boolean's results warned so, the sweeps' did not
+/// (a bow tie extruded; audit of 2026-11-22).
+pub fn warnTouching(allocator: std.mem.Allocator, body: *const Body, diag: *Diagnostics) Error!void {
+    var seen: std.AutoHashMapUnmanaged([2]u32, struct { edge: u32, warned: bool }) = .empty;
+    defer seen.deinit(allocator);
+    for (body.edges.items, 0..) |e, i| {
+        if (e.flags.tombstone or e.flags.degenerate) continue;
+        const key: [2]u32 = .{ @min(@backingInt(e.start), @backingInt(e.end)), @max(@backingInt(e.start), @backingInt(e.end)) };
+        const entry = try seen.getOrPut(allocator, key);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{ .edge = @intCast(i), .warned = false };
+            continue;
+        }
+        if (entry.value_ptr.warned or !alongOneCurve(body, entry.value_ptr.edge, @intCast(i))) continue;
+        entry.value_ptr.warned = true;
+        try diag.warn(.{ .code = .solids_touch, .entity = .of(.edge, entry.value_ptr.edge) });
+    }
+}
+
+/// The rules on `body`, whose faces `index` holds, when its nearest features come closer
+/// than its minimum feature size (`nearest`, `nearRules`): the pair, or null when none
+/// does.
+pub fn refuseNear(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, label: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!?Near {
+    const near = try nearest(allocator, body, index, options.tolerance orelse body.tol, 0, diag) orelse return null;
+    try nearRules(allocator, body, index, near, label, options, diag);
+    return near;
+}
+
 /// Two features of a body that do not meet, the distance between them, and the least
 /// distance they must keep (twice the tolerance and their vertices' gaps).
 pub const Near = struct { distance: f64, limit: f64, a: diagnostics.EntityRef, b: diagnostics.EntityRef };

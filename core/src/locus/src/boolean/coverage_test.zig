@@ -361,7 +361,10 @@ fn pentagramPrism(diag: *Diagnostics) !Body {
     faces[0] = .{ .surface = up.surface, .same_sense = up.same_sense, .loops = &top_loop };
     faces[1] = .{ .surface = down.surface, .same_sense = down.same_sense, .loops = &bottom_loop };
     for (&faces) |*f| f.uv_box = .{ .min = .{ -2, -2 }, .max = .{ 2, 2 } };
-    return b.finish(&faces, .outer);
+    // Sewn as it is: its edges cross, which a finished solid's rules refuse
+    // (`Builder.finish`); here it drives the boolean past its operand precondition
+    _ = sew.sew(&b.body, &faces, .outer) catch |e| return b.fail(e);
+    return b.body;
 }
 
 /// The paves of two cubes overlapping at a corner.

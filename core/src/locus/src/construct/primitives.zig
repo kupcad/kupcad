@@ -23,6 +23,7 @@ const traverse = @import("../topology/traverse.zig");
 const integrals = @import("../topology/integrals.zig");
 const sketch_boolean = @import("../sketch/boolean.zig");
 const overlay = @import("../sketch/overlay.zig");
+const overlap = @import("../query/overlap.zig");
 const Body = body_mod.Body;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
@@ -46,6 +47,15 @@ pub const Builder = struct {
     body: Body,
     interner: Interner,
     diag: *Diagnostics,
+    /// The operation's options, for the rules a made solid is finished with (`finish`).
+    options: diagnostics.Options = .{},
+    /// Whose faces a refusal of the made-solid rules names, set by an operation whose input
+    /// can bring features nearer than the minimum feature size (the sweeps, the hull,
+    /// polyhedron); null for the primitives, whose features keep it by construction (a box
+    /// thinner than the intersection tolerance has an edge the checker refuses; the
+    /// curved ones' faces are M5's, which the rules skip), and on which the rules cost a
+    /// third more (the bench, 2026-11-22).
+    made: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, tol: Tolerance, kind: body_mod.Kind, diag: *Diagnostics) Error!Builder {
         try diagnostics.input.tolerance(diag, tol);
@@ -150,10 +160,15 @@ pub const Builder = struct {
     /// The body, checked, or the checker's first finding as `error.NotValid`: a solid to
     /// level 1; a sheet to level 2 as well, whose hole rule is what tells a sketch of
     /// several outlines (a word's letters) from one with holes, which the even-odd builder
-    /// cannot until the 2D kernel nests them.
+    /// cannot until the 2D kernel nests them. A solid an operation made of its input (`made`
+    /// set) then takes the rules every such operation runs on it (`overlap.refuseMade`: a
+    /// pinch, faces lying on each other where features come nearer than the minimum feature
+    /// size), as the boolean's result does: the sweeps ran them, the hull and polyhedron did
+    /// not (audit of 2026-11-22).
     pub fn finish(self: *Builder, faces: []const sew.FaceSpec, kind: types.ShellKind) Error!Body {
         _ = sew.sew(&self.body, faces, kind) catch |e| return self.fail(e);
-        return self.checked(if (kind == .sheet) .global else .geometric);
+        _ = try self.checked(if (kind == .sheet) .global else .geometric);
+        return self.finished();
     }
 
     /// `finish` of a solid whose sewn shells may bound voids: each enclosing negative
@@ -162,13 +177,25 @@ pub const Builder = struct {
     pub fn finishWithVoids(self: *Builder, faces: []const sew.FaceSpec) Error!Body {
         _ = sew.sew(&self.body, faces, .outer) catch |e| return self.fail(e);
         try markVoids(&self.body, self.diag);
-        return self.checked(.geometric);
+        _ = try self.checked(.geometric);
+        return self.finished();
+    }
+
+    /// The body, a solid an operation made of its input through the rules of a made solid
+    /// (`overlap.refuseMade`).
+    fn finished(self: *Builder) Error!Body {
+        if (self.body.kind == .solid) if (self.made) |label| {
+            _ = try overlap.refuseMade(self.allocator, &self.body, label, self.options, self.diag);
+        };
+        return self.body;
     }
 
     fn checked(self: *Builder, level: check.Level) Error!Body {
         var report = check.run(self.body.allocator, &self.body, level) catch return error.OutOfMemory;
         defer report.deinit(self.body.allocator);
-        if (report.first()) |f| return self.diag.fail(error.NotValid, f);
+        // A size the input brought (two points past the zone but too near, a hull's edge
+        // between them; audit of 2026-11-22) refused as such, any other fault as the body's
+        if (report.first()) |f| return self.diag.fail(if (report.onlySizes()) error.Degenerate else error.NotValid, f);
         return self.body;
     }
 };
@@ -590,6 +617,7 @@ pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const 
     var b = try Builder.init(allocator, tol, .solid, diag);
     defer b.deinit();
     errdefer b.body.deinit();
+    b.made = "the triangles' faces, within their features nearer than the minimum feature size,";
     // Every point becomes a vertex (welded); the hull's unused points are the caller's to drop
     const vertices = try allocator.alloc(types.VertexIndex, points.len);
     defer allocator.free(vertices);
@@ -631,5 +659,9 @@ pub fn polyhedron(allocator: std.mem.Allocator, tol: Tolerance, points: []const 
         }
         spec.uv_box = uv;
     }
+    // Its triangles may still pass through each other far from any feature, which no rule
+    // gated on near features sees: the caller's to check, as OCCT's makers leave it to the
+    // argument check (`BOPAlgo_ArgumentAnalyzer`); the ungated overlap rules cost 18 times
+    // the build on a 2,000-triangle sphere (2026-11-22)
     return b.finish(specs, .outer);
 }

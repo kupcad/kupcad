@@ -42,6 +42,9 @@ const ASKEW_DIRECTIONS = [_]Vec3{ .{ 0, 3, 3 }, .{ 1, 0, 4 }, .{ -2, 1, 0.5 } };
 /// across: its caps lie within the intersection tolerance of each other.
 const ASKEW_STRIP = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 3e-5 }, .{ 0, 3e-5 } };
 const ASKEW_LOW: Vec3 = .{ 0.1, 0, 1.5e-5 };
+/// A height between the zone and twice it: past the extrusion's old guard, an edge too
+/// short for the checker.
+const LOW_HEIGHT: f64 = 1.5e-5;
 
 fn expectValid(body: *const Body) !void {
     var report = try check.run(testing.allocator, body, .geometric);
@@ -717,4 +720,49 @@ test "extrude: a strip swept askew so that its caps lie within the tolerance is 
     defer sheet.deinit();
     try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, ASKEW_LOW, .{}, &diag));
     try testing.expectEqual(.below_feature_size, diag.first().?.code);
+}
+
+/// Diagnostics' warnings of `code`.
+fn warned(diag: *const Diagnostics, code: @import("../diagnostics.zig").Code) usize {
+    var n: usize = 0;
+    for (diag.findings.items) |f| n += @intFromBool(f.severity == .warning and f.code == code);
+    return n;
+}
+
+test "extrude: a height between the zone and twice it is refused as the input, not a solid with edges too short" {
+    // The guard was at the zone; the checker's shortest edge is twice it, so a height
+    // between was swept into sides whose upright edges the checker refused (`NotValid`,
+    // `edge_too_short`, reading as the kernel's fault)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var sq = try primitives.square(testing.allocator, tol, 1, 1, false, &diag);
+    defer sq.deinit();
+    try testing.expectError(error.InvalidInput, sweep.extrude(testing.allocator, &sq, .{ 0, 0, LOW_HEIGHT }, .{}, &diag));
+    try testing.expectEqual(.not_positive, diag.first().?.code);
+}
+
+test "extrude and revolve: solids swept touching along a line or a circle warn so, as the boolean's do; a cylinder's halves do not" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var bow = try primitives.polygon(testing.allocator, tol, &.{ .{ 0, 0 }, .{ 2, 2 }, .{ 2, 0 }, .{ 0, 2 } }, &diag);
+    defer bow.deinit();
+    var prism = try sweep.extrude(testing.allocator, &bow, .{ 0, 0, 3 }, .{}, &diag);
+    defer prism.deinit();
+    try testing.expectEqual(@as(usize, 1), warned(&diag, .solids_touch));
+    var standing = try stoodUp(&bow, &diag);
+    defer standing.deinit();
+    var moved = try @import("transform.zig").transform(testing.allocator, &standing, &@import("../math/mat.zig").Affine.translate(.{ 1, 0, 0 }), .{}, &diag);
+    defer moved.deinit();
+    var ring = try revolved(&moved, 2.0 * std.math.pi, &diag);
+    defer ring.deinit();
+    try testing.expect(warned(&diag, .solids_touch) >= 2);
+    // A circle swept along its normal: its top and bottom circles each two halves between
+    // the same two vertices, one solid
+    diag.deinit();
+    diag = Diagnostics.init(testing.allocator);
+    var ci = try primitives.circle(testing.allocator, tol, 2, &diag);
+    defer ci.deinit();
+    var drum = try sweep.extrude(testing.allocator, &ci, .{ 0, 0, 3 }, .{}, &diag);
+    defer drum.deinit();
+    try testing.expectEqual(@as(usize, 0), warned(&diag, .solids_touch));
 }
