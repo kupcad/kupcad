@@ -519,6 +519,26 @@ const SLIT_DROPS = [_]f64{ 1.999999999431566e-4, 1.5e-4, 2.5e-4 };
 /// this deep, and its cavity inset this far from the box's other sides.
 const FUZZ_WALL_DEPTH: f64 = 1.5;
 const FUZZ_WALL_INSET: f64 = 0.25;
+/// The solids of the tests of two faces taken for one plane whose boundaries pass each
+/// other beyond the tolerance (the ReleaseSafe session on ff515852, dd, as the fuzzer drew
+/// them): a hull with a face in y = 2, and a wall whose face beside its gap lies 1.8e-5 to
+/// 2.0e-5 off it, turned `CROSS_WALL_TURNS` about `CROSS_WALL_AXIS`; the wall's edge from a
+/// corner inside the hull's face runs out past the hull's edge 2.0e-5 from it.
+const CROSS_HULL = [_]Vec3{ .{ 2, 2, 4 }, .{ 1, 2, 1 }, .{ 0, 2, 2 }, .{ 0, 0, 2 }, .{ 4, 2, 4 } };
+const CROSS_HULL_NUDGE: Vec3 = .{ -2e-3, 0, 5e-6 };
+const CROSS_WALL_AT: Vec3 = .{ 2, 2, 2 };
+const CROSS_WALL_LO: Vec3 = .{ 3, 2, 1 };
+const CROSS_WALL_HI: Vec3 = .{ 4, 4, 3 };
+const CROSS_WALL_XSECTS: f64 = 2.1;
+const CROSS_WALL_AXIS: Vec3 = .{ 1, 2, 3 };
+/// The wall's turn: the find's, and a tenth and three times it.
+const CROSS_WALL_TURNS = [_]f64{ 1e-6, 1e-7, 3e-6 };
+/// The wall's nudge in y, which puts its face that far off the hull's: the find's 2e-5
+/// (its corners 1.8e-5 to 2.0e-5 off after the turn), and a tenth of the tolerance either
+/// side of it.
+const CROSS_WALL_LIFTS = [_]f64{ 2e-5, 1.8e-5, 2.2e-5 };
+const CROSS_WALL_NUDGE_X: f64 = -2e-3;
+const CROSS_WALL_NUDGE_Z: f64 = -1.999999994315658e-5;
 /// The solids of the tests of a section piece running across the line two faces meet
 /// along (the nightly on ff515852, cz, and the ReleaseSafe session on ff515852, de, as the
 /// fuzzer drew them). cz: (box ∪ wall − hull) ∪ hull, moved whole.
@@ -5738,6 +5758,33 @@ test "degeneracy: hulls' edges across plates' ends of several thicknesses, turne
         var solids = try endSolids(thickness, shift, quarter, mirrored);
         defer for (&solids) |*body| body.deinit();
         try expectDecidedEitherWay(&solids[0], &solids[1]);
+    };
+}
+
+test "degeneracy: two faces taken for one plane whose boundaries pass each other beyond the tolerance are refused alike either way round" {
+    // The ReleaseSafe session's find on ff515852 (dd), as the fuzzer drew it: a hull's face
+    // in y = 2 and a wall's face beside its gap 1.8e-5 to 2.0e-5 off it, turned 1e-6, taken
+    // for one plane; the wall's edge from its corner inside the hull's face, 1.97e-5 off it,
+    // passes the hull's edge 2.0e-5 from it, beyond the tolerance, where the paves found no
+    // vertex. The hull's imprint of the wall ran to that corner, a spur, and the wall's of
+    // the hull another, and the two imprints disagreed (`imprint_unmatched`). The block
+    // leaving the face with no vertex where it crosses its boundary is refused where it
+    // meets that boundary in the plane (`pave.passesOut`, `apartInPlane`), and every
+    // neighbour of the find is decided: the wall turned a tenth and three times as much, its
+    // face a tenth of the tolerance nearer and farther, moved whole
+    for (CROSS_WALL_TURNS) |turn| for (CROSS_WALL_LIFTS) |lift| for (SLIVER_TURNS[0..2]) |move| {
+        errdefer std.debug.print("turned {e}, lifted {e}, moved {any}\n", .{ turn, lift, move });
+        var hull_drawn = try fuzzHullPlaced(&CROSS_HULL, vec.Z3, 0, null, vec.ZERO3, CROSS_HULL_NUDGE);
+        defer hull_drawn.deinit();
+        var wall_shape = try fuzzWall(tol, CROSS_WALL_AT, CROSS_WALL_LO, CROSS_WALL_HI, CROSS_WALL_XSECTS);
+        defer wall_shape.deinit();
+        var wall_drawn = try fuzzPlaced(&wall_shape, CROSS_WALL_AXIS, turn, null, vec.ZERO3, .{ CROSS_WALL_NUDGE_X, lift, CROSS_WALL_NUDGE_Z });
+        defer wall_drawn.deinit();
+        var hull = try sliverMoved(&hull_drawn, move);
+        defer hull.deinit();
+        var wall = try sliverMoved(&wall_drawn, move);
+        defer wall.deinit();
+        try expectDecidedEitherWay(&hull, &wall);
     };
 }
 

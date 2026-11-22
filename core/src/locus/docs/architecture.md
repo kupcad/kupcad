@@ -945,7 +945,13 @@ importing only those before it, which the layering test holds):**
   pave blocks in its plane other than at a merged vertex they share (the pair's height
   apart is dropped there: a plate's edge 2.013e-4 from a corner under a hull's bottom was
   2e-5 from it in the plane and the overlay welded it on, `imprint_unmatched`, the
-  nightly 2026-11-18; Leo: refused, not decided again in the plane); two parallel a hair apart (within
+  nightly 2026-11-18; Leo: refused, not decided again in the plane; so is a block running
+  from the end of one imprinted on the face out past its boundary with no merged vertex
+  there, the two boundaries passing each other beyond the tolerance: the imprint ends
+  inside the face where the other face's imprint has no end (a wall's face 1.8e-5 to
+  2.0e-5 off a hull's, turned 1e-6, its edge out past the hull's edge 2.0e-5 from it, dd,
+  2026-11-22, `pave.passesOut`; such a block from no imprint leaves both imprints agreeing,
+  made); two parallel a hair apart (within
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
   the result has faces that thin). A section piece lies on a face's boundary only when
   the paves put both its ends there (never by its middle's distance alone), and is then

@@ -2449,6 +2449,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // The cx diagnosis's solids run on ff515852 (di): hull ∪ wall, − a wall turned 1e-6,
         // ∪ hull (the same)
         "solids 1 6 2 0 0 0 0 2 4 3 3 4 0 0 3 0 0 0 2 4 0 0 2 2 -2 -2 0 2 3 1 3 1 4 3 2 4 3 0 2 2 2 3 1 -1 5 5 12 0 1 3 1 3 4 0 2 1 0 4 0 3 4 0 3 7 -1 9 -2 4 1 1 1 8 1 2 4 0 3 1 1 3 0 1 3 0 4 3 3 2 3 1 2 3 3 2 0 4 3 1 5 5 -2 8 0",
+        // The ReleaseSafe session on ff515852 (locus, dd): a hull's face and a wall's 1.8e-5
+        // to 2.0e-5 off it, turned 1e-6, taken for one plane, the wall's edge from inside
+        // the hull's face out past its edge 2.0e-5 from it with no vertex there; the two
+        // imprints disagreed (`imprint_unmatched`; pave.passesOut: refused where it meets
+        // the face's boundary in the plane, apartInPlane)
+        "solids 1 5 2 2 4 1 2 1 0 2 2 0 0 2 4 2 4 3 2 14 0 3 11 3 0 -1 -1 0 1 7 1 3 1 3 2 3 4 2 2 4 2 1 3 0 3 7 14 7 10 9 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

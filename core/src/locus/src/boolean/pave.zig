@@ -2352,6 +2352,10 @@ const Filler = struct {
         const body_k = self.body(k);
         const frame = planar_faces.frameOf(self.body(other), g).?;
         const plane = planar_faces.planeOf(frame);
+        var crossing: std.ArrayList(struct { edge: types.EdgeIndex, block: [2]u32 }) = .empty;
+        defer crossing.deinit(self.allocator);
+        var imprinted: std.ArrayList(u32) = .empty;
+        defer imprinted.deinit(self.allocator);
         var loops = traverse.Loops.init(body_k, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
             var it = traverse.Coedges.init(body_k, l);
@@ -2361,17 +2365,51 @@ const Filler = struct {
                 for (list[0 .. list.len - 1], list[1..]) |x, y| {
                     const mid = vec.lerp(p.point(x.vertex), p.point(y.vertex), 0.5);
                     const place = try self.placeIn(other, g, mid, null);
-                    if (try self.lies(other, g, x.vertex, y.vertex, mid, place, .{ .operand = @intCast(k), .face = @backingInt(f) }) != .in) continue;
+                    if (try self.lies(other, g, x.vertex, y.vertex, mid, place, .{ .operand = @intCast(k), .face = @backingInt(f) }) != .in) {
+                        // From inside `g` to outside it in that plane, with no merged vertex
+                        // where it crosses `g`'s boundary: decided below, once the blocks
+                        // imprinted on `g` are known
+                        if (try self.passesOut(other, g, x.vertex, y.vertex)) try crossing.append(self.allocator, .{ .edge = e, .block = .{ x.vertex, y.vertex } });
+                        continue;
+                    }
                     for ([2]u32{ x.vertex, y.vertex }) |v| {
                         if (try self.onPlane(plane, v, .of(.face, @backingInt(g)))) continue;
                         return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = if (k == 0) "a face of the first operand in one plane with a face of the second, its boundary inside that face beyond reach of its plane," else "a face of the second operand in one plane with a face of the first, its boundary inside that face beyond reach of its plane,", .measured = @abs(plane.height(p.point(v))), .threshold = p.tol.xsect + p.gaps.items[v] });
                     }
                     try self.apartInPlane(k, e, .{ x.vertex, y.vertex }, other, g, frame, f);
                     try p.sections[other][@backingInt(g)].append(self.allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
+                    try imprinted.appendSlice(self.allocator, &.{ x.vertex, y.vertex });
                     self.tally();
                 }
             }
         }
+        // A block leaving `g` from the end of one imprinted on it: the imprint ends there,
+        // inside `g`, where `g`'s imprint of the other face has no end (`passesOut`)
+        for (crossing.items) |c| {
+            const inside = if (try self.placeIn(other, g, p.point(c.block[0]), c.block[0]) == .inside) c.block[0] else c.block[1];
+            if (std.mem.indexOfScalar(u32, imprinted.items, inside) == null) continue;
+            try self.apartInPlane(k, c.edge, c.block, other, g, frame, f);
+        }
+    }
+
+    /// Whether the pave block from merged vertex `u` to `w` runs from strictly inside face
+    /// `g` of operand `other` to strictly outside it, in either order: it crosses `g`'s
+    /// boundary between two of its paves, where the paves found no vertex. Faces taken for
+    /// one plane whose boundaries pass each other there beyond the tolerance, which the
+    /// plane drops: a wall's face 1.83e-5 to 2.03e-5 off a hull's, turned 1e-6 rad, its edge
+    /// from a corner inside the hull's face 1.97e-5 off it out past the hull's edge 2.0e-5
+    /// from it, the hull's imprint of the wall a spur to that corner and the wall's of the
+    /// hull another (`imprint_unmatched`; the ReleaseSafe session on ff515852, dd). Where
+    /// the block leaves from the end of a block imprinted on `g`, the imprint ends inside
+    /// `g` with no end in the other face's imprint of `g`, and the block goes to
+    /// `apartInPlane`, which refuses it where it meets `g`'s boundary in the plane (Leo,
+    /// 2026-11-18: refused, not decided again in the plane); where it leaves from no
+    /// imprint, neither face's imprint ends there, and the two agree (a box's corner 1.1
+    /// tolerances over a slab's edge 0.9 under its top's plane, beside it: made, sound).
+    fn passesOut(self: *Filler, other: usize, g: types.FaceIndex, u: u32, w: u32) Error!bool {
+        const at_u = try self.placeIn(other, g, self.p.point(u), u);
+        const at_w = try self.placeIn(other, g, self.p.point(w), w);
+        return (at_u == .inside and at_w == .outside) or (at_u == .outside and at_w == .inside);
     }
 
     /// The pave block `block` of edge `e` of operand `k`, a section of face `g` of operand
