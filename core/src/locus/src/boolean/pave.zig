@@ -1391,7 +1391,12 @@ const Filler = struct {
     }
 
     /// The parameters in `band` of the segment from `a` to `b` whose feet on face `g`'s
-    /// plane lie in one of its triangles, as merged sorted spans, into `out`.
+    /// plane lie in one of its triangles, as merged sorted spans, into `out`. A segment along
+    /// a triangle's side to rounding (D27's band at the operands' size) is in it: a box's
+    /// edge along the side edge of a flat tetrahedron's bottom, within reach of its bottom
+    /// and top over a third of its length, was refused in place and made in half the far
+    /// moves, where the rounding put the edge outside the side (the audit of fixed
+    /// numbers, 2026-11-22).
     fn feetIn(self: *Filler, k: usize, g: types.FaceIndex, a: Vec3, b: Vec3, band: [2]f64, out: *std.ArrayList([2]f64)) Error!void {
         const p = self.p;
         out.clearRetainingCapacity();
@@ -1412,6 +1417,12 @@ const Filler = struct {
                 // side × (point − from), the point's height dropping out
                 const at_a = sense * vec.dot(vec.cross(side, vec.sub(a, from)), n);
                 const at_b = sense * vec.dot(vec.cross(side, vec.sub(b, from)), n);
+                // Along the side to rounding, both ends on its line, is inside (the boundary
+                // included): such a segment reads 0 at both ends where it is drawn and the
+                // coordinates' rounding of either sign moved whole, its span kept, cut or
+                // emptied by it. A segment leaving the side is cut where it leaves, exactly
+                const on = p.rounding * vec.length(side);
+                if (@abs(at_a) <= on and @abs(at_b) <= on) continue;
                 span = clip(span, at_a, at_b - at_a);
             }
             if (span[0] <= span[1]) try out.append(self.allocator, span);

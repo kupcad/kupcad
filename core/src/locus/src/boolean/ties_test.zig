@@ -99,6 +99,20 @@ const KNIFE_DROPS = [_]f64{ 0, 5e-6 };
 /// (made), ten zones under the tetrahedron (within the tolerance of both its faces over a
 /// strip that wide: refused), and ten zones short of it (made).
 const KNIFE_OVERS = [_]struct { by: f64, refused: bool }{ .{ .by = 0, .refused = false }, .{ .by = 1e-4, .refused = true }, .{ .by = -1e-4, .refused = false } };
+/// The flat tetrahedron with a side edge of its bottom on the y axis, and the box beside
+/// it whose top's edge lies along that side edge (`KNIFE_SIDES`: on it or 5e-6 under the
+/// tetrahedron, within reach of its bottom and top over a third of the edge, refused; 5e-6
+/// short of it, its ends merged with the side's and the edge leaving the top's side at
+/// once, made).
+const KNIFE_SIDE_TETRAHEDRON = [_]Vec3{ .{ 0, 0, 0 }, .{ 4, 0, 0 }, .{ 0, 4, 0 }, .{ 0, 4, 2.4e-4 } };
+const KNIFE_SIDE_BOX = [2]Vec3{ .{ -2, 0, -1 }, .{ 0, 4, 0 } };
+const KNIFE_SIDES = [_]struct { by: f64, drop: f64, refused: bool }{
+    .{ .by = 0, .drop = 0, .refused = true },
+    .{ .by = 0, .drop = 5e-6, .refused = true },
+    .{ .by = 5e-6, .drop = 0, .refused = true },
+    .{ .by = 5e-6, .drop = 5e-6, .refused = true },
+    .{ .by = -5e-6, .drop = 0, .refused = false },
+};
 
 /// What a boolean of two solids gives: a refusal's code, or the made solid's counts, its
 /// shells' kinds and its points (each vertex; each edge's curve at the middle of its range,
@@ -395,6 +409,33 @@ test "ties: a box's top along a flat tetrahedron's knife edge, the footprints on
         const joined = try Outcome.of(&tetrahedron, &box, .@"union", null);
         defer joined.deinit();
         try testing.expectEqual(@as(?diagnostics.Code, if (over.refused) .below_feature_size else null), joined.code);
+        try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
+    };
+}
+
+test "ties: a box's edge along the side edge of a flat tetrahedron's bottom, within reach of its two faces, is refused alike swapped, mirrored and moved far" {
+    // The audit of fixed numbers (2026-11-22): the knife rule asks over which stretch of
+    // a block its feet lie in both faces of a knife pair, each triangle's side clipping
+    // the stretch by the exact sign of the foot's side of it. The box's edge along the
+    // bottom's side edge read 0 at both ends in place, kept, and the rounding of either
+    // sign moved whole: the stretch emptied in half the far moves, and the solids refused
+    // in place (`below_feature_size`) were made there. Along a side to rounding is in it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (KNIFE_SIDES) |side| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the box's edge {e} past the side edge, its top {e} under the bottom's plane, mirrored {}\n", .{ side.by, side.drop, mirrored });
+        var drawn_tetrahedron = try hull_mod.hull(testing.allocator, Tolerance.fromZone(1e-5), &KNIFE_SIDE_TETRAHEDRON, &diag);
+        defer drawn_tetrahedron.deinit();
+        var drawn_box = try helpers.box(vec.sub(KNIFE_SIDE_BOX[0], .{ 0, 0, side.drop }), vec.add(KNIFE_SIDE_BOX[1], .{ side.by, 0, -side.drop }));
+        defer drawn_box.deinit();
+        const place = if (mirrored) mat.Affine.mirror(vec.X3) else mat.Affine.translate(vec.ZERO3);
+        var tetrahedron = try transform.transform(testing.allocator, &drawn_tetrahedron, &place, .{}, &diag);
+        defer tetrahedron.deinit();
+        var box = try transform.transform(testing.allocator, &drawn_box, &place, .{}, &diag);
+        defer box.deinit();
+        const joined = try Outcome.of(&tetrahedron, &box, .@"union", null);
+        defer joined.deinit();
+        try testing.expectEqual(@as(?diagnostics.Code, if (side.refused) .below_feature_size else null), joined.code);
         try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
     };
 }
