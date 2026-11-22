@@ -27,21 +27,21 @@ const mirrored = Affine.mirror(vec.Y3).compose(&rigid);
 const stretched = Affine.scaleBy(.{ 2, 1, 1 }).compose(&rigid);
 
 test "classify: rigid, scaled and mirrored maps are similarities; a stretch is general; a flat map singular" {
-    const r = transform.classify(&rigid, tol).similarity;
+    const r = transform.classify(&rigid).similarity;
     try testing.expectApproxEqAbs(@as(f64, 1), r.scale, 1e-12);
     try testing.expect(!r.mirror);
-    const s = transform.classify(&scaled, tol).similarity;
+    const s = transform.classify(&scaled).similarity;
     try testing.expectApproxEqAbs(@as(f64, 2), s.scale, 1e-12);
-    const m = transform.classify(&mirrored, tol).similarity;
+    const m = transform.classify(&mirrored).similarity;
     try testing.expect(m.mirror);
-    try testing.expectEqual(transform.Shape.general, transform.classify(&stretched, tol));
-    try testing.expectEqual(transform.Shape.singular, transform.classify(&Affine.scaleBy(.{ 1, 0, 1 }), tol));
+    try testing.expectEqual(transform.Shape.general, transform.classify(&stretched));
+    try testing.expectEqual(transform.Shape.singular, transform.classify(&Affine.scaleBy(.{ 1, 0, 1 })));
 }
 
 /// The mapped curve passes through the images of the original's points over the range,
 /// at the (scaled) parameters.
 fn expectCurveMapped(c: curves.Curve, t0: f64, t1: f64, a: *const Affine) !void {
-    const shape = transform.classify(a, tol);
+    const shape = transform.classify(a);
     var out = try transform.curve(testing.allocator, c, t0, t1, a, shape);
     defer out.deinit(testing.allocator);
     var i: usize = 0;
@@ -59,7 +59,7 @@ test "curve: every kind under a similarity keeps its kind and parameter; a line'
         try expectCurveMapped(line, -1, 5, a);
         try expectCurveMapped(circle, 0.3, 4.0, a);
         try expectCurveMapped(ellipse, 0, PI, a);
-        const shape = transform.classify(a, tol);
+        const shape = transform.classify(a);
         var c = try transform.curve(testing.allocator, circle, 0, 1, a, shape);
         defer c.deinit(testing.allocator);
         try testing.expect(c.curve == .circle);
@@ -70,7 +70,7 @@ test "curve: every kind under a similarity keeps its kind and parameter; a line'
         try testing.expect(e.curve == .ellipse);
     }
     // A line under the stretch: its direction turns, its parameter scales by the stretch along it
-    const shape = transform.classify(&stretched, tol);
+    const shape = transform.classify(&stretched);
     var l = try transform.curve(testing.allocator, line, 0, 5, &stretched, shape);
     defer l.deinit(testing.allocator);
     try testing.expect(l.curve == .line);
@@ -80,7 +80,7 @@ test "curve: every kind under a similarity keeps its kind and parameter; a line'
 
 test "curve: under a stretch an arc becomes its NURBS form, mapped, over the range in use" {
     const circle = curves.Curve{ .circle = curves.Circle.inPlane(.{ 1, 2, 3 }, vec.Z3, 2) };
-    const shape = transform.classify(&stretched, tol);
+    const shape = transform.classify(&stretched);
     var c = try transform.curve(testing.allocator, circle, 0.5, 2.5, &stretched, shape);
     defer c.deinit(testing.allocator);
     try testing.expect(c.curve == .nurbs);
@@ -103,7 +103,7 @@ test "curve: under a stretch an arc becomes its NURBS form, mapped, over the ran
 /// The mapped surface's points are the images of the original's over the box, at the
 /// scaled parameters, and its normals the images of the original's (turned by a mirror).
 fn expectSurfaceMapped(s: surfaces.Surface, box: Box2, a: *const Affine) !void {
-    const shape = transform.classify(a, tol);
+    const shape = transform.classify(a);
     var out = try transform.surface(testing.allocator, s, box, a, shape);
     defer out.deinit(testing.allocator);
     const nm = a.normalMatrix().?;
@@ -145,13 +145,13 @@ test "surface: every kind under a similarity keeps its kind; a mirror turns the 
     for ([_]*const Affine{ &rigid, &scaled, &mirrored }) |a| {
         for (kinds) |s| {
             try expectSurfaceMapped(s, box, a);
-            var out = try transform.surface(testing.allocator, s, box, a, transform.classify(a, tol));
+            var out = try transform.surface(testing.allocator, s, box, a, transform.classify(a));
             defer out.deinit(testing.allocator);
             try testing.expectEqual(std.meta.activeTag(s), std.meta.activeTag(out.surface));
         }
     }
     // The mirrored cylinder's frame is left-handed
-    var m = try transform.surface(testing.allocator, kinds[1], box, &mirrored, transform.classify(&mirrored, tol));
+    var m = try transform.surface(testing.allocator, kinds[1], box, &mirrored, transform.classify(&mirrored));
     defer m.deinit(testing.allocator);
     try testing.expectEqual(@as(f64, -1), m.surface.cylinder.frame.sign());
     // A NURBS surface under anything
@@ -164,7 +164,7 @@ test "surface: every kind under a similarity keeps its kind; a mirror turns the 
 
 test "surface: under a stretch a plane stays a plane and a swept NURBS survives, the curved kinds are not representable" {
     const box = Box2{ .min = .{ 0.2, -0.5 }, .max = .{ 2.0, 1.1 } };
-    const shape = transform.classify(&stretched, tol);
+    const shape = transform.classify(&stretched);
     try expectSurfaceMapped(.{ .plane = .{ .frame = Frame.init(.{ 1, 1, 1 }, vec.normalized(.{ 1, 1, 0 }).?, vec.normalized(.{ -1, 1, 1 }).?) } }, box, &stretched);
     for ([_]surfaces.Surface{
         .{ .cylinder = .{ .frame = Frame.world, .r = 2 } },
@@ -180,8 +180,39 @@ test "surface: under a stretch a plane stays a plane and a swept NURBS survives,
     var arc = try nurbs.circleArc(testing.allocator, vec.ZERO3, vec.X3, vec.Y3, 2, 0, PI);
     defer arc.deinit(testing.allocator);
     const along_x = surfaces.Surface{ .extrusion = .{ .curve = .{ .nurbs = arc.view() }, .d = vec.X3 } };
-    var out = try transform.surface(testing.allocator, along_x, .{ .min = .{ 0.2, 0.5 }, .max = .{ 2.0, 4.0 } }, &Affine.scaleBy(.{ 2, 1, 1 }), transform.classify(&Affine.scaleBy(.{ 2, 1, 1 }), tol));
+    var out = try transform.surface(testing.allocator, along_x, .{ .min = .{ 0.2, 0.5 }, .max = .{ 2.0, 4.0 } }, &Affine.scaleBy(.{ 2, 1, 1 }), transform.classify(&Affine.scaleBy(.{ 2, 1, 1 })));
     defer out.deinit(testing.allocator);
     try testing.expectEqual(@as(f64, 2), out.v_scale);
     try expectSurfaceMapped(along_x, .{ .min = .{ 0.2, 0.5 }, .max = .{ 2.0, 4.0 } }, &Affine.scaleBy(.{ 2, 1, 1 }));
+}
+
+test "classify: a similarity is one to rounding, whatever the tolerance; a matrix near one is snapped while it moves a body's points within the zone" {
+    // The audit of 2026-11-22: the limits were the zone as a share of the scale and the
+    // angular tolerance as a cosine, so a stretch of 8e-6 and a shear of 8e-5 were
+    // similarities, their frames off by that much
+    const stretch = Affine.scaleBy(.{ 1, 1, 1 + 8e-6 }).compose(&rigid);
+    var sheared = rigid;
+    sheared.linear[1] += 8e-5;
+    try testing.expectEqual(transform.Shape.general, transform.classify(&stretch));
+    try testing.expectEqual(transform.Shape.general, transform.classify(&sheared));
+    // Fifty turns composed stay one
+    var turned = Affine.identity;
+    for (0..50) |k| turned = Affine.rotate(vec.normalized(.{ 1, @floatFromInt(k), 2 }).?, 0.37).compose(&turned);
+    try testing.expect(transform.classify(&turned) == .similarity);
+
+    const zone = Tolerance.fromZone(1e-5);
+    // Within the zone over a reach of 0.1, past it over a reach of 100
+    try testing.expectEqual(@as(?Affine, null), transform.nearSimilarity(&stretch, zone, 100));
+    try testing.expectEqual(@as(?Affine, null), transform.nearSimilarity(&sheared, zone, 100));
+    for ([_]*const Affine{ &stretch, &sheared }) |a| {
+        const near = transform.nearSimilarity(a, zone, 0.1).?;
+        try testing.expect(transform.classify(&near) == .similarity);
+        // No point within the reach moves by more than the zone
+        for ([_]Vec3{ .{ 0.1, 0, 0 }, .{ 0, 0.1, 0 }, .{ 0, 0, 0.1 }, .{ 0.06, 0.06, 0.05 } }) |p| try testing.expect(vec.distance(a.point(p), near.point(p)) <= 1e-5);
+    }
+    // A mirror typed to six digits is still a mirror
+    var typed = mirrored;
+    for (&typed.linear) |*v| v.* = @round(v.* * 1e6) / 1e6;
+    const near = transform.nearSimilarity(&typed, zone, 1).?;
+    try testing.expect(transform.classify(&near).similarity.mirror);
 }

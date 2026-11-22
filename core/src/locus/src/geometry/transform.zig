@@ -33,18 +33,67 @@ pub const Shape = union(enum) {
     singular,
 };
 
-/// Classifies `a` within `tol`: a similarity when its columns are orthogonal (within
-/// `angle`) and of one length (within `zone` relative to that length).
-pub fn classify(a: *const Affine, tol: Tolerance) Shape {
+/// How many times the rounding of 1 a matrix's columns may differ in length, or fail to be
+/// square to each other, and the matrix still be a similarity as given: the rounding of
+/// composing a few dozen turns.
+const SIMILAR_ULPS: f64 = 64;
+/// Newton–Schulz steps to the orthogonal matrix nearest one within the tolerance of it:
+/// each squares the departure, so from 1e-3 the third is past rounding.
+const SNAP_STEPS: usize = 3;
+
+/// How far `a`'s linear part is from a similarity, as a share of its factor: the most a
+/// column's length differs from the columns' mean, or two columns' cosine. Null for a map
+/// that is singular or not finite.
+const Departure = struct { scale: f64, share: f64 };
+
+fn departure(a: *const Affine) ?Departure {
     const det = a.determinant();
-    if (!(det != 0.0) or !(det - det == 0)) return .singular;
+    if (!(det != 0.0) or !(det - det == 0)) return null;
     const lengths = a.columnLengths();
     const dots = a.columnDots();
     const scale = (lengths[0] + lengths[1] + lengths[2]) / 3.0;
-    if (!(scale > 0.0)) return .singular;
-    for (lengths) |l| if (@abs(l - scale) > tol.zone * scale) return .general;
-    for (dots) |d| if (@abs(d) > tol.angle * scale * scale) return .general;
-    return .{ .similarity = .{ .scale = scale, .mirror = det < 0.0 } };
+    if (!(scale > 0.0)) return null;
+    var share: f64 = 0;
+    for (lengths) |l| share = @max(share, @abs(l - scale) / scale);
+    for (dots) |d| share = @max(share, @abs(d) / (scale * scale));
+    return .{ .scale = scale, .share = share };
+}
+
+/// Classifies `a`: a similarity when its columns are of one length and square to each
+/// other to rounding (`SIMILAR_ULPS`), whatever the tolerance. A similarity's frames are
+/// mapped as they are and stay orthonormal only as far as the matrix is one: a matrix
+/// stretched 9e-6 along an axis or sheared 9e-5 passed for a similarity while the limits
+/// were the body's zone as a share and its angular tolerance as a cosine, its circles'
+/// and cylinders' frames off by that much, on a body of 100 an error of 1e-3, and the
+/// answer went by the zone (the audit of 2026-11-22). OCCT's `gp_GTrsf::SetForm` holds
+/// `MᵀM/s² − I` to 1e-12. A matrix a little further off is `nearSimilarity`'s.
+pub fn classify(a: *const Affine) Shape {
+    const d = departure(a) orelse return .singular;
+    if (d.share > SIMILAR_ULPS * std.math.floatEps(f64)) return .general;
+    return .{ .similarity = .{ .scale = d.scale, .mirror = a.determinant() < 0.0 } };
+}
+
+/// The similarity nearest `a`, when taking it for `a` moves no point within `reach` of the
+/// origin by more than the zone (at the map's scale): `a`'s departure from a similarity
+/// times `reach` within `tol.zone`. A matrix typed to a few digits, or composed of many
+/// turns, is one the host meant; past that limit the map is the stretch or shear it is
+/// (null, `classify`'s `general`). The nearest is the matrix's orthogonal polar factor
+/// at its mean column length, by Newton–Schulz steps `Q ← Q(3I − QᵀQ)/2`; the translation
+/// is kept.
+pub fn nearSimilarity(a: *const Affine, tol: Tolerance, reach: f64) ?Affine {
+    const d = departure(a) orelse return null;
+    if (!(d.share * reach <= tol.zone)) return null;
+    var q: mat.Mat3 = undefined;
+    for (a.linear, &q) |v, *o| o.* = v / d.scale;
+    for (0..SNAP_STEPS) |_| {
+        const qt = mat.transpose3(&q);
+        var correction = mat.mul3(&qt, &q);
+        for (&correction, 0..) |*v, k| v.* = ((if (k % 4 == 0) @as(f64, 3) else 0) - v.*) / 2;
+        q = mat.mul3(&q, &correction);
+    }
+    var out = a.*;
+    for (&out.linear, q) |*o, v| o.* = v * d.scale;
+    return out;
 }
 
 /// A frame under a similarity: axes mapped and renormalized, left-handed after a mirror.

@@ -293,7 +293,15 @@ their descriptions.
 All geometry is parametric, in millimetres and radians, with STEP Part 42's
 parameterizations so that export is a transliteration and import a lookup (usd-brep's
 schema keeps the same convention). Right-handed, column vectors, counter-clockwise
-positive; normals transform by the inverse transpose; a mirror flips `same_sense`. A
+positive; normals transform by the inverse transpose; a mirror flips `same_sense`.
+A map is a similarity as given when its matrix is one to rounding (64 ulps: `geometry/transform.classify`), and is
+taken for the similarity nearest it when that moves no point of the body by more than the
+zone (`nearSimilarity`: its departure times the body's reach from the origin; the orthogonal
+polar factor by Newton–Schulz steps), a matrix typed to a few digits; past that it is the
+stretch or shear it is. The limits were once the zone as a share of the scale and the angular
+tolerance as a cosine: a stretch of 8e-6 passed as it was, and a cylinder 100 long went
+with it, its frame off square, the checker's fault to report (`NotValid`; the audit of
+2026-11-22; OCCT's `gp_GTrsf::SetForm` holds 1e-12). A
 similarity scales the body's length tolerances with it (`Tolerance.scaled`: `zone`,
 `xsect`, `approx`; `angle` and the relative `param` kept), as OCCT's
 `BRepTools_TrsfModification` scales a shape's tolerances, so every relation the body held

@@ -7,6 +7,12 @@
 //! extrusion's length parameter does. Under a general map (a non-uniform scale) a body
 //! whose faces are all planes maps exactly; a curved face is `error.NotRepresentable`.
 //!
+//! A map is a similarity as given when its matrix is one to rounding, and is taken for the
+//! similarity nearest it when that moves no point of the body by more than the zone (a
+//! matrix typed to a few digits; `geo_transform.nearSimilarity`): the body's frames are
+//! then orthonormal, where a matrix 9e-6 off once passed as it was and left a cylinder's
+//! frame that far from square (audit of 2026-11-22). Past that the map is a general one.
+//!
 //! A similarity scales the body's tolerance with it (`Tolerance.scaled`, as OCCT's
 //! BRepTools_TrsfModification does), so every relation the body held, a gap, a vertex on
 //! an edge or a face within the intersection tolerance, holds at the scale: a union
@@ -36,14 +42,20 @@ const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 
 /// `body` under `affine`, in `allocator`'s memory; the input is untouched.
-pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const Affine, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
-    for (affine.linear) |v| try diagnostics.input.finite(diag, "the matrix", v);
-    for (affine.translation) |v| try diagnostics.input.finite(diag, "the matrix", v);
+pub fn transform(allocator: std.mem.Allocator, body: *const Body, input: *const Affine, options: diagnostics.Options, diag: *Diagnostics) Error!Body {
+    for (input.linear) |v| try diagnostics.input.finite(diag, "the matrix", v);
+    for (input.translation) |v| try diagnostics.input.finite(diag, "the matrix", v);
     try options.checkCancel();
-    try trace.arguments(allocator, &options, "transform", .{ .linear = affine.linear, .translation = affine.translation });
+    try trace.arguments(allocator, &options, "transform", .{ .linear = input.linear, .translation = input.translation });
     const tol = options.tolerance orelse body.tol;
-    const shape = geo_transform.classify(affine, tol);
-    if (shape == .singular) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .label = "the matrix's determinant", .measured = affine.determinant() });
+    // A similarity to rounding as given; one within the tolerance over the body's reach
+    // (a matrix typed to a few digits) as the similarity nearest it, which moves no point
+    // of the body by more than the zone; anything further off the stretch or shear it is
+    const given = geo_transform.classify(input);
+    if (given == .singular) return diag.fail(error.InvalidInput, .{ .code = .not_positive, .label = "the matrix's determinant", .measured = input.determinant() });
+    const snapped: ?Affine = if (given == .general) geo_transform.nearSimilarity(input, tol, reachOf(body)) else null;
+    const affine: *const Affine = if (snapped) |*near| near else input;
+    const shape = if (snapped != null) geo_transform.classify(affine) else given;
 
     var out = body.clone(allocator) catch |e| return mapError(diag, e);
     errdefer out.deinit();
@@ -192,6 +204,17 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, affine: *const
     if (shape == .general) try refuseStretched(allocator, &out, options, diag);
     try trace.phase(allocator, &options, &out, "transform", "checked");
     return out;
+}
+
+/// How far from the origin the body's points reach: what a change of the matrix moves them
+/// in proportion to.
+fn reachOf(body: *const Body) f64 {
+    var reach: f64 = 0;
+    for (body.vertices.items) |v| {
+        if (v.tombstone) continue;
+        reach = @max(reach, vec.length(body.geometry.point(v.point)));
+    }
+    return reach;
 }
 
 /// A body under a general map, which kept its tolerance and changed its distances unevenly:

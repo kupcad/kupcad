@@ -33,6 +33,15 @@ const C_SLIT: f64 = 3e-5;
 const C_SQUASH_SHUT = [_]f64{0.25};
 const C_SQUASH_OPEN = [_]f64{0.8};
 
+/// The cylinder of the tests of a matrix near a similarity (radius, height), reaching 100
+/// from the origin; the stretches along z and the shears of y into x that move its points
+/// past the zone (the old limits took them for similarities) and within it.
+const NEAR_CYLINDER = [2]f64{ 10, 100 };
+const NEAR_PAST = [_]f64{ 8e-6, 8e-5 };
+const NEAR_WITHIN = [_]f64{ 5e-8, 2e-8 };
+/// How a matrix is off a similarity: stretched along z, or sheared, y into x.
+const Near = enum { stretch, shear };
+
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
 }
@@ -265,5 +274,57 @@ test "transform: a stretch that closes a sheet's slit under the zone is refused,
         var squashed = try transform.transform(testing.allocator, &sheet, &Affine.scaleBy(.{ 1, k, 1 }), .{}, &diag);
         defer squashed.deinit();
         try overlap.check(testing.allocator, &squashed, .{}, &diag);
+    }
+}
+
+/// The matrix `kind` off a similarity by the share `by`: a stretch along z, or a shear of
+/// y into x; after a turn and a move, so nothing in it is axis-aligned.
+fn nearSimilarity(kind: Near, by: f64) Affine {
+    var off = Affine.identity;
+    switch (kind) {
+        .stretch => off.linear[8] += by,
+        .shear => off.linear[1] += by,
+    }
+    return off.compose(&Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, 0.3));
+}
+
+test "transform: a matrix off a similarity past the zone over the body is a stretch, refused for a cylinder; one within it is the similarity nearest it" {
+    // The audit of 2026-11-22: a similarity was a matrix whose columns agreed in length
+    // within the zone as a share (1e-5) and were square within the angular tolerance as a
+    // cosine (1e-4), so a stretch of 8e-6 and a shear of 8e-5 passed, and the cylinder's
+    // frame went with them, 8e-4 and 8e-3 off square over its height
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var c = try primitives.cylinder(testing.allocator, tol, NEAR_CYLINDER[0], NEAR_CYLINDER[1], false, &diag);
+    defer c.deinit();
+    var b = try primitives.box(testing.allocator, tol, 20, 20, 100, false, &diag);
+    defer b.deinit();
+    for (std.enums.values(Near)) |kind| {
+        for (NEAR_PAST) |by| {
+            errdefer std.debug.print("{s} by {e}\n", .{ @tagName(kind), by });
+            const map = nearSimilarity(kind, by);
+            try testing.expectError(error.NotRepresentable, transform.transform(testing.allocator, &c, &map, .{}, &diag));
+            // A box's planes map under any stretch
+            var boxed = try transform.transform(testing.allocator, &b, &map, .{}, &diag);
+            defer boxed.deinit();
+            try expectValid(&boxed);
+        }
+        for (NEAR_WITHIN) |by| {
+            errdefer std.debug.print("{s} by {e}\n", .{ @tagName(kind), by });
+            const map = nearSimilarity(kind, by);
+            var near = try transform.transform(testing.allocator, &c, &map, .{}, &diag);
+            defer near.deinit();
+            try expectValid(&near);
+            // Its frame square and of unit axes, its radius kept to the map's factor
+            const frame = near.geometry.cylinders.items[0].frame;
+            for ([_]Vec3{ frame.x, frame.y, frame.z }) |axis| try testing.expectApproxEqAbs(@as(f64, 1), vec.length(axis), 1e-13);
+            try testing.expectApproxEqAbs(@as(f64, 0), vec.dot(frame.x, frame.z), 1e-13);
+            try testing.expectApproxEqAbs(@as(f64, 0), vec.dot(frame.x, frame.y), 1e-13);
+            try testing.expectApproxEqAbs(NEAR_CYLINDER[0], near.geometry.cylinders.items[0].r, 1e-6);
+            // No vertex more than the zone from where the matrix as given puts it
+            for (c.vertices.items, near.vertices.items) |from, to| {
+                try testing.expect(vec.distance(map.point(c.geometry.point(from.point)), near.geometry.point(to.point)) <= tol.zone);
+            }
+        }
     }
 }
