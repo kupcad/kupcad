@@ -87,7 +87,8 @@ pub const FaceRange = struct {
     /// A loop of the face had a lens thinner than its chords (an arc's polyline fallen
     /// onto another edge's), pruned from the polygon: its arcs are refined like a failed
     /// face's, so this stays set only past `edges.MAX_DOUBLINGS` (a sliver no resolution
-    /// the tessellator uses resolves; on a solid, the mesh there encloses nothing).
+    /// the tessellator uses resolves; on a solid, the mesh there encloses nothing), and a
+    /// warning names the face.
     spikes_pruned: bool = false,
 };
 
@@ -161,6 +162,12 @@ pub fn tessellateWithin(allocator: std.mem.Allocator, body: *const Body, resolut
         }
         if (!refined) {
             for (attempt.findings.items) |finding| try diag.add(finding);
+            // A lens still thinner than its chords past the last refinement is left out of
+            // the face's mesh (on a solid its two sides one quad there): said, not silent
+            // (the mesher audit, 2026-11-22)
+            for (mesh.faces) |range| {
+                if (range.spikes_pruned) try diag.warn(.{ .code = .limit_exceeded, .entity = .of(.face, @backingInt(range.face)), .label = "the refinements of a face's lens thinner than its chords (left out of the mesh)", .measured = @floatFromInt(round), .threshold = @floatFromInt(edges_mod.MAX_DOUBLINGS) });
+            }
             return mesh;
         }
         mesh.deinit(allocator);

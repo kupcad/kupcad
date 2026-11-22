@@ -107,3 +107,42 @@ test "validate: a lens thinner than its chords, extruded, is refined into a clos
     const exact = (try mass.mass(&slab, .{}, &diag)).volume;
     try testing.expect(volume > 0.5 * exact and volume <= exact * (1 + 1e-12));
 }
+
+test "validate: a lens no refinement resolves, its arcs sweeping less than the finest grid step, is left out of the mesh with a warning naming its face" {
+    // The mesher audit (2026-11-22, finding 8): a lens still thinner than its chords past
+    // the last doubling is pruned (its two sides one quad in the mesh), and nothing said
+    // so. Two arcs of radius 10000 between two points 1 apart: each sweeps 1e-4 rad, the
+    // lens 2.5e-5 thick at its middle, turned so that each arc's middle lies halfway
+    // between two points of the finest grid the tessellator tries (the 12° step doubled
+    // `edges.MAX_DOUBLINGS` times), so no grid ever cuts it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const vec = @import("../math/vec.zig");
+    const r: f64 = 10000;
+    const d = @sqrt(r * r - 0.25);
+    const finest = 2 * std.math.pi / @as(f64, @floatFromInt(@as(u32, 30) << @import("edges.zig").MAX_DOUBLINGS));
+    const turn = finest / 2;
+    const Turned = struct {
+        fn at(p: vec.Vec2, angle: f64) vec.Vec2 {
+            return .{ p[0] * @cos(angle) - p[1] * @sin(angle), p[0] * @sin(angle) + p[1] * @cos(angle) };
+        }
+    };
+    const a = Turned.at(.{ -0.5, 0 }, turn);
+    const b = Turned.at(.{ 0.5, 0 }, turn);
+    const Arc = primitives.OutlineArc;
+    const lens = [_]primitives.OutlineEdge{
+        .{ .a = a, .b = b, .arc = Arc{ .c = Turned.at(.{ 0, d }, turn), .r = r, .ccw = true } },
+        .{ .a = b, .b = a, .arc = Arc{ .c = Turned.at(.{ 0, -d }, turn), .r = r, .ccw = true } },
+    };
+    var sheet = try primitives.outlines(testing.allocator, tol, &.{&lens}, &diag);
+    defer sheet.deinit();
+    var meshed = Diagnostics.init(testing.allocator);
+    defer meshed.deinit();
+    var mesh = try tessellate.tessellate(testing.allocator, &sheet, .{}, .{}, &meshed);
+    defer mesh.deinit(testing.allocator);
+    try testing.expect(mesh.faces[0].spikes_pruned);
+    try testing.expectEqual(@as(usize, 1), meshed.warnings());
+    const warning = meshed.findings.items[0];
+    try testing.expectEqual(@import("../diagnostics.zig").Code.limit_exceeded, warning.code);
+    try testing.expectEqual(@backingInt(mesh.faces[0].face), warning.entity.index);
+}
