@@ -2381,6 +2381,15 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // box's the other, its faces the box's planes either way (Provenance.tiedLines: the
         // line its faces' planes meet in)
         "solids 3 0 5 3 0 3 2 1 3 2 0 4 1 -2 3 4 15 3 1 0 2 3 2 4 0 3 1 3 14 11 6 12 2 0 0 -1 1 9 4 2 0 0 2 1 3 1 2 3 3 6 11 7 4 0",
+        // batch D's locus_solids 100K run (2026-11-22, cm): hull ∪ wall ∪ hull ∪ wall,
+        // moved whole an eighth about (1, 2, 3) and 3e5 out; a chain of four vertices off
+        // its chord by 5.135159e-6 and 5.135130e-6, split at the farther, joined three in
+        // place and none moved whole, the two tied to the rounding there: 155 vertices
+        // against 156 (simplify.decide: the fewest runs its lines hold)
+        "solids 1 8 4 2 3 1 2 1 2 4 2 2 4 1 2 3 0 3 2 1 4 3 1 1 3 2 1 3 12 13 5 16 3 1 3 1 5 4 3 4 2 1 4 3 0 3 2 14 5 0 3 0 3 1 8 3 0 1 3 3 2 3 4 4 1 3 1 4 0 3 4 4 0 2 1 4 1 1 2 0 3 8 0 1 1 2 8 3 0 8 0 2 3 1 4 4 1 4 0 1 4 2 1 3 2 12 12 4 16 0 3 2 2",
+        // the local session (2026-11-22, cu): a box ∪ a hull ∪ two plates, moved whole 0.3
+        // about y and 3e5 out, 47 vertices against 48: the same chain's runs
+        "solids 0 0 2 2 3 2 4 3 0 1 0 1 3 13 8 6 3 3 1 7 2 3 3 2 1 1 4 2 1 3 1 4 2 1 3 3 0 1 1 3 4 1 1 9 4 14 10 0 3 2 3 4 0 2 1 2 1 2 -1 5 4 16 0 2 2 0 4 0 2 2 3 0 0 8 1 14 2 6 6 0 1 3 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -45,6 +45,7 @@ const incidence = @import("../geometry/incidence.zig");
 const check = @import("../topology/check.zig");
 const Body = body_mod.Body;
 const Diagnostics = diagnostics.Diagnostics;
+const CurveRef = @import("../geometry/types.zig").CurveRef;
 const Error = diagnostics.Error;
 
 /// Passes at most: each pass that changes something removes an edge, so the edges bound
@@ -256,7 +257,7 @@ fn joinEdges(body: *Body, diag: *Diagnostics) Error!bool {
     defer runs.deinit(allocator);
     for (chains.items) |*chain| {
         runs.clearRetainingCapacity();
-        try decide(allocator, body, chain, 0, chain.vertices.items.len - 1, &runs, diag);
+        try decide(allocator, body, chain, &runs, diag);
         for (runs.items) |run_| changed = try joinRun(body, chain, run_, diag) or changed;
     }
     return changed;
@@ -347,7 +348,7 @@ const Chain = struct {
 };
 
 /// Vertices `lo` to `hi` of a chain become one edge on `line`.
-const Run = struct { lo: usize, hi: usize, line: @import("../geometry/types.zig").CurveRef };
+const Run = struct { lo: usize, hi: usize, line: CurveRef };
 
 fn otherEnd(body: *const Body, e: types.EdgeIndex, v: types.VertexIndex) types.VertexIndex {
     const edge = body.edge(e);
@@ -359,48 +360,71 @@ fn lessPoint(a: vec.Vec3, b: vec.Vec3) bool {
     return false;
 }
 
-/// The runs of vertices `lo` to `hi` of `chain`: all of them one edge when a line of
-/// theirs holds them (`holdingLine`), else split at the vertex farthest from the chord
-/// between the ends (Douglas–Peucker), each side decided alike. Geometry alone decides,
-/// never the order the vertices are numbered in, nor where the chain is placed: vertices
-/// as far from the chord to rounding (`canonical.sameToRounding`) are as far, and the chain
-/// splits at each of them. A tie broken by the measures' rounding, or by the points'
-/// coordinates, turns with the solids moved whole: a box's bottom edge along a hull's face
-/// and the plate's top across that face 9e-5 under it, two lines parallel, put two
-/// vertices of the chain exactly as far from its chord; in place the chain split at the
-/// one and kept every vertex, moved whole at the other and joined two edges into one (the
-/// first ReleaseSafe session on a1444371, cd, 2026-11-22).
-fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, lo: usize, hi: usize, runs: *std.ArrayList(Run), diag: *Diagnostics) Error!void {
-    if (hi - lo < 2) return;
-    if (try holdingLine(body, chain, lo, hi, diag)) |line| return runs.append(allocator, .{ .lo = lo, .hi = hi, .line = line });
-    const vs = chain.vertices.items;
-    const a = body.point(vs[lo]);
-    const b = body.point(vs[hi]);
-    var farthest: f64 = -1;
-    var scale = canonical.magnitude(&.{ a, b });
-    for (lo + 1..hi) |i| {
-        const p = body.point(vs[i]);
-        farthest = @max(farthest, chordDistance(a, b, p));
-        scale = @max(scale, canonical.magnitude(&.{p}));
+/// The runs of `chain`: the fewest edges it can be made, each run of its edges one edge on
+/// a line of theirs that holds them (`hold`), found exactly by dynamic programming over its
+/// vertices (the least count of runs to each vertex, a run ending there from any vertex
+/// before it that a line holds it to); of runs as few, the last run the longest, so the
+/// chain's own order picks among them, never the rounding. Geometry alone decides how many
+/// edges the chain keeps, never the order the vertices are numbered in nor where the chain
+/// is placed. Douglas–Peucker's split at the vertex farthest from the chord decided it by
+/// which of two vertices was farther, a difference the rounding of the placement could
+/// not resolve: two vertices 5.135159e-6 and 5.135130e-6 from the chord, apart by 2.9e-11,
+/// in place the one farther and the other three joined, moved whole 3e5 out tied to
+/// rounding (a band of 4e-9 there) and no run joined (the solids fuzzer, cm, 2026-11-22;
+/// cd, the exact tie, before it). A run held only to rounding (`at_tolerance`) is refused
+/// when the count depends on it, counted either way; else the count without it is taken.
+fn decide(allocator: std.mem.Allocator, body: *const Body, chain: *const Chain, runs: *std.ArrayList(Run), diag: *Diagnostics) Error!void {
+    const n = chain.edges.items.len;
+    if (n < 2) return;
+    // The least count of runs to each vertex: without the runs held to rounding, and with
+    // them; the vertex each least run (without) starts at, and its line
+    const least = try allocator.alloc(usize, 2 * (n + 1));
+    defer allocator.free(least);
+    const without = least[0 .. n + 1];
+    const with = least[n + 1 ..];
+    const from = try allocator.alloc(usize, n + 1);
+    defer allocator.free(from);
+    const line = try allocator.alloc(?CurveRef, n + 1);
+    defer allocator.free(line);
+    without[0] = 0;
+    with[0] = 0;
+    var rounding: ?struct { comparison: canonical.Comparison, edge: types.EdgeIndex } = null;
+    for (1..n + 1) |j| {
+        without[j] = without[j - 1] + 1;
+        with[j] = with[j - 1] + 1;
+        from[j] = j - 1;
+        line[j] = null;
+        for (0..j - 1) |i| {
+            switch (try hold(body, chain, i, j)) {
+                .held => |curve| {
+                    if (without[i] + 1 < without[j]) {
+                        without[j] = without[i] + 1;
+                        from[j] = i;
+                        line[j] = curve;
+                    }
+                    with[j] = @min(with[j], with[i] + 1);
+                },
+                .apart => {},
+                .at_tolerance => |c| {
+                    with[j] = @min(with[j], with[i] + 1);
+                    if (rounding == null) rounding = .{ .comparison = c, .edge = chain.edges.items[i] };
+                },
+            }
+        }
     }
-    // Split at every vertex as far as the farthest, each run between two decided alike
-    var from = lo;
-    for (lo + 1..hi) |i| {
-        if (!canonical.sameToRounding(chordDistance(a, b, body.point(vs[i])), farthest, scale)) continue;
-        try decide(allocator, body, chain, from, i, runs, diag);
-        from = i;
+    if (with[n] != without[n]) {
+        const r = rounding.?;
+        return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(r.edge)), .label = "edges meeting end to end, on one line or not, to within rounding", .measured = r.comparison.measured, .threshold = r.comparison.limit });
     }
-    try decide(allocator, body, chain, from, hi, runs, diag);
+    var j = n;
+    while (j > 0) : (j = from[j]) {
+        if (line[j]) |curve| try runs.append(allocator, .{ .lo = from[j], .hi = j, .line = curve });
+    }
 }
 
-/// How far `p` lies from the segment `a`–`b` (from `a` when the two are one point).
-fn chordDistance(a: vec.Vec3, b: vec.Vec3, p: vec.Vec3) f64 {
-    const d = vec.sub(b, a);
-    const len_sq = vec.lengthSq(d);
-    if (len_sq == 0) return vec.distance(p, a);
-    const s = std.math.clamp(vec.dot(vec.sub(p, a), d) / len_sq, 0, 1);
-    return vec.distance(p, vec.addScaled(a, d, s));
-}
+/// Whether a line holds vertices `lo` to `hi` of `chain` (`hold`), not yet taken: held on
+/// the line, apart, or at the tolerance to rounding.
+const Hold = union(enum) { held: CurveRef, apart, at_tolerance: canonical.Comparison };
 
 /// The line, of the edges between vertices `lo` and `hi` of `chain`, that holds them all
 /// within the tolerance: pieces of one curve record always; else a line every edge is
@@ -409,19 +433,19 @@ fn chordDistance(a: vec.Vec3, b: vec.Vec3, p: vec.Vec3) f64 {
 /// edge's gap, as the checker holds an edge to its surfaces (on planes a line's height is
 /// linear: its ends decide). Of several, the least record (the boolean's lines are its
 /// sources', D28: which one changes where the edge lies within the tolerance, never which
-/// vertices go). Null when none holds them; refused (`at_tolerance`) when none does and
-/// one is within rounding of it. The faces' check: a section's line, through a vertex
-/// 1.8e-4 under the plane it lies in at a tolerance of 2e-4, joined a notch's edge on that
-/// line and took the joined edge 3.6e-4 under the plane at its far end, the tolerance
-/// spent twice (the 10K session, 2026-11-15: a plate's top and a notch's ceiling 1.8e-4
+/// vertices go). Apart when none holds them; at the tolerance when none does and one is
+/// within rounding of it (`decide` refuses it where the chain's count depends on it). The
+/// faces' check: a section's line, through a vertex 1.8e-4 under the plane it lies in at a
+/// tolerance of 2e-4, joined a notch's edge on that line and took the joined edge 3.6e-4
+/// under the plane at its far end, the tolerance spent twice (the 10K session, 2026-11-15: a plate's top and a notch's ceiling 1.8e-4
 /// under it, the plate first, `edge_off_surface`).
-fn holdingLine(body: *const Body, chain: *const Chain, lo: usize, hi: usize, diag: *Diagnostics) Error!?@import("../geometry/types.zig").CurveRef {
+fn hold(body: *const Body, chain: *const Chain, lo: usize, hi: usize) Error!Hold {
     const edges = chain.edges.items[lo..hi];
     const first = body.edge(edges[0]).curve;
     for (edges[1..]) |e| {
         if (!body.edge(e).curve.eql(first)) break;
-    } else return first;
-    var best: ?@import("../geometry/types.zig").CurveRef = null;
+    } else return .{ .held = first };
+    var best: ?CurveRef = null;
     var at: ?canonical.Comparison = null;
     for (edges) |candidate| {
         const curve = body.edge(candidate).curve;
@@ -432,12 +456,12 @@ fn holdingLine(body: *const Body, chain: *const Chain, lo: usize, hi: usize, dia
             .at_tolerance => |c| at = at orelse c,
         }
     }
-    if (best != null) return best;
-    if (at) |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.edge, @backingInt(edges[0])), .label = "edges meeting end to end, on one line or not, to within rounding", .measured = c.measured, .threshold = c.limit });
-    return null;
+    if (best) |b| return .{ .held = b };
+    if (at) |c| return .{ .at_tolerance = c };
+    return .apart;
 }
 
-/// `holdingLine`'s measures of `line` against the edges and vertices `lo` to `hi`.
+/// `hold`'s measures of `line` against the edges and vertices `lo` to `hi`.
 fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, chain: *const Chain, lo: usize, hi: usize) Error!canonical.Verdict {
     const tol = body.tol;
     var tally: canonical.Tally = .{};
@@ -472,9 +496,13 @@ fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, ch
 fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!bool {
     const edges = chain.edges.items[r.lo..r.hi];
     var gap: f64 = 0;
+    // Every edge's range on the run's line taken by projection, its own line's too: the
+    // joins need the pieces' ranges to meet exactly, and an edge kept on its line with the
+    // range it came with met its rebased neighbour's by an ulp, and the join was refused
+    // (the test of the chain's runs, 2026-11-22)
     for (edges) |e| {
         gap = @max(gap, body.edge(e).gap);
-        if (!body.edge(e).curve.eql(r.line)) rebase(body, e, r.line);
+        rebase(body, e, r.line);
     }
     var joined = false;
     for (chain.vertices.items[r.lo + 1 .. r.hi]) |v| {
@@ -503,10 +531,10 @@ fn joinRun(body: *Body, chain: *const Chain, r: Run, diag: *Diagnostics) Error!b
     return joined;
 }
 
-/// Edge `e` on `curve` (a line) instead of its own: its range the projections of its ends,
+/// Edge `e` on `curve` (a line), its own or another: its range the projections of its ends,
 /// and run the line's way (its ends and its coedges' senses turned when the line runs from
 /// its end to its start).
-fn rebase(body: *Body, e: types.EdgeIndex, curve: @import("../geometry/types.zig").CurveRef) void {
+fn rebase(body: *Body, e: types.EdgeIndex, curve: CurveRef) void {
     const line = body.geometry.curve(curve).line;
     const edge = body.edge(e);
     const ts = line.project(body.point(edge.start));

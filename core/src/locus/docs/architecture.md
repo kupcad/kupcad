@@ -873,7 +873,8 @@ importing only those before it, which the layering test holds):**
   (`edgesMeet`; by `xsect` alone a box's edge between corners with gaps of 3.5e-5, its
   face in another's plane by them, missed that face's edge crossing it, 2026-11-16; a
   crossing whose vertex would lie past the zone from both refused, `gap_too_large`, as a
-  ball past it is) (parallel lines skipped: their overlaps
+  ball past it is)
+  (parallel lines skipped: their overlaps
   are made of vertex–edge's paves; two edges with a pave in common skipped, two straight
   edges meeting once, there, however far the computed point is: at a shallow angle they
   run within `xsect` of each other for `xsect / sin θ`; a crossing on both segments in an
@@ -1091,12 +1092,14 @@ importing only those before it, which the layering test holds):**
   shell's corner hung on the order the edges went in, 2026-11-18), bridges
   by `kemr` (never an edge with a copy either); `kevJoin` along
   chains of edges through vertices of two line edges, counted over the whole body, each
-  chain decided whole (one edge on a line of its own edges holding all its vertices, else
-  split at the vertex farthest from its chord, Douglas–Peucker, at each of them when
-  several are as far to rounding, `canonical.sameToRounding`: two lines parallel in a
-  face put two vertices exactly as far, and which the rounding found farther turned with
-  the solids moved whole, the chain joined in one placement and not in the other, find cd,
-  2026-11-22; vertex by vertex the
+  chain decided whole (the fewest runs of its edges each held by a line of theirs, found
+  exactly by dynamic programming over its vertices, the last run the longest of as few;
+  a run held only to rounding refused, `at_tolerance`, where the count hangs on it: split
+  at the vertex farthest from its chord, Douglas–Peucker, which vertex was farther hung
+  on a difference the rounding of the placement could not resolve, two vertices 2.9e-11
+  apart as far, joined in place and not 3e5 out, finds cd and cm, 2026-11-22; each run's
+  edges put on its line with their ranges by projection, its own line's edge too, the
+  join needing them to meet exactly; vertex by vertex the
   joins hung on the numbering, the operands' order, 2026-11-16); `kevMerge` of an edge no
   longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
   `compact`, the checker, whose findings are faults (`NotValid`) but for a face narrower

@@ -40,6 +40,26 @@ const SHORT_FAR: Vec3 = .{ 1.9e-5, 0.5e-5, 0 };
 const SHORT_FOOT: Vec3 = .{ 2.8e-5, 2.8e-5, 0 };
 const SHORT_LINE_GAP: f64 = 1e-5;
 
+/// The tests of a chain's runs (`simplify.decide`): a unit cube's front top edge split at
+/// a vertex lifted `TIE_LIFT` and more over the top at x = 0.4 and one `TIE_LIFT` in from
+/// the front at x = 0.8, the two as far from the chord to within `TIE_FARTHER`. No line of
+/// the chain holds all four of its vertices (the first edge's runs 2.2e-5 past the second
+/// and 2.5e-5 past the far corner, the middle's 2.2e-5 past the near corner), the middle
+/// edge's holds the last three (the far corner 1.57e-5 off it): two edges at fewest, the
+/// lifted vertex kept, and with the other gone no line holds the rest. Lifts from where
+/// the middle line first leaves the near corner to the find's 0.99 of the zone.
+const TIE_LIFT: f64 = 0.99e-5;
+const TIE_LIFTS = [_]f64{ 0.92e-5, 0.95e-5, 0.99e-5 };
+/// How much farther from the chord the first vertex lies than the second: an exact tie
+/// (find cd), a difference the rounding at the cube's place resolves and the rounding 3e5
+/// out does not (find cm: 2.9e-11), one either side of that, and the second the farther.
+const TIE_FARTHER = [_]f64{ 0, 1e-11, 2.9e-11, 1e-10, 1e-9, -2.9e-11 };
+/// How the cube is moved whole: in place, the solids fuzzer's turn of cm (an eighth about
+/// (1, 2, 3)) and its shift (1e5, -2e5, 3e5), and a turn of 0.3 about x a step out.
+const TIE_TURN_AXIS: Vec3 = .{ 1, 2, 3 };
+const TIE_SHIFT: Vec3 = .{ 1e5, -2e5, 3e5 };
+const TIE_NEAR_SHIFT: Vec3 = .{ 3, -1, 2 };
+
 /// A unit cube whose top is split along x = 0.5 into two faces on one plane, of
 /// attributes `left` and `right`; the front's top edge split there too, at a vertex of
 /// the split.
@@ -87,6 +107,113 @@ fn splitTop(left: u32, right: u32) !Body {
         faces[f] = .{ .surface = plane.surface, .same_sense = plane.same_sense, .loops = &loops[f], .uv_box = uv, .attribute = attribute };
     }
     return b.finish(&faces, .outer);
+}
+
+/// The cube of the chain's tests: its front top edge split at (0.4, 0, 1 + `lift` +
+/// `farther`) and (0.8, `lift`, 1), mirrored in x = 0 when `mirrored`, its top face built
+/// before its front when `top_first` (the chain then walked the other way round).
+fn tiedChain(lift: f64, farther: f64, mirrored: bool, top_first: bool) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var b = try primitives.Builder.init(testing.allocator, tol, .solid, &diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    var corners = [_]Vec3{
+        .{ 0, 0, 0 },                    .{ 1, 0, 0 },      .{ 1, 1, 0 }, .{ 0, 1, 0 },
+        .{ 0, 0, 1 },                    .{ 1, 0, 1 },      .{ 1, 1, 1 }, .{ 0, 1, 1 },
+        .{ 0.4, 0, 1 + lift + farther }, .{ 0.8, lift, 1 },
+    };
+    if (mirrored) for (&corners) |*p| {
+        p[0] = -p[0];
+    };
+    var v: [10]types.VertexIndex = undefined;
+    for (corners, 0..) |p, i| v[i] = try b.vertex(p);
+    // Faces as corner cycles counter-clockwise about their outward normals
+    const front = [_]u8{ 0, 1, 5, 9, 8, 4 };
+    const top = [_]u8{ 4, 8, 9, 5, 6, 7 };
+    const rest = [_][]const u8{ &.{ 0, 3, 2, 1 }, &.{ 1, 2, 6, 5 }, &.{ 2, 3, 7, 6 }, &.{ 3, 0, 4, 7 } };
+    const cycles = if (top_first) [_][]const u8{ &top, &front } ++ rest else [_][]const u8{ &front, &top } ++ rest;
+    const fronts = [_]Vec3{ vec.neg(vec.Y3), vec.Z3 };
+    const normals = (if (top_first) [_]Vec3{ fronts[1], fronts[0] } else fronts) ++ [_]Vec3{ vec.neg(vec.Z3), vec.X3, vec.Y3, vec.neg(vec.X3) };
+    var edges: [6][6]sew.EdgeSpec = undefined;
+    var loops: [6][1]sew.LoopSpec = undefined;
+    var faces: [6]sew.FaceSpec = undefined;
+    var reversed: [6][6]u8 = undefined;
+    // Each edge's line made once for both its faces, none interned: the chain's pieces
+    // apart, as a boolean's result keeps them from different operands
+    var own: std.AutoHashMapUnmanaged([2]u32, geometry.CurveRef) = .empty;
+    defer own.deinit(testing.allocator);
+    for (cycles, normals, 0..) |drawn, drawn_n, f| {
+        // Mirrored, a cycle runs the other way about its normal mirrored
+        var cycle = drawn;
+        var n = drawn_n;
+        if (mirrored) {
+            for (drawn, 0..) |c, k| reversed[f][drawn.len - 1 - k] = c;
+            cycle = reversed[f][0..drawn.len];
+            n[0] = -n[0];
+        }
+        for (cycle, 0..) |c, k| {
+            const next = cycle[(k + 1) % cycle.len];
+            edges[f][k] = try ownLine(&b, &own, v[c], v[next]);
+        }
+        loops[f] = .{.{ .edges = edges[f][0..cycle.len] }};
+        // The plane through the face's first corner, a corner of the cube on it
+        const x = vec.normalized(vec.sub(corners[cycle[1]], corners[cycle[0]])).?;
+        var holds: [6]Vec3 = undefined;
+        for (cycle, 0..) |c, k| holds[k] = corners[c];
+        const plane = try b.facingPlane(geometry.Frame.init(corners[cycle[0]], vec.normalized(vec.sub(x, vec.scale(n, vec.dot(x, n)))).?, n), holds[0..cycle.len]);
+        const frame = b.body.geometry.planes.items[plane.surface.index].frame;
+        var uv = geometry.Box2.empty;
+        for (cycle) |c| {
+            const l = frame.toLocal(corners[c]);
+            uv.grow(.{ l[0], l[1] });
+        }
+        faces[f] = .{ .surface = plane.surface, .same_sense = plane.same_sense, .loops = &loops[f], .uv_box = uv };
+    }
+    return b.finish(&faces, .outer);
+}
+
+/// The straight edge from `a` to `z` on a line record of its own, not interned, made once
+/// for both faces of the edge (`own`): the pieces of a chain the boolean's result keeps
+/// from different operands are each its source's line (D28), which the builder's
+/// interner would make one record. A body built so takes no line from the interner.
+fn ownLine(b: *primitives.Builder, own: *std.AutoHashMapUnmanaged([2]u32, geometry.CurveRef), a: types.VertexIndex, z: types.VertexIndex) !sew.EdgeSpec {
+    const lo = @min(@backingInt(a), @backingInt(z));
+    const hi = @max(@backingInt(a), @backingInt(z));
+    const p_lo = b.body.point(types.VertexIndex.of(lo));
+    const p_hi = b.body.point(types.VertexIndex.of(hi));
+    const entry = try own.getOrPut(testing.allocator, .{ lo, hi });
+    if (!entry.found_existing) entry.value_ptr.* = try b.body.geometry.addLine(b.body.allocator, curves.Line.through(p_lo, p_hi).?);
+    // Its range by projection, as the builder's `straight` and simplify's rebase take it
+    const l = b.body.geometry.curve(entry.value_ptr.*).line;
+    return .{ .start = a, .end = z, .curve = entry.value_ptr.*, .t0 = l.project(p_lo), .t1 = l.project(p_hi), .forward = @backingInt(a) == lo };
+}
+
+/// The chain's cube simplified in place and moved whole: the same counts, its edges two
+/// fewer than its chain's three pieces and the cube's nine others.
+fn expectTiedChain(lift: f64, farther: f64, mirrored: bool, top_first: bool) !void {
+    const Affine = @import("../math/mat.zig").Affine;
+    const transform = @import("../construct/transform.zig");
+    const moves = [_]Affine{
+        Affine.translate(.{ 0, 0, 0 }),
+        Affine.translate(TIE_SHIFT).compose(&Affine.rotate(vec.normalized(TIE_TURN_AXIS).?, std.math.pi / 4.0)),
+        Affine.translate(TIE_NEAR_SHIFT).compose(&Affine.rotate(vec.X3, 0.3)),
+    };
+    var drawn = try tiedChain(lift, farther, mirrored, top_first);
+    defer drawn.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (moves, 0..) |move, m| {
+        errdefer std.debug.print("lift {e}, farther {e}, mirrored {}, top first {}, move {d}\n", .{ lift, farther, mirrored, top_first, m });
+        var body = try transform.transform(testing.allocator, &drawn, &move, .{}, &diag);
+        defer body.deinit();
+        var log: simplify.Log = .{};
+        defer log.deinit(testing.allocator);
+        try simplify.run(&body, &diag, &log);
+        try expectValid(&body);
+        try testing.expectEqual(@as(usize, 13), body.counts().edges);
+        try testing.expectEqual(@as(usize, 9), body.counts().vertices);
+    }
 }
 
 /// The edge of `body` between the vertices at `p` and `q`, either way round.
@@ -531,4 +658,18 @@ test "simplify: a short edge collapses into the same end whichever way it runs" 
     try testing.expectEqual(results[0].refused, results[1].refused);
     try testing.expectEqual(results[0].vertices, results[1].vertices);
     try testing.expectEqual(results[0].kept, results[1].kept);
+}
+
+test "simplify: a chain's runs are the fewest its lines hold, wherever the chain is placed" {
+    // The solids fuzzer's find (2026-11-22, cm): a chain of four vertices along a line
+    // and off it by 5.135159e-6 and 5.135130e-6 from its chord, 2.9e-11 apart; split at the
+    // farther (Douglas–Peucker), in place the last three joined, moved whole 3e5 out the
+    // two tied to the rounding there and none joined: 155 vertices against 156
+    try expectTiedChain(TIE_LIFT, 2.9e-11, false, false);
+}
+
+test "simplify: a chain's runs keep their count for a tie, a near tie and a clear lead, mirrored and walked either way" {
+    for (TIE_LIFTS) |lift| for (TIE_FARTHER) |farther| for ([_]bool{ false, true }) |mirrored| for ([_]bool{ false, true }) |top_first| {
+        try expectTiedChain(lift, farther, mirrored, top_first);
+    };
 }
