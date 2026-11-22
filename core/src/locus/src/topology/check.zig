@@ -597,17 +597,6 @@ const Checker = struct {
                     walk.perimeter += circle.r * sweep;
                     walk.step(curve.eval(from), true);
                 },
-                // A line from its own start to its own end, then across to the next edge's
-                // start where its end misses the vertex by a gap: the same polygon whichever
-                // way the loop runs. Sampled short of its end, the walk cut the corner at
-                // the end and kept it at the start, and a face's measure went by its
-                // handedness (a corner triangle whose top edge, a hull's, ended 1e-4 under
-                // the vertex it met a box's edge at: 0.9956 of the limit, refused, and its
-                // mirror image 1.047 of it, made; the equal-zone family of by, 2026-11-22)
-                .line => {
-                    walk.step(curve.eval(from), false);
-                    walk.step(curve.eval(to), false);
-                },
                 else => {
                     var k: usize = 0;
                     while (k < LOOP_SAMPLES) : (k += 1) walk.step(curve.eval(from + (to - from) * @as(f64, @floatFromInt(k)) / LOOP_SAMPLES), false);
