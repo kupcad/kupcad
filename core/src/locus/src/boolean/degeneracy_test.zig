@@ -583,6 +583,17 @@ const BESIDE_WALL_NUDGE_XY = [2]f64{ 2e-3, -1e-5 };
 const BESIDE_WALL_NUDGE_Z: f64 = 2.000000005684342e-5;
 const BESIDE_STEP: f64 = 0x1p-51;
 const BESIDE_STEPS = [_]f64{ 0, -3, -2, -1, 1, 2, 3 };
+/// dk: (box − box) ∪ hull, as the solids fuzzer drew them: the block the difference leaves
+/// touches the hull's face 2x + y = 6 along its edge x = 2, y = 2, through that face's
+/// centroid. `TOUCH_LIFTS`: the hull's nudge in z (the find's first), the centroid along
+/// the edge still.
+const TOUCH_BOX = [2]Vec3{ .{ 1, 0, 1 }, .{ 2, 4, 3 } };
+const TOUCH_BOX_NUDGE: Vec3 = .{ 0, -1e-5, -1e-5 };
+const TOUCH_CUT = [2]Vec3{ .{ 1, 2, 0 }, .{ 2, 4, 3 } };
+const TOUCH_CUT_NUDGE: Vec3 = .{ 5e-6, -2.000000005684342e-5, -2.000000005684342e-5 };
+const TOUCH_HULL = [_]Vec3{ .{ 3, 3, 3 }, .{ 1, 4, 0 }, .{ 2, 2, 4 }, .{ 3, 0, 0 }, .{ 4, 0, 4 }, .{ 2, 4, 2 }, .{ 2, 2, 2 }, .{ 3, 1, 1 } };
+const TOUCH_HULL_NUDGE_Y: f64 = -2.000000005684342e-5;
+const TOUCH_LIFTS = [_]f64{ -2e-5, 0, 0.5, 1 };
 /// de: ((plate ∪ plate) − hull) ∩ a plate with a gap, the first plate and the last at a
 /// zone of 1e-4.
 const SPAN_PLATE = [2]Vec3{ .{ -48, -98, 0 }, .{ 102, 52, 2 } };
@@ -5906,4 +5917,36 @@ test "degeneracy: a section segment's middle outside one face and the tolerance 
             try testing.expectEqual(try outcomeOf(&joined, &wall, op), try outcomeOf(&wall, &joined, op));
         }
     }
+}
+
+test "degeneracy: two solids touching along a line through a face's centroid are one sound union, its shells counted clear of each other" {
+    // A locus_solids ReleaseSafe run's find on e83d2a0e (dk), as the fuzzer drew it: the
+    // block (box − box) leaves touches the hull's face along its edge, laid in that face
+    // as a slit through the face's centroid. The shells' count sampled the hull at that
+    // centroid, on two of the block's faces at once, where the block winds twice a half,
+    // and the sound union was said to overlap itself (`shell_overlaps`). A shell is
+    // counted at a point clear of the others (`overlap.onShell`)
+    for (TOUCH_LIFTS) |lift| for (SLIVER_TURNS) |whole| {
+        errdefer std.debug.print("the hull nudged {e} in z, moved whole {any}\n", .{ lift, whole });
+        var drawn = [_]Body{
+            try fuzzBoxPlaced(tol, TOUCH_BOX[0], TOUCH_BOX[1], vec.Z3, 0, null, TOUCH_BOX_NUDGE),
+            try fuzzBoxPlaced(tol, TOUCH_CUT[0], TOUCH_CUT[1], vec.Z3, 0, null, TOUCH_CUT_NUDGE),
+            try fuzzHullPlaced(&TOUCH_HULL, vec.Z3, 0, null, vec.ZERO3, .{ 0, TOUCH_HULL_NUDGE_Y, lift }),
+        };
+        defer for (&drawn) |*body| body.deinit();
+        var moved: [drawn.len]Body = undefined;
+        for (&drawn, &moved, 0..) |*body, *out, k| out.* = sliverMoved(body, whole) catch |err| {
+            for (moved[0..k]) |*done| done.deinit();
+            return err;
+        };
+        defer for (&moved) |*body| body.deinit();
+        var block = try helpers.sound(&moved[0], &moved[1], .difference);
+        defer block.deinit();
+        var forward = try helpers.sound(&block, &moved[2], .@"union");
+        defer forward.deinit();
+        var swapped = try helpers.sound(&moved[2], &block, .@"union");
+        defer swapped.deinit();
+        try testing.expectEqual(forward.counts(), swapped.counts());
+        try testing.expectEqual(@as(u32, 2), forward.counts().shells);
+    };
 }

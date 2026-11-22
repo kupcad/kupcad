@@ -613,7 +613,15 @@ fn coplanarOverlap(allocator: std.mem.Allocator, body: *const Body, f: types.Fac
     return false;
 }
 
-/// The second rule: each shell where the others put no material, or a void's one.
+/// The second rule: each shell where the others put no material, or a void's one. A shell
+/// is counted at a point of one of its faces clear of every other shell: on a face of
+/// another the other winds a half there, and on two of its faces at once, an edge of it,
+/// twice a half, a whole number that says nothing (`onShell`). Two solids of a union
+/// touched along a line, a block's edge in a hull's face, laid in that face as a slit;
+/// the face's point, the centroid of its triangle, fell on the slit, the block wound 1
+/// there, and the sound union was said to overlap itself (`shell_overlaps`; a
+/// locus_solids ReleaseSafe run on e83d2a0e, dk, 2026-11-22). A shell with no such point,
+/// every face's on another shell, is left to the faces' own rule.
 fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     var shells: std.ArrayList(types.ShellIndex) = .empty;
     defer shells.deinit(allocator);
@@ -625,13 +633,17 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
     if (shells.items.len < 2) return;
     var triangles = try FaceTriangles.build(allocator, body, shells.items, diag);
     defer triangles.deinit(allocator);
+    const tol = options.tolerance orelse body.tol;
     for (shells.items) |s| {
         try options.checkCancel();
         const expected: f64 = if (body.shell(s).kind == .void) 1 else 0;
-        var last: f64 = 0;
+        var last: f64 = expected;
         var faces = traverse.Faces.init(body, s);
         const material: f64 = decided: while (faces.next() catch return corrupt(diag)) |f| {
             const p = try facePoint(allocator, body, f, diag) orelse continue;
+            for (shells.items) |t| {
+                if (t != s and try onShell(body, t, p, tol, diag)) continue :decided;
+            }
             var sum: f64 = 0;
             var clean = true;
             for (shells.items) |t| {
@@ -646,6 +658,21 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
         } else last;
         if (material != expected) return diag.fail(error.NotValid, .{ .code = .shell_overlaps, .entity = .of(.shell, @backingInt(s)), .measured = material, .threshold = expected });
     }
+}
+
+/// Whether `p` lies on shell `t` (planar faces): within the intersection tolerance of one
+/// of its faces' planes, its foot there in the face or on its boundary
+/// (`planar_faces.place`, the paves' decision). The winding number of `t` about such a
+/// point is no count of its material.
+fn onShell(body: *const Body, t: types.ShellIndex, p: Vec3, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    var faces = traverse.Faces.init(body, t);
+    while (faces.next() catch return corrupt(diag)) |g| {
+        const frame = planar_faces.frameOf(body, g) orelse continue;
+        const height = vec.dot(vec.sub(p, frame.origin), frame.z);
+        if (@abs(height) > tol.xsect) continue;
+        if (try planar_faces.place(body, g, vec.addScaled(p, frame.z, -height), 0, tol, diag) != .outside) return true;
+    }
+    return false;
 }
 
 /// Whether every face of shell `s` is planar with straight edges (the faces the winding

@@ -1704,7 +1704,7 @@ point pass, a point of two shells' faces needing only one's boundary (a corner o
 splits no face; a vertex loop could record it, once the mesher and the STEP writer take
 one), and a face passing through or lying on another does not (`faces_intersect`);
 and each shell lies where the other shells' winding numbers sum to 0 for an outer shell
-and 1 for a void, at a point inside one of its faces (`shell_overlaps`; each face's solid
+and 1 for a void, at a point inside one of its faces clear of every other shell (`overlap.onShell`: on a face of another the other winds a half, on an edge of it twice a half, a whole number that counts nothing; two solids touching along a line through a face's centroid were said to overlap, find dk, 2026-11-22) (`shell_overlaps`; each face's solid
 angle summed over its own triangulation, spurs and slits taken out (`triangulate.splitSlits`: a step the loop runs both ways bounds nothing, a bridge from the outer loop to a hole as much as a spur; a bridge was handed to the triangulator whole and refused, find cp, 2026-11-22), never a fan from one corner,
 whose triangles overlap outside a face that is not convex and cancel there only by the
 signs of their rounding: a sample in the plane of another shell's notched face wound 1,
