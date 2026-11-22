@@ -1340,8 +1340,11 @@ triangles are checked by their count (Euler), their area and their boundary: eac
 edge a side of one triangle, run its ring's way, and of none run the other (a ring's
 point on another ring edge, a notch reaching an arc's chord, passes count and area with
 triangles across the edge; 2026-11-16); a polygon failing any of them is not simple, and
-the tessellator doubles the face's arcs and meshes it again (OCCT's healer refines the
-crossing edges alike). A curved face
+the tessellator refines the face's curved edges and meshes it again (OCCT's healer refines the
+crossing edges alike, of any type): a circle's grid doubled, a free-form edge's certified
+spans halved (`chords.halveSpans`), the coarser points kept either way (an elliptic
+plate's chord bowed through a square hole 0.005 inside its rim, and only arcs were
+refined: the face failed at once; the mesher audit, 2026-11-22). A curved face
 (cylinder, cone, sphere, torus; 2026-11-11) then gets interior points: the tensor grid of
 its boundary's distinct `u` and `v` values and of the resolution's own parameter lines
 around each circular direction (the grid a full circle of that direction's largest radius

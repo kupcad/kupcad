@@ -75,6 +75,33 @@ pub fn sampleParams(allocator: std.mem.Allocator, curve: curves.Curve, t0: f64, 
     }
 }
 
+/// Cuts every span between `t0`, the parameters in `params` (increasing, strictly between
+/// the ends) and `t1` into `2^halvings` equal pieces, the new parameters merged in order:
+/// a free-form edge refined as a circle's grid is doubled, the coarser samples kept, so
+/// the edge still meets the edges around it where it did and each span's bow shrinks
+/// about fourfold a halving (`tessellate` refines a face whose chorded outline crosses
+/// itself so, whatever its edges' curves: OCCT's `BRepMesh_ModelHealer` refines the
+/// crossing edges of any type). `error.LimitExceeded` with a finding on `entity` past
+/// `MAX_SPANS`.
+pub fn halveSpans(allocator: std.mem.Allocator, t0: f64, t1: f64, params: *std.ArrayList(f64), halvings: u8, diag: *Diagnostics, entity: diagnostics.EntityRef) Error!void {
+    if (halvings == 0) return;
+    const pieces = @as(usize, 1) << @intCast(halvings);
+    const spans = (params.items.len + 1) * pieces;
+    if (spans > MAX_SPANS) return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .entity = entity, .label = "the chords of a free-form edge", .measured = @floatFromInt(spans), .threshold = @floatFromInt(MAX_SPANS) });
+    var out: std.ArrayList(f64) = .empty;
+    defer out.deinit(allocator);
+    try out.ensureTotalCapacity(allocator, spans);
+    var a = t0;
+    for (0..params.items.len + 1) |k| {
+        const b = if (k < params.items.len) params.items[k] else t1;
+        for (1..pieces) |j| out.appendAssumeCapacity(a + (b - a) * @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(pieces)));
+        if (k < params.items.len) out.appendAssumeCapacity(b);
+        a = b;
+    }
+    params.clearRetainingCapacity();
+    try params.appendSlice(allocator, out.items);
+}
+
 /// Halves `[a, b]` until each piece's enclosure lies within the chord's budget, the
 /// halving points appended in order.
 fn refine(ctx: anytype, a: f64, b: f64, depth: u8, resolution: tolerance.Resolution, allocator: std.mem.Allocator, out: *std.ArrayList(f64), spans: *usize, diag: *Diagnostics, entity: diagnostics.EntityRef) Error!void {

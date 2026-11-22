@@ -82,6 +82,11 @@ const CUSP_FIND_SHARE: f64 = 0.1;
 const CUSP_FIND_REACH: f64 = 0.07;
 /// The square the sliver is a hole in.
 const CUSP_SQUARE = [2]Vec2{ .{ -150, -150 }, .{ 150, 150 } };
+/// A half ellipse's plate with a square hole near its rim (`test_bodies.ellipseSheetWithHole`):
+/// the hole's right side this far inside the rim's widest point (the ellipse's chords at
+/// the default resolution bow about 0.006 there), and the hole's side.
+const ELLIPSE_INSETS = [_]f64{ 0.001, 0.003, 0.005, 0.01 };
+const ELLIPSE_HOLE_SIDES = [_]f64{ 0.05, 0.1 };
 
 fn meshOf(body: *const Body, resolution: tolerance.Resolution) !Mesh {
     var diag = Diagnostics.init(testing.allocator);
@@ -917,6 +922,34 @@ test "tessellate: tighter arcs of a half, a tenth and a hundredth of a flatter o
     for (CUSP_TIGHT_SHARES) |share| for (CUSP_TIGHT_REACHES) |reach| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
         errdefer std.debug.print("radius share {d}, reach {d}, quarter turns {d}, mirrored {}\n", .{ share, reach, quarter, mirrored });
         var sheet = try cuspSheet(share, reach, quarter, mirrored, false, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+/// The affine of `quarter` quarter turns about z, then a mirror in the y axis when
+/// `mirrored`, with exact entries.
+fn quarterAffine(quarter: usize, mirrored: bool) mat.Affine {
+    const cs = [4][2]f64{ .{ 1, 0 }, .{ 0, 1 }, .{ -1, 0 }, .{ 0, -1 } };
+    const c = cs[quarter][0];
+    const s = cs[quarter][1];
+    const m: f64 = if (mirrored) -1 else 1;
+    return mat.Affine.fromRows(.{ m * c, -m * s, 0, 0, s, c, 0, 0, 0, 0, 1, 0 });
+}
+
+test "tessellate: a half ellipse's plate with a square hole near its rim, its chords across the hole, has the ellipse refined until the face meshes, its extrusion closed, in every quarter turn, mirrored or not" {
+    // The mesher audit (2026-11-22, finding 4): an ellipse's certified chord bows up to
+    // `Resolution.chordBow` off it and passed through a hole 0.005 inside the rim; the
+    // tessellator refined only circles, so a face whose curved edges are free-form failed
+    // at once (fan-filled), at the default resolution
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (ELLIPSE_INSETS) |inset| for (ELLIPSE_HOLE_SIDES) |side| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("inset {d}, side {d}, quarter turns {d}, mirrored {}\n", .{ inset, side, quarter, mirrored });
+        var drawn = try test_bodies.ellipseSheetWithHole(testing.allocator, tol, inset, side, &diag);
+        defer drawn.deinit();
+        const affine = quarterAffine(quarter, mirrored);
+        var sheet = try transform.transform(testing.allocator, &drawn, &affine, .{}, &diag);
         defer sheet.deinit();
         try expectSheetAndSolidMeshed(&sheet);
     };

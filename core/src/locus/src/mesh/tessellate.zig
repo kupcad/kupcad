@@ -133,7 +133,7 @@ pub const Mesh = struct {
 /// The mesh of `body` at `resolution`; owned by `allocator`. `error.LimitExceeded` for a
 /// free-form edge no chord certifies. A face whose chorded outline crosses itself at the resolution (a
 /// chord of an arc cutting across a hole or a neighbouring edge that the arc itself
-/// clears) has its arcs' grids doubled, the mesh built again, up to
+/// clears) has its curved edges refined, the mesh built again, up to
 /// `edges.MAX_DOUBLINGS` times; what still fails is reported `.failed` with a warning.
 pub fn tessellate(allocator: std.mem.Allocator, body: *const Body, resolution: tolerance.Resolution, options: diagnostics.Options, diag: *Diagnostics) Error!Mesh {
     return tessellateWithin(allocator, body, resolution, Budget.unbounded, options, diag);
@@ -155,8 +155,8 @@ pub fn tessellateWithin(allocator: std.mem.Allocator, body: *const Body, resolut
         if (round < edges_mod.MAX_DOUBLINGS) {
             for (mesh.faces) |range| {
                 // A failed face, or one with a lens thinner than its chords (on a solid its
-                // two sides would collapse onto one quad): its arcs' grids doubled
-                if ((range.status == .failed or range.spikes_pruned) and try doubleArcs(body, range.face, doublings, diag)) refined = true;
+                // two sides would collapse onto one quad): its curved edges refined
+                if ((range.status == .failed or range.spikes_pruned) and try refineCurved(body, range.face, doublings, diag)) refined = true;
             }
         }
         if (!refined) {
@@ -167,15 +167,20 @@ pub fn tessellateWithin(allocator: std.mem.Allocator, body: *const Body, resolut
     }
 }
 
-/// Doubles the grid of every arc edge of face `f`; whether it had any.
-fn doubleArcs(body: *const Body, f: types.FaceIndex, doublings: []u8, diag: *Diagnostics) Error!bool {
+/// Refines every curved edge of face `f` once more (a circle's grid doubled, a free-form
+/// edge's certified spans halved, `edges.discretizeRefined`); whether it had any. An
+/// ellipse's or a spline's chord bows up to `Resolution.chordBow` off it and can cross a
+/// hole or a neighbour the curve clears as an arc's can (an elliptic plate with a square
+/// hole 0.005 inside its rim failed at the default resolution, never refined: the mesher
+/// audit, 2026-11-22).
+fn refineCurved(body: *const Body, f: types.FaceIndex, doublings: []u8, diag: *Diagnostics) Error!bool {
     var any = false;
     var loops = traverse.Loops.init(body, f);
     while (loops.next() catch return corrupt(diag)) |l| {
         var coedges = traverse.Coedges.init(body, l);
         while (coedges.next() catch return corrupt(diag)) |c| {
             const e = body.coedge(c).edge;
-            if (body.geometry.curve(body.edge(e).curve) != .circle) continue;
+            if (body.edge(e).flags.degenerate or body.geometry.curve(body.edge(e).curve) == .line) continue;
             doublings[@backingInt(e)] += 1;
             any = true;
         }

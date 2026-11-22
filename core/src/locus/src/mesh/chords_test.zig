@@ -201,3 +201,19 @@ test "chords: random ellipses and curves are certified at random resolutions" {
         }
     }
 }
+
+test "chords: a free-form edge's certified spans halved keep the coarser samples, each span cut into equal pieces; past the most spans refused" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var params: std.ArrayList(f64) = .empty;
+    defer params.deinit(testing.allocator);
+    try params.appendSlice(testing.allocator, &.{ 1, 3 });
+    try chords.halveSpans(testing.allocator, 0, 4, &params, 0, &diag, .none);
+    try testing.expectEqualSlices(f64, &.{ 1, 3 }, params.items);
+    try chords.halveSpans(testing.allocator, 0, 4, &params, 1, &diag, .none);
+    try testing.expectEqualSlices(f64, &.{ 0.5, 1, 2, 3, 3.5 }, params.items);
+    try chords.halveSpans(testing.allocator, 0, 4, &params, 1, &diag, .none);
+    try testing.expectEqualSlices(f64, &.{ 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 3.25, 3.5, 3.75 }, params.items);
+    params.clearRetainingCapacity();
+    try testing.expectError(error.LimitExceeded, chords.halveSpans(testing.allocator, 0, 1, &params, 17, &diag, .none));
+}

@@ -74,8 +74,9 @@ pub const Cap = struct {
     pub const none: Cap = .{};
 };
 
-/// As `discretize`, each edge's circle grid doubled `doublings[e]` times: the finer grid
-/// keeps the coarser one's points, so an edge refined where its chords would cross a
+/// As `discretize`, each curved edge refined `doublings[e]` times (a circle's grid doubled,
+/// a free-form edge's certified spans halved): the finer polyline keeps the coarser one's
+/// points, so an edge refined where its chords would cross a
 /// neighbour still meets the edges around it where it did. Under `cap`, an edge with
 /// more interior points than its share is resampled evenly at that many (the edges'
 /// shares of the total in proportion to their counts), and `capped`, when given, is set
@@ -120,6 +121,9 @@ pub fn discretizeRefined(allocator: std.mem.Allocator, body: *const Body, resolu
                 defer params.deinit(allocator);
                 const curve = body.geometry.curve(e.curve);
                 try chords.sampleParams(allocator, curve, e.t0, e.t1, resolution, &params, diag, .of(.edge, i));
+                // Refined as a circle's grid is: each certified span halved a doubling
+                const halvings: u8 = if (doublings) |d| @min(d[i], MAX_DOUBLINGS) else 0;
+                try chords.halveSpans(allocator, e.t0, e.t1, &params, halvings, diag, .of(.edge, i));
                 for (params.items) |t| try interior[i].append(allocator, .{ .t = t, .p = curve.eval(t) });
             },
         }

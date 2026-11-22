@@ -64,6 +64,34 @@ pub fn ellipseSheet(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnos
     return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2.8, 3 } } }}, .sheet);
 }
 
+/// `ellipseSheet` with a square hole of side `side` whose right side lies `inset` inside
+/// the half ellipse's rim at its widest point (2.8, 1.5): a chord of the ellipse, which
+/// may bow up to `Resolution.chordBow` off it, can pass through the hole.
+pub fn ellipseSheetWithHole(allocator: std.mem.Allocator, tol: Tolerance, inset: f64, side: f64, diag: *Diagnostics) !Body {
+    var b = try primitives.Builder.init(allocator, tol, .sheet, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const corners = [4]Vec3{ .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 2, 3, 0 }, .{ 0, 3, 0 } };
+    var v: [4]types.VertexIndex = undefined;
+    for (corners, 0..) |p, i| v[i] = try b.vertex(p);
+    const right = try b.body.geometry.addEllipse(allocator, .{ .c = .{ 2, 1.5, 0 }, .x = vec.Y3, .y = vec.X3, .a = 1.5, .b = 0.8 });
+    const edges = [4]sew.EdgeSpec{
+        try b.straight(v[0], v[1]),
+        .{ .start = v[1], .end = v[2], .curve = right, .t0 = 0, .t1 = std.math.pi, .forward = false },
+        try b.straight(v[2], v[3]),
+        try b.straight(v[3], v[0]),
+    };
+    // The hole clockwise, its right side at x = 2.8 − inset
+    const x1 = 2.8 - inset;
+    const x0 = x1 - side;
+    const hole_corners = [4]Vec3{ .{ x0, 1.5 - side / 2, 0 }, .{ x0, 1.5 + side / 2, 0 }, .{ x1, 1.5 + side / 2, 0 }, .{ x1, 1.5 - side / 2, 0 } };
+    var h: [4]types.VertexIndex = undefined;
+    for (hole_corners, 0..) |p, i| h[i] = try b.vertex(p);
+    const hole = [4]sew.EdgeSpec{ try b.straight(h[0], h[1]), try b.straight(h[1], h[2]), try b.straight(h[2], h[3]), try b.straight(h[3], h[0]) };
+    const plane = try b.plane(geometry.Frame.world, &.{});
+    return b.finish(&.{.{ .surface = plane, .loops = &.{ .{ .edges = &edges }, .{ .edges = &hole } }, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2.8, 3 } } }}, .sheet);
+}
+
 /// A quarter disc of radius 2 on z = 0 whose arc is a rational B-spline.
 pub fn quarterDisc(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnostics) !Body {
     var arc = try nurbs.circleArc(allocator, vec.ZERO3, vec.X3, vec.Y3, 2, 0, std.math.pi / 2.0);
