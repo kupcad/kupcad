@@ -1666,7 +1666,7 @@ not cancel, and a sound wall measured inside out (the 10K session on c3a83ee8).
 adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`, tested at
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's
 domain; edge length > `δ`; a planar face's area more than `zone` times half its
-perimeter (`sliver_face`: no strip narrower than the zone, nor a face a couple of zones
+perimeter (`sliver_face`: a line measured from its own start to its own end, D28, the same whichever way the loop runs, 2026-11-22: walked short of its end the measure went by the face's handedness; no strip narrower than the zone, nor a face a couple of zones
 across; 2026-11-14, as SMLib and ACIS measure it; an arc's share of area and perimeter
 exact, its circular segment and length, `check.loopMeasure`: sampled, they went by
 how many edges an arc was cut into, and a lune at 1.015 of the limit was refused or made

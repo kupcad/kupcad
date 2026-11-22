@@ -6018,3 +6018,22 @@ fn fuzzBoxMovedPlaced() !Body {
     defer shape.deinit();
     return fuzzPlaced(&shape, vec.Z3, TRACE_BOX_TURN, TRACE_BOX_SCALE, TRACE_BOX_MOVE, TRACE_BOX_NUDGE);
 }
+
+test "degeneracy: a corner face whose edge ends a hair from its vertex measures alike mirrored, a sliver or not" {
+    // The equal-zone family of by (2026-11-22): the slab's corner triangle has a top edge,
+    // the hull's, ending 1e-4 under the vertex it meets the box's edge at (D28: an edge
+    // keeps its source's line). The checker's sliver measure walked each line short of
+    // its end, cutting that corner one way round the loop and keeping it the other: 0.9956
+    // of the limit unmirrored, refused, and 1.047 of it mirrored, made. A line is measured
+    // from its own start to its own end (`check.loopMeasure`), the same either way
+    for (TIE_EQUAL_RISES) |rise| for (0..4) |quarter| for ([_]pipeline.Op{ .intersection, .@"union" }) |op| {
+        errdefer std.debug.print("the tops {d} tolerances apart, {d} quarter turns, {t}\n", .{ rise, quarter, op });
+        var outcomes: [2]Outcome = undefined;
+        for ([_]bool{ false, true }, &outcomes) |mirrored, *outcome| {
+            var solids = try tieSolids(.{ TIE_EQUAL_ZONE, TIE_EQUAL_ZONE }, TIE_EQUAL_UNDER + rise * Tolerance.fromZone(TIE_EQUAL_ZONE).xsect, quarter, mirrored);
+            defer for (&solids) |*body| body.deinit();
+            outcome.* = try outcomeOf(&solids[0], &solids[1], op);
+        }
+        try testing.expectEqual(outcomes[0], outcomes[1]);
+    };
+}
