@@ -67,6 +67,21 @@ const FOLD_REACHES = [_][2]f64{ .{ 1, 0.5 }, .{ 1.5, 0.25 } };
 /// The resolutions the sheets of these tests are meshed at: the default, and grids of 4,
 /// 8 and 64 segments a circle (the coarse ones leave a flat arc one chord).
 const MESH_RESOLUTIONS = [_]tolerance.Resolution{ .{}, .{ .segments = 4 }, .{ .segments = 8 }, .{ .segments = 64 } };
+/// A sliver between a flatter arc and a tighter one tangent to it at the origin, both
+/// curving up from the x axis, closed by a line between their far ends (the audit's
+/// configuration of 2026-11-22: a short tighter arc whose far vertex the cusp matcher left
+/// out). The flatter circle's radius, the tighter's as shares of it, and the tighter arc's
+/// far end's tangent coordinates (each past the intersection tolerance above the flatter
+/// arc there, each within a quarter turn).
+const CUSP_FLAT_R: f64 = 1000;
+const CUSP_FLAT_REACH: f64 = 100;
+const CUSP_TIGHT_SHARES = [_]f64{ 0.5, 0.1, 0.01 };
+const CUSP_TIGHT_REACHES = [_]f64{ 0.3, 1, 3 };
+/// The audit's own tighter arc: radius 100, its far end at tangent coordinate 0.07.
+const CUSP_FIND_SHARE: f64 = 0.1;
+const CUSP_FIND_REACH: f64 = 0.07;
+/// The square the sliver is a hole in.
+const CUSP_SQUARE = [2]Vec2{ .{ -150, -150 }, .{ 150, 150 } };
 
 fn meshOf(body: *const Body, resolution: tolerance.Resolution) !Mesh {
     var diag = Diagnostics.init(testing.allocator);
@@ -845,6 +860,63 @@ test "tessellate: the region between two arcs leaving one vertex to points of on
         const with_square = [_][]const primitives.OutlineEdge{ &square, &region };
         const alone = [_][]const primitives.OutlineEdge{&region};
         var sheet = try primitives.outlines(testing.allocator, tol, if (as_hole) &with_square else &alone, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+/// The cusp sliver (`CUSP_*`): the tighter circle of radius `share · CUSP_FLAT_R`, its arc
+/// from the origin to tangent coordinate `reach`, turned and mirrored (`wedgeMove`), alone
+/// or as a hole in `CUSP_SQUARE`.
+fn cuspSheet(share: f64, reach: f64, quarter: usize, mirrored: bool, as_hole: bool, diag: *Diagnostics) !Body {
+    const flat_r = CUSP_FLAT_R;
+    const tight_r = share * CUSP_FLAT_R;
+    const v = wedgeMove(.{ 0, 0 }, quarter, mirrored);
+    const tight_far = wedgeMove(.{ reach, tight_r - @sqrt(tight_r * tight_r - reach * reach) }, quarter, mirrored);
+    const flat_far = wedgeMove(.{ CUSP_FLAT_REACH, flat_r - @sqrt(flat_r * flat_r - CUSP_FLAT_REACH * CUSP_FLAT_REACH) }, quarter, mirrored);
+    // Along the flatter arc counter-clockwise, back along the line, down the tighter arc
+    const sliver = [_]primitives.OutlineEdge{
+        .{ .a = v, .b = flat_far, .arc = .{ .c = wedgeMove(.{ 0, flat_r }, quarter, mirrored), .r = flat_r, .ccw = !mirrored } },
+        .{ .a = flat_far, .b = tight_far },
+        .{ .a = tight_far, .b = v, .arc = .{ .c = wedgeMove(.{ 0, tight_r }, quarter, mirrored), .r = tight_r, .ccw = mirrored } },
+    };
+    const lo = CUSP_SQUARE[0];
+    const hi = CUSP_SQUARE[1];
+    const square = [_]primitives.OutlineEdge{
+        .{ .a = lo, .b = .{ hi[0], lo[1] } },
+        .{ .a = .{ hi[0], lo[1] }, .b = hi },
+        .{ .a = hi, .b = .{ lo[0], hi[1] } },
+        .{ .a = .{ lo[0], hi[1] }, .b = lo },
+    };
+    const with_square = [_][]const primitives.OutlineEdge{ &square, &sliver };
+    const alone = [_][]const primitives.OutlineEdge{&sliver};
+    return primitives.outlines(testing.allocator, tol, if (as_hole) &with_square else &alone, diag);
+}
+
+test "tessellate: a short tighter arc tangent to a long flatter one at a cusp has its far vertex matched too, the sliver meshed and its extrusion closed in every quarter turn, mirrored or not, as a sheet or a hole" {
+    // The mesher audit (2026-11-22, finding 3): a tighter arc of radius 100 sweeping 7e-4
+    // rad, its far vertex 2.2e-5 above a flatter arc of radius 1000 tangent to it at the
+    // origin. The cusp matcher gave the flatter arc the tighter one's interior points'
+    // tangent coordinates and had none to give: the flatter arc's first chord left the
+    // vertex steeper than the tighter arc's only chord, the outline inverted, and no
+    // doubling brought it under (the face failed at the default resolution and at 8
+    // segments a circle)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_]bool{ false, true }) |as_hole| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("as a hole {}, quarter turns {d}, mirrored {}\n", .{ as_hole, quarter, mirrored });
+        var sheet = try cuspSheet(CUSP_FIND_SHARE, CUSP_FIND_REACH, quarter, mirrored, as_hole, &diag);
+        defer sheet.deinit();
+        try expectSheetAndSolidMeshed(&sheet);
+    };
+}
+
+test "tessellate: tighter arcs of a half, a tenth and a hundredth of a flatter one's radius, tangent to it at a cusp and ending at three tangent coordinates, are meshed and their extrusions closed in every quarter turn, mirrored or not" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (CUSP_TIGHT_SHARES) |share| for (CUSP_TIGHT_REACHES) |reach| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("radius share {d}, reach {d}, quarter turns {d}, mirrored {}\n", .{ share, reach, quarter, mirrored });
+        var sheet = try cuspSheet(share, reach, quarter, mirrored, false, &diag);
         defer sheet.deinit();
         try expectSheetAndSolidMeshed(&sheet);
     };

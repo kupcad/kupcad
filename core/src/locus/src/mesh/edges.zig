@@ -202,7 +202,7 @@ const End = struct {
 /// and near the vertex the chord falls away faster than the tighter arc does), and
 /// refining both keeps the picture similar. So the flatter arc takes a point at every
 /// tangent coordinate (along the common tangent from the vertex) the tighter arc's
-/// points have, as far as the tighter arc turns less than a quarter and the flatter one
+/// points have, its far vertex among them, as far as the tighter arc turns less than a quarter and the flatter one
 /// reaches: both polylines then interpolate their arcs' depths below the tangent at the
 /// same places, the tighter always the deeper, and interpolation keeps that order (the
 /// flatter polyline's own points between them lie on its arc, shallower still). Two
@@ -273,12 +273,18 @@ fn matchCusp(allocator: std.mem.Allocator, body: *const Body, interior: []std.Ar
     const v = body.point(if (tight_end.at_start) tight_edge.start else tight_edge.end);
     const far_vertex = body.point(if (flat_end.at_start) flat_edge.end else flat_edge.start);
     // The tighter arc's points from the vertex outward (its list runs in parameter order,
-    // from the vertex when the vertex is its start, towards it otherwise)
+    // from the vertex when the vertex is its start, towards it otherwise), then its far
+    // vertex: the ordering wants the flatter arc sampled at every point of the tighter
+    // polyline, its last too (a tighter arc of one chord, 7e-4 rad of a radius 100,
+    // tangent to a flatter one of radius 1000 cut every 12°: the flatter arc's first
+    // chord left the vertex steeper than the tighter one's only chord, and no doubling
+    // the tessellator makes brought it under)
     const tight_points = interior[tight_end.edge].items;
     const n = tight_points.len;
+    const tight_far = body.point(if (tight_end.at_start) tight_edge.end else tight_edge.start);
     var s_prev: f64 = 0;
-    for (0..n) |k| {
-        const q = tight_points[if (tight_end.at_start) k else n - 1 - k].p;
+    for (0..n + 1) |k| {
+        const q = if (k == n) tight_far else tight_points[if (tight_end.at_start) k else n - 1 - k].p;
         const s = vec.dot(vec.sub(q, v), tight.along);
         // Past a quarter turn the arc is no graph over the tangent; past the flatter
         // arc's reach there is nothing to match

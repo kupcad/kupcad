@@ -1316,9 +1316,11 @@ the same on both engines): a cylinder tessellated by Locus has the vertices Mani
 cylinder has, so the parity tests' bounding boxes and the viewer's picture agree. Two arcs
 tangent at a vertex and curving the same way bound a cusp, where chords of the two cross
 however fine the grids (the flatter arc's chord dips under the tighter arc); there the
-flatter arc also takes a point at each tangent coordinate the tighter arc's points have
-(`edges.matchCusps`, 2026-11-11), so both polylines interpolate ordered depths and cannot
-cross. A sketch arc across its circle's seam is two edges from the start (§7.5, D7).
+flatter arc also takes a point at each tangent coordinate the tighter arc's points have,
+its far vertex too (`edges.matchCusps`, 2026-11-11; the far vertex 2026-11-22: a tighter
+arc of one chord, 7e-4 rad of a radius 100 against a flatter radius 1000, had no
+interior point to give and the face failed past every doubling, the mesher audit), so
+both polylines interpolate ordered depths and cannot cross. A sketch arc across its circle's seam is two edges from the start (§7.5, D7).
 
 Per face: the loops' pcurves, evaluated at the edge points' parameters, become a
 UV polygon with holes (a plane's by projection; a degenerate edge, a pole or an apex, its
