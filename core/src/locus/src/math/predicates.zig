@@ -51,9 +51,14 @@ const ORIENT_UNDERFLOW: f64 = 0x1p-800;
 const ORIENT_TAIL_UNDERFLOW: f64 = 0x1p-450;
 /// The bits of a double's significand, as `orient2dTiny` takes it for an integer.
 const SIGNIFICAND_BITS: i32 = 53;
-/// Limbs of a coordinate as an integer at the least exponent of six doubles (53 bits
-/// shifted by up to 971 + 1126), and of a product of two differences of such.
-const TINY_COORDINATE_LIMBS: usize = 36;
+/// The bits of a coordinate as an integer at the least exponent of six doubles: 53 bits
+/// shifted by up to 971 + 1126.
+const TINY_COORDINATE_BITS: usize = 53 + 971 + 1126;
+/// Limbs of such a coordinate, and of a product of two differences of such: the bits in
+/// limbs of the target's word (64 bits natively, 32 on wasm32, where 36 limbs held 1152
+/// bits and the least double beside a coordinate of 2^26 ran out of the buffer; the audit
+/// of 2026-11-22), and the two limbs more `shiftLeft` asks for.
+const TINY_COORDINATE_LIMBS: usize = (TINY_COORDINATE_BITS + @bitSizeOf(std.math.big.Limb) - 1) / @bitSizeOf(std.math.big.Limb) + 2;
 const TINY_PRODUCT_LIMBS: usize = 2 * TINY_COORDINATE_LIMBS + 2;
 
 // The error bounds of the estimates (Shewchuk's, derived in the paper for each stage).

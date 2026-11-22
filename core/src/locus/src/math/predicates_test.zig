@@ -500,6 +500,21 @@ test "orient2d: exact where its products near the underflow, a coordinate the le
     try testing.expect(orient2d(.{ 0, 0 }, .{ hair, 0 }, .{ 5, hair }) > 0);
 }
 
+test "orient2d: exact near the underflow beside large coordinates, whatever the width of a big integer's limb" {
+    // The audit of 2026-11-22 (kind 9, B1): the integers of `orient2dTiny` were sized in
+    // limbs of 64 bits, and a limb is the target's word. The least double beside a
+    // coordinate of 2^26 or more shifts past 36 limbs of 32 bits: an index out of the
+    // buffer on wasm32, where the playground runs
+    const hair = std.math.floatTrueMin(f64);
+    for ([_]f64{ 7e7, 1e10, 1e40, 1e300 }) |large| {
+        errdefer std.debug.print("beside {e}\n", .{large});
+        try testing.expect(orient2d(.{ 0, 0 }, .{ hair, large }, .{ 0, 2 * large }) > 0);
+        try testing.expect(orient2d(.{ 0, 0 }, .{ -hair, large }, .{ 0, 2 * large }) < 0);
+        try testing.expectEqual(@as(f64, 0), orient2d(.{ 0, 0 }, .{ 0, large }, .{ 0, 2 * large }));
+        try testing.expect(orient2d(.{ large, 0 }, .{ large, hair }, .{ -large, 0 }) > 0);
+    }
+}
+
 test "orient2d: agrees with big-integer arithmetic on points mixing coordinates near zero and ordinary ones" {
     // Coordinates the least double and a few off zero, 2^-1000 and 2^-900, and ordinary
     // values: the products of differences reach below the underflow in every combination
