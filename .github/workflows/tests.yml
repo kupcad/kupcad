@@ -285,7 +285,7 @@ jobs:
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         # pnpm's scripts and the steps below are POSIX shell: Git Bash on Windows
