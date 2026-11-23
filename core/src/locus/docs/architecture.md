@@ -963,7 +963,20 @@ importing only those before it, which the layering test holds):**
   each line must lie on the other face's plane within `xsect` and the edge's gap at the
   block's ends, as the checker holds an edge, else refused `below_feature_size`; a hull's
   edge whose corners reached a box's face by their gaps, its line 2.5e-5 off it, was laid
-  in the face as a slit, 2026-11-16).
+  in the face as a slit, 2026-11-16). Each face's own pave block between two merged
+  vertices on both faces is a piece of where they meet too, decided as a gap is, whatever
+  their order along the line (`pave.blocksOnBoth`; OCCT's edge–face common block, a pave
+  block on a face, `BOPDS_FaceInfo::PaveBlocksIn`): the vertices on both lie within their
+  reach of both planes, not of the planes' line, and at an angle the band of both is that
+  reach over the angle's sine wide across the line, so three of them can span a region of
+  both faces, which the gaps of one order only walk through. A hull's corner 1.5e-5 off a
+  plate's side, its edge along the side's plane and its faces about the corner rising
+  from it at 24° and more, left the side uncut along that edge where the corner and
+  another edge's crossing of the plate's bottom were one place by the angle, ordered
+  across: the side's piece kept with the hull's triangle over part of it, an edge with
+  three faces and another with one (find dm, 2026-11-23, a regression of the order by
+  the angle, e83d2a0e; mirrored, the order had walked the edge). Cut along it, the side's
+  pieces are the hull's faces' twins (classify, OCCT's same-domain faces).
   A pair of faces sharing no merged vertex does not meet, whatever their planes: faces in
   one plane that overlap or touch have a corner of one on the other or edges crossing
   (OCCT takes tangent faces for same-domain ones only by their common parts). Their boxes

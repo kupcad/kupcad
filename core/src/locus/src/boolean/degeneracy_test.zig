@@ -749,6 +749,25 @@ const PEAK_PASTS = [_]f64{ 2.000000005684342e-5, 1.9e-5, 1.75e-5 };
 /// box's corner square and its seams decide it clearly).
 const PEAK_TURNS = [_]f64{ 1e-9, 1e-7, 1e-6 };
 const PEAK_TURN_AXIS: Vec3 = .{ 1, 2, 3 };
+/// The solids of the tests of a hull's corner within the tolerance of a plate's side (the
+/// nightly's locus_solids find dm on 9c931fef, as the solids fuzzer drew it): a plate
+/// `SIDE_CORNER_XSECTS` intersection tolerances thick about z = 2, from (1, 2) to (4, 4) in
+/// x and y, nudged `SIDE_CORNER_PLATE_NUDGE`, and the hull of `SIDE_CORNER_HULL` nudged
+/// `SIDE_CORNER_HULL_NUDGE`: its corner (1, 3, 2) 1.5e-5 off the plate's side x = 1 inside
+/// the plate's thickness, its edge to (1, 1, 1) along the side's plane, and its three faces
+/// about the corner rising from that plane at 24° and more, so that the pieces of two of
+/// them in the plate lie within the tolerance of the side.
+const SIDE_CORNER_HULL = [_]Vec3{ .{ 2, 1, 4 }, .{ 1, 3, 2 }, .{ 4, 3, 0 }, .{ 1, 1, 1 }, .{ 2, 4, 0 }, .{ 2, 1, 0 } };
+const SIDE_CORNER_HULL_NUDGE: Vec3 = .{ -5e-6, 5e-6, 5e-6 };
+const SIDE_CORNER_PLATE = [2]Vec3{ .{ 1, 2, 2 }, .{ 4, 4, 2 } };
+const SIDE_CORNER_PLATE_NUDGE: Vec3 = .{ 1e-5, 5e-6, 1e-5 };
+const SIDE_CORNER_XSECTS: f64 = 3;
+/// How far the hull is moved in x beyond the find's nudge with the corner within the
+/// tolerance of the side, off its plane: 1.5e-5 off it (the find's), 1e-5 and 1.8e-5.
+const SIDE_CORNER_WITHIN = [_]f64{ 0, 5e-6, -3e-6 };
+/// And with the corner in the side's plane, a hair past the tolerance (2.1e-5 off it) and
+/// past it (2.5e-5).
+const SIDE_CORNER_BESIDE = [_]f64{ 1.5e-5, -6e-6, -1e-5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -6042,4 +6061,68 @@ test "degeneracy: a corner face whose edge ends a hair from its vertex measures 
         }
         try testing.expectEqual(outcomes[0], outcomes[1]);
     };
+}
+
+test "degeneracy: a hull's corner within the tolerance of a plate's side, its edge along the side's plane and its faces rising from it, cuts the side along that edge: made and sound either way round" {
+    // The find dm (the nightly's locus_solids, 2026-11-23, on 9c931fef), as the fuzzer
+    // drew it. The merged vertices on both the side and the hull's face between the
+    // corner's edges down to the plate's bottom (the corner, and where the two edges cross
+    // the bottom) were a triangle, all three within the tolerance of both; the corner and
+    // one crossing one place along the faces' line by the angle, ordered across, the gaps
+    // skipped the edge along the side's plane, which was not cut along it: the side's piece
+    // inside the hull was kept with the hull's triangle over part of it, an edge of the
+    // intersection with three faces and another with one (`edge_coedge_count`, every
+    // operation either way round)
+    var drawn = try fuzzGapPlate(tol, .{ 0, 1, 2 }, SIDE_CORNER_PLATE[0], .{ 4, 4, 4 }, SIDE_CORNER_XSECTS);
+    defer drawn.deinit();
+    var plate = try fuzzPlaced(&drawn, vec.Z3, 0, null, vec.ZERO3, SIDE_CORNER_PLATE_NUDGE);
+    defer plate.deinit();
+    var hull = try fuzzHull(&SIDE_CORNER_HULL, vec.ZERO3, SIDE_CORNER_HULL_NUDGE);
+    defer hull.deinit();
+    for ([_]pipeline.Op{ .intersection, .@"union", .difference }) |op| {
+        for ([2][2]*const Body{ .{ &plate, &hull }, .{ &hull, &plate } }) |operands| {
+            var made = try sound(operands[0], operands[1], op);
+            made.deinit();
+        }
+        if (op != .difference) try expectAlikeEitherWay(&plate, &hull, op);
+    }
+}
+
+test "degeneracy: a hull's corner near a plate's side, within the tolerance of it or past it, turned and mirrored, is decided alike either way round" {
+    for ([_][]const f64{ &SIDE_CORNER_WITHIN, &SIDE_CORNER_BESIDE }, 0..) |shifts, set| for (shifts) |shift| for ([_]pipeline.Op{ .intersection, .@"union", .difference }) |op| {
+        var outcome: ?Outcome = null;
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("shift {e}, {t}, quarter turns {d}, mirrored {}\n", .{ shift, op, quarter, mirrored });
+            var solids = try sideCornerSolids(shift, quarter, mirrored);
+            defer for (&solids) |*body| body.deinit();
+            if (op != .difference) try expectAlikeEitherWay(&solids[0], &solids[1], op);
+            const this = try outcomeOf(&solids[0], &solids[1], op);
+            if (outcome) |first| try testing.expectEqual(first, this) else outcome = this;
+        };
+        // The corner on the side within the tolerance, every operation is made
+        if (set == 0) try testing.expect(outcome.? == .made);
+    };
+}
+
+/// The plate and the hull of the tests of a hull's corner near a plate's side, the hull
+/// moved `shift` more in x, both turned `quarter` quarter turns about z and mirrored or
+/// not (`tieMove`, exact).
+fn sideCornerSolids(shift: f64, quarter: usize, mirrored: bool) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = SIDE_CORNER_XSECTS * tol.xsect / 2;
+    const drawn = [2]Vec3{ .{ SIDE_CORNER_PLATE[0][0], SIDE_CORNER_PLATE[0][1], SIDE_CORNER_PLATE[0][2] - half }, .{ SIDE_CORNER_PLATE[1][0], SIDE_CORNER_PLATE[1][1], SIDE_CORNER_PLATE[1][2] + half } };
+    const corners = [2]Vec3{ tieMove(vec.add(drawn[0], SIDE_CORNER_PLATE_NUDGE), quarter, mirrored), tieMove(vec.add(drawn[1], SIDE_CORNER_PLATE_NUDGE), quarter, mirrored) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(corners[0][k], corners[1][k]);
+        hi[k] = @max(corners[0][k], corners[1][k]);
+    }
+    var plate = try helpers.boxAt(tol, lo, hi);
+    errdefer plate.deinit();
+    var points: [SIDE_CORNER_HULL.len]Vec3 = undefined;
+    for (SIDE_CORNER_HULL, &points) |q, *moved| moved.* = tieMove(vec.add(vec.add(q, SIDE_CORNER_HULL_NUDGE), .{ shift, 0, 0 }), quarter, mirrored);
+    const hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    return .{ plate, hull };
 }

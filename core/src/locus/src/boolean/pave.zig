@@ -1868,8 +1868,9 @@ const Filler = struct {
     /// lie on, sorted along their planes' line, each gap whose middle is in both faces a
     /// section segment of each face it is inside of (`lies`: not a run of the face's own
     /// boundary, and no section at all where it is a chord beside either face, across a
-    /// notch of its boundary). The line is `meetingLine`'s: planes at an angle meet along
-    /// their own line; planes parallel within the angular tolerance
+    /// notch of its boundary), and so is each face's own pave block between two of them
+    /// that no gap is (`blocksOnBoth`). The line is `meetingLine`'s: planes at an angle
+    /// meet along their own line; planes parallel within the angular tolerance
     /// have none (their normals' cross product is noise), so they meet along the merged
     /// vertices' line, and merged vertices off one line put them in one plane where they
     /// meet, whatever corners of theirs lie off it elsewhere: the pair is recorded as lying
@@ -1897,6 +1898,9 @@ const Filler = struct {
         defer on_b.deinit(self.allocator);
         var both: std.ArrayList(u32) = .empty;
         defer both.deinit(self.allocator);
+        // The pieces of a pair decided so far, each its two vertices, the lesser first
+        var asked: std.ArrayList([2]u32) = .empty;
+        defer asked.deinit(self.allocator);
         for (pairs.items) |pair| {
             try self.options.checkCancel();
             const fa = self.faces[0][pair[0]];
@@ -1942,28 +1946,86 @@ const Filler = struct {
                 .at => |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces at one place along the faces' line, apart across it to rounding", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect }),
                 .steep => |at| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces whose order along the faces' line hangs on the angular tolerance to rounding", .measured = at.comparison.measured, .threshold = at.comparison.limit }),
             };
+            asked.clearRetainingCapacity();
             for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
-                const mid = vec.lerp(p.point(u), p.point(w), 0.5);
-                // Outside either face it is no part of where the two meet, whatever the other
-                const in_a, const in_b = try self.placeInBoth(fa, fb, mid) orelse continue;
-                const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
-                // Beside either face it is no part of where the two meet
-                const lies_a = try self.lies(0, fa, u, w, mid, in_a, .{ .operand = 1, .face = @backingInt(fb) });
-                const lies_b = try self.lies(1, fb, u, w, mid, in_b, .{ .operand = 0, .face = @backingInt(fa) });
-                if (lies_a == .beside or lies_b == .beside) continue;
-                const imprint_a = lies_a == .in;
-                const imprint_b = lies_b == .in;
-                if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
-                if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
-                if (imprint_a or imprint_b) {
-                    const entry = try p.section_line_of.getOrPut(self.allocator, segment);
-                    if (!entry.found_existing) {
-                        // Merged vertices more than the welding distance apart: a line
-                        try p.section_lines.append(self.allocator, curves.Line.through(p.point(segment[0]), p.point(segment[1])).?);
-                        entry.value_ptr.* = @intCast(p.section_lines.items.len - 1);
-                    }
+                try asked.append(self.allocator, .{ @min(u, w), @max(u, w) });
+                try self.sectionOf(fa, fb, u, w);
+            }
+            // Each face's own pave blocks between two of them, where the line's order did
+            // not make them a gap (`blocksOnBoth`)
+            try self.blocksOnBoth(0, fa, fb, both.items, &asked);
+            try self.blocksOnBoth(1, fb, fa, both.items, &asked);
+        }
+    }
+
+    /// The piece between merged vertices `u` and `w`, both on face `fa` of `a` and `fb` of
+    /// `b`, as a section of each face it lies in (`lies`): its middle outside either face,
+    /// or beside either (a chord across a notch of its boundary), no part of where the two
+    /// meet; a run of one face's own boundary, that face's already.
+    fn sectionOf(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, u: u32, w: u32) Error!void {
+        const p = self.p;
+        const mid = vec.lerp(p.point(u), p.point(w), 0.5);
+        // Outside either face it is no part of where the two meet, whatever the other
+        const in_a, const in_b = try self.placeInBoth(fa, fb, mid) orelse return;
+        const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
+        // Beside either face it is no part of where the two meet
+        const lies_a = try self.lies(0, fa, u, w, mid, in_a, .{ .operand = 1, .face = @backingInt(fb) });
+        const lies_b = try self.lies(1, fb, u, w, mid, in_b, .{ .operand = 0, .face = @backingInt(fa) });
+        if (lies_a == .beside or lies_b == .beside) return;
+        const imprint_a = lies_a == .in;
+        const imprint_b = lies_b == .in;
+        if (imprint_a) try p.sections[0][@backingInt(fa)].append(self.allocator, segment);
+        if (imprint_b) try p.sections[1][@backingInt(fb)].append(self.allocator, segment);
+        if (imprint_a or imprint_b) {
+            const entry = try p.section_line_of.getOrPut(self.allocator, segment);
+            if (!entry.found_existing) {
+                // Merged vertices more than the welding distance apart: a line
+                try p.section_lines.append(self.allocator, curves.Line.through(p.point(segment[0]), p.point(segment[1])).?);
+                entry.value_ptr.* = @intCast(p.section_lines.items.len - 1);
+            }
+        }
+        self.tally();
+    }
+
+    /// Each pave block of face `f` of operand `k` whose two ends are among `both`, the
+    /// merged vertices on `f` and on face `g` of the other operand, and not a piece
+    /// `asked` already: a piece of where the two meet, decided as a gap of their line is
+    /// (`sectionOf`), an edge of one face lying in the other (OCCT's edge–face common
+    /// block, a pave block on a face: `IntTools_EdgeFace`'s common part of type edge,
+    /// `BOPDS_FaceInfo::PaveBlocksIn`). The merged vertices on both lie within their reach
+    /// of both planes, not of the planes' line: where the faces meet at an angle the band
+    /// within the tolerance of both is that reach over the angle's sine wide across the
+    /// line, and three such vertices can span a region of both faces, which the gaps of
+    /// one order along the line only walk through. A hull's corner 1.5e-5 off a plate's
+    /// side, the three faces about it rising from the side at 24° and more, left the
+    /// side's piece inside the hull a quad of four merged vertices on it, its corners on
+    /// the hull's edges, and the hull's face between two of those edges a triangle of
+    /// three, all within the tolerance of the side. The corner and the vertex where the
+    /// third edge crossed the plate's bottom, beside it along the line, were one place by
+    /// the angle, ordered across (`planar_faces.Along`), the gaps a path past the edge
+    /// from the corner down to the bottom, which no gap was: the side was not cut along
+    /// it, and its quad was kept with the hull's triangle over part of it, an edge of the
+    /// intersection with three faces and another with one (the nightly's locus_solids
+    /// find dm on 9c931fef, a regression of e83d2a0e's order, which before walked that
+    /// edge by chance). Cut along each such block, the side's pieces are the hull's faces'
+    /// twins over the same pieces (`classify`, OCCT's same-domain faces).
+    fn blocksOnBoth(self: *Filler, k: usize, f: types.FaceIndex, g: types.FaceIndex, both: []const u32, asked: *std.ArrayList([2]u32)) Error!void {
+        const p = self.p;
+        const body_k = self.body(k);
+        var loops = traverse.Loops.init(body_k, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_k, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const list = p.edge_paves[k][@backingInt(body_k.coedge(c).edge)].items;
+                for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                    if (std.mem.indexOfScalar(u32, both, x.vertex) == null or std.mem.indexOfScalar(u32, both, y.vertex) == null) continue;
+                    const segment: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
+                    if (for (asked.items) |piece| {
+                        if (piece[0] == segment[0] and piece[1] == segment[1]) break true;
+                    } else false) continue;
+                    try asked.append(self.allocator, segment);
+                    if (k == 0) try self.sectionOf(f, g, x.vertex, y.vertex) else try self.sectionOf(g, f, x.vertex, y.vertex);
                 }
-                self.tally();
             }
         }
     }

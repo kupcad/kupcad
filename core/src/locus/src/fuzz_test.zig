@@ -2488,6 +2488,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // from the wall's edge; made the hull first, refused `at_tolerance` the wall first
         // (pave.placeInBoth: outside either settles it)
         "solids 1 6 1 4 4 3 4 1 2 1 2 2 0 1 0 1 4 4 4 1 0 2 7 3 -1 6 6 12 3 0 0 1 0 7 8 1 3 0 3 0 3 4 2 2 4 2 1 3 0 2 2 11 4 2 9 0 3 3 1 3 2 3 4 2 2 4 3 1 3 2 13 6 11 10 0",
+        // The nightly's locus_solids on 9c931fef (dm): plate ∩ hull, the hull's corner
+        // 1.5e-5 off the plate's side, its edge along the side's plane; the gaps along the
+        // faces' line skipped that edge, the side was not cut along it, and an edge had
+        // three faces (pave.blocksOnBoth: each face's own blocks on both faces)
+        "solids 3 0 5 0 1 4 1 2 4 2 0 4 3 5 3 5 2 1 2 1 6 2 1 4 1 3 2 4 3 0 1 1 1 2 4 0 2 1 0 1 3 4 3 3 9 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
