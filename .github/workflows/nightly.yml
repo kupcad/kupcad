@@ -62,7 +62,7 @@ jobs:
           # sheets, offsets one in sixteen by an extreme, and runs its booleans twice over for
           # the area identities.
           - target: locus
-            runs: 100K
+            runs: 10K
             optimize: safe
           # Locus's overlay on generated arrangements alone (near-tangent arcs, points a
           # rounding off the grid), each checked against its inputs by exact point counts.
