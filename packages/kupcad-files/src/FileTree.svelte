@@ -319,9 +319,9 @@
               title={entry.path}
               onclick={() => onopen(entry)}
             >
-              {entry.name}{#if unsaved.has(entry.path)}<span class="unsaved" aria-hidden="true"
-                  >●</span
-                >{/if}
+              {entry.name}{#if unsaved.has(entry.path)}<span class="unsaved" aria-hidden="true">
+                  ●
+                </span>{/if}
             </button>
           {:else}
             <span class="twisty" aria-hidden="true"></span>

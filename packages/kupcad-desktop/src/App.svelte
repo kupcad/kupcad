@@ -748,8 +748,9 @@
         <button type="button" class="kc-control" onclick={() => openFolder()}>Open folder…</button>
         <span class="folder" title={project.root}>{nameOf(project.root)}</span>
         {#if open}
-          <span class="script">{open.name}{project.scripts.unsaved.has(open.path) ? ' ●' : ''}</span
-          >
+          <span class="script">
+            {open.name}{project.scripts.unsaved.has(open.path) ? ' ●' : ''}
+          </span>
           <button
             type="button"
             class="kc-control kc-primary"

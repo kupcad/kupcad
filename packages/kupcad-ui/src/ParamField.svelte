@@ -216,8 +216,10 @@
     <label
       id={labelId}
       for={control === 'list' || control === 'tuple' || control === 'record' ? undefined : id}
-      title={spec.title ? spec.name : undefined}>{label}</label
+      title={spec.title ? spec.name : undefined}
     >
+      {label}
+    </label>
     {#if overridden}
       <button type="button" class="revert" aria-label="Revert {label}" onclick={revert}> ↺ </button>
     {/if}
@@ -249,8 +251,10 @@
       class="add"
       aria-label="Add to {label}"
       disabled={!canAdd(spec, items.length)}
-      onclick={() => commit([...items, newElement(spec, items)])}>+ Add</button
+      onclick={() => commit([...items, newElement(spec, items)])}
     >
+      + Add
+    </button>
   {:else if control === 'tuple' || control === 'record'}
     <div role="group" aria-labelledby={labelId}>
       {@render parts(spec, value, [])}
@@ -271,8 +275,10 @@
     class="remove"
     aria-label="Remove {label} [{index}]"
     disabled={!canRemove(spec, items.length)}
-    onclick={() => commit(items.filter((_, at) => at !== index))}>−</button
+    onclick={() => commit(items.filter((_, at) => at !== index))}
   >
+    −
+  </button>
 {/snippet}
 
 <style>

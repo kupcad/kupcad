@@ -280,9 +280,9 @@
   <div class="toolbar">
     <!-- A section of a solid alone: a drawing isn't cut, and no model has none -->
     {#if solid}
-      <label
-        ><input class="kc-check" type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label
-      >
+      <label>
+        <input class="kc-check" type="checkbox" bind:checked={sectioned} disabled={!span} /> Section
+      </label>
     {/if}
     {#if sectioned && span}
       <select
@@ -450,8 +450,9 @@
                     class="source"
                     title="Show where {part.name} is named"
                     onclick={() => onsource(part)}
-                    >{part.source.file ? `${part.source.file} ` : ''}line {part.source.line}</button
                   >
+                    {part.source.file ? `${part.source.file} ` : ''}line {part.source.line}
+                  </button>
                 {/if}
               </li>
             {/each}
@@ -510,9 +511,9 @@
 {#snippet said(/** @type {Problem} */ problem)}
   <span class="severity">{SEVERITIES[problem.severity]}</span>
   <span class="message">{problem.message}</span>
-  {#if problem.line !== null}<span class="place"
-      >{problem.file ? `${problem.file} ` : ''}line {problem.line}</span
-    >{/if}
+  {#if problem.line !== null}<span class="place">
+      {problem.file ? `${problem.file} ` : ''}line {problem.line}
+    </span>{/if}
 {/snippet}
 
 <style>
