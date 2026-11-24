@@ -699,12 +699,11 @@ pub fn build(b: *std.Build) void {
         });
         const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
 
-        // Locus's own tests: a dependency's tests aren't among its importer's.
-        const locus_tests = b.addTest(.{
-            .root_module = locus.module("locus"),
-            .filters = test_filters,
-        });
-        const run_locus_tests = b.addRunArtifact(locus_tests);
+        // Locus's own tests are not among these: they run in Locus's own build
+        // (`pnpm test:locus`, `zig build test` in src/locus), as CI runs them in every Tests
+        // job. Run here too, they were the core's longest test binary, a second time over:
+        // in Debug, every allocation's stack trace kept, about 25 minutes and 13 GB once its
+        // test families grew (2026-11-24).
 
         // The C API's tests call it through include/kupcad.h, translated: a header that says
         // other than the exports do fails to compile, or fails them
@@ -730,7 +729,7 @@ pub fn build(b: *std.Build) void {
         const run_capi_tests = b.addRunArtifact(capi_tests);
 
         const test_step = b.step("test", "Run tests");
-        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests, run_locus_tests, run_capi_tests }) |run| {
+        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests, run_capi_tests }) |run| {
             test_step.dependOn(&run.step);
         }
 

@@ -141,6 +141,11 @@ jobs:
         working-directory: core
         run: zig build test -Doptimize=fast --summary line
 
+      # Locus's tests run in its own build, not the core's
+      - name: Run Locus's tests
+        working-directory: core/src/locus
+        run: zig build test -Doptimize=fast --summary line
+
       # Installed once the tests that don't need it have run, and the wasm tests run only where
       # it was: a download that failed (GitHub answering 504) skips them, the job failing on the
       # download, not on a missing wasmtime
