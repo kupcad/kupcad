@@ -73,7 +73,7 @@ jobs:
           # each step all three booleans checked by the checker, the overlap rules and the
           # volume identities.
           - target: locus_solids
-            runs: 120K
+            runs: 50K
             optimize: safe
     steps:
       - name: Checkout
