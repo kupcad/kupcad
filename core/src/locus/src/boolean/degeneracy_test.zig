@@ -381,6 +381,11 @@ const SLOPE_HULL_NUDGE: Vec3 = .{ -5e-5, 5e-5, 5e-5 };
 /// edge from 1.84e-4 under the sloped face's plane (within the intersection tolerance) to
 /// 2.62e-4 under it (past it by 0.62 of the zone), in steps of about 7e-6.
 pub const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 1e-4, 1.2e-4 };
+/// The last of `SLOPE_LIFTS` with the plate's edge within the intersection tolerance of the
+/// hull's face's plane (1.98e-4 under it): from the next on the edge, its ends on the face
+/// by their reach, lies past it, and the union is refused `below_feature_size` either way
+/// round (`pave.runOnPlane`; Leo, 2026-11-24).
+const SLOPE_LIFT_WITHIN: f64 = 3e-5;
 /// How the three operands of those tests are turned together: in place and about three
 /// skew axes (`SLIVER_TURNS` but its far shift, where the box's side and the plate's, 2e-4
 /// apart in place, are the intersection tolerance to rounding and their union is refused
@@ -4971,22 +4976,26 @@ test "degeneracy: a hull's face by a corner of a pocket's mouth, from clear of t
     }
 }
 
-test "degeneracy: a plate's edge along a hull's sloped face, its height over the face's plane past the intersection tolerance, is within the gap the union carries on it however it is measured" {
+test "degeneracy: a plate's edge along a hull's sloped face, its height over the face's plane past the intersection tolerance and its ends on the face by their reach, is refused either way round" {
     // The locus fuzzer's find (2026-11-21, bx), as it drew it: a box joined with a plate
     // (zone 1e-4), then with a hull whose sloped face the plate's edge runs along 2.12e-4
     // below, past the intersection tolerance, 2e-4, its ends merged within it. The edge
     // keeps the plate's line (D28) and its gap covers the line's height over the face's
     // plane past the tolerance (`pipeline.coverFaces`), set to that height as the plane
     // measures it; the checker measures it by projecting points of the edge onto the
-    // face, 5.5e-16 more, and refused the union (`edge_off_surface`)
+    // face, 5.5e-16 more, and refused the union (`edge_off_surface`). The edge between
+    // its ends is a pave block of the plate's own boundary with its line past the
+    // tolerance of the hull's face: the paves refuse it (`runOnPlane`), as they refuse a
+    // run of a face's boundary off the other's plane on every path (Leo, 2026-11-24; the
+    // union was made only because the block's middle, measured, had left the plate's face)
     try expectSlopeJoined(SLOPE_HULL_NUDGE[2], SLOPE_TURNS[0]);
 }
 
-test "degeneracy: a plate's edge along a hull's sloped face, from within the intersection tolerance of its plane to well past it, turned about skew axes, is within the gap the union carries on it either way round" {
+test "degeneracy: a plate's edge along a hull's sloped face, from within the intersection tolerance of its plane to well past it, turned about skew axes, is made within it and refused past it either way round" {
     // The cases about the find above (`SLOPE_LIFTS` × `SLOPE_TURNS`): the edge's height
     // over the face's plane from under the tolerance to 0.62 of the zone past it, the three
-    // operands in place and turned. Without the gap's rounding, 17 of the 40 unions were
-    // refused `edge_off_surface` (each way round), in place and turned
+    // operands in place and turned. Within the tolerance (`SLOPE_LIFT_WITHIN`) the union is
+    // made and sound; past it refused `below_feature_size`, either way round
     for (SLOPE_TURNS) |turn| for (SLOPE_LIFTS) |lift| {
         errdefer std.debug.print("the hull nudged {e} in z, turned {d} about {any}\n", .{ lift, turn.angle, turn.axis });
         try expectSlopeJoined(lift, turn);
@@ -5013,19 +5022,36 @@ fn expectSlopeTilted(lift: f64, axis: Vec3, angle: f64) !void {
     defer hull.deinit();
     var joined = try helpers.sound(&block, &plate, .@"union");
     defer joined.deinit();
-    var all = try helpers.sound(&joined, &hull, .@"union");
-    defer all.deinit();
-    var swapped = try helpers.sound(&hull, &joined, .@"union");
-    defer swapped.deinit();
+    try expectSlopeAlike(&joined, &hull);
+}
+
+/// The union of `a` and `b` decided alike either way round: made and sound, or refused for
+/// the plate's edge off the hull's face past the tolerance (`below_feature_size`).
+fn expectSlopeAlike(a: *const Body, b: *const Body) !void {
+    const forward = try outcomeOf(a, b, .@"union");
+    try testing.expectEqual(forward, try outcomeOf(b, a, .@"union"));
+    switch (forward) {
+        .made => {
+            var all = try helpers.sound(a, b, .@"union");
+            defer all.deinit();
+        },
+        .refused => |code| try testing.expectEqual(diagnostics.Code.below_feature_size, code),
+    }
 }
 
 fn expectSlopeJoined(lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !void {
     var operands = try slopeOperands(lift, turn);
     defer for (&operands) |*body| body.deinit();
-    var all = try helpers.sound(&operands[0], &operands[1], .@"union");
-    defer all.deinit();
-    var swapped = try helpers.sound(&operands[1], &operands[0], .@"union");
-    defer swapped.deinit();
+    if (lift <= SLOPE_LIFT_WITHIN) {
+        var all = try helpers.sound(&operands[0], &operands[1], .@"union");
+        defer all.deinit();
+        var swapped = try helpers.sound(&operands[1], &operands[0], .@"union");
+        defer swapped.deinit();
+        return;
+    }
+    const refused: Outcome = .{ .refused = .below_feature_size };
+    try testing.expectEqual(refused, try outcomeOf(&operands[0], &operands[1], .@"union"));
+    try testing.expectEqual(refused, try outcomeOf(&operands[1], &operands[0], .@"union"));
 }
 
 /// Find bx's operands, `lift` the hull's nudge in z (the fuzzer's 5e-5) and all three
@@ -5376,7 +5402,7 @@ fn fuzzPlaced(shape: *const Body, axis: Vec3, turn: f64, scale: ?Vec3, move: Vec
     return @import("../construct/transform.zig").transform(testing.allocator, shape, &place, .{}, &diag);
 }
 
-test "degeneracy: a plate's edge along a hull's sloped face tilted under it, its height changing along the edge, is joined with its ends' gaps holding it either way round" {
+test "degeneracy: a plate's edge along a hull's sloped face tilted under it, its height changing along the edge, is decided alike either way round" {
     // The audit of 2026-11-22 drew this to reach a join of pieces of different gaps
     // (simplify.coverEdge after joinRun): the cover gives each piece of the plate's edge
     // the gap of its line's height at its own ends, and a run joined into one edge must

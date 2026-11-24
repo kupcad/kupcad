@@ -878,13 +878,13 @@ const Filler = struct {
     /// of a wall's: the hull first, it was no part of where the two meet; the wall first,
     /// the union was refused `at_tolerance` (the ReleaseSafe session on e83d2a0e, dl,
     /// 2026-11-22).
-    /// `own` the faces whose own pave block `q` is the middle of: never outside that face, a
-    /// measure saying so is overruled by the paves' record (`ownBlock`).
+    /// `own` the faces whose own pave block `q` is the middle of: on that face's boundary by
+    /// the paves' record, not measured (`ownBlock`).
     fn placeInBoth(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, q: Vec3, own: [2]bool) Error!?[2]in_face.Place {
-        var placed = [2]in_face.Placed{ try self.placedIn(0, fa, q, null), try self.placedIn(1, fb, q, null) };
-        for (&placed, own) |*one, mine| {
-            if (mine and one.* == .outside) one.* = .boundary;
-        }
+        const placed = [2]in_face.Placed{
+            if (own[0]) .boundary else try self.placedIn(0, fa, q, null),
+            if (own[1]) .boundary else try self.placedIn(1, fb, q, null),
+        };
         if (placed[0] == .outside or placed[1] == .outside) return null;
         var places: [2]in_face.Place = undefined;
         for (placed, [2]types.FaceIndex{ fa, fb }, &places) |one, f, *place| place.* = switch (one) {
@@ -1970,8 +1970,8 @@ const Filler = struct {
     fn sectionOf(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, u: u32, w: u32) Error!void {
         const p = self.p;
         const mid = vec.lerp(p.point(u), p.point(w), 0.5);
-        // A pave block of either face's own edges is on that face, whatever its middle
-        // measures (`ownBlock`)
+        // A pave block of either face's own edges is on that face's boundary by the paves'
+        // record (`ownBlock`), and `lies` holds its line to the other face (`runOnPlane`)
         const own = [2]bool{ try self.ownBlock(0, fa, u, w), try self.ownBlock(1, fb, u, w) };
         // Outside either face it is no part of where the two meet, whatever the other
         const in_a, const in_b = try self.placeInBoth(fa, fb, mid, own) orelse return;
@@ -2039,16 +2039,21 @@ const Filler = struct {
     }
 
     /// Whether merged vertices `u` and `w` are two consecutive paves of an edge of face `f` of
-    /// operand `k`: a pave block of the face's own boundary, which no measure puts outside
-    /// the face. Its middle, the chord between paves merged onto the edge by their reach
-    /// and measured with no gap, can leave it: a hull's base edge between two vertices the
+    /// operand `k`: a pave block of the face's own boundary, on it by the paves' record and
+    /// not measured; `lies` then holds the block's line to the other face (`runOnPlane`), on
+    /// every path alike. Its middle, the chord between paves merged onto the edge by their
+    /// reach and measured with no gap, can leave the face: a hull's base edge between two vertices the
     /// paves had merged onto a box's top edge, 2.1e-5 off the hull's edge (within their
     /// reach of 2.5e-5 by their gap of 5e-6), was outside both the hull's faces by its
     /// middle, so the box's side, which the edge lay in, was not cut along it, and the
     /// difference kept the hull's face as a pocket's wall meeting the side along that line,
     /// the body touching itself there, made (the nightly's locus_solids find dn on 9772565c,
     /// 2026-11-24). OCCT places an edge's own pave block on its faces by the topology
-    /// (`BOPDS_FaceInfo::PaveBlocksOn`), never by a point of it.
+    /// (`BOPDS_FaceInfo::PaveBlocksOn`), never by a point of it. Measured, a plate's edge
+    /// 2.12e-4 under a hull's sloped face at a tolerance of 2e-4, its ends merged onto the
+    /// face, had left the plate's own face and the union was made; on its boundary, its line
+    /// off the hull's face is refused `below_feature_size` as any such run is (bx; Leo,
+    /// 2026-11-24: the same configuration refused on every path).
     fn ownBlock(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32) Error!bool {
         const operand = self.body(k);
         var loops = traverse.Loops.init(operand, f);

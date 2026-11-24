@@ -967,12 +967,16 @@ importing only those before it, which the layering test holds):**
   vertices on both faces is a piece of where they meet too, decided as a gap is, whatever
   their order along the line (`pave.blocksOnBoth`; OCCT's edge–face common block, a pave
   block on a face, `BOPDS_FaceInfo::PaveBlocksIn`). A piece that is one face's own pave
-  block is never outside that face, whatever its middle measures (`pave.ownBlock`, as OCCT
-  places an edge's block on its own faces by topology): a hull's base edge between ends
-  merged onto a box's edge by their reach, 2.1e-5 off it, was outside the hull's faces by
-  its middle measured with no gap, the box's side was not cut along it, and a
-  difference's pocket met the side along that line, made (find dn, 2026-11-24). The
-  vertices on both lie within their
+  block lies on that face's boundary by the paves' record, not measured (`pave.ownBlock`,
+  as OCCT places an edge's block on its own faces by topology), and its line is held to
+  the other face as any run of a face's boundary is (`runOnPlane`, refused
+  `below_feature_size` past it): a hull's base edge between ends merged onto a box's edge
+  by their reach, 2.1e-5 off it, was outside the hull's faces by its middle measured with
+  no gap, the box's side was not cut along it, and a difference's pocket met the side
+  along that line, made (find dn, 2026-11-24); a plate's edge 2.12e-4 under a hull's
+  sloped face at a tolerance of 2e-4, its ends merged onto the face, had left the plate's
+  own face the same way and its union was made, now refused (bx; Leo, 2026-11-24: one
+  decision on every path). The vertices on both lie within their
   reach of both planes, not of the planes' line, and at an angle the band of both is that
   reach over the angle's sine wide across the line, so three of them can span a region of
   both faces, which the gaps of one order only walk through. A hull's corner 1.5e-5 off a
