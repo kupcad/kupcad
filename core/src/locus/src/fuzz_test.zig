@@ -2493,6 +2493,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // faces' line skipped that edge, the side was not cut along it, and an edge had
         // three faces (pave.blocksOnBoth: each face's own blocks on both faces)
         "solids 3 0 5 0 1 4 1 2 4 2 0 4 3 5 3 5 2 1 2 1 6 2 1 4 1 3 2 4 3 0 1 1 1 2 4 0 2 1 0 1 3 4 3 3 9 2",
+        // The nightly on 9772565c (2026-11-24, locus_solids, dn): a hull's base edge along
+        // the running solid's face, its ends merged onto the box's edge by their reach; the
+        // block between them, measured again by its middle with no gap, left the hull's
+        // faces, the face was not cut along it, and the difference's pocket met it along a
+        // line, made (pave.ownBlock: a face's own pave block is on its boundary)
+        "solids 0 0 2 1 4 1 4 1 0 2 0 0 5 3 4 6 3 1 1 5 3 2 3 4 1 2 1 4 3 1 3 3 1 0 0 0 2 6 0 1 0 1 1 2 9 2 1 3 1 6 4 1 4 4 2 0 3 2 4 2 4 3 4 3 0 2 0 0 3 3 11 7 -2 6 0 2 1 6 0 0 2 3 4 2 4 0 2 3 3 3 0 1 2 4 4 2 1 3 0 0 10 9 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -878,8 +878,13 @@ const Filler = struct {
     /// of a wall's: the hull first, it was no part of where the two meet; the wall first,
     /// the union was refused `at_tolerance` (the ReleaseSafe session on e83d2a0e, dl,
     /// 2026-11-22).
-    fn placeInBoth(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, q: Vec3) Error!?[2]in_face.Place {
-        const placed = [2]in_face.Placed{ try self.placedIn(0, fa, q, null), try self.placedIn(1, fb, q, null) };
+    /// `own` the faces whose own pave block `q` is the middle of: never outside that face, a
+    /// measure saying so is overruled by the paves' record (`ownBlock`).
+    fn placeInBoth(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, q: Vec3, own: [2]bool) Error!?[2]in_face.Place {
+        var placed = [2]in_face.Placed{ try self.placedIn(0, fa, q, null), try self.placedIn(1, fb, q, null) };
+        for (&placed, own) |*one, mine| {
+            if (mine and one.* == .outside) one.* = .boundary;
+        }
         if (placed[0] == .outside or placed[1] == .outside) return null;
         var places: [2]in_face.Place = undefined;
         for (placed, [2]types.FaceIndex{ fa, fb }, &places) |one, f, *place| place.* = switch (one) {
@@ -1965,8 +1970,11 @@ const Filler = struct {
     fn sectionOf(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, u: u32, w: u32) Error!void {
         const p = self.p;
         const mid = vec.lerp(p.point(u), p.point(w), 0.5);
+        // A pave block of either face's own edges is on that face, whatever its middle
+        // measures (`ownBlock`)
+        const own = [2]bool{ try self.ownBlock(0, fa, u, w), try self.ownBlock(1, fb, u, w) };
         // Outside either face it is no part of where the two meet, whatever the other
-        const in_a, const in_b = try self.placeInBoth(fa, fb, mid) orelse return;
+        const in_a, const in_b = try self.placeInBoth(fa, fb, mid, own) orelse return;
         const segment: [2]u32 = .{ @min(u, w), @max(u, w) };
         // Beside either face it is no part of where the two meet
         const lies_a = try self.lies(0, fa, u, w, mid, in_a, .{ .operand = 1, .face = @backingInt(fb) });
@@ -2028,6 +2036,32 @@ const Filler = struct {
                 }
             }
         }
+    }
+
+    /// Whether merged vertices `u` and `w` are two consecutive paves of an edge of face `f` of
+    /// operand `k`: a pave block of the face's own boundary, which no measure puts outside
+    /// the face. Its middle, the chord between paves merged onto the edge by their reach
+    /// and measured with no gap, can leave it: a hull's base edge between two vertices the
+    /// paves had merged onto a box's top edge, 2.1e-5 off the hull's edge (within their
+    /// reach of 2.5e-5 by their gap of 5e-6), was outside both the hull's faces by its
+    /// middle, so the box's side, which the edge lay in, was not cut along it, and the
+    /// difference kept the hull's face as a pocket's wall meeting the side along that line,
+    /// the body touching itself there, made (the nightly's locus_solids find dn on 9772565c,
+    /// 2026-11-24). OCCT places an edge's own pave block on its faces by the topology
+    /// (`BOPDS_FaceInfo::PaveBlocksOn`), never by a point of it.
+    fn ownBlock(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32) Error!bool {
+        const operand = self.body(k);
+        var loops = traverse.Loops.init(operand, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(operand, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const list = self.p.edge_paves[k][@backingInt(operand.coedge(c).edge)].items;
+                for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                    if ((x.vertex == u and y.vertex == w) or (x.vertex == w and y.vertex == u)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// The direction of the line two faces with unit normals `n_a` and `n_b` meet along,

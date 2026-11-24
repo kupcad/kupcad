@@ -35,6 +35,7 @@ const shellKinds = helpers.shellKinds;
 const turned = helpers.turned;
 const Vec3 = vec.Vec3;
 const types = @import("../topology/types.zig");
+const overlap = @import("../query/overlap.zig");
 const VertexIndex = types.VertexIndex;
 const Diagnostics = diagnostics.Diagnostics;
 
@@ -768,6 +769,34 @@ const SIDE_CORNER_WITHIN = [_]f64{ 0, 5e-6, -3e-6 };
 /// And with the corner in the side's plane, a hair past the tolerance (2.1e-5 off it) and
 /// past it (2.5e-5).
 const SIDE_CORNER_BESIDE = [_]f64{ 1.5e-5, -6e-6, -1e-5 };
+
+/// The operands of the tests of a face's own pave block lying in another's face (the
+/// nightly's locus_solids find dn, 2026-11-24, as the fuzzer drew it): a box, less a hull,
+/// joined with a hull whose face at x = 4 rises above the box's top edge, then a hull whose
+/// base edge runs along that edge 1.5e-5 off it across and along, its ends merged onto the
+/// box's edge within their reach.
+const OWN_BOX = [2]Vec3{ .{ 0, 1, 1 }, .{ 2, 4, 4 } };
+const OWN_BOX_SCALE: Vec3 = .{ 2, 0.5, 0.5 };
+const OWN_BOX_NUDGE: Vec3 = .{ 1e-5, 5e-6, -5e-6 };
+const OWN_CUT = [_]Vec3{ .{ 3, 2, 3 }, .{ 4, 1, 2 }, .{ 1, 4, 3 }, .{ 1, 3, 3 }, .{ 1, 0, 0 } };
+const OWN_CUT_TURN: f64 = 0.014142253478516982;
+const OWN_CUT_SCALE: Vec3 = .{ 1, 0.5, 1 };
+const OWN_CUT_MOVE: Vec3 = .{ 0.5, 1, 0 };
+const OWN_CUT_NUDGE: Vec3 = .{ 0, 0, 1.999999993585303e-5 };
+const OWN_JOIN = [_]Vec3{ .{ 4, 1, 4 }, .{ 4, 2, 0 }, .{ 3, 2, 4 }, .{ 2, 4, 3 }, .{ 4, 3, 0 }, .{ 2, 0, 0 } };
+const OWN_JOIN_MOVE: Vec3 = .{ 0, 0, -1 };
+const OWN_JOIN_NUDGE: Vec3 = .{ 2.000000005684342e-5, 2e-5, 0 };
+const OWN_LAST = [_]Vec3{ .{ 0, 0, 2 }, .{ 3, 4, 2 }, .{ 4, 0, 2 }, .{ 3, 3, 3 }, .{ 0, 1, 2 }, .{ 4, 4, 2 } };
+/// The last hull's nudges in the tests about that find: the fuzzer's, and its base edge
+/// nearer the box's edge and farther, either side of the merged ends' reach.
+const OWN_LAST_NUDGES = [_]Vec3{
+    .{ 0, 0, -1.9999999943156583e-5 },
+    .{ 0, 0, -1e-5 },
+    .{ 0, 0, -1.5e-5 },
+    .{ 0, 0, -2.5e-5 },
+    .{ 5e-6, 0, -2e-5 },
+    .{ -5e-6, 0, -2e-5 },
+};
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -5217,6 +5246,24 @@ fn cornerSolids(thickness: f64, lift: f64, turn: @TypeOf(SLIVER_TURNS[0])) !stru
     return .{ joined, try sliverMoved(&drawn_b, turn) };
 }
 
+/// A result made sound as the solids fuzzer's oracle holds it: the checker's every rule,
+/// then the overlap rules (a result the boolean made that touches itself was refused only
+/// there: find dn, 2026-11-24).
+fn expectHeld(result: *const Body) !void {
+    var report = try check.run(testing.allocator, result, .global);
+    defer report.deinit(testing.allocator);
+    if (report.first()) |f| {
+        std.debug.print("the checker: {f}\n", .{f});
+        return error.ResultNotValid;
+    }
+    var rules = Diagnostics.init(testing.allocator);
+    defer rules.deinit();
+    overlap.check(testing.allocator, result, .{}, &rules) catch |err| {
+        if (rules.first()) |f| std.debug.print("the overlap rules: {f}\n", .{f});
+        return err;
+    };
+}
+
 /// Each operation of `a` and `b` either way round never leaves an edge's faces unpaired
 /// (`NotValid`), and what it makes is sound; the union and the intersection come out alike
 /// either way round (`expectAlikeEitherWay`).
@@ -5232,12 +5279,7 @@ fn expectPairedEitherWay(a: *const Body, b: *const Body) !void {
                 continue;
             };
             defer result.deinit();
-            var report = try check.run(testing.allocator, &result, .global);
-            defer report.deinit(testing.allocator);
-            if (report.first()) |f| {
-                std.debug.print("the checker: {f}\n", .{f});
-                return error.ResultNotValid;
-            }
+            try expectHeld(&result);
         }
         if (op != .difference) try expectAlikeEitherWay(a, b, op);
     }
@@ -5375,8 +5417,8 @@ test "degeneracy: a hull's top at the angular tolerance to a plate's, an edge of
     };
 }
 
-/// Every operation of `a` and `b` either way round decided: made and sound, or refused for
-/// a configuration (never `unclassified` or an edge's faces unpaired, the kernel's own
+/// Every operation of `a` and `b` either way round decided: made and sound (`expectHeld`),
+/// or refused for a configuration (never `unclassified` or an edge's faces unpaired, the kernel's own
 /// contradictions); the union and the intersection alike either way round.
 fn expectDecidedEitherWay(a: *const Body, b: *const Body) !void {
     for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
@@ -5393,12 +5435,7 @@ fn expectDecidedEitherWay(a: *const Body, b: *const Body) !void {
                 else => continue,
             };
             defer result.deinit();
-            var report = try check.run(testing.allocator, &result, .global);
-            defer report.deinit(testing.allocator);
-            if (report.first()) |f| {
-                std.debug.print("the checker: {f}\n", .{f});
-                return error.ResultNotValid;
-            }
+            try expectHeld(&result);
         }
         if (op != .difference) try expectAlikeEitherWay(a, b, op);
     }
@@ -6125,4 +6162,56 @@ fn sideCornerSolids(shift: f64, quarter: usize, mirrored: bool) ![2]Body {
     for (SIDE_CORNER_HULL, &points) |q, *moved| moved.* = tieMove(vec.add(vec.add(q, SIDE_CORNER_HULL_NUDGE), .{ shift, 0, 0 }), quarter, mirrored);
     const hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
     return .{ plate, hull };
+}
+
+/// The running solid and the last hull of the tests about find dn: the box less the first
+/// hull, joined with the second, and the last hull nudged by `nudge`; both turned
+/// `quarter` quarter turns about z through the origin.
+fn ownBlockSolids(nudge: Vec3, quarter: usize) ![2]Body {
+    var drawn_box = try fuzzBoxPlaced(tol, OWN_BOX[0], OWN_BOX[1], vec.Z3, 0, OWN_BOX_SCALE, OWN_BOX_NUDGE);
+    defer drawn_box.deinit();
+    var cut = try fuzzHullPlaced(&OWN_CUT, vec.Z3, OWN_CUT_TURN, OWN_CUT_SCALE, OWN_CUT_MOVE, OWN_CUT_NUDGE);
+    defer cut.deinit();
+    var join = try fuzzHullPlaced(&OWN_JOIN, vec.Z3, 0, null, OWN_JOIN_MOVE, OWN_JOIN_NUDGE);
+    defer join.deinit();
+    var last = try fuzzHullPlaced(&OWN_LAST, vec.Z3, 0, null, vec.ZERO3, nudge);
+    defer last.deinit();
+    var notched = try sound(&drawn_box, &cut, .difference);
+    defer notched.deinit();
+    var running = try sound(&notched, &join, .@"union");
+    defer running.deinit();
+    if (quarter == 0) return .{ try running.clone(testing.allocator), try last.clone(testing.allocator) };
+    const turn = mat.Affine.rotateAbout(vec.ZERO3, vec.Z3, std.math.pi / 2.0 * @as(f64, @floatFromInt(quarter)));
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const transform = @import("../construct/transform.zig").transform;
+    var turned_running = try transform(testing.allocator, &running, &turn, .{}, &diag);
+    errdefer turned_running.deinit();
+    return .{ turned_running, try transform(testing.allocator, &last, &turn, .{}, &diag) };
+}
+
+test "degeneracy: a hull's base edge along a face it lies in, between ends merged onto it by their reach, cuts the face, so a pocket meeting it is refused" {
+    // The nightly's locus_solids find dn (2026-11-24): the last hull's base edge ran along
+    // the running solid's face at x = 4, its ends merged onto the box's top edge 1.5e-5
+    // off it across and along (2.1e-5, within their reach of 2.5e-5 by their gap of 5e-6).
+    // The block between them, the hull's own edge, was measured again by its middle with
+    // no gap and left outside the hull's faces, so the face at x = 4 was not cut along it.
+    // The difference kept the hull's sloped face as a pocket's wall meeting that face along
+    // the line, the body touching itself there, made, and only the overlap rules saw it.
+    // A face's own pave block is on its boundary by the paves' record (`pave.ownBlock`)
+    var solids = try ownBlockSolids(OWN_LAST_NUDGES[0], 0);
+    defer for (&solids) |*body| body.deinit();
+    try expectDecidedEitherWay(&solids[0], &solids[1]);
+}
+
+test "degeneracy: a hull's base edge near a face it may lie in, nearer and farther and turned, is decided alike either way round" {
+    // The cases about the find above: the last hull's base edge nearer the running solid's
+    // face and edge and farther (`OWN_LAST_NUDGES`, either side of the merged ends' reach),
+    // all turned the four quarter turns about z
+    for (OWN_LAST_NUDGES) |nudge| for (0..4) |quarter| {
+        errdefer std.debug.print("the last hull nudged {any}, {d} quarter turns\n", .{ nudge, quarter });
+        var solids = try ownBlockSolids(nudge, quarter);
+        defer for (&solids) |*body| body.deinit();
+        try expectDecidedEitherWay(&solids[0], &solids[1]);
+    };
 }

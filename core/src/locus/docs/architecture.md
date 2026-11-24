@@ -966,7 +966,13 @@ importing only those before it, which the layering test holds):**
   in the face as a slit, 2026-11-16). Each face's own pave block between two merged
   vertices on both faces is a piece of where they meet too, decided as a gap is, whatever
   their order along the line (`pave.blocksOnBoth`; OCCT's edge–face common block, a pave
-  block on a face, `BOPDS_FaceInfo::PaveBlocksIn`): the vertices on both lie within their
+  block on a face, `BOPDS_FaceInfo::PaveBlocksIn`). A piece that is one face's own pave
+  block is never outside that face, whatever its middle measures (`pave.ownBlock`, as OCCT
+  places an edge's block on its own faces by topology): a hull's base edge between ends
+  merged onto a box's edge by their reach, 2.1e-5 off it, was outside the hull's faces by
+  its middle measured with no gap, the box's side was not cut along it, and a
+  difference's pocket met the side along that line, made (find dn, 2026-11-24). The
+  vertices on both lie within their
   reach of both planes, not of the planes' line, and at an angle the band of both is that
   reach over the angle's sine wide across the line, so three of them can span a region of
   both faces, which the gaps of one order only walk through. A hull's corner 1.5e-5 off a
