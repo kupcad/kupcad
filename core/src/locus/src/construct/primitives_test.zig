@@ -784,3 +784,47 @@ test "primitives: a C ring is made however many edges its inner arc is in, in ev
         try testing.expectEqual(@as(?diagnostics_mod.Code, null), try cRingOutcome(sweep, share, cuts, turn, mirrored));
     };
 }
+
+/// What a hull of points made: its counts, or the refusal's code.
+const HullOutcome = struct { made: bool, v: usize = 0, e: usize = 0, f: usize = 0, code: diagnostics_mod.Code = .empty_input };
+
+fn hullOutcome(points: []const Vec3) !HullOutcome {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    if (hull.hull(testing.allocator, tol, points, &diag)) |made| {
+        var h = made;
+        defer h.deinit();
+        try expectValid(&h);
+        const c = h.counts();
+        return .{ .made = true, .v = c.vertices, .e = c.edges, .f = c.faces };
+    } else |e| {
+        if (e == error.OutOfMemory) return e;
+        return .{ .made = false, .code = diag.first().?.code };
+    }
+}
+
+test "hull: a box and a point a little over its top, the same hull in place and moved whole" {
+    const lifts = [_]f64{ 1e-13, 1e-10, 1e-8, 1e-7, 1e-6, 5e-6 };
+    const places = [_][2]f64{ .{ 5, 5 }, .{ 5, 10 - 2e-5 }, .{ 10 - 2e-5, 10 - 2e-5 }, .{ 10 + 1e-3, 10 } };
+    const moves = [_]Vec3{ .{ 0, 0, 0 }, .{ 3e5, 0, 0 }, .{ 0, 3e5, 0 }, .{ 0, 0, 3e5 }, .{ 3e5, 3e5, 3e5 }, .{ 1e6, -2e6, 3e6 } };
+    for (lifts) |lift| for (places) |place| {
+        var base: ?HullOutcome = null;
+        for (moves) |move| for ([_]bool{ false, true }) |mirrored| for ([_]bool{ false, true }) |reversed| {
+            var pts: [9]Vec3 = undefined;
+            var n: usize = 0;
+            for ([_]f64{ 0, 10 }) |x| for ([_]f64{ 0, 10 }) |y| for ([_]f64{ 0, 10 }) |z| {
+                pts[n] = .{ x, y, z };
+                n += 1;
+            };
+            pts[8] = .{ place[0], place[1], 10 + lift };
+            for (&pts) |*p| {
+                if (mirrored) p[0] = -p[0];
+                p.* = vec.add(p.*, move);
+            }
+            if (reversed) std.mem.reverse(Vec3, &pts);
+            const got = try hullOutcome(&pts);
+            errdefer std.debug.print("lift {e} at {any}, moved {any}, mirrored {}, reversed {}: {any} against {any}\n", .{ lift, place, move, mirrored, reversed, got, base });
+            if (base) |b| try testing.expectEqualDeep(b, got) else base = got;
+        };
+    };
+}

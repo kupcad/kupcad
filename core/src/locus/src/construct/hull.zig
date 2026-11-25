@@ -20,10 +20,6 @@ const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 
-/// How far outside a face a point must be to count as outside it, relative to the point
-/// set's extent (within it, a point is on the face: the hull is sewn through such points).
-const OUTSIDE: f64 = 1e-12;
-
 const NONE: u32 = std.math.maxInt(u32);
 
 const HalfEdge = struct {
@@ -49,16 +45,24 @@ pub const Quickhull = struct {
     points: []const Vec3,
     half_edges: std.ArrayList(HalfEdge) = .empty,
     faces: std.ArrayList(Face) = .empty,
-    /// The least distance that counts as outside a face.
+    /// How far outside a face a point must be to count as outside it, in model units:
+    /// within it, the point is on the face, and the hull passes it by. The hull takes the
+    /// zone, the interner's own measure of a point on a plane (`canonical.planeHolds`), so
+    /// it is the same band wherever the points are placed. Taken relative to the largest
+    /// coordinate, it was 1e-11 in place and 3e-7 moved whole to 3e5: a box's corners and
+    /// a point 1e-10 over its top, 2e-5 from an edge, was a sliver face refused in place
+    /// and the box moved (the audit of 2026-11-22, kind 8, C4).
     epsilon: f64,
+    /// The points whose height over a face they were tested against was the band to
+    /// rounding (`passedAtBand` asks only these again).
+    at_band: std.DynamicBitSetUnmanaged = .{},
 
-    pub fn init(allocator: std.mem.Allocator, points: []const Vec3) Quickhull {
-        var extent: f64 = 0;
-        for (points) |p| extent = @max(extent, @max(@abs(p[0]), @max(@abs(p[1]), @abs(p[2]))));
-        return .{ .allocator = allocator, .points = points, .epsilon = @max(extent, 1.0) * OUTSIDE };
+    pub fn init(allocator: std.mem.Allocator, points: []const Vec3, on_face: f64) Quickhull {
+        return .{ .allocator = allocator, .points = points, .epsilon = on_face };
     }
 
     pub fn deinit(self: *Quickhull) void {
+        self.at_band.deinit(self.allocator);
         for (self.faces.items) |*f| f.outside.deinit(self.allocator);
         self.half_edges.deinit(self.allocator);
         self.faces.deinit(self.allocator);
@@ -105,9 +109,21 @@ pub const Quickhull = struct {
         }
     }
 
+    /// Point `point`'s height over face `face`, the point marked when it is the band to
+    /// rounding.
+    fn heightOver(self: *Quickhull, face: u32, point: u32) f64 {
+        const f = self.faces.items[face];
+        const p = self.points[point];
+        const d = height(f.normal, f.distance, p);
+        const corner = self.points[self.half_edges.items[f.first].end];
+        const cmp = canonical.Comparison.distance(d, self.epsilon, canonical.magnitude(&.{ corner, p }));
+        if (@abs(cmp.measured - cmp.limit) <= cmp.band) self.at_band.set(point);
+        return d;
+    }
+
     fn assignOutside(self: *Quickhull, face: u32, point: u32) error{OutOfMemory}!void {
         const f = &self.faces.items[face];
-        const d = height(f.normal, f.distance, self.points[point]);
+        const d = self.heightOver(face, point);
         if (d <= self.epsilon) return;
         try f.outside.append(self.allocator, point);
         if (d > f.farthest_dist) {
@@ -121,6 +137,7 @@ pub const Quickhull = struct {
     fn initialTetrahedron(self: *Quickhull) error{ OutOfMemory, Degenerate }!void {
         const pts = self.points;
         if (pts.len < 4) return error.Degenerate;
+        self.at_band = try std.DynamicBitSetUnmanaged.initEmpty(self.allocator, pts.len);
         var v0: u32 = 0;
         var v1: u32 = 0;
         for (pts, 0..) |p, i| {
@@ -162,8 +179,8 @@ pub const Quickhull = struct {
             // To the face it is farthest outside of
             var far: ?u32 = null;
             var far_d: f64 = self.epsilon;
-            for (self.faces.items, 0..) |f, fi| {
-                const d = height(f.normal, f.distance, pts[i]);
+            for (0..self.faces.items.len) |fi| {
+                const d = self.heightOver(@intCast(fi), @intCast(i));
                 if (d > far_d) {
                     far_d = d;
                     far = @intCast(fi);
@@ -244,6 +261,38 @@ pub const Quickhull = struct {
         }
     }
 
+    /// A point the hull passed by whose height over one of its faces is the band to
+    /// rounding (D27): on the face by one computation and outside it by another, so that
+    /// whether it is a corner of the hull would hang on where the points are placed. Only
+    /// the points found at the band of a face they were tested against are asked again,
+    /// of the hull's faces: the rest were decided clear of it (a pass over every point and
+    /// face doubled the hull of 10,000 points).
+    pub fn passedAtBand(self: *const Quickhull, allocator: std.mem.Allocator) error{OutOfMemory}!?canonical.Comparison {
+        if (self.at_band.count() == 0) return null;
+        const used = try allocator.alloc(bool, self.points.len);
+        defer allocator.free(used);
+        @memset(used, false);
+        for (self.half_edges.items) |he| {
+            if (!self.faces.items[he.face].disabled) used[he.end] = true;
+        }
+        var it = self.at_band.iterator(.{});
+        while (it.next()) |i| {
+            if (used[i]) continue;
+            const p = self.points[i];
+            var tally: canonical.Tally = .{};
+            for (self.faces.items) |f| {
+                if (f.disabled) continue;
+                const corner = self.points[self.half_edges.items[f.first].end];
+                tally.add(canonical.Comparison.distance(height(f.normal, f.distance, p), self.epsilon, canonical.magnitude(&.{ corner, p })));
+            }
+            switch (tally.verdict()) {
+                .at_tolerance => |cmp| return cmp,
+                .same, .apart => {},
+            }
+        }
+        return null;
+    }
+
     /// The hull's triangles, corners counter-clockwise seen from outside.
     pub fn triangles(self: *const Quickhull, allocator: std.mem.Allocator) error{OutOfMemory}![][3]u32 {
         var out = std.ArrayList([3]u32).empty;
@@ -293,12 +342,13 @@ pub fn hull(allocator: std.mem.Allocator, tol: Tolerance, points: []const Vec3, 
         try records.append(allocator, r);
         try kept.append(allocator, b.body.geometry.points.items[@backingInt(r)]);
     }
-    var qh = Quickhull.init(allocator, kept.items);
+    var qh = Quickhull.init(allocator, kept.items, tol.zone);
     defer qh.deinit();
     qh.build() catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Degenerate => return flat(diag, points.len),
     };
+    if (try qh.passedAtBand(allocator)) |cmp| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .label = "a point within the zone of a face of the hull or outside it, the zone to rounding", .measured = cmp.measured, .threshold = cmp.limit });
     const tris = try qh.triangles(allocator);
     defer allocator.free(tris);
 

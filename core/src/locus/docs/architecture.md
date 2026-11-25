@@ -733,7 +733,12 @@ outputs, each testable alone, and whose intermediate bodies pass the structural 
   warns so (`overlap.warnTouching`, two edges along one curve between one pair of
   vertices), as the boolean's result does. The checker's size findings on what a builder
   or `transform` made (two vertices within the zone, an edge no longer than twice it, a
-  sliver) are the input's sizes, refused `Degenerate` (`Report.onlySizes`; a hull of two
+  sliver) are the input's sizes, refused `Degenerate` (`Report.onlySizes`; the hull's
+quickhull takes a point within the zone of a face for on it, the interner's own measure of a
+point on a plane, in model units, a point passed by at the zone to rounding refused
+`at_tolerance`: relative to the largest coordinate, its band was 1e-11 in place and 3e-7
+moved 3e5 out, and a box with a point 1e-10 over its top, 2e-5 from an edge, was refused a
+sliver in place and made the box moved, the audit of 2026-11-22; a hull of two
   cubes 1e-5 apart along each axis, corners 1.73 zones apart past the zone it welds at,
   an edge too short: `NotValid` before), any other fault `NotValid`; an extrusion's height
   is checked against the shortest edge (`check.shortest`, twice the zone), not the zone. A
