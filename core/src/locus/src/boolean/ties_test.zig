@@ -439,3 +439,76 @@ test "ties: a box's edge along the side edge of a flat tetrahedron's bottom, wit
         try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
     };
 }
+
+/// The solids of the tests of edges crossing a face within the tolerance of one another
+/// (the audit of the ties, finding 6): a tetrahedron whose apex lies `APEX_LIFTS` over a
+/// box's top, its three edges from the apex crossing the top steeply at slightly
+/// different angles, `APEX_SPREADS` across at its base, so their crossings lie within
+/// the tolerance of one another; drawn turned `quarter` quarter turns about z through the
+/// top's middle and mirrored in x there when `mirrored` (the hull numbered anew).
+const APEX = [_]Vec3{ .{ 2.1, 2.05, 1 }, .{ 2.1, 2.05, -1 }, .{ 2.1, 2.05, -1 }, .{ 2.1, 2.05, -1 } };
+/// The base corners' directions from under the apex, of different lengths: the edges
+/// cross the top at different angles.
+const APEX_SPREAD = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ -0.5, 0.8, 0 }, .{ -0.45, -0.9, 0 } };
+const APEX_LIFTS = [_]f64{ 3e-5, 2.5e-5, 5e-5 };
+const APEX_SPREADS = [_]f64{ 0.3, 0.5 };
+const APEX_BOX = [2]Vec3{ .{ 0, 0, 0 }, .{ 4, 4, 1 } };
+
+/// That tetrahedron lifted `lift` and spread `spread`, placed by `place`.
+fn apexTetrahedron(lift: f64, spread: f64, place: *const mat.Affine) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var points: [APEX.len]Vec3 = undefined;
+    for (APEX, APEX_SPREAD, &points, 0..) |p, d, *q, i| q.* = place.point(vec.add(vec.addScaled(p, d, spread), .{ 0, 0, if (i == 0) lift else 0 }));
+    return hull_mod.hull(testing.allocator, Tolerance.fromZone(1e-5), &points, &diag);
+}
+
+/// `quarter` quarter turns about z through the box's top's middle, then mirrored in x
+/// there when `mirrored`: the box onto itself.
+fn apexPlace(quarter: usize, mirrored: bool) mat.Affine {
+    const turn = mat.Affine.rotateAbout(.{ 2, 2, 0 }, vec.Z3, @as(f64, @floatFromInt(quarter)) * std.math.pi / 2.0);
+    if (!mirrored) return turn;
+    return mat.Affine.translate(.{ 4, 0, 0 }).compose(&mat.Affine.mirror(vec.X3).compose(&turn));
+}
+
+test "ties: a tetrahedron's edges crossing a box's top within the tolerance of one another merge at the steepest's crossing, alike turned, mirrored and swapped" {
+    // The audit of the ties (finding 6): edge–face took the crossings in the operands'
+    // order and the edges' numbering, and the first became the merged vertex the others
+    // within the tolerance shared. The apex 3e-5 over the top, its three edges crossing
+    // it 1.3e-5 apart: the intersection's apex was made at whichever came first, a hull
+    // drawn turned a quarter or mirrored numbering its edges otherwise. Steepest first,
+    // the least uncertain crossing, as edge–edge takes its pairs nearest first
+    var box = try helpers.box(APEX_BOX[0], APEX_BOX[1]);
+    defer box.deinit();
+    for (APEX_LIFTS) |lift| for (APEX_SPREADS) |spread| for (OPS) |op| for ([2]bool{ false, true }) |swapped| {
+        var want: ?Outcome = null;
+        defer if (want) |w| w.deinit();
+        for (0..4) |quarter| for ([2]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("lifted {e}, spread {d}, {t}, swapped {}, {d} quarter turns, mirrored {}\n", .{ lift, spread, op, swapped, quarter, mirrored });
+            const place = apexPlace(quarter, mirrored);
+            var tetrahedron = try apexTetrahedron(lift, spread, &place);
+            defer tetrahedron.deinit();
+            const got = if (swapped) try Outcome.of(&box, &tetrahedron, op, place.inverse().?) else try Outcome.of(&tetrahedron, &box, op, place.inverse().?);
+            if (want) |w| {
+                defer got.deinit();
+                if (!w.alike(got)) {
+                    std.debug.print("want {f}, got {f}\n", .{ w, got });
+                    printUnmatched("unturned only:", w, got);
+                    printUnmatched("turned only:", got, w);
+                    return error.TestUnexpectedResult;
+                }
+            } else want = got;
+        };
+    };
+}
+
+test "ties: the tetrahedron whose edges cross a box's top within the tolerance of one another, alike swapped and moved far" {
+    var box = try helpers.box(APEX_BOX[0], APEX_BOX[1]);
+    defer box.deinit();
+    for ([2]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("mirrored {}\n", .{mirrored});
+        var tetrahedron = try apexTetrahedron(APEX_LIFTS[0], APEX_SPREADS[0], &apexPlace(0, mirrored));
+        defer tetrahedron.deinit();
+        try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
+    }
+}

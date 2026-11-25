@@ -940,7 +940,14 @@ importing only those before it, which the layering test holds):**
   on either side of a face's plane, neither on the face, and the crossing is in the face (one on
   its boundary tried against the other's edges, which edge–edge should have split), or a
   pave the edge already has on the face, an edge meeting a plane once (at a shallow angle
-  the computed point can be several `xsect` from where edge–edge met the face's edge);
+  the computed point can be several `xsect` from where edge–edge met the face's edge;
+  the crossings of both operands taken steepest first, the sine of the angle the edge
+  crosses the plane at, so which crossing a merged vertex stands for, and which others
+  within `xsect` share it, is the least uncertain crossing's, as edge–edge's nearest
+  meeting, not the operands' order or the numbering's: a tetrahedron's apex 3e-5 over a
+  box's top, its three edges crossing the top within `xsect` of one another, put the
+  intersection's apex 5.8e-6 apart as the hull, drawn turned a quarter or mirrored,
+  numbered its edges, the audit of the ties, finding 6, 2026-11-25);
   then each face's merged vertices (its edges' paves and what the face stages found), and
   face–face from those alone: the vertices both faces lie on, sorted along their planes'
   line (pointed by the line alone, its largest component positive, and two at one position

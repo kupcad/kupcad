@@ -307,16 +307,19 @@ const POCKET_MIRROR_Y: f64 = 4;
 /// tolerances the corner lies behind its face (`PocketCase.depth`; at the fuzzer's,
 /// `POCKET_FOUND_DEPTH`, the hull is as it drew it): the face clear of the corner on its far side and
 /// the corner on the face, each operation made; the corner past its reach of the face and
-/// within the minimum feature size of where the face meets the pocket's faces, refused;
+/// within the minimum feature size of where the face meets the pocket's faces, refused (at
+/// 1.2 tolerances as an edge too short to split, the face crossing an edge of the pocket
+/// 1.9e-5 from the corner, in the corner's strip, the steepest crossing taken first; the
+/// audit of the ties, 2026-11-25);
 /// the face cutting the corner's three edges, the chord between its crossings of the
 /// mouth's two edges within reach of them (the find's and either side of it), where the
 /// solids are joined, the tip of the corner the hull holds a sliver (the intersection
 /// and the hull less the solid refused); and the face farther in, each operation made.
-const PocketCase = struct { depth: f64, want: enum { made, below_feature_size, sliver_tip } };
+const PocketCase = struct { depth: f64, want: enum { made, below_feature_size, edge_too_short, sliver_tip } };
 const POCKET_CASES = [_]PocketCase{
     .{ .depth = -1.5, .want = .made },
     .{ .depth = 0.5, .want = .made },
-    .{ .depth = 1.2, .want = .below_feature_size },
+    .{ .depth = 1.2, .want = .edge_too_short },
     .{ .depth = 1.4, .want = .below_feature_size },
     .{ .depth = 1.5, .want = .sliver_tip },
     .{ .depth = POCKET_FOUND_DEPTH, .want = .sliver_tip },
@@ -4911,9 +4914,10 @@ fn expectByPocket(solid: *const Body, hull: *const Body, want: @FieldType(Pocket
             try helpers.expectIdentitiesAtTolerance(solid, hull);
             try helpers.expectIdentitiesAtTolerance(hull, solid);
         },
-        .below_feature_size => {
-            try expectRefused(solid, hull, .below_feature_size);
-            try expectRefused(hull, solid, .below_feature_size);
+        .below_feature_size, .edge_too_short => {
+            const code: diagnostics.Code = if (want == .edge_too_short) .edge_too_short else .below_feature_size;
+            try expectRefused(solid, hull, code);
+            try expectRefused(hull, solid, code);
         },
         .sliver_tip => {
             for ([2][2]*const Body{ .{ solid, hull }, .{ hull, solid } }) |operands| {
