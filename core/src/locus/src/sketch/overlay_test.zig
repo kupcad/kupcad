@@ -126,6 +126,57 @@ const CLUSTER_CROSS_DX: f64 = 2;
 const CLUSTER_LINE: f64 = 1;
 const CLUSTER_RISES = [_]f64{ 0.024754878398197, 0.015, 0.02, 0.028, 0.035, 0.05 };
 const CLUSTER_SHIFTS = [_]Vec2{ .{ 0, 0 }, .{ 3e5, -3e5 } };
+/// Find dz (the overlay fuzz target on 9015ab26): its arrangement as drawn, three inputs;
+/// at (2.5, 3) a line of the second input tangent to its circle about (3.875, 4.375) and
+/// across the third input's circle about (3.875, 1.625), with a line of the third.
+const DZ_INPUTS = [_][]const overlay.InputEdge{
+    &.{
+        .{ .a = .{ 0.25, 0.5 }, .b = .{ -0.25, 0.5 }, .arc = .{ .c = .{ 5e-324, 0.5 }, .r = 0.25, .ccw = true } },
+        .{ .a = .{ -0.25, 0.5 }, .b = .{ 0.25, 0.5 }, .arc = .{ .c = .{ 5e-324, 0.5 }, .r = 0.25, .ccw = true } },
+        .{ .a = .{ 4.0, 0.25 }, .b = .{ 3.5, 0.25000000000000006 }, .arc = .{ .c = .{ 3.75, 0.25 }, .r = 0.25, .ccw = false } },
+        .{ .a = .{ 3.5, 0.25000000000000006 }, .b = .{ 4.0, 0.25 }, .arc = .{ .c = .{ 3.75, 0.25 }, .r = 0.25, .ccw = false } },
+    },
+    &.{
+        .{ .a = .{ 5.25, 5.75 }, .b = .{ 3.75, 5.75 }, .arc = .{ .c = .{ 4.5, 5.0 }, .r = 1.0606601717798212, .ccw = false } },
+        .{ .a = .{ 3.75, 5.75 }, .b = .{ 3.0, 1.0 }, .arc = .{ .c = .{ 1.0, 3.75 }, .r = 3.400367627183861, .ccw = true } },
+        .{ .a = .{ 3.0, 1.0 }, .b = .{ 3.25, 1.0 }, .arc = .{ .c = .{ 3.125, 1.0625 }, .r = 0.13975424859373686, .ccw = false } },
+        .{ .a = .{ 3.25, 1.0 }, .b = .{ 3.25, 2.25 }, .arc = .{ .c = .{ 3.875, 1.625 }, .r = 0.8838834764831844, .ccw = false } },
+        .{ .a = .{ 3.25, 2.25 }, .b = .{ 0.5, 5.0 } },
+        .{ .a = .{ 0.5, 5.0 }, .b = .{ 0.7500000000000001, 2.0 } },
+        .{ .a = .{ 0.7500000000000001, 2.0 }, .b = .{ 5.25, 3.0 } },
+        .{ .a = .{ 5.25, 3.0 }, .b = .{ 5.25, 5.75 }, .arc = .{ .c = .{ 3.875, 4.375 }, .r = 1.9445436482630056, .ccw = false } },
+        .{ .a = .{ 3.2500000000000004, 5.0 }, .b = .{ 3.75, 5.5 } },
+        .{ .a = .{ 3.75, 5.5 }, .b = .{ 1.5, 3.25 } },
+        .{ .a = .{ 1.5, 3.25 }, .b = .{ 0.75, 1.0 }, .arc = .{ .c = .{ 1.6875, 1.9375 }, .r = 1.3258252147247767, .ccw = false } },
+        .{ .a = .{ 0.75, 1.0 }, .b = .{ 0.5, 5.75 } },
+        .{ .a = .{ 0.5, 5.75 }, .b = .{ 4.5, 4.0 }, .arc = .{ .c = .{ 2.9375, 5.875 }, .r = 2.4407030237208294, .ccw = true } },
+        .{ .a = .{ 4.5, 4.0 }, .b = .{ 0.0, 0.25 }, .arc = .{ .c = .{ 3.1875, 1.0 }, .r = 3.274546724357434, .ccw = false } },
+        .{ .a = .{ 0.0, 0.25 }, .b = .{ 0.0, 3.75 }, .arc = .{ .c = .{ -1.75, 2.0 }, .r = 2.4748737341529163, .ccw = false } },
+        .{ .a = .{ 0.0, 3.75 }, .b = .{ 3.2500000000000004, 5.0 } },
+    },
+    &.{
+        .{ .a = .{ 1.5, 1.0 }, .b = .{ 0.0, 0.25 }, .arc = .{ .c = .{ 0.9375, 0.25 }, .r = 0.9375, .ccw = false } },
+        .{ .a = .{ 0.0, 0.25 }, .b = .{ 5e-324, 5.25 } },
+        .{ .a = .{ 5e-324, 5.25 }, .b = .{ 2.5, 5.5 }, .arc = .{ .c = .{ 1.375, 4.125 }, .r = 1.776583800443987, .ccw = true } },
+        .{ .a = .{ 2.5, 5.5 }, .b = .{ 2.5, 0.25 } },
+        .{ .a = .{ 2.5, 0.25 }, .b = .{ 5.5, 4.75 } },
+        .{ .a = .{ 5.5, 4.75 }, .b = .{ 5.75, 2.75 } },
+        .{ .a = .{ 5.75, 2.75 }, .b = .{ 6.000000000000001, 1.0 }, .arc = .{ .c = .{ 5.4375, 1.8124999999999998 }, .r = 0.9882117688026187, .ccw = true } },
+        .{ .a = .{ 6.000000000000001, 1.0 }, .b = .{ 1.5, 1.0 } },
+        .{ .a = .{ 1.5, 1.0 }, .b = .{ 5.75, 1.0 } },
+        .{ .a = .{ 5.75, 1.0 }, .b = .{ 5.75, 3.25 } },
+        .{ .a = .{ 5.75, 3.25 }, .b = .{ 2.5000000000000004, 0.25 }, .arc = .{ .c = .{ 5.625, 0.12500000000000022 }, .r = 3.127499000799201, .ccw = true } },
+        .{ .a = .{ 2.5000000000000004, 0.25 }, .b = .{ 5.25, 0.25 }, .arc = .{ .c = .{ 3.875, 1.6249999999999998 }, .r = 1.9445436482630052, .ccw = false } },
+        .{ .a = .{ 5.25, 0.25 }, .b = .{ 3.25, 5.75 }, .arc = .{ .c = .{ 1.5, 2.0 }, .r = 4.138236339311712, .ccw = true } },
+        .{ .a = .{ 3.25, 5.75 }, .b = .{ 0.25, 4.75 }, .arc = .{ .c = .{ 2.0, 4.5 }, .r = 1.7677669529663689, .ccw = false } },
+        .{ .a = .{ 0.25, 4.75 }, .b = .{ 2.25, 0.25 }, .arc = .{ .c = .{ 0.125, 2.0 }, .r = 2.752839443193155, .ccw = false } },
+        .{ .a = .{ 2.25, 0.25 }, .b = .{ 1.5, 1.0 }, .arc = .{ .c = .{ 2.25, 1.0 }, .r = 0.75, .ccw = true } },
+    },
+};
+/// The moves it is taken through: the find's turn (the crossing on the circle's ray
+/// exactly), in each quarter turn, a hair off it, and its shifts.
+const DZ_TURNS = [_]f64{ 0.7853981633974483, 0.7853981633974483 + 1e-12, 0.7853981633974483 - 1e-9, 0 };
+const DZ_SHIFTS = [_]Vec2{ .{ 0, 0 }, .{ 1e5, -2e5 }, .{ 3e5, -3e5 } };
 
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
@@ -1658,4 +1709,62 @@ test "overlay: the tangent cluster crossed nearer and farther from the tangency 
             if (first) |f| try testing.expectEqual(f, counts) else first = counts;
         };
     };
+}
+
+test "overlay: a circle cut twice on one ray from its centre is cut once there, its piece between the cuts their chord (find dz)" {
+    // Find dz: at (2.5, 3) a line tangent to one circle crosses another, and a line of
+    // that circle's input crosses there too. Turned π/4 and shifted (1e5, −2e5), the
+    // rounding made the tangent line cut its circle twice, 1.46e-5 apart, both cuts the
+    // zone of the second circle and on the ray from its centre through the crossing
+    // exactly; so the second circle was cut at both. Its piece between them, as an arc
+    // with ends on one ray, read as a whole turn (`arcSpan`), was cut again at every
+    // vertex of the circle, and the faces inside it took in the disc: the third input's
+    // windings weighed 16.04 against its area's 4.17. The piece is its chord
+    // (`Overlay.piece`, `oneRay`). In each quarter turn, a hair off the ray, mirrored and
+    // shifted, the arrangement is planar and its windings weigh the inputs' areas
+    for (DZ_TURNS) |base| for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| for (DZ_SHIFTS) |shift| {
+        const angle = base + @as(f64, @floatFromInt(quarter)) * PI / 2.0;
+        errdefer std.debug.print("turned {d}, mirrored {}, shifted ({d}, {d})\n", .{ angle, mirrored, shift[0], shift[1] });
+        const turn: Vec2 = .{ @cos(angle), @sin(angle) };
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        var areas: [DZ_INPUTS.len]f64 = @splat(0);
+        var lengths: [DZ_INPUTS.len]f64 = @splat(0);
+        for (DZ_INPUTS, &areas, &lengths) |edges, *area, *length| {
+            _ = try o.addInput();
+            var from: ?Vec2 = null;
+            for (edges) |e| {
+                const m = movedEdge(if (mirrored) mirroredEdge(e) else e, turn, shift);
+                try o.addEdge(m);
+                const f = from orelse m.a;
+                from = f;
+                area.* += greenTerm(m, f) / 2;
+                length.* += if (m.arc) |arc| arc.r * overlay.arcSweep(m.a, m.b, arc) else vec.distance2(m.a, m.b);
+            }
+        }
+        try o.run();
+        try expectPlanar(&o);
+        for (areas, lengths, 0..) |own, length, k| {
+            var weighed: f64 = 0;
+            for (o.faces.items, 0..) |f, fi| {
+                var area = o.cycles.items[f.outer].area;
+                for (o.holesOf(@intCast(fi))) |h| area += o.cycles.items[h].area;
+                weighed += @as(f64, @floatFromInt(o.windingOf(@intCast(fi), @intCast(k)))) * area;
+            }
+            errdefer std.debug.print("input {d}: its area {d}, the faces' windings weigh {d}\n", .{ k, own, weighed });
+            try testing.expectApproxEqAbs(own, weighed, 2 * tol.zone * length + 1e-9 * @max(@abs(own), 1));
+        }
+    };
+}
+
+/// Twice the signed area edge `e` sweeps about `from` (Green's theorem on the edge as
+/// given: its chord's triangle and, for an arc, its segment).
+fn greenTerm(e: overlay.InputEdge, from: Vec2) f64 {
+    var twice = overlay.chordTerm(e.a, e.b, from);
+    if (e.arc) |arc| {
+        const theta = overlay.arcSweep(e.a, e.b, arc);
+        const segment = arc.r * arc.r * (theta - @sin(theta));
+        twice += if (arc.ccw) segment else -segment;
+    }
+    return twice;
 }

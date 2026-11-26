@@ -694,7 +694,13 @@ pub const Overlay = struct {
         // plane): an arc piece within the zone of its chord is still an arc of its circle,
         // and one edge with a line between its ends only where there is such a line
         // (`mergeLenses`)
-        const arc: ?Arc = if (g.arc) |given_arc| .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw } else null;
+        // A piece of an arc between two vertices on one ray from its centre, the zone
+        // either side of the circle at most, has no turn: it is its chord. As an arc its
+        // ends on one ray read as a whole turn (`arcSpan`), and a circle cut twice where a
+        // line tangent to another circle crossed it, the two cuts on the ray through the
+        // crossing exactly once moved, was cut again at every vertex of the circle, its
+        // faces taking in the disc (the overlay's moved arrangement on 9015ab26, dz)
+        const arc: ?Arc = if (g.arc) |given_arc| (if (a != b and oneRay(self.point(a), self.point(b), given_arc.c)) null else .{ .c = given_arc.c, .r = given_arc.r, .ccw = if (forward) given_arc.ccw else !given_arc.ccw }) else null;
         const key = EdgeKey{ .a = a, .b = b, .arc = if (arc) |piece_arc| arcKey(piece_arc) else 0 };
         try merged.ensureUnusedCapacity(self.allocator, 1);
         const entry = merged.getOrPutAssumeCapacity(key);
@@ -1919,6 +1925,11 @@ fn arcStretchApart(a: Vec2, b: Vec2, on: Arc, other: Arc) f64 {
         if (onArcStrictly(a, b, on, q)) apart = @max(apart, @abs(vec.distance2(q, other.c) - other.r));
     }
     return apart;
+}
+
+/// Whether `a` and `b`, two points, lie on one ray from `c`, exactly (`orient2d`).
+fn oneRay(a: Vec2, b: Vec2, c: Vec2) bool {
+    return predicates.orient2d(c, a, b) == 0 and vec.dot2(vec.sub2(a, c), vec.sub2(b, c)) > 0;
 }
 
 /// The size of a point's larger coordinate: what its distances are rounded at.

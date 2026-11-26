@@ -2614,6 +2614,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // corner edge, a run joined, took a line by the records' order, which the mirror
         // changed: its area 4% off mirrored (simplify.hold: the line nearest the faces)
         "solids 1 6 1 1 3 2 1 2 0 4 2 1 0 4 4 4 0 4 3 4 3 2 1 0 8 14 3 2 0 2 4 3 4 0 2 3 0 0 0 2 -1 11 11 10 1 3 3 1 5 3 0 4 2 2 3 0 2 4 0 1 2 6 5 9 16 1 3 3 1 5 1 2 4 4 2 4 0 0 4 0 2 1 1 9 6 14 2 0 3 0",
+        // The overlay sessions on 9015ab26 (locus_overlay, dz): moved whole, a line tangent
+        // to a circle cut it twice on another circle's ray exactly; that circle's piece
+        // between the cuts read as a whole turn (overlay.piece: such a piece is its chord)
+        "overlay 3 2 0 0 2 1 0 0 1 0 15 1 4 0 0 0 2 1 8 21 23 2 15 23 8 12 4 6 13 4 6 13 9 4 2 20 5 3 8 1 21 12 5 1 3 0 1 0 1 1 2 0 1 0 0 2 3 0 4 3 0 3 0 0 1 3 0 2 8 13 20 1 15 22 7 6 13 3 3 4 8 2 23 5 18 16 2 0 1 8 0 15 7 2 3 1 4 1 1 1 2 0 3 3 1 1 2 1 1 2 0 1 3 0 3 2 0 2 1 8 6 4 8 0 1 8 0 21 1 10 22 3 10 1 3 22 19 2 23 11 2 24 4 1 1 2 0 2 1 0 1 0 1 4 0 0 4 2 1 4 1 0 1 1 1 4 3 0 1 8 6 4 2 23 4 7 23 13 7 10 1 1 21 1 7 13 23 5 1 19 5 9 1 5 3 1 1 3 1 0 1 3 1 1 3 0 1 3 1 1 2 0 1 1 0 1 0 1 2 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
