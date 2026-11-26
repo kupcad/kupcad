@@ -24,6 +24,9 @@ const test_bodies = @import("../construct/test_bodies.zig");
 const mass = @import("../measure/mass.zig");
 const hull = @import("../construct/hull.zig");
 const section = @import("section.zig");
+const helpers = @import("pipeline_test.zig");
+const degeneracy = @import("degeneracy_test.zig");
+const sketch_query = @import("../sketch/query.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 
@@ -55,6 +58,29 @@ const WEDGE_SLOPES = [_]f64{ 10, 20, 29 };
 const WEDGE_RISES = [_]f64{ 0.4, 0.6, 0.9, -0.4, -0.6, -0.9 };
 /// The height a wedge is sliced at.
 const WEDGE_HEIGHT: f64 = 0.5;
+/// Find ed (the solids oracle's slice on 42feb869, locus_solids), as the fuzzer drew it:
+/// a plate 3 intersection tolerances thick about z = 4.5, less a hull whose top edge lies
+/// in the plate's mid-plane across it, so the difference has a groove in the plate's
+/// bottom up to a ridge at 4.5; sliced at 4.4999922, 7.8e-6 under the ridge, and a point
+/// of the plate beside the groove.
+const ED_PLATE = [2]Vec3{ .{ 1, 2, 4 - 3e-5 }, .{ 3, 3, 4 + 3e-5 } };
+const ED_PLATE_MOVE: Vec3 = .{ 0, 0, 0.5 };
+const ED_HULL = [_]Vec3{ .{ 1, 1, 1 }, .{ 3, 1, 0 }, .{ 1, 3, 3 }, .{ 2, 3, 4 }, .{ 4, 0, 0 }, .{ 1, 1, 4 } };
+const ED_HULL_MOVE: Vec3 = .{ 0, 0.5, 0.5 };
+const ED_HULL_NUDGE: Vec3 = .{ -5e-6, 0, 0 };
+const ED_HEIGHT: f64 = 4.499992199999999;
+const ED_POINT: Vec2 = .{ 1.42, 2.1299999999999994 };
+/// The family about ed: a plate 6e-5 thick about z = 0, 2 by 1, less a prism whose ridge
+/// lies in the plate's mid-plane, skewed across it, its walls falling at 45° and at 51°
+/// (`RIDGE_FEET`, the feet's offsets in x a unit down), so that sliced under the ridge
+/// within the zone the walls' traces lie at different distances from it; the depths under
+/// the ridge it is sliced at (the find's 7.8e-6 among them) and a height over it; and the
+/// moves in the plane (quarter turns, far out), each mirrored too.
+const RIDGE_PLATE = [2]Vec3{ .{ 0, 0, -3e-5 }, .{ 2, 1, 3e-5 } };
+const RIDGE_ENDS = [2]Vec3{ .{ 0.5, -1, 0 }, .{ 1, 2, 0 } };
+const RIDGE_FEET = [2]f64{ -1, 0.8 };
+const RIDGE_HEIGHTS = [_]f64{ -2e-6, -5e-6, -7.8e-6, -9.5e-6, 5e-6 };
+const RIDGE_SHIFTS = [_]Vec3{ .{ 0, 0, 0 }, .{ 3e5, -2e5, 0 } };
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
 fn sliced(body: *const Body, height: f64) !Body {
@@ -497,4 +523,56 @@ fn clippedArea(ring: []const Vec2, y_max: f64) f64 {
         twice += p[0] * q[1] - q[0] * p[1];
     }
     return @abs(twice) / 2;
+}
+
+test "slice: a groove's walls falling from a ridge on the plane within the zone give nothing, whichever is nearer the ridge (find ed)" {
+    // Find ed: the plate less the hull keeps a groove in its bottom up to the hull's ridge
+    // in the plate's mid-plane, and the section 7.8e-6 under the ridge has the ridge on
+    // the plane: the solid just above it is the whole plate. Each wall falling from the
+    // ridge traced a piece between the ridge's ends, which was the ridge when its middle
+    // lay within the zone of it in 3D: 1.0e-5 from one wall's, 1.05e-5 from the other's,
+    // so one wall bounded the section and its other side was lost, the plate's point beside
+    // the groove inside the solid and outside the section. A piece between the two ends of
+    // the face's edge on the plane is that edge, by record (`Section.ownEdgeInPlane`)
+    const t = tolerance.Tolerance.fromZone(1e-5);
+    var drawn = try helpers.boxAt(t, ED_PLATE[0], ED_PLATE[1]);
+    defer drawn.deinit();
+    var plate = try helpers.moved(&drawn, ED_PLATE_MOVE);
+    defer plate.deinit();
+    var tool = try degeneracy.fuzzHullPlaced(&ED_HULL, vec.Z3, 0, null, ED_HULL_MOVE, ED_HULL_NUDGE);
+    defer tool.deinit();
+    var grooved = try helpers.sound(&plate, &tool, .difference);
+    defer grooved.deinit();
+    var sheet = try sliced(&grooved, ED_HEIGHT);
+    defer sheet.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expect(try sketch_query.contains(&sheet, ED_POINT, 0, &diag));
+    try testing.expectEqual(@as(usize, 1), sheet.counts().faces);
+    try testing.expectApproxEqRel(@as(f64, 2), try areaOf(&sheet), EXACT);
+}
+
+test "slice: the family about ed, a ridge's walls at two slopes, sliced under it within the zone and over it, turned, mirrored and moved far" {
+    var plate = try helpers.box(RIDGE_PLATE[0], RIDGE_PLATE[1]);
+    defer plate.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var points: [6]Vec3 = undefined;
+    for (RIDGE_ENDS, 0..) |end, i| {
+        points[3 * i] = end;
+        for (RIDGE_FEET, 0..) |foot, k| points[3 * i + 1 + k] = vec.add(end, .{ foot, 0, -1 });
+    }
+    var prism = try hull.hull(testing.allocator, tol, &points, &diag);
+    defer prism.deinit();
+    var grooved = try helpers.sound(&plate, &prism, .difference);
+    defer grooved.deinit();
+    for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for (RIDGE_SHIFTS) |shift| for (RIDGE_HEIGHTS) |height| {
+        errdefer std.debug.print("quarter turns {d}, mirrored {}, shifted {any}, sliced at {e}\n", .{ quarter, mirrored, shift, height });
+        var place = Affine.translate(shift).compose(&Affine.rotate(vec.Z3, @as(f64, @floatFromInt(quarter)) * PI / 2.0));
+        if (mirrored) place = place.compose(&Affine.mirror(vec.X3));
+        var moved = try turned(&grooved, place);
+        defer moved.deinit();
+        // The ridge on the plane: the solid just above it, the whole plate
+        try expectSection(&moved, height, 2, 1);
+    };
 }

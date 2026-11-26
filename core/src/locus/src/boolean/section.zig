@@ -372,25 +372,37 @@ const Section = struct {
     /// The piece of `curve` from `a` to `b`, kept when its middle is inside face `f` by the
     /// face's loops (`in_face.byLoops`): the piece runs between two of the points where
     /// the face's boundary meets the plane, so it lies in the face or out of it whole, however
-    /// near the boundary its middle is. A piece along an edge lying in the plane is that
-    /// edge, which `edgeInPlane` gives (`alongInPlane`). Not by the zone about the boundary:
+    /// near the boundary its middle is. A piece between the two ends of an edge of the face
+    /// lying in the plane is that edge, which `edgeInPlane` gives (`ownEdgeInPlane`). Not by
+    /// the zone about the boundary:
     /// a face narrower than two zones has no point beyond it, and the piece across it was
     /// dropped and the section's outline left open (a sheet with a strip 2e-5 wide,
     /// extruded: a side face that wide, and the section at 1.11 lost a face of 0.58; the
     /// 2D chain fuzzer's find cc, 2026-11-22).
     fn piece(self: *Section, f: types.FaceIndex, curve: Curve, a: Mark, b: Mark) Error!void {
         if (self.tol.samePoint(a.p, b.p) and b.t - a.t < std.math.pi) return;
+        if (try self.ownEdgeInPlane(f, a.p, b.p)) return;
         const mid = curve.eval((a.t + b.t) / 2);
-        if (try self.alongInPlane(f, mid)) return;
         if (try in_face.byLoops(self.body, f, mid, null, self.diag) != .inside) return;
         const uv = in_face.uvOf(self.body, f, mid);
         const dir = vec.cross(self.plane.n, in_face.outwardNormal(self.body, f, uv));
         try self.add(curve, a, b, dir);
     }
 
-    /// Whether `p` lies within the zone of an edge of face `f` that lies in the plane
-    /// (`cutOf`): a trace piece through it runs along that edge.
-    fn alongInPlane(self: *Section, f: types.FaceIndex, p: Vec3) Error!bool {
+    /// Whether `p` and `q`, two of the points where face `f`'s boundary meets the plane,
+    /// are the two ends of an edge of the face lying in the plane (`cutOf`): a trace piece
+    /// between them is that edge, by the face's own record, which `edgeInPlane` gives when
+    /// the face rises from it and nothing gives when it falls from it (the solid just above
+    /// the plane). Not by measuring the trace's middle against the edge: the plane within
+    /// the zone of a ridge, the two faces falling from it at about 45° each traced a piece
+    /// 7e-6 across from it and 7.8e-6 under it, in 3D 1.0e-5 from the ridge on one side and
+    /// 1.05e-5 on the other, so one face's piece was the ridge and the other's a bound of
+    /// the section, which lost the material beyond it (a plate's mid-plane on a hull's
+    /// ridge, less the hull, sliced 7.8e-6 under the ridge: the solids oracle's slice on
+    /// 42feb869, ed). OCCT's section likewise takes an edge lying on the plane as the
+    /// common block it is (`BOPAlgo_PaveFiller`'s edge–face common part of type edge),
+    /// never by a point of a curve near it.
+    fn ownEdgeInPlane(self: *Section, f: types.FaceIndex, p: Vec3, q: Vec3) Error!bool {
         const body = self.body;
         var loops = traverse.Loops.init(body, f);
         while (loops.next() catch return corrupt(self.diag)) |l| {
@@ -398,7 +410,10 @@ const Section = struct {
             while (it.next() catch return corrupt(self.diag)) |c| {
                 const e = body.coedge(c).edge;
                 if (!(try self.cutOf(e)).lies_in) continue;
-                if (in_face.edgeDistance(body, e, p) <= self.tol.zone) return true;
+                const start = body.point(body.edge(e).start);
+                const end = body.point(body.edge(e).end);
+                const same = self.tol.samePoint(p, start) and self.tol.samePoint(q, end);
+                if (same or (self.tol.samePoint(p, end) and self.tol.samePoint(q, start))) return true;
             }
         }
         return false;

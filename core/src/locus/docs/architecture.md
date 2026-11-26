@@ -831,7 +831,11 @@ outline left open at it; the audit of decisions made twice, 2026-11-22), and eac
 zone about its boundary (a piece between two boundary points is in the face or out of it
 whole, and a face narrower than two zones has no point past the zone: a strip 2e-5 wide
 extruded, the trace across its end face was dropped and the section left open, find cc,
-2026-11-22), a piece along an edge lying in the plane being that edge; the face itself is not split,
+2026-11-22), a piece between the two ends of the face's own edge lying in the plane being
+that edge by the face's record, not by its middle's distance from the edge (two walls
+falling from a ridge 7.8e-6 over the plane traced pieces 1.0e-5 and 1.05e-5 from it, one
+taken for the ridge and the other a bound, the material beyond it lost, find ed,
+2026-11-27); the face itself is not split,
 since a section needs only the pieces (M4's `trim_by_plane` splits it with the same pieces).
 Each kept piece runs along `n_plane × n_face`, the material on its left, and the pieces are
 one input of the overlay, whose faces wound once are the section, a sheet on `z = 0`. On the
