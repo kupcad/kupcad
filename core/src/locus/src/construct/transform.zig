@@ -36,6 +36,7 @@ const check = @import("../topology/check.zig");
 const overlap = @import("../query/overlap.zig");
 const sketch_overlap = @import("../sketch/overlap.zig");
 const trace = @import("../io/trace.zig");
+const cover = @import("../topology/cover.zig");
 const Body = body_mod.Body;
 const Affine = mat.Affine;
 const Diagnostics = diagnostics.Diagnostics;
@@ -196,6 +197,10 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, input: *const 
     // A mirror: outward normals flip with the handedness, so the senses do, and the loops
     // run the other way to keep the face on the left
     if (affine.determinant() < 0) try mirrorTopology(&out);
+    // Every gap re-measured where the map left the edges and vertices, with D27's band at
+    // the size they are at now: set at the old size, a band does not cover the rounding
+    // far out (`cover.coverBody`)
+    try cover.coverBody(&out, diag);
     try trace.phase(allocator, &options, &out, "transform", "mapped");
 
     var report = check.run(allocator, &out, if (out.kind == .sheet) .global else .geometric) catch return error.OutOfMemory;

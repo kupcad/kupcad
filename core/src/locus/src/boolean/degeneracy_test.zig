@@ -388,7 +388,7 @@ pub const SLOPE_LIFTS = [_]f64{ 1e-5, 2e-5, 3e-5, 4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 
 /// hull's face's plane (1.98e-4 under it): from the next on the edge, its ends on the face
 /// by their reach, lies past it, and the union is refused `below_feature_size` either way
 /// round (`pave.runOnPlane`; Leo, 2026-11-24).
-const SLOPE_LIFT_WITHIN: f64 = 3e-5;
+pub const SLOPE_LIFT_WITHIN: f64 = 3e-5;
 /// How the three operands of those tests are turned together: in place and about three
 /// skew axes (`SLIVER_TURNS` but its far shift, where the box's side and the plate's, 2e-4
 /// apart in place, are the intersection tolerance to rounding and their union is refused

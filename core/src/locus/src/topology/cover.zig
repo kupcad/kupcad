@@ -92,3 +92,25 @@ pub fn coverEdge(body: *Body, e: types.EdgeIndex, diag: *Diagnostics) Error!void
     edge.gap = gap;
     for ([_]types.VertexIndex{ edge.start, edge.end }) |v| body.vertex(v).gap = @max(body.vertex(v).gap, gap);
 }
+
+/// Every live edge of `body` and its ends re-measured where they now lie: each end of an
+/// edge on a line by `coverLine`, each edge by `coverEdge`. The rule for a body whose
+/// coordinates all changed at once (`construct/transform`): a rigid move far out rounds
+/// every point, line and plane at the new size, and the gaps set with D27's band at the
+/// old size do not cover it (audit 2's item 4: a union whose edge lay within the
+/// intersection tolerance of a sloped face, 2e-4 to rounding at coordinates of 200, moved
+/// 3e5 out had it 1e-11 past). OCCT moves a shape by a `TopLoc_Location`, never rounding
+/// its geometry, and re-validates its tolerances where an edit changes geometry (ShapeFix);
+/// a map here rewrites the coordinates, so it re-measures, with the band at the size it
+/// left them. Gaps only grow; past the zone, refused (`gap_too_large`).
+pub fn coverBody(body: *Body, diag: *Diagnostics) Error!void {
+    for (body.edges.items, 0..) |edge, i| {
+        if (edge.flags.tombstone) continue;
+        const e = types.EdgeIndex.of(i);
+        if (edge.curve.kind == .line) {
+            const line = body.geometry.lines.items[edge.curve.index];
+            for ([_]types.VertexIndex{ edge.start, edge.end }) |v| try coverLine(body, v, line, .of(.vertex, @backingInt(v)), "a vertex the map left off its edge's line past the intersection tolerance by", diag);
+        }
+        try coverEdge(body, e, diag);
+    }
+}

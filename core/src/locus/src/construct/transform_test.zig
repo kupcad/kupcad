@@ -21,6 +21,13 @@ const tol = Tolerance.fromZone(1e-5);
 /// to that far off its plane, with no gap), and the factors it is scaled by.
 const STACK_LIFTS = [_]f64{ 1e-5, 1.5e-5, 1.9e-5 };
 const STACK_SCALES = [_]f64{ 2, 3, 0.5 };
+/// How far under the intersection tolerance the second box rests in the tests of a union
+/// moved far out, past D27's band at the union's size (5.7e-14) and within it where the
+/// moves take it (3.7e-9 at 3e5); the rigid moves (the solids fuzzer's far shift, alone
+/// and after turns about a skew axis, and a near one).
+const STACK_UNDER = [_]f64{ 1e-12, 1e-11, 1e-10 };
+const STACK_SHIFTS = [_]Vec3{ .{ 1e5, -2e5, 3e5 }, .{ 0.5, -1, 2 } };
+const STACK_TURNS = [_]f64{ 0, 0.3, std.math.pi / 2.0 };
 /// A tetrahedron on the unit right triangle, its apex `LOW_RISE` over (0.3, 0.3): sound
 /// (past twice the intersection tolerance), and the factors along z that bring it under the
 /// tolerance (its sides then in its base's plane) or keep it past.
@@ -222,6 +229,34 @@ test "transform: a union with a box resting within the tolerance, scaled, keeps 
             try testing.expectApproxEqRel(k * tol.zone, scaled.tol.zone, 1e-12);
             try testing.expectApproxEqRel(k * tol.xsect, scaled.tol.xsect, 1e-12);
         }
+    }
+}
+
+test "transform: a union with a box resting just under the intersection tolerance, moved far out, keeps every relation" {
+    // Audit 2's item 4: the union's gaps cover its edges' heights over the faces' planes
+    // with D27's band at its own size; moved 3e5 out, every point, line and plane rounds at
+    // the size there, 1e-11 and more, and an edge resting 1e-12 under the tolerance with no
+    // gap lay past it (`edge_off_surface`). The map re-measures every gap where it left
+    // the body (`cover.coverBody`), with the band at that size; its corners, on the first
+    // box's edges as near, lay past their lines (`vertex_off_curve`)
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var a = try boxAt(.{ 0, 0, 0 }, .{ 2, 2, 2 }, &diag);
+    defer a.deinit();
+    for (STACK_UNDER) |under| {
+        const lift = tol.xsect - under;
+        var b = try boxAt(.{ 1, 0, 2 + lift }, .{ 2, 2, 2 - lift }, &diag);
+        defer b.deinit();
+        var joined = try pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag, null);
+        defer joined.deinit();
+        for (STACK_SHIFTS) |shift| for (STACK_TURNS) |angle| {
+            errdefer std.debug.print("under {e}, turned {d}, shifted {any}: {any}\n", .{ under, angle, shift, diag.first() });
+            const move = Affine.translate(shift).compose(&Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, angle));
+            var moved = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
+            defer moved.deinit();
+            try expectValid(&moved);
+            try overlap.check(testing.allocator, &moved, .{}, &diag);
+        };
     }
 }
 

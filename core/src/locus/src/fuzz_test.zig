@@ -1787,6 +1787,7 @@ const solid_boolean = struct {
     const step_corpus = @import("boolean/step_corpus.zig");
 };
 const oracle = @import("boolean/oracle_test.zig");
+const degeneracy = @import("boolean/degeneracy_test.zig");
 const solid_hull = @import("construct/hull.zig");
 
 test "fuzz: booleans of solids take any generated chain" {
@@ -1813,6 +1814,52 @@ test "Fuzz solids: generated chains of booleans of solids run clean on a plain t
     }
     try testing.expect(checked >= PLAIN_RUN_SOLIDS / 2);
     try tally.expectSpread("the solid chains");
+}
+
+test "Fuzz solids: a union along a sloped face, its edge within the intersection tolerance of the face, stays sound moved by the chains' turns and shifts" {
+    // Audit 2's item 4: a result's gaps were set at its own size, and the checker after a
+    // move far out measures them with the rounding there. The union of find bx's operands
+    // where it is made (the plate's edge within the tolerance of the hull's sloped face),
+    // in place and turned, moved by every turn and shift a chain is moved whole by
+    for (degeneracy.SLOPE_TURNS) |turn| for (degeneracy.SLOPE_LIFTS) |lift| {
+        if (lift > degeneracy.SLOPE_LIFT_WITHIN) continue;
+        var operands = try degeneracy.slopeOperands(lift, turn);
+        defer for (&operands) |*body| body.deinit();
+        var all = try solid_boolean.tests.sound(&operands[0], &operands[1], .@"union");
+        defer all.deinit();
+        errdefer std.debug.print("the hull nudged {e} in z, turned {d} about {any}\n", .{ lift, turn.angle, turn.axis });
+        try expectMovedEverywhere(&all);
+    };
+}
+
+/// `result` moved by every rigid move a chain is moved whole by (`TURNS` about each of
+/// `TURN_AXES`, then each of `MOVE_SHIFTS`), each made (`transform` checks what it makes)
+/// or refused cleanly, and moved by each shift alone a sound solid (`expectSolid`: the
+/// overlap rules too, which take most of the time).
+fn expectMovedEverywhere(result: *const Body) !void {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (MOVE_SHIFTS) |shift| {
+        errdefer std.debug.print("moved: shifted ({d}, {d}, {d})\n", .{ shift[0], shift[1], shift[2] });
+        var moved = (try resultMoved(result, &Affine.translate(shift), &diag)) orelse continue;
+        defer moved.deinit();
+        try expectSolid(&moved, &diag);
+        for (TURN_AXES) |axis| for (TURNS) |angle| {
+            errdefer std.debug.print("moved: turned {d} about ({d}, {d}, {d}) first\n", .{ angle, axis[0], axis[1], axis[2] });
+            var turned = (try resultMoved(result, &Affine.translate(shift).compose(&Affine.rotate(vec.normalized(axis).?, angle)), &diag)) orelse continue;
+            turned.deinit();
+        };
+    }
+}
+
+/// A made body under a rigid move, which `transform` checks: null for a clean refusal;
+/// one the checker refuses (`NotValid`) is a find.
+fn resultMoved(result: *const Body, move: *const Affine, diag: *Diagnostics) !?Body {
+    return transform.transform(testing.allocator, result, move, .{}, diag) catch |err| {
+        if (err == error.NotValid) std.debug.print("the moved result: {f}\n", .{diag.first().?});
+        try oracle.clean(err);
+        return null;
+    };
 }
 
 test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and the nightly's" {
