@@ -64,17 +64,38 @@ pub fn clean(err: anyerror) anyerror!void {
 
 /// A solid passes every rule of the checker and the overlap rules.
 pub fn expectSolid(body: *const Body, diag: *Diagnostics) !void {
+    try expectChecked(body);
+    overlap.check(testing.allocator, body, .{}, diag) catch |err| return overlapFailed(err, diag);
+}
+
+/// A made solid under a rigid move (`transform` made it): it passes every rule of the
+/// checker, and the overlap rules or their refusal by design. A distance at the tolerance
+/// moves by a rounding, at most onto the refused side (D27: a floor the tolerance thin
+/// moved reads within it, its wall's edge touching its underside, `pinched`), as a step of
+/// the chain moved whole may be refused (`expectMovedWhole`); the rules failing
+/// (`NotValid`) is a find.
+pub fn expectMovedSolid(body: *const Body, diag: *Diagnostics) !void {
+    try expectChecked(body);
+    overlap.check(testing.allocator, body, .{}, diag) catch |err| {
+        clean(err) catch |find| return overlapFailed(find, diag);
+    };
+}
+
+/// A solid passes every rule of the checker.
+fn expectChecked(body: *const Body) !void {
     var report = try check.run(testing.allocator, body, .global);
     defer report.deinit(testing.allocator);
     if (report.first()) |f| {
         std.debug.print("the checker: {f}\n", .{f});
         return error.ResultNotValid;
     }
-    overlap.check(testing.allocator, body, .{}, diag) catch |err| {
-        // The rule that failed, before the warnings the result carries
-        if (diag.first()) |f| std.debug.print("the overlap rules: {f}\n", .{f});
-        return err;
-    };
+}
+
+/// The overlap rules' failure `err`, the rule that failed printed before the warnings the
+/// result carries.
+fn overlapFailed(err: anyerror, diag: *Diagnostics) anyerror {
+    if (diag.first()) |f| std.debug.print("the overlap rules: {f}\n", .{f});
+    return err;
 }
 
 pub fn solidVolume(body: *const Body, diag: *Diagnostics) !f64 {

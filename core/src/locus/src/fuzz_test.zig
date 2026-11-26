@@ -2574,6 +2574,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // faces, the face was not cut along it, and the difference's pocket met it along a
         // line, made (pave.ownBlock: a face's own pave block is on its boundary)
         "solids 0 0 2 1 4 1 4 1 0 2 0 0 5 3 4 6 3 1 1 5 3 2 3 4 1 2 1 4 3 1 3 3 1 0 0 0 2 6 0 1 0 1 1 2 9 2 1 3 1 6 4 1 4 4 2 0 3 2 4 2 4 3 4 3 0 2 0 0 3 3 11 7 -2 6 0 2 1 6 0 0 2 3 4 2 4 0 2 3 3 3 0 1 2 4 4 2 1 3 0 0 10 9 2",
+        // The oracle extensions' first sessions on 05c27278 (locus_solids, do): box − box,
+        // the floor the tolerance and 64 ulps thin; moved to 3e5 the floor reads within the
+        // tolerance and the wall's edge touches its underside, refused `pinched` by design
+        // (oracle.expectMovedSolid: a moved result's refusal by the overlap rules is clean)
+        "solids 0 0 4 1 2 1 4 1 3 11 0 12 4 1 1 0 3 4 0 4 0 3 1 1 8 7 2 4 1 3 8 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
@@ -2706,8 +2711,8 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
     }
     // Every result the chain made moved alone by the move it was moved whole by: made
     // (`transform` checks what it makes, its geometry where the move left it) or refused
-    // cleanly; the chain's own result through the overlap rules too (`expectSolid`; each
-    // result's would take a quarter of the replays' time)
+    // cleanly; the chain's own result through the overlap rules too, or refused by them by
+    // design (`expectMovedSolid`; each result's would take a quarter of the replays' time)
     const move = try expectMovedWhole(source, &log, &first, steps.items, &current, &diag);
     for (made_results.items, 0..) |*r, i| {
         errdefer std.debug.print("the chain's result {d} of {d}, moved\n", .{ i + 1, made_results.items.len });
@@ -2718,7 +2723,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         var held = moved;
         defer held.deinit();
         errdefer std.debug.print("the chain's result, moved\n", .{});
-        try expectSolid(&held, &diag);
+        try oracle.expectMovedSolid(&held, &diag);
     }
     try oracle.expectMirrored(&first, steps.items, &current, SOLID_REACH, &diag);
     return .checked;
