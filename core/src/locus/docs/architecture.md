@@ -978,19 +978,21 @@ importing only those before it, which the layering test holds):**
   intersection's apex 5.8e-6 apart as the hull, drawn turned a quarter or mirrored,
   numbered its edges, the audit of the ties, finding 6, 2026-11-25);
   then each face's merged vertices (its edges' paves and what the face stages found), and
-  face–face from those alone: the vertices both faces lie on, sorted along their planes'
-  line (pointed by the line alone, its largest component positive, and two at one position
-  to rounding by their positions across it, along the line crossed with the faces' outward
-  normals summed, `planar_faces.Along`, so neither the operands' order nor a move of the
-  solids whole changes which gaps are pieces, as the overlap rules' `planar_faces.meet`
-  sorts; two at one position across it too, or on faces facing opposite ways, refused
-  `at_tolerance`; a union's faces differed with the operands swapped, the sessions on
-  3681979b, be, and by the points' coordinates, which a turn changes, moved whole, the
-  audit of the ties, 2026-11-22; at one position meaning their separation lies across the
-  line within the angular tolerance, the solids' own angle, not to rounding, a band at the
-  coordinates' size that a move far out widens ten thousand times: a hull's corner and a
-  merged vertex 7e-10 along the line and 2.7e-5 across were two places in place and one
-  moved to 3e5, cx), each gap whose middle is in both (the two faces asked before either
+  face–face from those alone: the vertices both faces lie on, by their places along their
+  planes' line (pointed by the line alone, its largest component positive, so neither the
+  operands' order nor a move of the solids whole changes the places, the sessions on
+  3681979b, be, and the audit of the ties, 2026-11-22; one place meaning their separation
+  lies across the line within the angular tolerance, the solids' own angle, not to
+  rounding, a band at the coordinates' size that a move far out widens ten thousand times:
+  a hull's corner and a merged vertex 7e-10 along the line and 2.7e-5 across were two
+  places in place and one moved to 3e5, cx; a pair at that angle to rounding, or two at
+  one position on faces facing opposite ways, refused `at_tolerance`), a place's points
+  not ordered across (`planar_faces.Along.places`: each pair of a place, and each of its
+  points with each of the next place's, is a piece asked; ordered across by the faces'
+  outward normals summed, which a mirror turns over while the line need not, a box's
+  corner was joined to the farther of two vertices at its place in place, a sliver
+  refused, and to the nearer mirrored, made, find dv, 2026-11-27; Leo: order-free, the
+  slivers such places span refused whichever way the solids lie), each such piece whose middle is in both (the two faces asked before either
   refuses, outside one settling it whatever the other, `pave.placeInBoth`: a middle outside
   a hull's face and the tolerance to rounding from a wall's edge was no segment the hull
   first and `at_tolerance` the wall first, find dl, 2026-11-22) a section segment of each face it is inside of

@@ -2632,6 +2632,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // `at_tolerance` in place, made mirrored, where the triangulation's samples differ
         // (classify.sameDomain: such a sample says nothing, planar_faces.placed)
         "solids 3 1 5 2 0 4 1 2 4 3 2 4 2 1 11 -2 16 3 3 1 8 1 4 4 2 3 3 1 0 3 2 0 2 3 4 4 4 2 0 4 1 3 0 4 3 0 1 6 0 0 2 0 12 7 1 10 0 3 3 1 4 1 0 4 0 0 4 1 0 4 2 9 7 -2 10 0",
+        // The sessions on 9015ab26 (locus, dv): (wall ∪ hull) ∪ box, a box corner and two
+        // points at one place along a hull face's line with the bottom, ordered across by
+        // the normals: in place joined into a sliver triangle, refused, mirrored not, made
+        // (planar_faces.Along.places: a place's points not ordered, every pair asked)
+        "solids 3 1 5 2 0 2 1 1 3 0 0 3 1 7 9 -1 8 2 1 1 5 0 1 1 4 3 4 1 3 4 4 0 0 0 4 1 3 3 5 5 -1 12 0 1 0 2 4 1 4 1 3 1 3 4 4 -2 16 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

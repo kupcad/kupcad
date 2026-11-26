@@ -1911,11 +1911,12 @@ const Filler = struct {
 
     /// Every pair of faces of `a` and `b`: lying in one plane, recorded, and each one's
     /// pave blocks inside the other a section segment of it; else the merged vertices both
-    /// lie on, sorted along their planes' line, each gap whose middle is in both faces a
-    /// section segment of each face it is inside of (`lies`: not a run of the face's own
-    /// boundary, and no section at all where it is a chord beside either face, across a
-    /// notch of its boundary), and so is each face's own pave block between two of them
-    /// that no gap is (`blocksOnBoth`). The line is `meetingLine`'s: planes at an angle
+    /// lie on, by their places along their planes' line (`planar_faces.Along.places`), each
+    /// piece between two of one place or of two places next to each other whose middle is
+    /// in both faces a section segment of each face it is inside of (`lies`: not a run of
+    /// the face's own boundary, and no section at all where it is a chord beside either
+    /// face, across a notch of its boundary), and so is each face's own pave block between
+    /// two of them that no such piece is (`blocksOnBoth`). The line is `meetingLine`'s: planes at an angle
     /// meet along their own line; planes parallel within the angular tolerance
     /// have none (their normals' cross product is noise), so they meet along the merged
     /// vertices' line, and merged vertices off one line put them in one plane where they
@@ -1947,6 +1948,10 @@ const Filler = struct {
         // The pieces of a pair decided so far, each its two vertices, the lesser first
         var asked: std.ArrayList([2]u32) = .empty;
         defer asked.deinit(self.allocator);
+        // Where each place along a pair's line starts among its merged vertices
+        // (`Along.places`)
+        var starts: std.ArrayList(usize) = .empty;
+        defer starts.deinit(self.allocator);
         for (pairs.items) |pair| {
             try self.options.checkCancel();
             const fa = self.faces[0][pair[0]];
@@ -1984,24 +1989,40 @@ const Filler = struct {
                     continue;
                 },
             };
-            var order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa), planar_faces.outward(self.body(1), fb), 0, p.tol);
+            const order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa), planar_faces.outward(self.body(1), fb), 0, p.tol);
             // Two whose separation lies across the line within the angle are at one place
-            // along it (`Along`)
-            order.steep = p.tol.angleSine();
-            if (order.sort(u32, both.items, p.points.items, mergedPoint)) |refusal| switch (refusal) {
-                .at => |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces at one place along the faces' line, apart across it to rounding", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect }),
-                .steep => |at| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces whose order along the faces' line hangs on the angular tolerance to rounding", .measured = at.comparison.measured, .threshold = at.comparison.limit }),
+            // along it, and a place's points are not ordered (`Along.places`)
+            try starts.resize(self.allocator, both.items.len + 1);
+            const groups = switch (order.places(u32, both.items, p.points.items, mergedPoint, p.tol.angleSine(), starts.items)) {
+                .groups => |n| n,
+                .refused => |refusal| switch (refusal) {
+                    .at => |tie| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces facing opposite ways, at one place along the faces' line to rounding", .measured = vec.distance(p.point(tie[0]), p.point(tie[1])), .threshold = p.tol.xsect }),
+                    .steep => |at| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(fb)), .label = "two merged vertices on two faces whose place along the faces' line hangs on the angular tolerance to rounding", .measured = at.comparison.measured, .threshold = at.comparison.limit }),
+                },
             };
+            // Each pair of a place's points, and each with each of the next place's: the
+            // pieces the line's order leaves to `sectionOf`, whichever way across
             asked.clearRetainingCapacity();
-            for (both.items[0 .. both.items.len - 1], both.items[1..]) |u, w| {
-                try asked.append(self.allocator, .{ @min(u, w), @max(u, w) });
-                try self.sectionOf(fa, fb, u, w);
+            for (0..groups) |g| {
+                const here = both.items[starts.items[g]..starts.items[g + 1]];
+                const next = if (g + 1 < groups) both.items[starts.items[g + 1]..starts.items[g + 2]] else &.{};
+                for (here, 0..) |u, k| {
+                    for (here[k + 1 ..]) |w| try self.ask(fa, fb, u, w, &asked);
+                    for (next) |w| try self.ask(fa, fb, u, w, &asked);
+                }
             }
             // Each face's own pave blocks between two of them, where the line's order did
             // not make them a gap (`blocksOnBoth`)
             try self.blocksOnBoth(0, fa, fb, both.items, &asked);
             try self.blocksOnBoth(1, fb, fa, both.items, &asked);
         }
+    }
+
+    /// The piece between merged vertices `u` and `w` of the line of faces `fa` and `fb`,
+    /// `asked` (each piece once) and decided (`sectionOf`).
+    fn ask(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, u: u32, w: u32, asked: *std.ArrayList([2]u32)) Error!void {
+        try asked.append(self.allocator, .{ @min(u, w), @max(u, w) });
+        try self.sectionOf(fa, fb, u, w);
     }
 
     /// The piece between merged vertices `u` and `w`, both on face `fa` of `a` and `fb` of

@@ -167,6 +167,26 @@ const HINGE_CASES = [_]struct { lift: f64, along: f64, other: f64, refused: bool
 /// is moved by `MOVES` only, out to 2e3: no tie, the measure's own rounding.
 const HINGE_PAST_ANGLE: f64 = 0.02;
 
+/// The solids of find dv (the solids sessions on 9015ab26, locus), as the fuzzer drew them
+/// at a zone of 1e-5: a wall with a gap of three intersection tolerances about x = 2, from
+/// (0, 1, 0) to (2, 3, 3), united with a hull, both moved down 0.5; then a box, moved down
+/// 1. The hull's face and the box's bottom share the box's corner and two merged vertices
+/// of the wall's, at y = 1.00002 exactly, 5.5e-5 apart across the faces' line (y).
+const DV_WALL_AT: Vec3 = .{ 2, 1, 0 };
+const DV_WALL = [2]Vec3{ .{ 0, 1, 0 }, .{ 2, 3, 3 } };
+const DV_WALL_XSECTS: f64 = 3;
+const DV_WALL_NUDGE: Vec3 = .{ 2e-5, 1.9999999957367437e-5, 0 };
+const DV_HULL = [_]Vec3{ .{ 0, 1, 1 }, .{ 4, 3, 4 }, .{ 1, 3, 4 }, .{ 4, 0, 0 }, .{ 0, 4, 1 } };
+const DV_HULL_NUDGE: Vec3 = .{ 1e-5, 1e-5, 0 };
+const DV_MOVE: Vec3 = .{ 0, 0, -0.5 };
+const DV_BOX = [2]Vec3{ .{ 2, 1, 1 }, .{ 4, 4, 3 } };
+const DV_BOX_MOVE: Vec3 = .{ 0, 0, -1 };
+const DV_BOX_NUDGE: Vec3 = .{ -5e-6, -5e-6, 0 };
+/// The family about dv: the box shifted in x (its corner nearer the wall's two vertices
+/// across the line, or farther) and in y (its corner past them along the line, or short),
+/// by half a zone and a zone.
+const DV_BOX_SHIFTS = [_]f64{ -1e-5, -5e-6, 0, 5e-6, 1e-5 };
+
 const Outcome = struct {
     code: ?diagnostics.Code = null,
     counts: ?@TypeOf(@as(Body, undefined).counts()) = null,
@@ -701,4 +721,50 @@ test "ties: the family about du, a slab's bottom hinged on a box's top within th
         try expectAlikeSwappedAndMovedBy(&slab, &box, if (case.other == HINGE_PAST_ANGLE) &MOVES else &FAR_MOVES);
         try expectAlikeMirrored(&slab, &box);
     }
+}
+
+/// The wall united with the hull of find dv (`DV_*`).
+fn dvJoined() !Body {
+    const t = Tolerance.fromZone(1e-5);
+    var wall = try degeneracy.fuzzWallPlaced(t, DV_WALL_AT, DV_WALL[0], DV_WALL[1], DV_WALL_XSECTS, DV_MOVE, DV_WALL_NUDGE);
+    defer wall.deinit();
+    var hull = try degeneracy.fuzzHullPlaced(&DV_HULL, vec.Z3, 0, null, DV_MOVE, DV_HULL_NUDGE);
+    defer hull.deinit();
+    return helpers.sound(&wall, &hull, .@"union");
+}
+
+/// The box of find dv, shifted by `shift` from where the fuzzer drew it.
+fn dvBox(shift: Vec3) !Body {
+    return helpers.fuzzPlaced(Tolerance.fromZone(1e-5), vec.sub(DV_BOX[1], DV_BOX[0]), DV_BOX[0], vec.Z3, 0, DV_BOX_MOVE, vec.add(DV_BOX_NUDGE, shift));
+}
+
+test "ties: a box's corner and two merged vertices at one place along a hull's face's line with the box's bottom are joined alike mirrored (find dv)" {
+    // Find dv: the hull's face and the box's bottom share the box's corner and two of the
+    // wall's merged vertices at one place along their line, 5.5e-5 apart across it. Ordered
+    // across by the faces' normals, the corner was joined to the farther of the two in
+    // place, the three a sliver triangle and the intersection refused (`sliver_face`), and
+    // to the nearer mirrored, made. A place is not ordered (`planar_faces.Along.places`):
+    // every pair of the three is a piece the faces may share, the sliver theirs whichever
+    // way the solids lie
+    var joined = try dvJoined();
+    defer joined.deinit();
+    var box = try dvBox(vec.ZERO3);
+    defer box.deinit();
+    const got = try Outcome.of(&joined, &box, .intersection, null);
+    defer got.deinit();
+    try testing.expectEqual(@as(?diagnostics.Code, .sliver_face), got.code);
+    try expectAlikeMirrored(&joined, &box);
+    try expectAlikeSwappedAndMovedBy(&joined, &box, &FAR_MOVES);
+}
+
+test "ties: the family about dv, the box's corner moved across and along the faces' line, alike swapped, mirrored and moved far" {
+    var joined = try dvJoined();
+    defer joined.deinit();
+    for (DV_BOX_SHIFTS) |dx| for (DV_BOX_SHIFTS) |dy| {
+        errdefer std.debug.print("the box shifted ({e}, {e})\n", .{ dx, dy });
+        var box = try dvBox(.{ dx, dy, 0 });
+        defer box.deinit();
+        try expectAlikeMirrored(&joined, &box);
+        try expectAlikeSwappedAndMovedBy(&joined, &box, &FAR_MOVES);
+    };
 }

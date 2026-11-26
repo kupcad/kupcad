@@ -5364,7 +5364,7 @@ fn slitSolids(drop: f64, turn: @TypeOf(SLIVER_TURNS[0])) !struct { Body, Body } 
 /// (`GapShape.wall`): a box less a cavity, the wall's middle plane x = `at[0]`, from `lo`
 /// to `hi` in y and z; moved by `move` and by `nudge` in one translation, as the fuzzer
 /// places a solid of a tolerance of its own.
-fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move: Vec3, nudge: Vec3) !Body {
+pub fn fuzzWallPlaced(t: Tolerance, at: Vec3, lo: Vec3, hi: Vec3, xsects: f64, move: Vec3, nudge: Vec3) !Body {
     var wall = try fuzzWall(t, at, lo, hi, xsects);
     defer wall.deinit();
     return fuzzPlaced(&wall, vec.Z3, 0, null, move, nudge);
