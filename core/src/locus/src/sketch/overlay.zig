@@ -419,7 +419,7 @@ pub const Overlay = struct {
         var candidates: [4]Vec2 = undefined;
         var n: usize = 0;
         if (gi.arc == null and gj.arc == null) {
-            n = self.lineLine(gi, gj, &candidates);
+            n = try self.lineLine(gi, gj, &candidates);
         } else if (gi.arc != null and gj.arc != null) {
             n = try self.arcArc(gi, gj, &candidates);
         } else {
@@ -476,7 +476,7 @@ pub const Overlay = struct {
     fn cutAt(self: *Overlay, i: u32, v: u32, cuts: *std.ArrayList(Cut)) Error!void {
         const g = self.given.items[i];
         if (v == g.a or v == g.b) return;
-        if (self.paramOn(g, self.point(v))) |t| try cuts.append(self.allocator, .{ .given = i, .t = t, .vertex = v });
+        if (try self.paramOn(g, self.point(v))) |t| try cuts.append(self.allocator, .{ .given = i, .t = t, .vertex = v });
     }
 
     /// The parameter of `p` along a given edge when `p` lies inside it within the zone (a
@@ -485,8 +485,9 @@ pub const Overlay = struct {
     /// measured from its lower end (by x, then y), whichever way it was given: from either
     /// end a point the zone from it rounds either side (1.00000000003e-5 one way,
     /// 9.99999999997e-6 the other), and two coincident sides given opposite ways were cut
-    /// at it one and not the other, a sliver face one zone wide between them.
-    fn paramOn(self: *const Overlay, g: Given, p: Vec2) ?f64 {
+    /// at it one and not the other, a sliver face one zone wide between them. Whether it
+    /// is within the zone of a line is `onLine`'s, as for `lineLine`.
+    fn paramOn(self: *const Overlay, g: Given, p: Vec2) Error!?f64 {
         const a = self.point(g.a);
         const b = self.point(g.b);
         if (g.arc) |arc| {
@@ -500,8 +501,25 @@ pub const Overlay = struct {
         const len = vec.length2(d);
         const s = vec.dot2(vec.sub2(p, lo), d) / (len * len);
         if (s <= 0 or s >= 1) return null;
-        if (vec.distance2(vec.addScaled2(lo, d, s), p) > self.tol.zone) return null;
+        if (!try self.onLine(a, b, p)) return null;
         return if (from_b) 1 - s else s;
+    }
+
+    /// Whether `p` lies within the zone of the line through `a` and `b`: its distance from
+    /// the line by the exact turn over the segment's length, the same number whichever way
+    /// the segment runs, at the zone to rounding refused (D27, `AtTolerance`). One measure
+    /// for both questions an end near a line asks, whether two segments cross (`lineLine`)
+    /// and whether the end cuts the other (`paramOn`): measured two ways, by the turn and
+    /// by the foot, an offset's bevel 2e-5 at a 60° corner, its end the zone from the other
+    /// leg's line, was neither a crossing nor a cut, and left an edge a rounding short of the
+    /// least in place where moved whole it was made (the audit of 2026-11-22, kind 6, item 14).
+    fn onLine(self: *const Overlay, a: Vec2, b: Vec2, p: Vec2) Error!bool {
+        const gap = @abs(predicates.orient2d(a, b, p)) / vec.distance2(a, b);
+        return switch (canonical.verdict(&.{canonical.Comparison.distance(gap, self.tol.zone, @max(magnitude2(a), magnitude2(b), magnitude2(p)))})) {
+            .same => true,
+            .apart => false,
+            .at_tolerance => error.AtTolerance,
+        };
     }
 
     /// The crossing of two line segments inside both (an end on the other is a cut of its
@@ -510,21 +528,28 @@ pub const Overlay = struct {
     /// T-junction or an overlap for `cutAt`, never a crossing, whichever side the exact
     /// turn puts it: a crossing computed from two near-zero turns could land anywhere
     /// along the segment.
-    fn lineLine(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) usize {
+    fn lineLine(self: *const Overlay, gi: Given, gj: Given, out: *[4]Vec2) Error!usize {
         const a = self.point(gi.a);
         const b = self.point(gi.b);
         const c = self.point(gj.a);
         const d = self.point(gj.b);
+        // An end on the other's line decides, whatever another end's measure is at; an
+        // end at the zone of it to rounding only where the turns put a crossing
+        var at_tolerance = false;
+        for ([_][3]Vec2{ .{ a, b, c }, .{ a, b, d }, .{ c, d, a }, .{ c, d, b } }) |end| {
+            if (self.onLine(end[0], end[1], end[2])) |on| {
+                if (on) return 0;
+            } else |e| switch (e) {
+                error.AtTolerance => at_tolerance = true,
+                else => return e,
+            }
+        }
         const abc = predicates.orient2d(a, b, c);
         const abd = predicates.orient2d(a, b, d);
         const cda = predicates.orient2d(c, d, a);
         const cdb = predicates.orient2d(c, d, b);
-        // A turn is twice the triangle's area: the end's distance from the line times the
-        // line's length
-        const ab_zone = self.tol.zone * vec.distance2(a, b);
-        const cd_zone = self.tol.zone * vec.distance2(c, d);
-        if (@abs(abc) <= ab_zone or @abs(abd) <= ab_zone or @abs(cda) <= cd_zone or @abs(cdb) <= cd_zone) return 0;
         if ((abc > 0) == (abd > 0) or (cda > 0) == (cdb > 0)) return 0;
+        if (at_tolerance) return error.AtTolerance;
         out[0] = vec.addScaled2(a, vec.sub2(b, a), cda / (cda - cdb));
         return 1;
     }

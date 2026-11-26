@@ -589,7 +589,14 @@ within its rounding of the x axis is put in the half its bend takes it to (`leav
 the arc's coordinates for large radii or far out: a disc of radius 1e5 tangent inside a
 rectangle's side, and two discs of radii 10 and 10.001 tangent inside moved 3e5 out, had
 their unions empty; the audit of 2026-11-22, kind 6), and nesting by
-the exact ray rule. Every decision about a circle is exact too (D26, 2026-11-11): whether a
+the exact ray rule. An end of a segment is on another segment's line by one measure, its
+exact turn over the segment's length against the zone, at the zone to rounding refused
+(`at_tolerance`, `onLine`), whether the question is a crossing or a cut: measured by the
+turn for the one and by the foot for the other, an offset's bevel at a 60° corner, its end
+`delta·cos 60°`, the zone, from the other leg, was neither, and the result differed in
+place and moved (the audit of 2026-11-22, kind 6). An end at the zone to rounding is
+refused only where a cut or a crossing hangs on it: inside the other segment's span, or
+where the exact turns put a crossing. Every decision about a circle is exact too (D26, 2026-11-11): whether a
 line meets, touches or misses a circle and where each crossing lies along the segment
 (`lineCircleDiscriminant`, `lineCircleCrossing`), whether a point lies within an arc's turn
 about its centre (`orient2d` about the centre, never an angle: no seam, no slack, and the

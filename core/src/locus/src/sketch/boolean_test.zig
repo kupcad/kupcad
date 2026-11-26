@@ -508,6 +508,62 @@ test "sketch booleans: a disc tangent to a rectangle's side from within, every r
     };
 }
 
+test "sketch booleans: a triangle's tip the zone past a square's side, to rounding, is cut there or refused, in place, turned and moved whole" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const square = [_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    var k: i32 = -40;
+    while (k <= 40) : (k += 1) {
+        const past = tol.zone + @as(f64, @floatFromInt(k)) * 2e-12;
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for ([_]Vec2{ .{ 0, 0 }, .{ 3e5, 0 }, .{ 0, 3e5 }, .{ 3e5, 3e5 } }) |shift| {
+            const place = struct {
+                fn at(p: Vec2, quarters: usize, mirror: bool, by: Vec2) Vec2 {
+                    var q: Vec2 = if (mirror) .{ -p[0], p[1] } else p;
+                    for (0..quarters) |_| {
+                        const turned: Vec2 = .{ -q[1], q[0] };
+                        q = turned;
+                    }
+                    return vec.add2(q, by);
+                }
+            };
+            var a_pts = square;
+            for (&a_pts) |*p| p.* = place.at(p.*, quarter, mirrored, shift);
+            if (mirrored) std.mem.reverse(Vec2, &a_pts);
+            var b_pts = [_]Vec2{ .{ 5, -past }, .{ 6, 5 }, .{ 4, 5 } };
+            for (&b_pts) |*p| p.* = place.at(p.*, quarter, mirrored, shift);
+            if (mirrored) std.mem.reverse(Vec2, &b_pts);
+            var a = try primitives.polygon(testing.allocator, tol, &a_pts, &diag);
+            defer a.deinit();
+            var b = try primitives.polygon(testing.allocator, tol, &b_pts, &diag);
+            defer b.deinit();
+            for ([_]boolean.Op{ .@"union", .difference, .intersection }) |op| {
+                errdefer std.debug.print("past {e}, {s}, quarter turns {d}, mirrored {}, moved {any}: {any}\n", .{ past, @tagName(op), quarter, mirrored, shift, diag.first() });
+                var made = boolean.boolean(testing.allocator, &.{ &a, &b }, op, .{}, &diag) catch |e| {
+                    try testing.expectEqual(error.Degenerate, e);
+                    try testing.expectEqual(.at_tolerance, diag.first().?.code);
+                    diag.deinit();
+                    diag = Diagnostics.init(testing.allocator);
+                    continue;
+                };
+                defer made.deinit();
+                var report = try check.run(testing.allocator, &made, .global);
+                defer report.deinit(testing.allocator);
+                try testing.expect(report.ok());
+                // The triangle's area in the square (all of it but its tip below the side)
+                // The triangle's area in the square: all of it but its tip below the side,
+                // to the zone's moves of its corners
+                const inside = 5 + past - past * past / 5;
+                const want: f64 = switch (op) {
+                    .@"union" => 100 + past * past / 5,
+                    .difference => 100 - inside,
+                    .intersection => inside,
+                };
+                try testing.expectApproxEqAbs(want, try areaOf(&made), 1e-4);
+            }
+        };
+    }
+}
+
 test "sketch booleans: two discs tangent inside, nearly one radius, in place, turned and moved whole, at two zones" {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();

@@ -683,3 +683,42 @@ test "offset: an arc whose end lies off its circle within the zone moves to the 
         try testing.expectApproxEqAbs(@as(f64, 1), try areaOf(&back), OFF_CIRCLE_CLOSE);
     };
 }
+
+test "offset: a 60° corner bevelled at twice the zone, its bevel's end the zone from the other leg, refused at the tolerance, in place, turned and moved whole" {
+    // The audit of 2026-11-22 (kind 6, item 14): the bevel's end is `delta·cos 60°`, the
+    // zone to rounding, from the other leg's line, which the overlay measured by the turn
+    // for a crossing and by the foot for a cut. In place 14 of 24 were refused for an edge
+    // a rounding shorter than the least, moved whole all made; one measure, refused at the
+    // tolerance everywhere
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const h = 5 * @sqrt(3.0);
+    const delta = 2e-5;
+    for ([_]f64{ 10, 7, 3 }) |side| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for ([_]Vec2{ .{ 0, 0 }, .{ 3e5, 0 }, .{ 0, 3e5 }, .{ 3e5, 3e5 } }) |shift| {
+        var pts = [_]Vec2{ .{ 0, 0 }, .{ side, 0 }, .{ side / 2, h * side / 10 } };
+        for (&pts) |*p| {
+            var q: Vec2 = if (mirrored) .{ -p[0], p[1] } else p.*;
+            for (0..quarter) |_| {
+                const turned: Vec2 = .{ -q[1], q[0] };
+                q = turned;
+            }
+            p.* = vec.add2(q, shift);
+        }
+        if (mirrored) std.mem.reverse(Vec2, &pts);
+        var sheet = try primitives.polygon(testing.allocator, tol, &pts, &diag);
+        defer sheet.deinit();
+        errdefer std.debug.print("side {d}, quarter turns {d}, mirrored {}, moved {any}: {f}\n", .{ side, quarter, mirrored, shift, &diag });
+        try testing.expectError(error.Degenerate, offset.offset(testing.allocator, &sheet, delta, .bevel, 2, .{}, &diag));
+        try testing.expectEqual(.at_tolerance, diag.first().?.code);
+        diag.deinit();
+        diag = Diagnostics.init(testing.allocator);
+        // Its end clear of the zone either way: made alike, the bevels' area added
+        for ([_]f64{ 1.6e-5, 2.4e-5, 3e-5 }) |clear| {
+            var made = try offset.offset(testing.allocator, &sheet, clear, .bevel, 2, .{}, &diag);
+            defer made.deinit();
+            const area = side * side * @sqrt(3.0) / 4 + 3 * side * clear + 3 * clear * clear * @sin(2.0 * PI / 3.0) / 2.0;
+            try testing.expectApproxEqAbs(area, (try mass.mass(&made, .{}, &diag)).area, 1e-7);
+            try testing.expectEqual(@as(usize, 6), made.counts().edges);
+        }
+    };
+}
