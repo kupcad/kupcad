@@ -2606,6 +2606,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // read in one plane, on each other, NotValid (planar_faces.onPlaneOf: at_tolerance)
         "solids 0 2 4 1 4 1 3 2 3 8 10 0 16 1 1 0 0 4 2 4 0 1 0 1 8 1 13 2 10 14 0 0 4 2",
         "solids 0 2 4 2 4 1 4 3 3 9 -2 14 16 1 1 0 1 4 3 4 2 3 1 3 3 11 13 4 0 2 5 2",
+        // The step-4 sessions on 9015ab26 (locus_solids, dx): box ∪ box, a right face the
+        // tolerance from a left face to rounding, their regions apart; the union's own rules
+        // overlaid them, refused one way round only (planar_faces.onPlaneOf, overlay reach)
+        "solids 0 0 1 0 3 1 3 1 2 10 6 2 3 1 1 0 0 4 1 4 0 2 2 2 2 0 6 15 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

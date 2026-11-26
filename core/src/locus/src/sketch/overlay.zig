@@ -318,21 +318,30 @@ pub const Overlay = struct {
         var cuts = std.ArrayList(Cut).empty;
         defer cuts.deinit(allocator);
         // Broad phase: the edges by their box's least x, each against the ones that follow
-        // while their boxes may still meet
+        // while their boxes may still meet. The boxes reach past the zone by D27's band at
+        // the inputs' size (`reach`), so that every pair a decision at the zone could put
+        // within it, or at it to rounding, is asked: grown by the zone alone, the boxes'
+        // own comparison decided a pair the zone apart to rounding first, one way in one
+        // frame and the other way in another, and the overlap rules refused two faces with
+        // edges a zone apart (`onLine`, `AtTolerance`) taken one way round and passed them
+        // the other (the solids fuzzer on 9015ab26, dx)
         const n = self.given.items.len;
         const order_by_x = try allocator.alloc(u32, n);
         defer allocator.free(order_by_x);
         const boxes = try allocator.alloc(Box, n);
         defer allocator.free(boxes);
+        var size: f64 = 0;
         for (self.given.items, 0..) |g, i| {
             order_by_x[i] = @intCast(i);
             boxes[i] = self.boxOf(g);
+            size = @max(size, magnitude2(boxes[i].min), magnitude2(boxes[i].max));
         }
+        const reach = self.tol.zone + canonical.Comparison.distance(0, self.tol.zone, size).band;
         std.mem.sort(u32, order_by_x, boxes, byMinX);
         for (order_by_x, 0..) |i, k| {
             for (order_by_x[k + 1 ..]) |j| {
-                if (boxes[j].min[0] > boxes[i].max[0] + self.tol.zone) break;
-                if (boxes[j].min[1] > boxes[i].max[1] + self.tol.zone or boxes[j].max[1] < boxes[i].min[1] - self.tol.zone) continue;
+                if (boxes[j].min[0] > boxes[i].max[0] + reach) break;
+                if (boxes[j].min[1] > boxes[i].max[1] + reach or boxes[j].max[1] < boxes[i].min[1] - reach) continue;
                 try self.cutPair(i, j, &cuts);
             }
         }
@@ -350,12 +359,12 @@ pub const Overlay = struct {
             var hi: usize = by_x.len;
             while (lo < hi) {
                 const mid = (lo + hi) / 2;
-                if (self.points.items[by_x[mid]][0] < box.min[0] - self.tol.zone) lo = mid + 1 else hi = mid;
+                if (self.points.items[by_x[mid]][0] < box.min[0] - reach) lo = mid + 1 else hi = mid;
             }
-            while (lo < by_x.len and self.points.items[by_x[lo]][0] <= box.max[0] + self.tol.zone) : (lo += 1) {
+            while (lo < by_x.len and self.points.items[by_x[lo]][0] <= box.max[0] + reach) : (lo += 1) {
                 const v = by_x[lo];
                 const y = self.points.items[v][1];
-                if (y < box.min[1] - self.tol.zone or y > box.max[1] + self.tol.zone) continue;
+                if (y < box.min[1] - reach or y > box.max[1] + reach) continue;
                 try self.cutAt(@intCast(i), v, &cuts);
             }
         }

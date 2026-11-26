@@ -78,6 +78,14 @@ const MOVED_FINDS = [_]MovedFind{
     },
 };
 
+/// Find dx (the solids fuzzer on 9015ab26), as the fuzzer placed it (`fuzzPlaced`): a box
+/// whose right face is the intersection tolerance from a second box's left face to a few
+/// roundings in place, its bottom a zone over the second's top; the first box's nudges
+/// along x (the find's, then the tolerance exactly, 1e-10 within it and 1e-10 beyond it).
+const DX_FIRST = .{ .size = Vec3{ 1, 3, 2 }, .lo = Vec3{ 0, 0, 1 }, .move = Vec3{ 0, 0, 1 }, .nudge = Vec3{ -1.9999999943156583e-5, -1e-5, 0 } };
+const DX_SECOND = .{ .size = Vec3{ 4, 3, 2 }, .lo = Vec3{ 0, 1, 0 }, .move = Vec3{ 1, 0, 0 }, .nudge = Vec3{ 0, 0, -1e-5 } };
+const DX_NUDGES = [_]f64{ -1.9999999943156583e-5, -2e-5, -1.99999e-5, -2.00001e-5 };
+
 /// A box from `lo` to `hi`.
 pub fn box(lo: Vec3, hi: Vec3) !Body {
     return boxAt(tol, lo, hi);
@@ -1293,6 +1301,51 @@ test "boolean: faces of a union the tolerance apart to rounding, moved far, are 
                 try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &placed, .{}, &diag));
                 try testing.expectEqual(diagnostics.Code.at_tolerance, diag.first().?.code);
             }
+        }
+    }
+}
+
+test "boolean: boxes whose faces in parallel planes the tolerance apart to rounding do not meet are joined either way round (find dx)" {
+    // Find dx: a box's right face the intersection tolerance from a second box's left face
+    // to a few roundings, the faces' regions apart (the first's bottom a zone over the
+    // second's top). The union is made, and the overlap rules it runs on its result (its
+    // features nearer than the minimum feature size) read the right face's corners in the
+    // left face's plane (a plain comparison): the faces "in one plane", overlaid, their
+    // edges a zone apart to rounding, refused `at_tolerance` with the boxes swapped only.
+    // A corner at its reach of a plane to rounding outside the face is off the plane, as
+    // the paves take it (`planar_faces.onPlaneOf`): the faces cross nowhere, and the union
+    // is made either way round. Nudged within the tolerance or beyond it, and mirrored,
+    // the two ways round agree
+    const mirror = mat.Affine.mirror(vec.X3);
+    var second = try fuzzPlaced(tol, DX_SECOND.size, DX_SECOND.lo, vec.Z3, 0, DX_SECOND.move, DX_SECOND.nudge);
+    defer second.deinit();
+    for (DX_NUDGES, 0..) |x, i| {
+        var first = try fuzzPlaced(tol, DX_FIRST.size, DX_FIRST.lo, vec.Z3, 0, DX_FIRST.move, .{ x, DX_FIRST.nudge[1], DX_FIRST.nudge[2] });
+        defer first.deinit();
+        for ([_]?mat.Affine{ null, mirror }) |move| {
+            errdefer std.debug.print("the first box nudged {e} along x, mirrored {}\n", .{ x, move != null });
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var a = if (move) |m| try transform.transform(testing.allocator, &first, &m, .{}, &diag) else try first.clone(testing.allocator);
+            defer a.deinit();
+            var b = if (move) |m| try transform.transform(testing.allocator, &second, &m, .{}, &diag) else try second.clone(testing.allocator);
+            defer b.deinit();
+            if (i == 0) {
+                var forward = try sound(&a, &b, .@"union");
+                defer forward.deinit();
+                var swapped = try sound(&b, &a, .@"union");
+                defer swapped.deinit();
+                try testing.expectEqual(forward.counts(), swapped.counts());
+                continue;
+            }
+            var forward = pipeline.boolean(testing.allocator, &a, &b, .@"union", .{}, &diag, null);
+            defer if (forward) |*r| r.deinit() else |_| {};
+            var swapped = pipeline.boolean(testing.allocator, &b, &a, .@"union", .{}, &diag, null);
+            defer if (swapped) |*r| r.deinit() else |_| {};
+            errdefer std.debug.print("forward {any}, swapped {any}: {f}\n", .{ if (forward) |r| r.counts() else |e| e, if (swapped) |r| r.counts() else |e| e, diag });
+            if (forward) |r| {
+                try testing.expectEqual(r.counts(), (try swapped).counts());
+            } else |e| try testing.expectError(e, swapped);
         }
     }
 }
