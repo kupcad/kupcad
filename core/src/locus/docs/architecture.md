@@ -1398,7 +1398,11 @@ periods into the face's box. A planar face whose edges are lines and circles' ar
 the same answer from the exact crossing parity of a ray in its plane
 (`math/ray_crossing.zig`: `orient2d` and `inCircle`, half-open at vertices, an arc by its
 sector and its two radii, a point on an edge answered as the point a hair east of it for
-every edge alike), with no angle per piece: a boolean's paves ask it of every vertex near a
+every edge alike; a point exactly on a straight edge's image, its ends included, is outside
+by an exact test before the parity, whose rules at a vertex and along a level edge read
+the loop's direction and the plane's axes, which a mirror turns: a wall's end over a
+vertex lying a zone under the face, beyond reach of it in space, was inside in place and
+outside mirrored, find dp, 2026-11-26), with no angle per piece: a boolean's paves ask it of every vertex near a
 face, and on a 1000-sided face the angles took most of a second (2026-11-13); and the
 angle's acceptance by halves is certain for a circle only, not for a thin ellipse, whose
 whole and half can both be a turn off about a point near its end (the audit of 2026-11-22),

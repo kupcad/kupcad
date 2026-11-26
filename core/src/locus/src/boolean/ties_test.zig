@@ -113,6 +113,16 @@ const KNIFE_SIDES = [_]struct { by: f64, drop: f64, refused: bool }{
     .{ .by = 5e-6, .drop = 5e-6, .refused = true },
     .{ .by = -5e-6, .drop = 0, .refused = false },
 };
+/// The plates of find dp (the oracle extensions' first sessions on 05c27278, locus_solids),
+/// as the fuzzer placed them at a zone of 1e-4 (`helpers.fuzzPlaced`: size, lower corner,
+/// turn about z, move, nudge): two joined, the second turned 0.3 and its top 2e-4 over
+/// the first's, then less a third whose top is a zone under the first's; and the third's
+/// drops (the find's 1e-4, the zone's half, the intersection tolerance's three quarters).
+const DP_ZONE: f64 = 1e-4;
+const DP_FIRST = .{ .size = Vec3{ 50, 150, 4 }, .lo = Vec3{ 52, -48, 0 }, .turn = 0.0, .move = Vec3{ 0, 0, 0 }, .nudge = Vec3{ -2.000000014495072e-4, -1.9999999855049283e-4, 0 } };
+const DP_SECOND = .{ .size = Vec3{ 150, 50, 1 }, .lo = Vec3{ -98, 52, 3 }, .turn = 0.3, .move = Vec3{ 0, -0.5, 0 }, .nudge = Vec3{ 1.9999999825084743e-4, 0, 1.9999999825084743e-4 } };
+const DP_THIRD = .{ .size = Vec3{ 100, 100, 2 }, .lo = Vec3{ 2, 2, 2 }, .turn = 0.0, .move = Vec3{ 0, 0, 0 }, .nudge = Vec3{ 2e-2, -1.9999999855049283e-4, 0 } };
+const DP_DROPS = [_]f64{ 1e-4, 5e-5, 1.5e-4 };
 
 /// What a boolean of two solids gives: a refusal's code, or the made solid's counts, its
 /// shells' kinds and its points (each vertex; each edge's curve at the middle of its range,
@@ -565,5 +575,30 @@ test "ties: the tetrahedron whose edges cross a box's top within the tolerance o
         var tetrahedron = try apexTetrahedron(APEX_LIFTS[0], APEX_SPREADS[0], &apexPlace(0, mirrored));
         defer tetrahedron.deinit();
         try expectAlikeSwappedAndMovedBy(&tetrahedron, &box, &FAR_MOVES);
+    }
+}
+
+test "ties: a pocket's wall over a vertex a zone under the face it is cut from is placed alike mirrored (find dp)" {
+    // Find dp: the union's top has a vertex a zone under its plane, and the third plate's
+    // wall rises from there to 2e-4 over it. The overlap rules placed the wall's upper end
+    // against the top (`in_face.placeWithin`): 3e-4 from the vertex in space, beyond the
+    // reach, so by the parity of the loops, exactly at the vertex's image, where its rules
+    // at a vertex read the loop's direction and the plane's axes: inside in place, and the
+    // wall's edge a chord of the top, the difference refused (`pinched`); outside
+    // mirrored, made. A point exactly on a straight edge's image is outside, by an exact
+    // test before the parity (`ray_crossing.onSegment`). The third plate dropped by a zone
+    // either side of the find too
+    const t = Tolerance.fromZone(DP_ZONE);
+    var first = try helpers.fuzzPlaced(t, DP_FIRST.size, DP_FIRST.lo, vec.Z3, DP_FIRST.turn, DP_FIRST.move, DP_FIRST.nudge);
+    defer first.deinit();
+    var second = try helpers.fuzzPlaced(t, DP_SECOND.size, DP_SECOND.lo, vec.Z3, DP_SECOND.turn, DP_SECOND.move, DP_SECOND.nudge);
+    defer second.deinit();
+    var joined = try helpers.sound(&first, &second, .@"union");
+    defer joined.deinit();
+    for (DP_DROPS) |drop| {
+        errdefer std.debug.print("the third plate dropped {e}\n", .{drop});
+        var third = try helpers.fuzzPlaced(t, DP_THIRD.size, DP_THIRD.lo, vec.Z3, DP_THIRD.turn, DP_THIRD.move, vec.add(DP_THIRD.nudge, .{ 0, 0, -drop }));
+        defer third.deinit();
+        try expectAlikeMirrored(&joined, &third);
     }
 }

@@ -153,16 +153,23 @@ pub const FaceEdges = struct {
         var box = Box3.ofPoint(.{ uv[0], uv[1], 0 });
         box.grow(.{ EAST, uv[1], 0 });
         fl.tree.query(box, &ray, Ray.visit);
-        return if (ray.inside) .inside else .outside;
+        return if (ray.inside and !ray.on) .inside else .outside;
     }
 
-    /// `in_face`'s exact crossing count, over the segments the tree gives.
+    /// `in_face`'s exact crossing count, over the segments the tree gives (each segment
+    /// through `uv` among them), and whether `uv` lies on one (outside, as `in_face` has it).
     const Ray = struct {
         segments: [][2]Vec2,
         uv: Vec2,
         inside: bool = false,
+        on: bool = false,
         fn visit(r: *@This(), item: u32) bool {
-            if (ray_crossing.line(r.segments[item][0], r.segments[item][1], r.uv)) r.inside = !r.inside;
+            const s = r.segments[item];
+            if (ray_crossing.onSegment(s[0], s[1], r.uv)) {
+                r.on = true;
+                return false;
+            }
+            if (ray_crossing.line(s[0], s[1], r.uv)) r.inside = !r.inside;
             return true;
         }
     };

@@ -41,6 +41,15 @@ pub fn line(a: Vec2, b: Vec2, p: Vec2) bool {
     return (predicates.orient2d(a, b, p) > 0) == (b[1] > a[1]);
 }
 
+/// Whether `p` lies on the segment from `a` to `b`, its ends included, exactly. The
+/// parity alone answers such a point by its rules at a vertex and along a level edge,
+/// which read the loop's direction and the plane's axes (a mirror turns both), so a count
+/// that must answer it alike either way asks this first (a planar face's: outside).
+pub fn onSegment(a: Vec2, b: Vec2, p: Vec2) bool {
+    if (p[0] < @min(a[0], b[0]) or p[0] > @max(a[0], b[0]) or p[1] < @min(a[1], b[1]) or p[1] > @max(a[1], b[1])) return false;
+    return predicates.orient2d(a, b, p) == 0;
+}
+
 /// `line` for an arc's radius, a point on it read a hair east (`side`): the arc's two
 /// radii and its sector must read one point.
 fn radius(a: Vec2, b: Vec2, p: Vec2) bool {

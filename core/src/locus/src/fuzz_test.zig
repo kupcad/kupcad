@@ -2579,6 +2579,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // tolerance and the wall's edge touches its underside, refused `pinched` by design
         // (oracle.expectMovedSolid: a moved result's refusal by the overlap rules is clean)
         "solids 0 0 4 1 2 1 4 1 3 11 0 12 4 1 1 0 3 4 0 4 0 3 1 1 8 7 2 4 1 3 8 2",
+        // The same sessions (locus_solids, dp): (plate ∪ plate) − plate, a wall's end 2e-4
+        // over a vertex a zone under the top it is cut from, beyond reach of it in space and
+        // placed by the parity exactly at the vertex's image: inside in place, refused
+        // `pinched`, outside mirrored, made (ray_crossing.onSegment: on the image, outside)
+        "solids 2 3 4 1 4 0 4 2 0 1 1 1 12 10 0 2 2 3 2 0 3 3 4 3 4 0 2 3 2 9 -1 9 14 0 1 2 2 4 2 4 2 4 2 2 13 10 6 11 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

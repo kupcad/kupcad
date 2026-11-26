@@ -298,7 +298,10 @@ fn nearestAlongEdge(body: *const Body, e: types.EdgeIndex, p: Vec3) struct { poi
 /// Whether the loops of face `f` hold `uv`, for a planar face whose edges are lines and
 /// circles' arcs: the parity of the crossings of the ray from `uv` to +x with its edges,
 /// exact (`math/ray_crossing.zig`: `orient2d` and `inCircle`, the half-open rule at
-/// vertices, each edge from its coedge's start vertex to its end). The same answer as
+/// vertices, each edge from its coedge's start vertex to its end); a point exactly on a
+/// line's image, its ends included, outside (`ray_crossing.onSegment`: the parity's rules
+/// there read the loop's direction and the frame's axes, which a mirror turns; find dp,
+/// 2026-11-26). The same answer as
 /// the winding for a point off the boundary, without an angle per piece (a boolean's
 /// paves ask it of every vertex near a face; on a 1000-sided face the angles took most of
 /// a second, 2026-11-12), and with nothing to accept an arc's angle by: a cap of two arcs
@@ -321,7 +324,7 @@ fn windsPlanar(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnosti
             const a: Vec2 = .{ a3[0], a3[1] };
             const b: Vec2 = .{ b3[0], b3[1] };
             const crosses = switch (body.geometry.curve(body.edge(coedge.edge).curve)) {
-                .line => ray_crossing.line(a, b, uv),
+                .line => if (ray_crossing.onSegment(a, b, uv)) return false else ray_crossing.line(a, b, uv),
                 .circle => |circle| arc: {
                     const centre = frame.toLocal(circle.c);
                     // Counter-clockwise in UV when the circle turns the plane's way and
