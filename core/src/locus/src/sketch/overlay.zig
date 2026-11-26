@@ -41,8 +41,9 @@ const SPAN_SLACK: f64 = 1e-9;
 /// How far along its curve a half-edge is sampled for the order about its origin, in
 /// zones: past any crossing within the zone of the vertex (snapped to it: the order past
 /// the vertex is the order past the crossing, and the tangents at the vertex told the
-/// order before it, a rotation system of genus one), and far enough that an arc's bend
-/// outweighs the arithmetic of its sample (a radius of 1000 bends 5e-10 in 1e-3).
+/// order before it, a rotation system of genus one), and far enough that most arcs' bend
+/// outweighs the arithmetic of their sample (a radius of 1000 bends 5e-10 in 1e-3; where
+/// it does not, the bends are compared, `leavingSide`).
 const ORDER_REACH: f64 = 100;
 
 /// A circular arc's circle: the arc runs from the edge's `a` to its `b` about `c`,
@@ -827,31 +828,31 @@ pub const Overlay = struct {
 
     /// Whether `x` leaves its origin at a smaller angle than `y`, counter-clockwise from
     /// the positive x axis: by the directions to their samples a reach along them
-    /// (`orderSample`), by half-plane, then by the exact predicate on the sample points.
-    /// Tangent curves (a join arc and the line it joins) part by their bend within the
-    /// reach, so no curvature rule is needed; two lines a fraction of a degree apart have
-    /// their definite order (as near-tangent by an angle tolerance they had none, and the
-    /// sort put them anyhow). No angle is ever computed, so a direction along the
-    /// negative x axis has no seam to fall across.
+    /// (`leaving`), by half-plane, then as `leavingSide` puts them, by the exact
+    /// predicate on the sample points or, where that is within the samples' rounding, by
+    /// their bend. Two lines a fraction of a degree apart have their definite order (as
+    /// near-tangent by an angle tolerance they had none, and the sort put them anyhow).
+    /// No angle is ever computed, so a direction along the negative x axis has no seam
+    /// to fall across.
     fn lessAbout(self: *const Overlay, x: u32, y: u32) bool {
         const o = self.point(self.origin(x));
-        const px = self.sample(x);
-        const py = self.sample(y);
-        const ux = upperHalf(vec.sub2(px, o));
-        const uy = upperHalf(vec.sub2(py, o));
+        const lx = self.leavingOf(x);
+        const ly = self.leavingOf(y);
+        const ux = lx.upperHalf(o);
+        const uy = ly.upperHalf(o);
         if (ux != uy) return ux;
-        const side = predicates.orient2d(o, px, py);
+        const side = leavingSide(o, lx, ly);
         if (side != 0) return side > 0;
+        // Leaving the opposite ways along the x axis, into one half by their bends: the
+        // upper half runs from east to west, the lower from west to east
+        const east_x = lx.sample[0] > o[0];
+        if (east_x != (ly.sample[0] > o[0])) return east_x == ux;
         return x < y;
     }
 
-    /// The half-edge's point the order about its origin goes by (`orderSample`).
-    fn sample(self: *const Overlay, half: u32) Vec2 {
-        return orderSample(self.point(self.origin(half)), self.point(self.target(half)), self.arcOf(half), self.tol.zone);
-    }
-
-    fn upperHalf(d: Vec2) bool {
-        return d[1] > 0 or (d[1] == 0 and d[0] > 0);
+    /// The half-edge as the order about its origin reads it (`leaving`).
+    fn leavingOf(self: *const Overlay, half: u32) Leaving {
+        return leaving(self.point(self.origin(half)), self.point(self.target(half)), self.arcOf(half), self.tol.zone);
     }
 
     // --- cycles ---
@@ -1097,18 +1098,12 @@ const Span = struct {
     }
 };
 
-/// The point the curve from `a` to `b` (straight, or along `arc`) is ordered by among the
-/// curves leaving `a`: `ORDER_REACH` zones along it, or its middle when it is shorter
-/// than twice that; `b` itself for a line, whose direction from `a` is the same anywhere
-/// along it and exact there. The overlay's order about a vertex goes by it, and so does
-/// the offset's turn at a cusp (offset.zig), so the two read curves leaving a vertex one
-/// way alike.
 /// Which way a boundary turns at `v`, arriving along the curve from `a` (straight, or along
 /// `arc`) with tangent `t1` there and leaving along the curve to `b` (straight, or along
 /// `next_arc`) with tangent `t2`: positive to the left, negative to the right. Within a
 /// quarter turn of straight on, the tangents' cross: the turn's size and side are the
 /// tangents' alone, however the curves bend. Past it, the side as the overlay orders the
-/// two curves about `v` (`orderSample`, the predicate exact on those points), +1 or −1: at
+/// two curves about `v` (`leavingSide`), +1 or −1: at
 /// a cusp (an arc ending tangent to a line) the tangents oppose and their cross is 0 or a
 /// rounding either way, while the turn is a half turn to the side the face lies on, which
 /// only the curves' bend tells; elsewhere the two agree, the overlay having cut the curves
@@ -1118,20 +1113,94 @@ const Span = struct {
 pub fn turnAt(v: Vec2, a: Vec2, arc: ?Arc, t1: Vec2, b: Vec2, next_arc: ?Arc, t2: Vec2, zone: f64) f64 {
     if (vec.dot2(t1, t2) >= 0) return vec.cross2(t1, t2);
     const back: ?Arc = if (arc) |circle| .{ .c = circle.c, .r = circle.r, .ccw = !circle.ccw } else null;
-    const behind = orderSample(v, a, back, zone);
-    const ahead = orderSample(v, b, next_arc, zone);
     // Left when the curve back lies within a half turn counter-clockwise of the one ahead:
     // the face, between them that way round, is the narrower side
-    const side = predicates.orient2d(v, ahead, behind);
-    return if (side > 0) 1 else if (side < 0) -1 else 0;
+    return leavingSide(v, leaving(v, b, next_arc, zone), leaving(v, a, back, zone));
 }
 
-pub fn orderSample(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Vec2 {
-    const circle = throughEnds(a, b, arc orelse return b);
+/// A curve leaving a vertex as the order about the vertex reads it: its sample, how far
+/// that point's arithmetic may have put it off the curve, and how the curve bends.
+pub const Leaving = struct {
+    /// The point the curve is ordered by among the curves leaving the vertex:
+    /// `ORDER_REACH` zones along it, or its middle when it is shorter than twice that; its
+    /// far end for a line, whose direction from the vertex is the same anywhere along it
+    /// and exact there.
+    sample: Vec2,
+    /// The sample's rounding: none for a line, whose sample is its far end; D27's band at
+    /// the arc's coordinates for an arc, whose sample is computed.
+    rounding: f64 = 0,
+    /// The arc's radius, null for a line.
+    radius: ?f64 = null,
+    /// Whether the arc turns left as it leaves the vertex.
+    left: bool = false,
+
+    /// Whether the curve leaves `v` into the upper half-plane, the positive x axis
+    /// included: by its sample's side of `v`, or, where its sample is within its rounding
+    /// of the x axis through `v`, by the way the curve bends off the axis, so that two
+    /// curves leaving along the axis are put in their halves as `leavingSide` orders them
+    /// (two discs tangent inside at their tops, moved 1e6 out: the smaller one's sample
+    /// eastward rounded onto the axis, put it first round the vertex instead of last).
+    fn upperHalf(self: Leaving, v: Vec2) bool {
+        const d = vec.sub2(self.sample, v);
+        if (self.radius != null and @abs(d[1]) <= self.rounding) return (d[0] > 0) == (bendSign(self) > 0);
+        return d[1] > 0 or (d[1] == 0 and d[0] > 0);
+    }
+};
+
+/// The curve from `a` to `b` (straight, or along `arc`) as it leaves `a`. The overlay's
+/// order about a vertex goes by it, and so does the offset's turn at a cusp (offset.zig),
+/// so the two read curves leaving a vertex one way alike.
+pub fn leaving(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Leaving {
+    const circle = throughEnds(a, b, arc orelse return .{ .sample = b });
     const span = arcSpan(a, b, circle);
     const s = @min(ORDER_REACH * zone, circle.r * span.sweep / 2.0);
     const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
-    return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
+    return .{
+        .sample = vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r),
+        .rounding = canonical.Comparison.distance(0, 0, magnitude2(circle.c) + circle.r).band,
+        .radius = circle.r,
+        .left = circle.ccw,
+    };
+}
+
+/// Which way round `q` leaves `v` from `p`: +1 counter-clockwise, −1 clockwise, 0 along
+/// one line. By the exact predicate on their samples, unless it is within what the
+/// samples' rounding can move it by: then the two leave `v` along one line to that
+/// rounding, the opposite ways (0) or one way, along one tangent, and the one bending
+/// further left is
+/// further round (a line bends none, an arc by `1/r` to the side it turns), compared
+/// exactly; equal bends are one circle, welded already. The bend a reach along is `s²/2r`,
+/// under the rounding of a sample at the arc's coordinates for large radii or far from
+/// the origin: a disc of radius 1e5 tangent inside a rectangle's side lost the order of
+/// its arc and the side about their touch, and the union was empty; two discs of radii 10
+/// and 10.001 tangent inside, moved 3e5 out, likewise (the audit of 2026-11-22, kind 6,
+/// item 6).
+pub fn leavingSide(v: Vec2, p: Leaving, q: Leaving) f64 {
+    const side = predicates.orient2d(v, p.sample, q.sample);
+    const band = p.rounding * vec.distance2(q.sample, v) + q.rounding * vec.distance2(p.sample, v);
+    if (@abs(side) <= band) {
+        // Leaving the opposite ways along one line: neither side
+        if (vec.dot2(vec.sub2(p.sample, v), vec.sub2(q.sample, v)) <= 0) return 0;
+        return bendOrder(q, p);
+    }
+    return if (side > 0) 1 else -1;
+}
+
+/// +1 when `x` bends further left than `y`, −1 further right, 0 alike.
+fn bendOrder(x: Leaving, y: Leaving) f64 {
+    const sx = bendSign(x);
+    const sy = bendSign(y);
+    if (sx != sy) return if (sx > sy) 1 else -1;
+    if (sx == 0 or x.radius.? == y.radius.?) return 0;
+    // Both left: the smaller radius bends further left; both right, the larger
+    const tighter = x.radius.? < y.radius.?;
+    return if (tighter == (sx > 0)) 1 else -1;
+}
+
+fn bendSign(x: Leaving) i2 {
+    const r = x.radius orelse return 0;
+    if (r == 0) return 0;
+    return if (x.left) 1 else -1;
 }
 
 /// The circle of `arc`'s radius through `a` and `b`, its centre on the side of their chord

@@ -580,7 +580,15 @@ decided by `orient2d` on points sampled a hundred zones along each curve (an arc
 the arc of its radius through its welded ends, as a line's is toward its far end: a cut
 moves an end up to the zone off the circle, and two pieces 1.3 zones long, each to a
 vertex on the other's circle, left their own circles' tangents 44° the other way round
-from their ends, a map of genus one; 2026-11-21, the locus target's overlay, cb), and nesting by
+from their ends, a map of genus one; 2026-11-21, the locus target's overlay, cb), unless
+two samples lie within their own rounding of one line through the vertex: leaving it one
+way, the two are tangent to that rounding and the one bending further left is further
+round (a line bends none, an arc `1/r` to its side, radii compared exactly), and a sample
+within its rounding of the x axis is put in the half its bend takes it to (`leavingSide`,
+`Leaving.upperHalf`; the bend a reach along, `s²/2r`, is under the rounding of a sample at
+the arc's coordinates for large radii or far out: a disc of radius 1e5 tangent inside a
+rectangle's side, and two discs of radii 10 and 10.001 tangent inside moved 3e5 out, had
+their unions empty; the audit of 2026-11-22, kind 6), and nesting by
 the exact ray rule. Every decision about a circle is exact too (D26, 2026-11-11): whether a
 line meets, touches or misses a circle and where each crossing lies along the segment
 (`lineCircleDiscriminant`, `lineCircleCrossing`), whether a point lies within an arc's turn

@@ -444,3 +444,110 @@ test "sketch booleans: a narrow strip across the top of a wide disc keeps a shor
         try testing.expectApproxEqAbs(w * STRIP_REACH, try areaOf(&rest), close);
     };
 }
+
+/// What a sketch boolean made: its counts and area, or that it was refused.
+const SheetOutcome = struct { made: bool, faces: usize = 0, loops: usize = 0, edges: usize = 0, area: f64 = 0 };
+
+fn sheetOutcome(sheets: []const *const Body, op: boolean.Op, diag: *Diagnostics) !SheetOutcome {
+    var made = boolean.boolean(testing.allocator, sheets, op, .{}, diag) catch |e| {
+        if (e == error.OutOfMemory) return e;
+        return .{ .made = false };
+    };
+    defer made.deinit();
+    var report = try check.run(testing.allocator, &made, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    const c = made.counts();
+    return .{ .made = true, .faces = c.faces, .loops = c.loops, .edges = c.edges, .area = try areaOf(&made) };
+}
+
+test "sketch booleans: a disc tangent to a rectangle's side from within, every radius, in place, turned and moved whole" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_]f64{ 10, 1e3, 1e4, 1e5 }) |r| for ([_]boolean.Op{ .@"union", .difference, .intersection }) |op| {
+        // The disc's two vertices are at its east and west points wherever the rest is
+        // turned, at the tangent point in odd quarter turns, and which arcs simplify joins
+        // goes by them: the faces, loops and area are compared
+        var base: [2]?SheetOutcome = .{ null, null };
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for ([_]Vec2{ .{ 0, 0 }, .{ 3e5, 0 }, .{ 0, 3e5 }, .{ 3e5, 3e5 } }) |shift| {
+            const place = struct {
+                fn at(p: Vec2, quarters: usize, mirror: bool, by: Vec2) Vec2 {
+                    var q: Vec2 = if (mirror) .{ -p[0], p[1] } else p;
+                    for (0..quarters) |_| {
+                        const turned: Vec2 = .{ -q[1], q[0] };
+                        q = turned;
+                    }
+                    return vec.add2(q, by);
+                }
+            };
+            var corners: [4]Vec2 = .{ .{ -2 * r, -3 * r }, .{ 2 * r, -3 * r }, .{ 2 * r, 0 }, .{ -2 * r, 0 } };
+            for (&corners) |*p| p.* = place.at(p.*, quarter, mirrored, shift);
+            if (mirrored) std.mem.reverse(Vec2, &corners);
+            errdefer std.debug.print("radius {e}, {s}, quarter turns {d}, mirrored {}, moved {any}: {f}\n", .{ r, @tagName(op), quarter, mirrored, shift, &diag });
+            var rect = try primitives.polygon(testing.allocator, tol, &corners, &diag);
+            defer rect.deinit();
+            const centre = place.at(.{ 0, -r }, quarter, mirrored, shift);
+            var drawn = try primitives.circle(testing.allocator, tol, r, &diag);
+            defer drawn.deinit();
+            var disc = try moved(&drawn, centre[0], centre[1], &diag);
+            defer disc.deinit();
+            const got = try sheetOutcome(&.{ &rect, &disc }, op, &diag);
+            errdefer std.debug.print("radius {e}, {s}, quarter turns {d}, mirrored {}, moved {any}: {any} against {any}\n", .{ r, @tagName(op), quarter, mirrored, shift, got, base[quarter % 2] });
+            const want: f64 = switch (op) {
+                .@"union" => 12 * r * r,
+                .difference => (12 - PI) * r * r,
+                .intersection => PI * r * r,
+            };
+            try testing.expect(got.made);
+            try testing.expectApproxEqRel(want, got.area, 1e-6);
+            if (base[quarter % 2]) |b| {
+                try testing.expectEqual(b.faces, got.faces);
+                try testing.expectEqual(b.loops, got.loops);
+            } else base[quarter % 2] = got;
+        };
+    };
+}
+
+test "sketch booleans: two discs tangent inside, nearly one radius, in place, turned and moved whole, at two zones" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for ([_]f64{ 1e-5, 1e-6 }) |zone| for ([_][2]f64{ .{ 10, 10.001 }, .{ 1e3, 1e3 + 0.01 }, .{ 1e4, 1e4 + 0.1 } }) |radii| for ([_]boolean.Op{ .@"union", .difference, .intersection }) |op| {
+        const t = Tolerance.fromZone(zone);
+        var base: ?SheetOutcome = null;
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for ([_]Vec2{ .{ 0, 0 }, .{ 3e5, 0 }, .{ 0, 3e5 }, .{ 3e5, 3e5 }, .{ 1e6, -1e6 } }) |shift| {
+            // Within the scale guard: the zone at least the extent times 1e-12
+            if (@max(@abs(shift[0]), @abs(shift[1])) + 2 * radii[1] > zone * 1e12) continue;
+            var turned: Vec2 = .{ 0, -1 };
+            if (mirrored) turned[0] = -turned[0];
+            for (0..quarter) |_| {
+                const q: Vec2 = .{ -turned[1], turned[0] };
+                turned = q;
+            }
+            errdefer std.debug.print("radii {any}, zone {e}, {s}, quarter turns {d}, mirrored {}, moved {any}: {f}\n", .{ radii, zone, @tagName(op), quarter, mirrored, shift, &diag });
+            var discs: [2]Body = undefined;
+            for (radii, &discs, 0..) |r, *disc, i| {
+                var drawn = try primitives.circle(testing.allocator, t, r, &diag);
+                defer drawn.deinit();
+                const centre = vec.addScaled2(shift, turned, r);
+                disc.* = try moved(&drawn, centre[0], centre[1], &diag);
+                errdefer if (i == 1) discs[0].deinit();
+            }
+            defer for (&discs) |*d| d.deinit();
+            const got = try sheetOutcome(&.{ &discs[1], &discs[0] }, op, &diag);
+            errdefer std.debug.print("{any} against {any}\n", .{ got, base });
+            const small = PI * radii[0] * radii[0];
+            const large = PI * radii[1] * radii[1];
+            const want: f64 = switch (op) {
+                .@"union" => large,
+                .difference => large - small,
+                .intersection => small,
+            };
+            try testing.expect(got.made);
+            try testing.expectApproxEqAbs(want, got.area, 1e-9 * large);
+            if (base) |b| {
+                try testing.expectEqual(b.faces, got.faces);
+                try testing.expectEqual(b.loops, got.loops);
+            } else base = got;
+        };
+    };
+}
