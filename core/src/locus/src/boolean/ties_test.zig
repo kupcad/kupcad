@@ -17,6 +17,7 @@ const pipeline = @import("pipeline.zig");
 const helpers = @import("pipeline_test.zig");
 const degeneracy = @import("degeneracy_test.zig");
 const hull_mod = @import("../construct/hull.zig");
+const planar_faces = @import("../intersect/planar_faces.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
@@ -35,6 +36,15 @@ const MOVES = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
     .{ .axis = .{ 0, 1, 0 }, .angle = 2.0, .shift = vec.ZERO3 },
     .{ .axis = .{ -2, 1, 1 }, .angle = 0.7, .shift = .{ 1e3, -2e3, 500 } },
 };
+/// Find dv's tie (the solids oracle's mirrored replay on 9015ab26): a box's bottom corner
+/// and two merged vertices on a hull's face and the bottom, tied along the faces' line (one
+/// y exactly) and 5.5e-5 apart across it, with the faces' outward normals; and the joins
+/// the paves make of them along the line, by the points' labels (the corner first).
+const DV_POINTS = [_]Vec3{ .{ 1.999995, 0.999995, 0 }, .{ 1.9999954411764707, 1.0000199999999573, 0.0000017647058823645039 }, .{ 2.0000500000000003, 1.0000199999999573, -0.000010000000000065512 } };
+const DV_OUTWARD = [2]Vec3{ .{ -0.24253562503633297, 0, -0.9701425001453319 }, .{ 0, 0, -1 } };
+const DV_JOINS = [2][2]u32{ .{ 0, 1 }, .{ 1, 2 } };
+/// The tolerance the finds were drawn at.
+const DV_TOL = Tolerance.fromZone(1e-5);
 /// `MOVES` and the solids fuzzer's own far moves, out to 3e5, where D27's band at the
 /// coordinates (64 ulps of them, 4e-9) is ten thousand times the origin's: a difference
 /// below it there and above it in place is a tie in one place only.
@@ -601,4 +611,43 @@ test "ties: a pocket's wall over a vertex a zone under the face it is cut from i
         defer third.deinit();
         try expectAlikeMirrored(&joined, &third);
     }
+}
+
+test "ties: points tied along two faces' line are joined alike moved, mirrored and either way round (find dv)" {
+    // Find dv: a box's bottom and a hull's face share the box's corner and two merged
+    // vertices tied along the faces' line, apart across it; sorted, the tied two run
+    // across it by `line × (n_a + n_b)`, whose sign a mirror turns over while the line keeps
+    // its direction: in place the corner was joined to the farther of the two and the
+    // three made a triangle, a sliver face of both faces (the intersection refused
+    // `sliver_face`), mirrored to the nearer, and the intersection was made. A run at one
+    // place along the line now runs from its end nearer the point before it
+    // (`Along.reversed`): the joins are the same however the faces are moved or mirrored,
+    // and with the faces swapped
+    for (MOVES) |m| for ([_]bool{ false, true }) |mirrored| for ([_]bool{ false, true }) |swapped| {
+        errdefer std.debug.print("turned {d} about {any}, mirrored {}, swapped {}\n", .{ m.angle, m.axis, mirrored, swapped });
+        var move = mat.Affine.translate(m.shift).compose(&mat.Affine.rotate(vec.normalized(m.axis).?, m.angle));
+        if (mirrored) move = move.compose(&mat.Affine.mirror(vec.X3));
+        var points: [DV_POINTS.len]Vec3 = undefined;
+        for (DV_POINTS, &points) |p, *q| q.* = move.point(p);
+        const a = vec.normalized(move.vector(DV_OUTWARD[@intFromBool(swapped)])).?;
+        const b = vec.normalized(move.vector(DV_OUTWARD[@intFromBool(!swapped)])).?;
+        const line = planar_faces.lineDirection(vec.normalized(vec.cross(a, b)).?);
+        var order = planar_faces.Along.init(line, a, b, 0, DV_TOL);
+        order.steep = DV_TOL.angleSine();
+        var items = [_]u32{ 0, 1, 2 };
+        const Of = struct {
+            fn point(ps: []const Vec3, i: u32) Vec3 {
+                return ps[i];
+            }
+        };
+        try testing.expect(order.sort(u32, &items, @as([]const Vec3, &points), Of.point) == null);
+        for (DV_JOINS) |join| {
+            var found = false;
+            for (items[0 .. items.len - 1], items[1..]) |x, y| {
+                if (@min(x, y) == join[0] and @max(x, y) == join[1]) found = true;
+            }
+            errdefer std.debug.print("order {any}\n", .{items});
+            try testing.expect(found);
+        }
+    };
 }

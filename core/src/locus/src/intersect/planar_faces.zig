@@ -186,6 +186,30 @@ pub const Along = struct {
         return if (along < limit) .yes else .no;
     }
 
+    /// Whether every pair of `run` is at one place along the line (`steep`'s angle; without
+    /// it a run is one place to rounding throughout).
+    fn chained(self: Along, run: anytype, context: anytype, comptime pointOf: anytype, across: Vec3, scale: f64) bool {
+        const ratio = self.steep orelse return true;
+        for (run, 0..) |x, k| for (run[k + 1 ..]) |y| {
+            if (self.steepPair(ratio, across, pointOf(context, x), pointOf(context, y), scale) != .yes) return false;
+        };
+        return true;
+    }
+
+    /// Whether the run `items[i..j]` should run the other way: its last point nearer the
+    /// point before it than its first (else, at the start, its first nearer the point after
+    /// it than its last); distances the same to rounding keep it. Distances are the same
+    /// whichever way the solids are moved or mirrored.
+    fn reversed(_: Along, items: anytype, i: usize, j: usize, context: anytype, comptime pointOf: anytype, scale: f64) bool {
+        const first = pointOf(context, items[i]);
+        const last = pointOf(context, items[j - 1]);
+        const neighbour = if (i > 0) pointOf(context, items[i - 1]) else if (j < items.len) pointOf(context, items[j]) else return false;
+        const d_first = vec.distance(neighbour, first);
+        const d_last = vec.distance(neighbour, last);
+        if (canonical.sameToRounding(d_first, d_last, scale)) return false;
+        return if (i > 0) d_last < d_first else d_first < d_last;
+    }
+
     /// Whether `x` and `y` are two points, more than `one` apart.
     fn two(self: Along, x: Vec3, y: Vec3) bool {
         return vec.distance(x, y) > self.one;
@@ -251,6 +275,18 @@ pub const Along = struct {
                     .at => |c| return .{ .steep = .{ .pair = .{ x, y }, .comparison = c } },
                 }
             };
+            // A run every pair of which is at one place along the line runs across from its
+            // end nearer the point before it (else farther from the point after it): the
+            // sign of across is the normals' cross product's, which a mirror turns over
+            // while the line keeps its direction, and the run reversed alone changed which
+            // of its points the point before it was joined to. A hull's face and a box's
+            // bottom shared a corner of the box and two points tied along their line, 5.5e-5
+            // apart across: in place the three were joined into a triangle, a sliver face
+            // in both, mirrored two of them were (the solids oracle's mirrored replay on
+            // 9015ab26, dv: the intersection refused `sliver_face` in place, made mirrored)
+            if (self.chained(run, context, pointOf, across, scale)) {
+                if (self.reversed(items, i, j, context, pointOf, scale)) std.mem.reverse(T, run);
+            }
             for (run[0 .. run.len - 1], run[1..]) |x, y| {
                 const px = pointOf(context, x);
                 const py = pointOf(context, y);
