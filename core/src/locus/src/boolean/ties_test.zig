@@ -291,6 +291,12 @@ test "ties: the family about be, the box's side and bottom edge moved by up to a
 const SIDE_A = [2]Vec3{ .{ 0, 0, 0 }, .{ 1, 1, 1 } };
 const SIDE_B = [2]Vec3{ .{ 1, 0, 0 }, .{ 2, 1, 1 } };
 const SIDE_TOP_LIFTS = [_]f64{ 5e-6, 1e-5, 1.5e-5 };
+/// The boxes of the tests of a group's plane mirrored: overlapping, their tops one group,
+/// the second's `SIDE_TOP_LIFTS` over the first's, so the inner plane (the one the group's
+/// points lie farther outside of) decides; and the planes they are mirrored in.
+const OVER_A = [2]Vec3{ .{ 0, 0, 0 }, .{ 2, 2, 2 } };
+const OVER_B = [2]Vec3{ .{ 1, 0, 0 }, .{ 3, 2, 2 } };
+const MIRROR_NORMALS = [_]Vec3{ vec.X3, vec.Y3, vec.Z3 };
 
 test "ties: two boxes side by side, their tops a hair apart and moving each other alike, take one top swapped and moved whole" {
     for (SIDE_TOP_LIFTS) |lift| {
@@ -301,6 +307,55 @@ test "ties: two boxes side by side, their tops a hair apart and moving each othe
         defer b.deinit();
         try expectAlikeSwappedAndMoved(&a, &b);
     }
+}
+
+test "ties: two overlapping boxes, their tops a hair apart, take the same top mirrored as in place" {
+    // The solids oracle's mirrored replay (2026-11-26, on the replay of a find of the
+    // 2026-11-13 list): a wall's top and a hull's 1.5e-5 apart were one group, and the tie
+    // rule takes the inner plane by the faces' outward normals, which took a plane's
+    // frame's z turned by the face's sense; a mirror leaves the frames left-handed and
+    // flips the senses, so each top's outward normal pointed down and the outer plane was
+    // taken, the edge along the group the other operand's line, and the intersection was
+    // made mirrored and refused in place (`sliver_face`). The outward normal is the
+    // surface's (`in_face.outwardNormal`), turned by the sense. The intersection and the
+    // difference: the union joins the front and back top edges, each a run of both
+    // boxes' lines, and simplify keeps the least record of the lines holding the run
+    // (`simplify.hold`), which the mirror's reversed loops number the other way (open)
+    for (SIDE_TOP_LIFTS) |lift| {
+        errdefer std.debug.print("the second top {e} over the first\n", .{lift});
+        var a = try helpers.box(OVER_A[0], OVER_A[1]);
+        defer a.deinit();
+        var b = try helpers.box(OVER_B[0], vec.add(OVER_B[1], .{ 0, 0, lift }));
+        defer b.deinit();
+        try expectAlikeMirrored(&a, &b);
+        try expectAlikeMirrored(&b, &a);
+    }
+}
+
+/// The intersection and the difference of `a` and `b` mirrored in each of
+/// `MIRROR_NORMALS` as they are in place: made alike, point for point, mirrored back, or
+/// refused with one code. A mirror rounds nothing. Every case that differs is printed
+/// before the test fails.
+fn expectAlikeMirrored(a: *const Body, b: *const Body) !void {
+    var differing: usize = 0;
+    for ([_]pipeline.Op{ .intersection, .difference }) |op| {
+        const want = try Outcome.of(a, b, op, null);
+        defer want.deinit();
+        for (MIRROR_NORMALS) |normal| {
+            var ma = try helpers.mirrored(a, normal);
+            defer ma.deinit();
+            var mb = try helpers.mirrored(b, normal);
+            defer mb.deinit();
+            const got = try Outcome.of(&ma, &mb, op, mat.Affine.mirror(normal));
+            defer got.deinit();
+            if (want.alike(got)) continue;
+            std.debug.print("{s}, mirrored in {any}: want {f}, got {f}\n", .{ @tagName(op), normal, want, got });
+            printUnmatched("in place only:", want, got);
+            printUnmatched("mirrored only:", got, want);
+            differing += 1;
+        }
+    }
+    try testing.expectEqual(0, differing);
 }
 
 /// The solids of the tests of a chain of edges on two lines within the tolerance of each

@@ -279,7 +279,7 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     // parallel within the angular tolerance have no line of their own (their normals'
     // cross product is noise), and what the rules find of such faces is their distance
     // (`nearest`), so their marks keep the exact order, whatever ties it has
-    const order = Along.init(along, outward(a, fa, frame_a), outward(b, fb, frame_b), tol.zone, tol);
+    const order = Along.init(along, outward(a, fa), outward(b, fb), tol.zone, tol);
     if (tol.parallel(frame_a.z, frame_b.z)) {
         const Exact = struct {
             fn lessThan(line: Vec3, p: Mark, q: Mark) bool {
@@ -343,9 +343,14 @@ fn markPoint(_: void, m: Mark) Vec3 {
     return m.p;
 }
 
-/// Planar face `f`'s outward normal: its plane's, turned by the face's sense.
-pub fn outward(body: *const Body, f: types.FaceIndex, frame: Frame) Vec3 {
-    return if (body.face(f).same_sense) frame.z else vec.neg(frame.z);
+/// Planar face `f`'s outward normal: its plane's, turned by the face's sense; the one
+/// definition (`in_face.outwardNormal`), the plane's normal its frame's z turned by the
+/// frame's handedness. The frame's z alone, turned by the sense, pointed every face of a
+/// mirrored body inward (a mirror leaves the frames left-handed and flips the senses), and
+/// the tie rule took the outer of two planes a hair apart mirrored, the inner in place
+/// (the solids oracle's mirrored replay, 2026-11-26).
+pub fn outward(body: *const Body, f: types.FaceIndex) Vec3 {
+    return in_face.outwardNormal(body, f, .{ 0, 0 });
 }
 
 /// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives those
@@ -470,7 +475,7 @@ pub const TieFace = struct {
     pub fn of(body: *const Body, operand: u1, face: u32) TieFace {
         const f = types.FaceIndex.of(face);
         const frame = frameOf(body, f).?;
-        return .{ .frame = frame, .outward = outward(body, f, frame), .zone = body.tol.zone, .operand = operand, .face = face };
+        return .{ .frame = frame, .outward = outward(body, f), .zone = body.tol.zone, .operand = operand, .face = face };
     }
 
     /// The order a choice between faces' planes that hold what it measures alike (to

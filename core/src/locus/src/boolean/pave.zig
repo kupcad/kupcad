@@ -1984,7 +1984,7 @@ const Filler = struct {
                     continue;
                 },
             };
-            var order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa, frame_a), planar_faces.outward(self.body(1), fb, frame_b), 0, p.tol);
+            var order = planar_faces.Along.init(line, planar_faces.outward(self.body(0), fa), planar_faces.outward(self.body(1), fb), 0, p.tol);
             // Two whose separation lies across the line within the angle are at one place
             // along it (`Along`)
             order.steep = p.tol.angleSine();
