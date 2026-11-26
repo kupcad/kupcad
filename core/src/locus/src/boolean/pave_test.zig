@@ -18,10 +18,28 @@ const in_face = @import("../query/in_face.zig");
 const pave = @import("pave.zig");
 const imprint = @import("imprint.zig");
 const classify = @import("classify.zig");
+const planar_faces = @import("../intersect/planar_faces.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
+/// The probes of the test of a sample at the tolerance from a partner face's boundary to
+/// rounding (find ec): the first the intersection tolerance outside the partner's side
+/// x = 1, then one inside the partner, one outside it, or none; and whether the samples put
+/// the fragment inside the partner.
+const PROBE_AT: Vec3 = .{ 1 - 2e-5, 2, 1 };
+const PROBE_CASES = [_]struct { next: ?Vec3, inside: bool }{
+    .{ .next = .{ 2, 2, 1 }, .inside = true },
+    .{ .next = .{ 0.5, 0.5, 1 }, .inside = false },
+    .{ .next = null, .inside = false },
+};
+/// The rigid moves the probes and their boxes are taken through: a turn and a shift, and
+/// the solids fuzzer's far move to 3e5.
+const PROBE_MOVES = [_]struct { axis: Vec3, angle: f64, shift: Vec3 }{
+    .{ .axis = .{ 0, 0, 1 }, .angle = 0, .shift = .{ 0, 0, 0 } },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 0.5, -1, 2 } },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.014142253476507214, .shift = .{ 1e5, -2e5, 3e5 } },
+};
 /// Where each run of the paves is; the refusal test reads it.
 var stage: pave.Stage = .vertex_vertex;
 
@@ -239,4 +257,44 @@ test "paves: two solids of an operand touching along a line meet there by their 
     defer diag.deinit();
     try testing.expectError(error.Degenerate, pipeline.boolean(testing.allocator, &touching, &cut, .@"union", .{}, &diag, null));
     try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+}
+
+test "paves: a fragment's sample the tolerance from a partner's boundary to rounding says nothing, the next sample decides, alike mirrored and moved (find ec)" {
+    // Find ec (the nightly's locus_solids on 61054773): a fragment with no twin is checked
+    // to be no region of a partner by samples inside it, its triangulation's centroids,
+    // which a mirror changes. One sample lay 3.8e-14 past the tolerance from the partner's
+    // boundary, within D27's band, and the union was refused `at_tolerance` in place and
+    // made mirrored, where no sample lay there. A sample at the boundary to rounding says
+    // nothing, as one on it does (`planar_faces.placed`)
+    for (PROBE_MOVES) |move| for ([_]bool{ false, true }) |mirrored| for (PROBE_CASES) |case| {
+        errdefer std.debug.print("turned {d} about {any}, shifted {any}, mirrored {}, next {any}\n", .{ move.angle, move.axis, move.shift, mirrored, case.next });
+        var place = mat.Affine.translate(move.shift).compose(&mat.Affine.rotate(vec.normalized(move.axis).?, move.angle));
+        if (mirrored) place = place.compose(&mat.Affine.mirror(.{ 1, 0, 0 }));
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var drawn_a = try box(.{ 0, 0, 0 }, .{ 4, 4, 1 });
+        defer drawn_a.deinit();
+        var drawn_b = try box(.{ 1, 1, 0 }, .{ 3, 3, 1 });
+        defer drawn_b.deinit();
+        var a = try transform.transform(testing.allocator, &drawn_a, &place, .{}, &diag);
+        defer a.deinit();
+        var b = try transform.transform(testing.allocator, &drawn_b, &place, .{}, &diag);
+        defer b.deinit();
+        var p = try pave.run(testing.allocator, &a, &b, tol, .{}, &diag, &stage);
+        defer p.deinit();
+        const up = place.vector(.{ 0, 0, 1 });
+        const top_a = types.FaceIndex.of(facing(&a, up));
+        const top_b = facing(&b, up);
+        var samples: [2]Vec3 = undefined;
+        samples[0] = place.point(PROBE_AT);
+        // The first sample is at the boundary to rounding
+        try testing.expect(try planar_faces.placed(&b, types.FaceIndex.of(top_b), samples[0], 0, tol, &diag) == .at_tolerance);
+        var n: usize = 1;
+        if (case.next) |q| {
+            samples[1] = place.point(q);
+            n = 2;
+        }
+        const found = try classify.sameDomain(&p, &a, top_a, 1, samples[0..n], &.{top_b}, &diag);
+        try testing.expectEqual(case.inside, found != null);
+    };
 }

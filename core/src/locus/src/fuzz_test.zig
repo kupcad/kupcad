@@ -2627,6 +2627,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // slit, the planes crossing along it: four coedges, NotValid (pave.hingedWithin:
         // faces parallel within the angular tolerance crossing along the hinge refused)
         "solids 0 0 4 3 4 0 1 2 1 -1 -2 10 10 3 3 2 0 3 0 3 3 4 1 0 0 1 1 8 12 10 13 1 1 0 1 2 2 4 2 4 3 2 -2 7 5 2 0 2 1 5 4 2 4 1 2 1 2 2 1 4 1 1 0 1 1 0 3 6 2 4 11 0 15 2",
+        // The nightly's locus_solids on 61054773 (ec): (wall ∪ hull) ∪ wall, a fragment's
+        // sample 3.8e-14 past the tolerance from a partner face's boundary, refused
+        // `at_tolerance` in place, made mirrored, where the triangulation's samples differ
+        // (classify.sameDomain: such a sample says nothing, planar_faces.placed)
+        "solids 3 1 5 2 0 4 1 2 4 3 2 4 2 1 11 -2 16 3 3 1 8 1 4 4 2 3 3 1 0 3 2 0 2 3 4 4 4 2 0 4 1 3 0 4 3 0 1 6 0 0 2 0 12 7 1 10 0 3 3 1 4 1 0 4 0 0 4 1 0 4 2 9 7 -2 10 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

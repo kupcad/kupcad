@@ -891,15 +891,19 @@ pub fn piecesOf(allocator: std.mem.Allocator, fragments: *const Fragments, i: us
 }
 
 /// Whether some sample of a fragment lies inside one of `partners` (the old decision by
-/// sampling, kept as the check that a fragment with no twin is no region of a partner).
-fn sameDomain(paves: *const Paves, body: *const Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
+/// sampling, kept as the check that a fragment with no twin is no region of a partner). A
+/// sample on a partner's boundary, or there to rounding, says nothing and the next decides
+/// (`planar_faces.placed`): the samples are the fragment's triangulation's, not the
+/// solids', and one at the tolerance to rounding refused in place what was made mirrored
+/// (ec).
+pub fn sameDomain(paves: *const Paves, body: *const Body, f: types.FaceIndex, other: usize, samples: []const Vec3, partners: []const u32, diag: *Diagnostics) Error!?Classified {
     for (samples) |p| {
         var on_a_boundary = false;
         for (partners) |g| {
             const face_g = types.FaceIndex.of(g);
-            switch (try planar_faces.place(paves.operands[other], face_g, p, 0, paves.tol, diag)) {
+            switch (try planar_faces.placed(paves.operands[other], face_g, p, 0, paves.tol, diag)) {
                 .outside => continue,
-                .boundary => {
+                .boundary, .at_tolerance => {
                     on_a_boundary = true;
                     continue;
                 },

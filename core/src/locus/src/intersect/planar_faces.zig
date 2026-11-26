@@ -470,13 +470,24 @@ fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceInd
 /// rounded into the band, read as overlapping itself where in place it did not, and was
 /// called invalid (the solids oracle's moved results on 9015ab26, dt and dy, 2026-11-26).
 pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
-    const decide: incidence.Decider = .{ .tol = tol, .scale = canonical.magnitude(&.{p}) };
-    return switch (try in_face.placeWithin(decide, body, f, p, gap, null, diag)) {
+    return switch (try placed(body, f, p, gap, tol, diag)) {
         .inside => .inside,
         .outside => .outside,
         .boundary => .boundary,
         .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a point on a face's boundary or not", .measured = c.measured, .threshold = c.limit }),
     };
+}
+
+/// `place`'s decision, at the boundary to rounding answered (`at_tolerance`), not refused:
+/// for a probe, a point the caller chose (a sample inside a fragment), which says nothing
+/// there and leaves the question to the next. The probe's place is no feature of the
+/// solids: a fragment's samples are the centroids of its triangulation, which a mirror
+/// changes, and one of them 3.8e-14 past the tolerance from a partner face's boundary
+/// refused a union in place that was made mirrored, where no sample lay there
+/// (`boolean/classify.zig`'s `sameDomain`; the nightly's locus_solids on 61054773, ec).
+pub fn placed(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Placed {
+    const decide: incidence.Decider = .{ .tol = tol, .scale = canonical.magnitude(&.{p}) };
+    return in_face.placeWithin(decide, body, f, p, gap, null, diag);
 }
 
 /// Whether `p`, reaching `gap` beyond the tolerance (its vertex's, 0 for a point that is
