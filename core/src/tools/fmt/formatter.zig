@@ -87,6 +87,17 @@ pub const Formatter = struct {
         return self.line_index.getLine(self.token_starts[tok]);
     }
 
+    /// Whether code follows `node` on the line it ends on (`.m + c`, `.m[1]`, `.m.n`): a
+    /// comment on that line runs to its end, so it comes after that code too.
+    fn codeFollows(self: *const Formatter, tree: *const ast.Tree, node: ast.NodeIndex) bool {
+        const next = token_span.last(tree, node) + 1;
+        if (next >= self.token_starts.len) return false;
+        return switch (self.token_tags[next]) {
+            .newline, .eof => false,
+            else => true,
+        };
+    }
+
     /// The column the next character lands in, counting characters, not bytes.
     fn column(self: *const Formatter) usize {
         const line = self.out.items[if (std.mem.findScalarLast(u8, self.out.items, '\n')) |nl| nl + 1 else 0..];
@@ -1345,7 +1356,10 @@ pub const Formatter = struct {
                     try f.writeIndent();
                     try f.formatLink(c.tree, link, calledNext(c.tree, c.links, i));
                     prev_line = f.lastLine(c.tree, link);
-                    try f.flushTrailingComments(link_line, prev_line);
+                    // A comment on the line stays after the code that follows the call there
+                    // (`.m + c # x`): written after the call, it went before that code, and
+                    // the program changed.
+                    if (!f.codeFollows(c.tree, link)) try f.flushTrailingComments(link_line, prev_line);
                 }
                 f.indent_level -= 1;
             }

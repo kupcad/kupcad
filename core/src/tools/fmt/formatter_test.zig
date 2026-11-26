@@ -818,6 +818,26 @@ test "Formatter: comments between and after the calls of a chain stay there" {
     );
 }
 
+test "Formatter: a comment after code that follows a chain's last call on its line stays after that code" {
+    // The nightly front-end fuzzer (2026-11-27, from `.named("M2.5 × 6 screw")\n  .m&lw #&`):
+    // the comment was written right after the call, before the code after it on its line,
+    // so `.m # x` and `+ c` below it changed the program, and the formatter refused it.
+    const cases = [_][2][]const u8{
+        .{ "b\n  .m + c # x\n", "b\n  .m + c # x\n" },
+        .{ "a = b\n  .m(1) & lw # x\n", "a = b\n  .m(1) & lw # x\n" },
+        .{ "b\n  .m[1] # x\n", "b\n  .m[1] # x\n" },
+        .{ "b\n  .m ? 1 : 2 # x\n", "b\n  .m ? 1 : 2 # x\n" },
+        .{ "b\n  .m.n # x\n", "b\n  .m.n # x\n" },
+        .{ "f(b\n  .m + 1) # x\n", "f(\n  b\n    .m + 1, # x\n)\n" },
+        // A call that ends its line still takes the comment there.
+        .{ "b\n  .m # x\n  .n # y\nz = 1\n", "b\n  .m # x\n  .n # y\nz = 1\n" },
+    };
+    for (cases) |c| {
+        errdefer std.debug.print("source:\n{s}\n", .{c[0]});
+        try expectStableFormat(c[0], c[1]);
+    }
+}
+
 test "Formatter: arguments break inside a broken chain, indented under their call" {
     try expectStableFormat(
         \\body = cube(10)
