@@ -32,6 +32,10 @@ const LoopIndex = types.LoopIndex;
 const FaceIndex = types.FaceIndex;
 const ShellIndex = types.ShellIndex;
 
+/// How near nothing a loop's area may be and be no area, in ulps of the products it is
+/// summed from (D27's 64): a lamina's or a spur's rounding, whatever the body's size.
+const NO_AREA_ULPS: f64 = 64;
+
 pub const Error = error{OutOfMemory};
 
 /// The rules, as diagnostics codes.
@@ -146,8 +150,23 @@ pub fn pcurveLift(b: *const Body, c: CoedgeIndex) f64 {
     return most;
 }
 
-/// A loop's area about its face's outward normal and its length (`Checker.loopMeasure`).
-const LoopMeasure = struct { area: f64, perimeter: f64 };
+/// A loop's area about its face's outward normal and its length (`Checker.loopMeasure`),
+/// and the size of the products the area is summed from, which its rounding is in
+/// proportion to.
+const LoopMeasure = struct {
+    area: f64,
+    perimeter: f64,
+    size: f64 = 0,
+
+    /// Whether the area is none to rounding: a lamina or a spur mid-construction, run
+    /// neither way round and no sliver. Not an area under the parametric tolerance
+    /// squared, 1e-10, which a body's scale does not change: scaled by 1e-3, a sliver
+    /// 1e-3 long and 1.5e-8 high was a face of no area, and the sliver rule passed it
+    /// (the audit of 2026-11-22, kind 6, item 12).
+    fn none(self: LoopMeasure) bool {
+        return @abs(self.area) <= NO_AREA_ULPS * std.math.floatEps(f64) * self.size;
+    }
+};
 
 /// The polygon of a loop's points taken one by one, its area from its first point and its
 /// length, a step from a point that starts an arc counted by the arc's own length (added
@@ -156,13 +175,17 @@ const LoopWalk = struct {
     outward: Vec3,
     area: f64 = 0,
     perimeter: f64 = 0,
+    size: f64 = 0,
     first: ?Vec3 = null,
     last: Vec3 = .{ 0, 0, 0 },
     last_arc: bool = false,
 
     fn step(self: *LoopWalk, p: Vec3, starts_arc: bool) void {
         if (self.first) |origin| {
-            self.area += vec.dot(vec.cross(vec.sub(self.last, origin), vec.sub(p, origin)), self.outward) / 2;
+            const u = vec.sub(self.last, origin);
+            const v = vec.sub(p, origin);
+            self.area += vec.dot(vec.cross(u, v), self.outward) / 2;
+            self.size += vec.length(u) * vec.length(v) / 2;
             if (!self.last_arc) self.perimeter += vec.distance(self.last, p);
         } else self.first = p;
         self.last = p;
@@ -171,7 +194,7 @@ const LoopWalk = struct {
 
     fn close(self: *LoopWalk) LoopMeasure {
         if (self.first) |origin| self.step(origin, false);
-        return .{ .area = self.area, .perimeter = self.perimeter };
+        return .{ .area = self.area, .perimeter = self.perimeter, .size = self.size };
     }
 };
 
@@ -556,16 +579,18 @@ const Checker = struct {
             if (face.flags.tombstone or face.surface.kind != .plane) continue;
             const n = b.geometry.surface(face.surface).normal(0, 0);
             const outward = if (face.same_sense) n else vec.neg(n);
-            var area: f64 = 0;
-            var perimeter: f64 = 0;
+            var face_measure: LoopMeasure = .{ .area = 0, .perimeter = 0 };
             var loops = traverse.Loops.init(b, types.FaceIndex.of(i));
             while (loops.next() catch return) |l| {
                 if (b.loop(l).first == .none) continue;
                 const m = self.loopMeasure(l, outward);
-                area += m.area;
-                perimeter += m.perimeter;
+                face_measure.area += m.area;
+                face_measure.perimeter += m.perimeter;
+                face_measure.size += m.size;
             }
-            if (@abs(area) <= b.tol.param * b.tol.param) continue;
+            if (face_measure.none()) continue;
+            const area = face_measure.area;
+            const perimeter = face_measure.perimeter;
             const least = b.tol.zone * perimeter / 2;
             if (!(area > least)) try self.add(.sliver_face, .of(.face, i), area, least);
         }
@@ -598,6 +623,7 @@ const Checker = struct {
                     const sweep = @abs(to - from);
                     const turn: f64 = if ((vec.dot(circle.normal(), outward) > 0) == (to > from)) 1 else -1;
                     walk.area += turn * circle.r * circle.r / 2 * (sweep - @sin(sweep));
+                    walk.size += circle.r * circle.r / 2 * (sweep + @abs(@sin(sweep)));
                     walk.perimeter += circle.r * sweep;
                     walk.step(curve.eval(from), true);
                 },
@@ -645,15 +671,15 @@ const Checker = struct {
                     // outer loop, negative for a hole
                     if (face.surface.kind == .plane) {
                         const n = b.geometry.surface(face.surface).normal(0, 0);
-                        const area = self.loopMeasure(l, if (face.same_sense) n else vec.neg(n)).area;
-                        if (@abs(area) > b.tol.param * b.tol.param and (area > 0) != outer) try self.add(.loop_winding, .of(.loop, @backingInt(l)), area, 0);
+                        const m = self.loopMeasure(l, if (face.same_sense) n else vec.neg(n));
+                        if (!m.none() and (m.area > 0) != outer) try self.add(.loop_winding, .of(.loop, @backingInt(l)), m.area, 0);
                         continue;
                     }
                     if (!try self.sampleLoop(l, &uv, &xyz)) continue;
-                    const area = shoelace(uv.items);
+                    const m = shoelace(uv.items);
                     const want_ccw = outer == face.same_sense;
                     // A loop of no area (a spur, a lamina mid-construction) runs neither way
-                    if (@abs(area) > b.tol.param * b.tol.param and (area > 0) != want_ccw) try self.add(.loop_winding, .of(.loop, @backingInt(l)), area, 0);
+                    if (!m.none() and (m.area > 0) != want_ccw) try self.add(.loop_winding, .of(.loop, @backingInt(l)), m.area, 0);
                 }
             }
             // A body the structural rules found broken measures nothing
@@ -969,14 +995,17 @@ fn uvGap(a: Vec2, b: Vec2, slack: Vec2, periods: [2]?f64) f64 {
 /// Twice the signed area of a polygon in UV: positive counter-clockwise. Summed about its
 /// first point, so that the terms are as small as the polygon (a plane's frame may be far
 /// from the face: about UV's origin, a sliver 1e7 out summed to an area of 0).
-fn shoelace(points: []const Vec2) f64 {
+fn shoelace(points: []const Vec2) LoopMeasure {
     var area: f64 = 0;
+    var size: f64 = 0;
     const from = points[0];
     for (points, 0..) |p, i| {
-        const q = points[(i + 1) % points.len];
-        area += vec.cross2(vec.sub2(p, from), vec.sub2(q, from));
+        const u = vec.sub2(p, from);
+        const v = vec.sub2(points[(i + 1) % points.len], from);
+        area += vec.cross2(u, v);
+        size += vec.length2(u) * vec.length2(v);
     }
-    return area;
+    return .{ .area = area, .perimeter = 0, .size = size };
 }
 
 /// Whether `p` is inside the polygon by the even-odd rule.

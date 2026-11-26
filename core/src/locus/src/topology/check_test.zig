@@ -587,3 +587,25 @@ test "check: a planar face narrower than the zone is a sliver, its edges long an
     try testing.expectEqual(@import("../diagnostics.zig").Code.sliver_face, first.code);
     try testing.expectApproxEqRel(@as(f64, 7.5e-6), first.measured, 1e-6);
 }
+
+test "check: a sliver of a body scaled small is a sliver, as it is at full size" {
+    // The audit of 2026-11-22 (kind 6, item 12): "a face of no area" was one under the
+    // parametric tolerance squared, 1e-10, which a body's scale does not change (`param`
+    // is relative): scaled by 1e-3, a sliver 1e-3 long and 1.5e-8 high (area 7.5e-12, zone
+    // 1e-8) had no area, and the sliver rule passed it
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const triangles = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ 2, 0, 3 } };
+    for ([_]f64{ 1, 1e-3, 1e-1, 1e2 }) |scale| {
+        errdefer std.debug.print("scale {e}\n", .{scale});
+        const t = tol.scaled(scale);
+        var points = [_]Vec3{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0.5, 1.5e-5, 0 }, .{ 0.5, -0.3, 1 } };
+        for (&points) |*p| p.* = vec.scale(p.*, scale);
+        try testing.expectError(error.Degenerate, @import("../construct/primitives.zig").polyhedron(testing.allocator, t, &points, &triangles, &diag));
+        const first = diag.first().?;
+        try testing.expectEqual(@import("../diagnostics.zig").Code.sliver_face, first.code);
+        try testing.expectApproxEqRel(7.5e-6 * scale * scale, first.measured, 1e-6);
+        diag.deinit();
+        diag = Diagnostics.init(testing.allocator);
+    }
+}

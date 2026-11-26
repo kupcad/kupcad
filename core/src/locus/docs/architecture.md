@@ -1724,7 +1724,11 @@ across; 2026-11-14, as SMLib and ACIS measure it; an arc's share of area and per
 exact, its circular segment and length, `check.loopMeasure`: sampled, they went by
 how many edges an arc was cut into, and a lune at 1.015 of the limit was refused or made
 by where its circle's seam fell, batch E's probe, cs, 2026-11-22; a boolean whose result has one refuses
-it by design, §7.4); no two vertices within `zone` of each
+it by design, §7.4; a face of no area, a lamina or a spur mid-construction, neither a sliver
+nor wound either way, is one whose area is within its sum's rounding, 64 ulps of the products
+it is summed from, not under the parametric tolerance squared, which a body's scale does not
+change: scaled by 1e-3, a sliver 1e-3 long and 1.5e-8 high passed the rule, the audit of
+2026-11-22); no two vertices within `zone` of each
 other; UV boxes inside the surface domain without wrap; gaps ordered vertex ≥ edge ≥ face.
 *Global* (slow, level 2): faces of a shell do not intersect except along shared edges
 (the intersector run over face pairs; for a sheet, since 2026-11-12, `sketch/overlap.zig`:
