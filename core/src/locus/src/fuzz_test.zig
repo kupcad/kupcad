@@ -2637,6 +2637,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the normals: in place joined into a sliver triangle, refused, mirrored not, made
         // (planar_faces.Along.places: a place's points not ordered, every pair asked)
         "solids 3 1 5 2 0 2 1 1 3 0 0 3 1 7 9 -1 8 2 1 1 5 0 1 1 4 3 4 1 3 4 4 0 0 0 4 1 3 3 5 5 -1 12 0 1 0 2 4 1 4 1 3 1 3 4 4 -2 16 0",
+        // The same sessions (locus_overlay, eb): two circles tangent outside, turned a hair
+        // and moved 2e6 out, the tangency welded 9.4e-6 off both; the smaller's piece from
+        // it ends outside the larger's circle past the zone, and the samples, not parted,
+        // put it inside: a map of genus one (overlay.endSide: by the shorter's end against
+        // the longer's stored circle)
+        "overlay 3 2 1 4 15 14 5 11 18 4 3 10 1 22 7 3 1 3 0 1 3 1 2 2 1 1 0 0 1 7 15 24 3 15 2 8 23 23 3 14 17 8 17 14 4 8 5 5 4 5 5 2 2 1 2 3 0 1 3 0 1 3 1 1 3 0 4 3 1 1 3 1 2 2 3 4 23 4 14 10 6 18 1 7 2 2 1 1 1 1 1 3 0 0 23 10 5 0 0 1 2 1 5 0 0 3 0 24 1 14 8 7 3 9 6 15 14 1 4 3 1 3 2 1 4 2 0 1 3 1 1 3 0 1 7 23 22 6 9 8 1 15 24 7 9 4 6 21 24 6 8 8 5 9 8 1 4 3 0 1 3 1 2 0 0 2 1 1 1 3 1 3 1 1 3 2 1 7 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

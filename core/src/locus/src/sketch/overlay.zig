@@ -501,7 +501,7 @@ pub const Overlay = struct {
         const a = self.point(g.a);
         const b = self.point(g.b);
         if (g.arc) |arc| {
-            if (@abs(vec.length2(vec.sub2(p, arc.c)) - arc.r) > self.tol.zone) return null;
+            if (offCircle(arc, p) > self.tol.zone) return null;
             if (!onArcStrictly(a, b, arc, p)) return null;
             return arcParam(a, b, arc, p);
         }
@@ -524,7 +524,7 @@ pub const Overlay = struct {
     /// leg's line, was neither a crossing nor a cut, and left an edge a rounding short of the
     /// least in place where moved whole it was made (the audit of 2026-11-22, kind 6, item 14).
     fn onLine(self: *const Overlay, a: Vec2, b: Vec2, p: Vec2) Error!bool {
-        const gap = @abs(predicates.orient2d(a, b, p)) / vec.distance2(a, b);
+        const gap = offLine(a, b, p);
         return switch (canonical.verdict(&.{canonical.Comparison.distance(gap, self.tol.zone, @max(magnitude2(a), magnitude2(b), magnitude2(p)))})) {
             .same => true,
             .apart => false,
@@ -1183,6 +1183,11 @@ pub const Leaving = struct {
     start: f64 = 0,
     reach: f64 = 0,
     limit: f64 = 0,
+    /// The curve's far end, its length (an arc's along its stored circle) and the arc's
+    /// stored circle (D26), the curve as the cuts read it (`endSide`).
+    end: Vec2,
+    length: f64,
+    stored: ?Arc = null,
 
     /// The arc sampled twice as far along, up to its middle and to `cap`; null for a
     /// line, whose sample is its far end, or an arc sampled as far as it may go. Two
@@ -1238,11 +1243,15 @@ pub const Leaving = struct {
 /// order about a vertex goes by it, and so does the offset's turn at a cusp (offset.zig),
 /// so the two read curves leaving a vertex one way alike.
 pub fn leaving(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Leaving {
-    const circle = throughEnds(a, b, arc orelse return .{ .sample = b, .zone = zone });
+    const given = arc orelse return .{ .sample = b, .zone = zone, .end = b, .length = vec.distance2(a, b) };
+    const circle = throughEnds(a, b, given);
     const span = arcSpan(a, b, circle);
     const limit = circle.r * span.sweep / 2.0;
     const s = @min(ORDER_REACH * zone, limit);
     return .{
+        .end = b,
+        .length = given.r * arcSpan(a, b, given).sweep,
+        .stored = given,
         .sample = arcPoint(circle, span.start, s),
         .rounding = canonical.Comparison.distance(0, 0, magnitude2(circle.c) + circle.r).band,
         .radius = circle.r,
@@ -1275,7 +1284,8 @@ fn arcPoint(circle: Arc, start: f64, s: f64) Vec2 {
 /// item 6). Samples within the zone of each other's line through the vertex have not
 /// parted: both are taken farther along until they do, as far as the shorter curve
 /// reaches (`Leaving.farther`): a piece within the zone of the vertex has no farther
-/// point to part at.
+/// point to part at. Two leaving one way that have not parted there are told by the
+/// shorter's end against the longer as the cuts read it (`endSide`).
 pub fn leavingSide(v: Vec2, p: Leaving, q: Leaving) f64 {
     var x = p;
     var y = q;
@@ -1299,9 +1309,68 @@ pub fn leavingSide(v: Vec2, p: Leaving, q: Leaving) f64 {
                 y = fy orelse y;
                 continue;
             }
+            if (endSide(v, x, y)) |by_end| return by_end;
         }
         return if (side > 0) 1 else -1;
     }
+}
+
+/// Which way round `y` leaves `v` from `x`, two curves leaving it one way that have not
+/// parted by the zone as far as their samples go (`leavingSide`), by the exact side of the
+/// shorter's far end against the longer as the overlay runs it: an arc along its stored
+/// circle (D26), the circle the cuts measure a vertex against (`paramOn`), and a line
+/// along its own line; null where that end lies within the zone of it, which the cuts
+/// read as on it (a cut, or past the longer's piece: three curves crossing pairwise
+/// within the zone, each piece from one crossing ending on another's circle, cb), or, the
+/// two as long, where each end's side disagrees with the other's. Unparted, the samples
+/// say nothing of the side the curves part to, and the circles through the pieces' welded
+/// ends (`throughEnds`), which the samples follow, need not part where the stored circles
+/// do: two circles tangent outside at a vertex moved 2e6 out, welded 9.4e-6 off both, the
+/// shorter's piece 4.3e-3 long ending 1.5e-5 outside the longer's circle, past the zone
+/// and so cut nowhere on it; the circles through the ends had swapped sides before it
+/// ended, its sample at its middle on the longer's left, inside, and the faces between
+/// them were walked as a map of genus one (V − E + F short by 2; the overlay's ReleaseSafe
+/// session on 9015ab26, eb; Leo, 2026-11-27: the stored circle is the one notion of where
+/// a piece runs). Cutting against the circles through the ends instead moves the circles
+/// with every cut, a pass that never settles (`MAX_CUT_PASSES`).
+fn endSide(v: Vec2, x: Leaving, y: Leaving) ?f64 {
+    if (vec.dot2(vec.sub2(x.sample, v), vec.sub2(y.sample, v)) <= 0) return null;
+    // `x`'s end on the left of `y` puts `y` clockwise of `x`; `y`'s on the left of `x`,
+    // counter-clockwise
+    const x_end = if (x.length <= y.length) -sideOf(v, y, x.end) else 0;
+    const y_end = if (y.length <= x.length) sideOf(v, x, y.end) else 0;
+    if (x_end == 0 and y_end == 0) return null;
+    if (x_end != 0 and y_end != 0 and x_end != y_end) return null;
+    return if (x_end != 0) x_end else y_end;
+}
+
+/// The side of `p` from curve `c` leaving `v`, as it runs: +1 left, −1 right, 0 within
+/// the zone of it (as `paramOn` measures a vertex against a given edge: an arc's distance
+/// from its stored circle, a line's from its line by the turn). Past the zone, exact: an
+/// arc's by the point against its stored circle, the centre on its left when it turns
+/// left; a line's by `orient2d`.
+fn sideOf(v: Vec2, c: Leaving, p: Vec2) f64 {
+    const left = if (c.stored) |arc| blk: {
+        if (offCircle(arc, p) <= c.zone) return 0;
+        const inside = predicates.inCircle(arc.c, arc.r, p);
+        break :blk if (arc.ccw) inside else -inside;
+    } else blk: {
+        if (offLine(v, c.end, p) <= c.zone) return 0;
+        break :blk predicates.orient2d(v, c.end, p);
+    };
+    return if (left > 0) 1 else -1;
+}
+
+/// How far `p` lies from `arc`'s circle: the measure a cut (`paramOn`) and the order
+/// about a vertex (`sideOf`) read a vertex against an arc by, against the zone.
+fn offCircle(arc: Arc, p: Vec2) f64 {
+    return @abs(vec.length2(vec.sub2(p, arc.c)) - arc.r);
+}
+
+/// How far `p` lies from the line through `a` and `b`: its exact turn over the segment's
+/// length, the same number whichever way the segment runs (`onLine`, `sideOf`).
+fn offLine(a: Vec2, b: Vec2, p: Vec2) f64 {
+    return @abs(predicates.orient2d(a, b, p)) / vec.distance2(a, b);
 }
 
 /// +1 when `x` bends further left than `y`, −1 further right, 0 alike.

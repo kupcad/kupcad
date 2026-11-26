@@ -177,6 +177,47 @@ const DZ_INPUTS = [_][]const overlay.InputEdge{
 /// exactly), in each quarter turn, a hair off it, and its shifts.
 const DZ_TURNS = [_]f64{ 0.7853981633974483, 0.7853981633974483 + 1e-12, 0.7853981633974483 - 1e-9, 0 };
 const DZ_SHIFTS = [_]Vec2{ .{ 0, 0 }, .{ 1e5, -2e5 }, .{ 3e5, -3e5 } };
+/// Find eb (the overlay's ReleaseSafe session on 9015ab26), reduced to the four rings it
+/// needs, two inputs: two circles tangent outside at (3.75, 3.5), radii 1 and 1.75, the
+/// line x = 3.75 tangent to both there and a line through it, each a ring's; and two
+/// arcs of a third ring ending there. The find's move (a hair's turn, 2e6 out) welds the
+/// tangency 9.4e-6 off both circles, the smaller's piece from it ending 1.5e-5 outside
+/// the larger's circle. The family's turns (none, the find's hair either way and twice
+/// it, a tenth of it, 0.3, a quarter and a half turn past the hair) and shifts (none, the
+/// find's either way, 3e5).
+const EB_INPUTS = [_][]const overlay.InputEdge{
+    &.{
+        .{ .a = .{ 3.75, 3.5 }, .b = .{ 2.75, 4.5 }, .arc = .{ .c = .{ 2.75, 3.5 }, .r = 1, .ccw = false } },
+        .{ .a = .{ 2.75, 4.5 }, .b = .{ 0.7500000000000001, 2.5 }, .arc = .{ .c = .{ 2.75, 2.5 }, .r = 2, .ccw = true } },
+        .{ .a = .{ 0.7500000000000001, 2.5 }, .b = .{ 5.5, 1.75 } },
+        .{ .a = .{ 5.5, 1.75 }, .b = .{ 3.75, 3.5 }, .arc = .{ .c = .{ 5.5, 3.5 }, .r = 1.75, .ccw = false } },
+        .{ .a = .{ 3.75, 6 }, .b = .{ 3.75, 0.5 } },
+        .{ .a = .{ 3.75, 0.5 }, .b = .{ 5.75, 5.75 } },
+        .{ .a = .{ 5.75, 5.75 }, .b = .{ 3.5, 4.25 }, .arc = .{ .c = .{ 5.375, 3.875 }, .r = 1.9121323175972944, .ccw = false } },
+        .{ .a = .{ 3.5, 4.25 }, .b = .{ 4.25, 3.5 }, .arc = .{ .c = .{ 4.25, 4.25 }, .r = 0.75, .ccw = true } },
+        .{ .a = .{ 4.25, 3.5 }, .b = .{ 2, 1.25 }, .arc = .{ .c = .{ 4.25, 1.25 }, .r = 2.25, .ccw = false } },
+        .{ .a = .{ 2, 1.25 }, .b = .{ 1, 1.25 } },
+        .{ .a = .{ 1, 1.25 }, .b = .{ 3.75, 6 }, .arc = .{ .c = .{ 0, 5 }, .r = 3.881043674065006, .ccw = true } },
+    },
+    &.{
+        .{ .a = .{ 0, 0 }, .b = .{ 4.9406564584124654e-324, 6 } },
+        .{ .a = .{ 4.9406564584124654e-324, 6 }, .b = .{ 3.5, 2 } },
+        .{ .a = .{ 3.5, 2 }, .b = .{ 0.75, 2.25 } },
+        .{ .a = .{ 0.75, 2.25 }, .b = .{ 3.7500000000000004, 3.5 }, .arc = .{ .c = .{ 1.625, 4.375 }, .r = 2.2980970388562794, .ccw = true } },
+        .{ .a = .{ 3.7500000000000004, 3.5 }, .b = .{ 0, 0 }, .arc = .{ .c = .{ 3.625, -0.12500000000000022 }, .r = 3.627154532136727, .ccw = false } },
+        .{ .a = .{ 5.75, 5.5 }, .b = .{ 2.2500000000000004, 2 } },
+        .{ .a = .{ 2.2500000000000004, 2 }, .b = .{ 3.75, 6 }, .arc = .{ .c = .{ 1, 4.75 }, .r = 3.0207614933986435, .ccw = true } },
+        .{ .a = .{ 3.75, 6 }, .b = .{ 2.25, 1 } },
+        .{ .a = .{ 2.25, 1 }, .b = .{ 5.25, 6 } },
+        .{ .a = .{ 5.25, 6 }, .b = .{ 2, 2 }, .arc = .{ .c = .{ 5.625, 2.375 }, .r = 3.6443449342783127, .ccw = true } },
+        .{ .a = .{ 2, 2 }, .b = .{ 2.2500000000000004, 2 } },
+        .{ .a = .{ 2.2500000000000004, 2 }, .b = .{ 5.75, 5.5 } },
+    },
+};
+const EB_TURN: f64 = 1e-6;
+const EB_SHIFT: Vec2 = .{ 2e6, -3e6 };
+const EB_TURNS = [_]f64{ 0, EB_TURN, -EB_TURN, 2 * EB_TURN, EB_TURN / 10, 0.3, PI / 2.0 + EB_TURN, PI + EB_TURN };
+const EB_SHIFTS = [_]Vec2{ .{ 0, 0 }, EB_SHIFT, .{ -EB_SHIFT[0], -EB_SHIFT[1] }, .{ 3e5, -3e5 } };
 
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
@@ -1767,4 +1808,41 @@ fn greenTerm(e: overlay.InputEdge, from: Vec2) f64 {
         twice += if (arc.ccw) segment else -segment;
     }
     return twice;
+}
+
+/// Find eb's arrangement (`EB_INPUTS`), mirrored in the y axis when `mirrored`, turned by
+/// `angle` about the origin and shifted, as the fuzzer moves an arrangement whole.
+fn ebArrangement(o: *Overlay, angle: f64, shift: Vec2, mirrored: bool) !void {
+    const turn: Vec2 = .{ @cos(angle), @sin(angle) };
+    for (EB_INPUTS) |edges| {
+        _ = try o.addInput();
+        for (edges) |e| try o.addEdge(movedEdge(if (mirrored) mirroredEdge(e) else e, turn, shift));
+    }
+}
+
+test "overlay: a piece of one of two circles tangent outside, its vertex welded off both, ends outside the other and is ordered so (find eb)" {
+    // Find eb: turned a hair and moved 2e6 out, the circles' tangency is welded 9.4e-6 off
+    // both, and from there the smaller's piece, 4.3e-3 long, ends 1.5e-5 outside the
+    // larger's circle, past the zone: cut nowhere on it, so on its right. The circles
+    // through the pieces' ends (`throughEnds`), which the samples follow, crossed before
+    // the piece ended, and the samples, within the zone of each other as far as they go,
+    // put the piece on the larger's left: a map of genus one (V - E + F short by 2). Two
+    // pieces not parted are told by the shorter's end against the longer's stored circle,
+    // the cut test's own question (`endSide`)
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    try ebArrangement(&o, EB_TURN, EB_SHIFT, false);
+    try o.run();
+    try expectPlanar(&o);
+}
+
+test "overlay: the tangent circles of find eb, turned by hairs and quarter turns, mirrored and moved far out, are planar" {
+    for (EB_TURNS) |angle| for (EB_SHIFTS) |shift| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("turned {d}, shifted ({d}, {d}), mirrored {}\n", .{ angle, shift[0], shift[1], mirrored });
+        var o = Overlay.init(testing.allocator, tol);
+        defer o.deinit();
+        try ebArrangement(&o, angle, shift, mirrored);
+        try o.run();
+        try expectPlanar(&o);
+    };
 }

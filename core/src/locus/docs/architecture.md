@@ -597,7 +597,17 @@ that, so both are taken twice as far along, as far as the shorter reaches, until
 the edges, `RefineAngles`): a line and two circles tangent at a vertex, crossed by a third
 circle where the two are within the zone, the smaller's piece to a vertex 8e-6 off it,
 lay 1.5e-7 left of the line 100 zones along and parted to the right, a map of genus one
-(2026-11-26, the overlay's session on 05c27278, ds). And nesting by
+(2026-11-26, the overlay's session on 05c27278, ds). Two not parted as far as the shorter
+reaches are told by the shorter's far end against the longer as the cuts read it: an
+arc's stored circle (D26, the circle `paramOn` measures a vertex against), a line's own
+line, by the exact side where the end lies past the zone of it (`endSide`; within the
+zone the cuts read it as on the longer, and the samples decide). The stored circle is the
+one notion of where a piece runs, so the order and the cut agree: two circles tangent
+outside moved 2e6 out, their tangency welded 9.4e-6 off both, the shorter's piece ending
+1.5e-5 outside the longer's circle and so cut nowhere on it, had crossed the longer's
+circle through its ends before it ended, a map of genus one (Leo, 2026-11-27, the overlay's
+session on 9015ab26, eb; cutting against the circles through the ends instead never
+settles, every cut moving them). And nesting by
 the exact ray rule. An end of a segment is on another segment's line by one measure, its
 exact turn over the segment's length against the zone, at the zone to rounding refused
 (`at_tolerance`, `onLine`), whether the question is a crossing or a cut: measured by the
