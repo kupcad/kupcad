@@ -260,6 +260,21 @@ const Section = struct {
         return side;
     }
 
+    /// Whether face `f`, lying in the plane along some of its edges, rises from it: a
+    /// vertex of it over the plane, none under it (`sideOf`; with both, `steepEnough`
+    /// refused it).
+    fn rises(self: *Section, f: types.FaceIndex) Error!bool {
+        const body = self.body;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                if (try self.sideOf(body.coedgeStart(c)) == .above) return true;
+            }
+        }
+        return false;
+    }
+
     /// Edge `e`'s cut, computed on the first ask: a straight edge's by its ends' sides, a
     /// curved one's by its own crossings.
     fn cutOf(self: *Section, e: types.EdgeIndex) Error!Cut {
@@ -421,7 +436,19 @@ const Section = struct {
 
     /// Edge `e` of face `f` (by coedge `c`), lying in the plane: a bound of the section
     /// when the face rises from it, running with the material of the face's side on its
-    /// left.
+    /// left. A planar face parallel to the plane within the angular tolerance has no slope
+    /// to rise by (its normal's tilt is noise) and bounds the section by its vertices'
+    /// sides of the plane, decided once (`sideOf`): its in-plane edges are on the plane, the
+    /// rest of it over the plane or under it (both, `steepEnough` refused it), and just above
+    /// the plane its side of the edge holds material when it rises facing up (a top over
+    /// the plane, the solid under it) or falls facing down (a bottom under it); then the
+    /// edge bounds the section with the face's side on its left, which with a steep face
+    /// rising from the other side cancels, as a groove's floor does. Two plates united, the
+    /// upper's bottom 5e-6 under the lower's top, so the two one plane where they overlap,
+    /// sliced 6.2e-6 under that bottom: the lower's top, rising from the upper's walls'
+    /// edges on the plane to 1.1e-5 over it, took no part by the sign of its normal's tilt,
+    /// and the upper's walls bounded the section across the lower plate's material, which
+    /// was lost (the solids oracle's slice on 4aaaef51, ee).
     fn edgeInPlane(self: *Section, f: types.FaceIndex, c: types.CoedgeIndex) Error!void {
         const body = self.body;
         const coedge = body.coedge(c);
@@ -436,6 +463,21 @@ const Section = struct {
         // A curved face tangent to the plane along the edge (a lying cylinder split at its
         // side) leaves a sliver of no area above it
         if (body.face(f).surface.kind != .plane and self.tol.parallel(n, self.plane.n)) return;
+        if (body.face(f).surface.kind == .plane) switch (planar_faces.parallelPlanes(n, self.plane.n, self.tol)) {
+            .apart => {},
+            .at_tolerance => |cmp| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a face on the slicing plane along an edge, parallel to it or not, the angle between them the angular tolerance to rounding", .measured = cmp.measured, .threshold = cmp.limit }),
+            .same => {
+                if (try self.rises(f) != (vec.dot(n, self.plane.n) > 0)) return;
+                // Into the face across the edge, flat: the face's side on the bound's left
+                const inward = vec.cross(n, along);
+                const start: Mark = .{ .t = edge.t0, .p = body.point(edge.start) };
+                const end: Mark = .{ .t = edge.t1, .p = body.point(edge.end) };
+                return switch (curve) {
+                    .line, .circle => self.add(curve, start, end, vec.cross(inward, self.plane.n)),
+                    else => self.diag.fail(error.NotImplemented, .{ .code = .not_implemented, .entity = .of(.edge, @backingInt(coedge.edge)), .label = "a section along an edge that is neither a line nor an arc", .threshold = NO_MILESTONE }),
+                };
+            },
+        };
         // Into the face, across the edge: the face lies left of its coedge seen from outside
         if (vec.dot(vec.cross(n, along), self.plane.n) <= 0) return;
         const dir = vec.cross(self.plane.n, n);

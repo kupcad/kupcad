@@ -27,6 +27,8 @@ const section = @import("section.zig");
 const helpers = @import("pipeline_test.zig");
 const degeneracy = @import("degeneracy_test.zig");
 const sketch_query = @import("../sketch/query.zig");
+const point_in_body = @import("../query/point_in_body.zig");
+const FaceIndex = @import("../query/index.zig").FaceIndex;
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 
@@ -81,6 +83,35 @@ const RIDGE_ENDS = [2]Vec3{ .{ 0.5, -1, 0 }, .{ 1, 2, 0 } };
 const RIDGE_FEET = [2]f64{ -1, 0.8 };
 const RIDGE_HEIGHTS = [_]f64{ -2e-6, -5e-6, -7.8e-6, -9.5e-6, 5e-6 };
 const RIDGE_SHIFTS = [_]Vec3{ .{ 0, 0, 0 }, .{ 3e5, -2e5, 0 } };
+/// Find ee (the solids oracle's slice on 4aaaef51, locus_solids), as the fuzzer drew it: a
+/// plate 3 intersection tolerances thick, 1 square, its bottom at z = 1, united with a
+/// plate 2.5 tolerances thick, 4 by 1, whose top lies 5e-6 over that bottom where the two
+/// overlap, a strip 2e-3 wide; sliced at 0.99999385, 6.15e-6 under the upper's bottom and
+/// 1.1e-5 under the lower's top, and a point of the lower plate only.
+const EE_UPPER = [2]Vec3{ .{ 2, 2, 1 - 3e-5 }, .{ 3, 3, 1 + 3e-5 } };
+const EE_UPPER_MOVES = [2]Vec3{ .{ 0, 0, 1e-5 }, .{ 2e-5, 2e-3, 2e-5 } };
+const EE_LOWER = [2]Vec3{ .{ 0, 3, 1 - 2.5e-5 }, .{ 4, 4, 1 + 2.5e-5 } };
+const EE_LOWER_NUDGE: Vec3 = .{ 0, 1.9999999943156583e-5, -2.000000005684342e-5 };
+const EE_HEIGHT: f64 = 0.9999938499999641;
+const EE_POINT: Vec2 = .{ 3.312, 3.024986239999971 };
+/// The union of the two plates' footprints: the lower's 4, the upper's 1 less the
+/// strip's 0.00198.
+const EE_AREA: f64 = 4.99802;
+/// The family about ee: a plate 5e-5 thick about z = 0, 4 by 1, and over it a plate 6e-5
+/// thick, 1 by 1.002, overlapping it along a strip 2e-3 wide, its bottom `PARALLEL_OVERLAPS`
+/// under the lower's top; sliced `PARALLEL_DEPTHS` under the upper's bottom (within the
+/// zone of it, the lower's top past the zone over the plane); moved as the ridge family is.
+const PARALLEL_LOWER = [2]Vec3{ .{ 0, 0, -2.5e-5 }, .{ 4, 1, 2.5e-5 } };
+const PARALLEL_UPPER = [2]Vec2{ .{ 1, 0.998 }, .{ 2, 2 } };
+const PARALLEL_UPPER_THICKNESS: f64 = 6e-5;
+const PARALLEL_OVERLAPS = [_]f64{ 4e-6, 5e-6 };
+const PARALLEL_DEPTHS = [_]f64{ 7e-6, 9e-6 };
+/// The probes: a point of the lower plate only, of the strip where they overlap and of
+/// neither (not of the upper only: the plane within the zone under its bottom, the section
+/// holds the solid just above, the solid itself is outside there); and how near the
+/// far-moved areas agree (the coordinates' rounding at 3e5 over the outline).
+const PARALLEL_PROBES = [_]Vec2{ .{ 3.3, 0.5 }, .{ 1.5, 0.999 }, .{ 0.5, 1.5 } };
+const PARALLEL_AREA_SLACK: f64 = 1e-6;
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
 fn sliced(body: *const Body, height: f64) !Body {
@@ -574,5 +605,74 @@ test "slice: the family about ed, a ridge's walls at two slopes, sliced under it
         defer moved.deinit();
         // The ridge on the plane: the solid just above it, the whole plate
         try expectSection(&moved, height, 2, 1);
+    };
+}
+
+test "slice: a plate's top a hair over the plane, under another plate's walls on it, holds the plate under them (find ee)" {
+    // Find ee: the upper plate's bottom and the lower's top 5e-6 apart are one plane where
+    // the plates overlap, and the section 6.15e-6 under that bottom has it on the plane,
+    // the lower's top 1.1e-5 over it. The upper's walls rise from their bottom edges on the
+    // plane, and the lower's top, parallel to the plane within the angular tolerance, rises
+    // from the same edges facing up, the lower plate under it: its side holds material
+    // too. Decided by its normal's tilt, it took no part, the upper's walls bounded the
+    // section across the lower plate, which was lost. A face parallel to the plane bounds
+    // the section by its vertices' sides of the plane (`Section.edgeInPlane`)
+    const t = tolerance.Tolerance.fromZone(1e-5);
+    var drawn_upper = try helpers.boxAt(t, EE_UPPER[0], EE_UPPER[1]);
+    defer drawn_upper.deinit();
+    var moved_upper = try helpers.moved(&drawn_upper, EE_UPPER_MOVES[0]);
+    defer moved_upper.deinit();
+    var upper = try helpers.moved(&moved_upper, EE_UPPER_MOVES[1]);
+    defer upper.deinit();
+    var drawn_lower = try helpers.boxAt(t, EE_LOWER[0], EE_LOWER[1]);
+    defer drawn_lower.deinit();
+    var lower = try helpers.moved(&drawn_lower, EE_LOWER_NUDGE);
+    defer lower.deinit();
+    var joined = try helpers.sound(&upper, &lower, .@"union");
+    defer joined.deinit();
+    var sheet = try sliced(&joined, EE_HEIGHT);
+    defer sheet.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expect(try sketch_query.contains(&sheet, EE_POINT, 0, &diag));
+    try testing.expectEqual(@as(usize, 1), sheet.counts().faces);
+    try testing.expectApproxEqAbs(EE_AREA, try areaOf(&sheet), PARALLEL_AREA_SLACK);
+}
+
+test "slice: the family about ee, a plate on another a hair into it, sliced within the zone under it, agrees with the solid turned, mirrored and moved far" {
+    // Each section holds the probes the solid holds (a probe on its boundary, within the
+    // zone, skipped), and its area is the same in every placement
+    var lower = try helpers.box(PARALLEL_LOWER[0], PARALLEL_LOWER[1]);
+    defer lower.deinit();
+    for (PARALLEL_OVERLAPS) |overlap| for (PARALLEL_DEPTHS) |depth| {
+        const bottom = PARALLEL_LOWER[1][2] - overlap;
+        var upper = try helpers.box(.{ PARALLEL_UPPER[0][0], PARALLEL_UPPER[0][1], bottom }, .{ PARALLEL_UPPER[1][0], PARALLEL_UPPER[1][1], bottom + PARALLEL_UPPER_THICKNESS });
+        defer upper.deinit();
+        var joined = try helpers.sound(&upper, &lower, .@"union");
+        defer joined.deinit();
+        var area: ?f64 = null;
+        for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for (RIDGE_SHIFTS) |shift| {
+            errdefer std.debug.print("overlap {e}, {e} under the upper's bottom, quarter turns {d}, mirrored {}, shifted {any}\n", .{ overlap, depth, quarter, mirrored, shift });
+            var place = Affine.translate(shift).compose(&Affine.rotate(vec.Z3, @as(f64, @floatFromInt(quarter)) * PI / 2.0));
+            if (mirrored) place = place.compose(&Affine.mirror(vec.X3));
+            var moved = try turned(&joined, place);
+            defer moved.deinit();
+            const z = bottom - depth;
+            var sheet = try sliced(&moved, z);
+            defer sheet.deinit();
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var index = try FaceIndex.build(testing.allocator, &moved, &diag);
+            defer index.deinit(testing.allocator);
+            for (PARALLEL_PROBES) |probe| {
+                const p = place.point(.{ probe[0], probe[1], z });
+                const place_of = try point_in_body.classify(testing.allocator, &moved, &index, p, .{}, &diag);
+                if (place_of == .boundary) continue;
+                errdefer std.debug.print("the probe {any}: the solid says {t}\n", .{ probe, place_of });
+                try testing.expectEqual(place_of == .inside, try sketch_query.contains(&sheet, .{ p[0], p[1] }, 0, &diag));
+            }
+            const got = try areaOf(&sheet);
+            if (area) |want| try testing.expectApproxEqAbs(want, got, PARALLEL_AREA_SLACK) else area = got;
+        };
     };
 }

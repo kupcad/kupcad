@@ -843,7 +843,12 @@ plane the section is the solid just above it, as Manifold slices (a triangle cou
 lowest corner is at or below the height and its highest above): a face lying in the plane
 gives nothing and an edge lying in it is taken from each face that rises from it, so two
 faces rising from one edge (a groove's floor) cancel; a face only touching the plane gives
-nothing. A trace that is an ellipse has no sketch edge and is refused naming the face.
+nothing. A planar face parallel to the plane within the angular tolerance rises or falls
+from its edges on the plane by its vertices' sides (`sideOf`), not by its normal's tilt,
+which is noise: a top rising from them, or a bottom falling, holds material on its side
+(a lower plate's top 5e-6 over an upper plate's bottom where they overlap, sliced 6.2e-6
+under it, took no part by its tilt and the upper's walls cut the lower plate out of the
+section, find ee, 2026-11-27). A trace that is an ellipse has no sketch edge and is refused naming the face.
 
 ### 7.4 Booleans
 

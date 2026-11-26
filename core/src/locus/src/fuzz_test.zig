@@ -2648,6 +2648,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the ridge by its distance, the other's not, the plate beyond it lost from the
         // section (section.ownEdgeInPlane: such a piece is the ridge by record)
         "solids 3 0 5 4 1 3 4 2 3 4 2 3 2 0 0 1 16 3 0 -1 1 -1 7 8 3 1 6 1 1 1 3 1 0 1 3 3 2 3 4 4 0 0 1 1 4 1 2 4 1 1 13 1",
+        // The nightly's locus_solids on 4aaaef51 (ee): two plates united, the upper's bottom
+        // 5e-6 under the lower's top, sliced 6.15e-6 under that bottom; the lower's top,
+        // parallel to the plane, took no part by its normal's tilt, and the upper's walls
+        // cut the lower plate out (section.edgeInPlane: by its vertices' sides)
+        "solids 3 0 5 4 2 3 4 2 3 1 0 3 2 7 13 7 1 2 9 1 2 3 0 4 1 0 4 4 3 4 1 1 2 3 0 9 12 3 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
