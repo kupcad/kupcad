@@ -22,9 +22,11 @@
 //! - Shells of one solid touch nowhere (ISO 10303-42: a void apart from its outer shell and
 //!   from every other void, which STEP's `brep_with_voids` cannot hold otherwise; Tu §22.3:
 //!   the boundary of a solid is a 2-manifold, and a point where it touches itself is not a
-//!   manifold point): faces of two shells of one solid (`Solids`) meeting anywhere, or faces
-//!   of one shell touching away from where they share an edge or a vertex, are a pinch
-//!   (`pinched`); faces of two solids may touch, at a point or along their edges.
+//!   manifold point): faces of two shells of one solid (`Solids`) meeting anywhere, faces
+//!   of one shell touching away from where they share an edge or a vertex, or two faces of
+//!   one solid back to back in one plane covering a region together (a fin of no thickness,
+//!   the solid touching itself over an area), are a pinch (`pinched`); faces of two solids
+//!   may touch, at a point or along their edges.
 
 const std = @import("std");
 const vec = @import("../math/vec.zig");
@@ -70,28 +72,31 @@ pub fn check(allocator: std.mem.Allocator, body: *const Body, options: diagnosti
     const tol = options.tolerance orelse body.tol;
     var index = try index_mod.FaceIndex.build(allocator, body, diag);
     defer index.deinit(allocator);
-    try rules(allocator, body, &index, options, diag);
+    try rules(allocator, body, &index, false, options, diag);
     if (try nearest(allocator, body, &index, tol, 0, diag)) |near| try diag.warn(.{ .code = .features_near, .entity = near.a, .measured = near.distance, .threshold = near.limit });
 }
 
 /// `check`'s rules on a solid body whose faces `index` holds: its faces met pairwise
 /// (`faces_intersect`, `pinched`) and its shells counted (`shell_overlaps`). The boolean
 /// and the sweeps run them on a result whose features come nearer than its minimum feature
-/// size (`nearRules`), with the index built for `nearest`.
-pub fn rules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+/// size (`nearRules`, `near` set: faces in one plane over a region are then features
+/// within the tolerance of each other, never a pinch), with the index built for `nearest`.
+fn rules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, near: bool, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     const tol = options.tolerance orelse body.tol;
     var solids = try Solids.init(allocator, body, options, diag);
     defer solids.deinit(allocator);
-    try facePairs(allocator, body, index, &solids, tol, options, diag);
+    try facePairs(allocator, body, index, &solids, near, tol, options, diag);
     try shellCounts(allocator, body, options, diag);
 }
 
 /// The rules on a body an operation made whose nearest features `near` come closer than its
-/// minimum feature size (`nearest`). A pinch there is the rules' own refusal (`pinched`);
-/// faces they find meeting away from their boundaries lie within the tolerance of each
-/// other's planes by that pair's nearness, which no decision of the tolerance keeps apart,
-/// so the body is refused as a boolean's operand precondition refuses such a pair
-/// (`below_feature_size`, naming the face the rules found; `label` says whose faces), not
+/// minimum feature size (`nearest`). A pinch along a line or at a point there is the
+/// rules' own refusal (`pinched`); faces they find meeting away from their boundaries, or
+/// in one plane over a region, back to back or not (`backToBack`), lie within the
+/// tolerance of each other's planes by that pair's nearness, which no decision of the
+/// tolerance keeps apart, so the body is refused as a boolean's operand precondition
+/// refuses such a pair (`below_feature_size`, naming the face the rules found; `label`
+/// says whose faces), not
 /// called invalid: the locus fuzzer's sessions on 3681979b (2026-11-19, bd) found a hull's
 /// tip cut by a plate a tetrahedron 2.05e-4 high at an intersection tolerance of 2e-4, every
 /// face of it within the tolerance of another's plane; a hull's face 2.05e-4 under a box's
@@ -105,7 +110,7 @@ pub fn rules(allocator: std.mem.Allocator, body: *const Body, index: *const inde
 pub fn nearRules(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, near: Near, label: []const u8, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     var scratch = Diagnostics.init(allocator);
     defer scratch.deinit();
-    rules(allocator, body, index, options, &scratch) catch |e| switch (e) {
+    rules(allocator, body, index, true, options, &scratch) catch |e| switch (e) {
         error.NotValid => return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = scratch.first().?.entity, .label = label, .measured = near.distance, .threshold = near.limit }),
         else => {
             for (scratch.findings.items) |f| try diag.add(f);
@@ -488,8 +493,9 @@ pub fn pointInside(allocator: std.mem.Allocator, body: *const Body, f: types.Fac
     return if (try in_face.classify(body, f, p, uv, 0, diag) == .inside) p else null;
 }
 
-/// The first rule over every pair of faces whose boxes overlap, in order of their items.
-fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, solids: *const Solids, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics) Error!void {
+/// The first rule over every pair of faces whose boxes overlap, in order of their items;
+/// `near` as `rules` takes it.
+fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const index_mod.FaceIndex, solids: *const Solids, near: bool, tol: Tolerance, options: diagnostics.Options, diag: *Diagnostics) Error!void {
     const Collect = struct {
         allocator: std.mem.Allocator,
         out: std.ArrayList([2]u32) = .empty,
@@ -536,9 +542,32 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
                     return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) });
                 }
             },
-            .coplanar => |holder| if (try coplanarOverlap(allocator, body, f, g, planar_faces.frameOf(body, if (holder == .first) f else g).?, tol, diag)) return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) }),
+            .coplanar => |holder| if (try coplanarOverlap(allocator, body, f, g, planar_faces.frameOf(body, if (holder == .first) f else g).?, tol, diag)) {
+                if (!near and backToBack(body, f, g, solids)) return pinch(diag, shell_f, g);
+                return diag.fail(error.NotValid, .{ .code = .faces_intersect, .entity = .of(.face, @backingInt(f)), .measured = @floatFromInt(@backingInt(g)) });
+            },
         }
     }
+}
+
+/// Whether faces `f` and `g`, lying in one plane and covering a region together, are of one
+/// solid and back to back (their outward normals opposite): the solid's boundary touches
+/// itself over that region, a fin of no thickness between the two faces or material on
+/// both sides of them, the pinch over an area as a pocket's edge on the face it was cut
+/// from is one along a line (`pinched`, by design). Two faces of one solid facing the same
+/// way, or faces of two solids, so lie on each other (`faces_intersect`). Where an
+/// operation runs the rules on what it made, its features nearer than its minimum feature
+/// size (`nearRules`), such faces lie within the tolerance of each other by that nearness
+/// and are refused as the boolean's operands are, `below_feature_size`: a flat
+/// tetrahedron, a strip extruded, the same whether operand or result. A fin of a
+/// difference, its far edge the intersection tolerance from the pocket's wall to within
+/// rounding once moved to 3e5, read as lying in the wall, was called invalid
+/// (`faces_intersect`; the solids oracle's moved results on 05c27278, dr, 2026-11-26).
+fn backToBack(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, solids: *const Solids) bool {
+    const shell_f = body.face(f).shell;
+    const shell_g = body.face(g).shell;
+    if (shell_f != shell_g and !solids.same(shell_f, shell_g)) return false;
+    return vec.dot(planar_faces.outward(body, f), planar_faces.outward(body, g)) < 0;
 }
 
 /// Whether every point of `piece` (its ends and middle) lies on both faces' boundaries

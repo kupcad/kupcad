@@ -2589,6 +2589,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the area check's bound taken of the turn itself, refused not simple by 1.3e-17
         // (triangulate.trianglesArea: a turn rounds by its products)
         "solids 2 1 4 1 3 0 2 2 0 2 0 2 11 10 7 15 3 2 1 8 0 1 2 2 2 2 0 1 3 1 0 0 0 0 3 2 1 0 2 3 0 3 4 2 1 0 2 0 2 12 12 3 9 1 2 1 8 0 1 1 1 0 0 3 0 2 0 4 3 2 2 2 2 0 1 4 2 1 4 1 2 0 1 7 0 1 2 2 5 13 -1 1 2 4 2",
+        // The same sessions (locus_solids, dr): plate − plate turned 1e-6, a fin between
+        // the plate's side and the block's 2.0000051e-5 across, made; moved far its faces
+        // read in one plane, back to back, over a region: called invalid, now refused
+        // `pinched` by design (overlap.backToBack: one solid touching itself over an area)
+        "solids 2 3 4 3 4 2 3 3 3 6 4 6 15 1 2 2 3 4 2 3 1 4 0 2 7 1 9 4 14 12 1 3 4 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

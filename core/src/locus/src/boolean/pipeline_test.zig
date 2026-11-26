@@ -26,6 +26,22 @@ const Op = pipeline.Op;
 
 const tol = Tolerance.fromZone(1e-5);
 const CLOSE = 1e-9;
+/// Find dr's solids (the solids oracle's moved results on 05c27278), as the fuzzer placed
+/// them at a zone of 1e-5 (`fuzzPlaced`: size, lower corner, turn about z, nudge): a plate,
+/// and a block turned 1e-6 whose side leaves a fin of the plate; the block's nudges along x
+/// (the find's, a fin 2e-5 across to a few roundings, 1e-10 thicker, and 5e-6 and 1e-5
+/// thicker) and whether the difference moved far is pinched; and the find's move far.
+const DR_PLATE = .{ .size = Vec3{ 50, 50, 1 }, .lo = Vec3{ 52, 52, 2 }, .nudge = Vec3{ -1e-5, -5e-6, -1e-5 } };
+const DR_BLOCK = .{ .size = Vec3{ 50, 50, 3 }, .lo = Vec3{ 52, 2, 1 }, .turn = 1e-6, .nudge = Vec3{ 0, -5e-6, -2e-3 } };
+const DR_FINS = [_]struct { nudge: f64, pinched: bool }{
+    .{ .nudge = 1.999999855049282e-5, .pinched = true },
+    .{ .nudge = 1.99999e-5, .pinched = true },
+    .{ .nudge = 1.5e-5, .pinched = false },
+    .{ .nudge = 1e-5, .pinched = false },
+};
+const DR_AXIS = Vec3{ 1, 2, 3 };
+const DR_TURN: f64 = 0.014142253477512098;
+const DR_SHIFT = Vec3{ 1e5, -2e5, 3e5 };
 
 /// A box from `lo` to `hi`.
 pub fn box(lo: Vec3, hi: Vec3) !Body {
@@ -1202,4 +1218,41 @@ test "boolean: the report keeps the result's nearest features that do not meet, 
     var v = try pipeline.boolean(testing.allocator, &other, &far, .@"union", .{}, &diag, &r);
     defer v.deinit();
     try testing.expect(r.near == null);
+}
+
+test "boolean: a fin the intersection tolerance thick, moved far, is a pinch over an area (find dr)" {
+    // Find dr: a plate less a block turned 1e-6 about z leaves a fin of the plate between
+    // the plate's side and the block's, 2.0000051e-5 across at its far edge, past D27's
+    // band in place: made, its fin's faces sharing its tip edge. Moved far, the fin's far
+    // edge reads within the tolerance of the plate's side (`incidence.holds`): the two
+    // faces in one plane, back to back, covering a region, which the overlap rules called
+    // invalid (`faces_intersect`); the solid touching itself over an area, refused
+    // `pinched` by design (`overlap.backToBack`). The block nudged so the fin is thicker
+    // stays sound moved; mirrored alone the fin is as placed
+    var plate = try fuzzPlaced(tol, DR_PLATE.size, DR_PLATE.lo, vec.Z3, 0, .{ 0, 0, 0 }, DR_PLATE.nudge);
+    defer plate.deinit();
+    const whole = mat.Affine.translate(DR_SHIFT).compose(&mat.Affine.rotate(vec.normalized(DR_AXIS).?, DR_TURN));
+    const mirror = mat.Affine.mirror(vec.X3);
+    for (DR_FINS) |fin| {
+        errdefer std.debug.print("the block nudged {e} along x\n", .{fin.nudge});
+        var block = try fuzzPlaced(tol, DR_BLOCK.size, DR_BLOCK.lo, vec.Z3, DR_BLOCK.turn, .{ 0, 0, 0 }, .{ fin.nudge, DR_BLOCK.nudge[1], DR_BLOCK.nudge[2] });
+        defer block.deinit();
+        var d = try sound(&plate, &block, .difference);
+        defer d.deinit();
+        for ([_]mat.Affine{ mirror, whole, whole.compose(&mirror) }, [_]bool{ false, fin.pinched, fin.pinched }) |move, pinched| {
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            var placed = try transform.transform(testing.allocator, &d, &move, .{}, &diag);
+            defer placed.deinit();
+            if (!pinched) {
+                overlap.check(testing.allocator, &placed, .{}, &diag) catch |e| {
+                    std.debug.print("the overlap rules: {f}\n", .{diag});
+                    return e;
+                };
+                continue;
+            }
+            try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &placed, .{}, &diag));
+            try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+        }
+    }
 }

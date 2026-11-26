@@ -305,6 +305,31 @@ test "overlap: two voids of one solid sharing a corner are a pinch; two solids s
     try expectSound(&solids);
 }
 
+test "overlap: two faces of one solid back to back in one plane over a region are a pinch; facing one way, or of two solids, they lie on each other" {
+    // A void whose top lies in its outer shell's top: the floor between them no thickness,
+    // the solid touching itself over an area (find dr's fin, two shells); before, the two
+    // faces lay on each other (`faces_intersect`), as faces of two solids still do
+    var void_on_top = try boxes(testing.allocator, &.{
+        .{ .lo = .{ 0, 0, 0 }, .hi = .{ 6, 6, 6 } },
+        .{ .lo = .{ 1, 1, 4 }, .hi = .{ 3, 3, 6 }, .void = true },
+    });
+    defer void_on_top.deinit();
+    try expectChecked(&void_on_top);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &void_on_top, .{}, &diag));
+    try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+    try testing.expectEqual(diagnostics.EntityKind.shell, diag.first().?.entity.kind);
+    // Two solids stacked, a face of each on the other's: back to back, of two solids
+    var stacked = try boxes(testing.allocator, &.{ .{ .lo = .{ 0, 0, 0 }, .hi = .{ 2, 2, 1 } }, .{ .lo = .{ 0.5, 0.5, 1 }, .hi = .{ 1.5, 1.5, 2 } } });
+    defer stacked.deinit();
+    _ = try expectOverlap(&stacked, .faces_intersect, .face);
+    // Two solids one inside the other, their bottoms in one plane facing one way
+    var nested = try boxes(testing.allocator, &.{ .{ .lo = .{ 0, 0, 0 }, .hi = .{ 4, 4, 4 } }, .{ .lo = .{ 1, 1, 0 }, .hi = .{ 2, 2, 1 } } });
+    defer nested.deinit();
+    _ = try expectOverlap(&nested, .faces_intersect, .face);
+}
+
 test "overlap: features nearer than twice the tolerance that do not meet are warned of; a box has none" {
     // research/consistent-tolerances.md, T3: the minimum feature size a boolean reaching
     // both needs is twice its reach; valid bodies may come nearer, and say so. A flat

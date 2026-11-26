@@ -1297,7 +1297,16 @@ importing only those before it, which the layering test holds):**
   at a point inside one solid (`pinched`, naming the shell): one shell touching itself (a
   pocket meeting a face along an edge of its own, a V groove stopped short of the far side),
   a void touching its outer shell (an octahedron's corners on a cube's faces, cut out; a
-  diamond prism's edge on a face) or another void (two corner to corner). A shell could hold
+  diamond prism's edge on a face) or another void (two corner to corner). Over an area too
+  (decided 2026-11-26, find dr): two faces of one solid in one plane, back to back (outward
+  normals opposite), covering a region together are the solid touching itself there, a fin
+  of no thickness or material on both sides, refused `pinched` by the overlap rules
+  (`overlap.backToBack`); two such faces facing the same way, or faces of two solids, lie
+  on each other (`faces_intersect`). Where an operation runs the rules on what it made
+  because its features come nearer than its minimum feature size (`overlap.nearRules`),
+  faces in one plane are that nearness and stay `below_feature_size`, as the boolean's
+  operands are refused (a flat tetrahedron, an extruded strip); an operand failing them
+  at the boolean's larger tolerance, a pinch too, is `mixed_tolerance`. A shell could hold
   it only with two vertex records at one point, which the model forbids, and a STEP solid
   only as shells that touch, which `brep_with_voids` forbids (OpenCascade read the
   octahedral void as two solids). Solids touching each other are not pinched: they separate

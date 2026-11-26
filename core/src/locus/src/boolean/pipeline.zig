@@ -27,7 +27,8 @@
 //! merged vertex, or in a face's plane, `pave`), `mixed_tolerance` (an operand not valid at
 //! the larger tolerance the boolean takes),
 //! `imprint_unmatched` and `unclassified` (an operand's face), `pinched` (a result's shell
-//! touching itself along a line or at a point inside one solid, refused by design), the
+//! touching itself inside one solid, along a line, at a point or over an area, refused by
+//! design), the
 //! checker's on the result; warnings `nearly_coplanar` (a face of `a` parallel to one of `b` a hair from its
 //! plane, the result's faces that thin) and `solids_touch` (a result's edge where two of
 //! its solids touch along a line).
@@ -485,7 +486,9 @@ fn validAt(allocator: std.mem.Allocator, operand: *const Body, tol: Tolerance, k
     var scratch = Diagnostics.init(allocator);
     defer scratch.deinit();
     overlap.check(allocator, &held, common, &scratch) catch |e| switch (e) {
-        error.NotValid => return diag.fail(error.InvalidInput, .{ .code = .mixed_tolerance, .entity = scratch.first().?.entity, .label = label, .measured = operand.tol.zone, .threshold = tol.zone }),
+        // A pinch too: faces of the operand back to back within the larger tolerance are the
+        // solid touching itself over an area there (`overlap.backToBack`), not at its own
+        error.NotValid, error.Degenerate => return diag.fail(error.InvalidInput, .{ .code = .mixed_tolerance, .entity = scratch.first().?.entity, .label = label, .measured = operand.tol.zone, .threshold = tol.zone }),
         else => return e,
     };
 }
