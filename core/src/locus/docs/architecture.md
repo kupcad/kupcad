@@ -332,8 +332,9 @@ quadratic NURBS (NURBS Book ch. 7: every conic arc is one), so the curve set sta
 The parametric contract every kind implements: `domain()`, `periodic()`, `eval(t)`,
 `d1(t)`, `d2(t)` (surfaces: `eval(u,v)`, `du, dv, duu, duv, dvv`, `normal`), `project(p,
 seed) → param` (closed form for lines, circles, planes, cylinders, cones, spheres, tori;
-Newton with the NURBS Book's four stopping tests, §6.1, for the rest, seeded by a coarse
-sample), `bounds(interval) → AABB` (convex hull per span for NURBS, P3.5), and
+an ellipse's nearest point by Eberly's bracketed root, which Newton from the point's angle
+missed, stopping at the major axis's end seen from inside, the audit of 2026-11-22; Newton
+with the NURBS Book's four stopping tests, §6.1, for the rest, seeded by a coarse sample), `bounds(interval) → AABB` (convex hull per span for NURBS, P3.5), and
 `toNurbs()` for STEP fallback and parity tests (A7.1 circles, ch. 8 extrusion, A8.1
 revolution).
 

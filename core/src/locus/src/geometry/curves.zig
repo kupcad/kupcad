@@ -13,6 +13,10 @@ const Domain = types.Domain;
 const Box3 = types.Box3;
 const TWO_PI = types.TWO_PI;
 
+/// The most halvings of the bracket of an ellipse's nearest point (`Ellipse.project`):
+/// enough to reach any double's ulp from any start, the double's digits and exponents.
+const MAX_BISECTIONS: usize = 1100;
+
 /// A sample of a curve: the point and its first two derivatives.
 pub const Sample = nurbs.Sample;
 
@@ -142,11 +146,80 @@ pub const Ellipse = struct {
         };
     }
 
-    /// A start for Newton: the angle of `p` seen through the ellipse's affine map to a
-    /// circle, exact for points on the ellipse.
-    pub fn projectSeed(self: Ellipse, p: Vec3) f64 {
+    /// The parameter of the point of the ellipse nearest `p` (of the ellipse's plane, or
+    /// over it: the nearest to its foot). Not Newton's from a seed, which stops where the
+    /// tangent is square to the way to `p`, as at the farthest point or the nearer end of
+    /// the major axis seen from inside: the point 1.25 along the major axis of an ellipse
+    /// 2 by 1 got that end, 0.75 away, where the nearest is 0.69 (the audit of 2026-11-22,
+    /// kind 7, site 8). Eberly's method ("Distance from a point to an ellipse, an
+    /// ellipsoid, or a hyperellipsoid"; OCCT's `Extrema_ExtPElC` finds every extremum by
+    /// its trigonometric roots): in the quadrant of `p`, the nearest point is
+    /// `(a²u/(s + a²), b²v/(s + b²))` for the one root `s` of a function monotone on its
+    /// bracket, found by halving it to the last bit; on an axis, closed form.
+    pub fn project(self: Ellipse, p: Vec3) f64 {
         const d = vec.sub(p, self.c);
-        return types.angleOf(vec.dot(d, self.x) / self.a, vec.dot(d, self.y) / self.b);
+        const u = vec.dot(d, self.x);
+        const v = vec.dot(d, self.y);
+        // In the frame whose first axis is the major one
+        const swap = self.b > self.a;
+        const e0 = if (swap) self.b else self.a;
+        const e1 = if (swap) self.a else self.b;
+        const y0 = @abs(if (swap) v else u);
+        const y1 = @abs(if (swap) u else v);
+        var x0: f64 = undefined;
+        var x1: f64 = undefined;
+        if (y1 > 0) {
+            if (y0 > 0) {
+                const z0 = y0 / e0;
+                const z1 = y1 / e1;
+                const g = z0 * z0 + z1 * z1 - 1;
+                if (g != 0) {
+                    const r0 = (e0 / e1) * (e0 / e1);
+                    const s = nearestRoot(r0, z0, z1, g);
+                    x0 = r0 * y0 / (s + r0);
+                    x1 = y1 / (s + 1);
+                } else {
+                    x0 = y0;
+                    x1 = y1;
+                }
+            } else {
+                x0 = 0;
+                x1 = e1;
+            }
+        } else {
+            const numerator = e0 * y0;
+            const denominator = e0 * e0 - e1 * e1;
+            if (numerator < denominator) {
+                const share = numerator / denominator;
+                x0 = e0 * share;
+                x1 = e1 * @sqrt(@max(1 - share * share, 0));
+            } else {
+                x0 = e0;
+                x1 = 0;
+            }
+        }
+        // Back to the ellipse's own axes and the quadrant of `p`
+        const along_x = std.math.copysign(if (swap) x1 else x0, u);
+        const along_y = std.math.copysign(if (swap) x0 else x1, v);
+        return types.angleOf(along_x / self.a, along_y / self.b);
+    }
+
+    /// The root of `(r0·z0/(s + r0))² + (z1/(s + 1))² − 1` (Eberly's `GetRoot`), `g` its
+    /// value at 0: the function falls on the bracket, so halving it finds the root.
+    fn nearestRoot(r0: f64, z0: f64, z1: f64, g: f64) f64 {
+        const n0 = r0 * z0;
+        var s0 = z1 - 1;
+        var s1: f64 = if (g < 0) 0 else std.math.hypot(n0, z1) - 1;
+        var s: f64 = 0;
+        for (0..MAX_BISECTIONS) |_| {
+            s = (s0 + s1) / 2;
+            if (s == s0 or s == s1) break;
+            const ratio0 = n0 / (s + r0);
+            const ratio1 = z1 / (s + 1);
+            const value = ratio0 * ratio0 + ratio1 * ratio1 - 1;
+            if (value > 0) s0 = s else if (value < 0) s1 = s else break;
+        }
+        return s;
     }
 
     pub fn bounds(self: Ellipse, t0: f64, t1: f64) Box3 {
@@ -215,7 +288,7 @@ pub const Curve = union(types.CurveKind) {
         return switch (self) {
             .line => |c| c.project(p),
             .circle => |c| c.project(p),
-            .ellipse => |c| nurbs.refineProjection(Curve{ .ellipse = c }, p, c.projectSeed(p), eps, max_steps),
+            .ellipse => |c| c.project(p),
             .nurbs => |c| c.project(p, eps, max_steps),
         };
     }

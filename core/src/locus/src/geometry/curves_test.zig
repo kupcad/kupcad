@@ -164,3 +164,48 @@ test "Box3 and Frame: the small shared types" {
     try testing.expectEqual(@as(f64, 0), types.angleOf(0, 0));
     try testing.expectApproxEqAbs(@as(f64, 3.0 * std.math.pi / 2.0), types.angleOf(0, -1), 1e-15);
 }
+
+/// The least distance from `p` to the ellipse, by brute force: the best of `n` samples,
+/// then golden-section search about it.
+fn bruteEllipseDistance(e: curves.Ellipse, p: Vec3, n: usize) f64 {
+    var best_t: f64 = 0;
+    var best = std.math.inf(f64);
+    for (0..n) |k| {
+        const t = types.TWO_PI * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(n));
+        const d = vec.distance(e.eval(t), p);
+        if (d < best) {
+            best = d;
+            best_t = t;
+        }
+    }
+    var lo = best_t - types.TWO_PI / @as(f64, @floatFromInt(n));
+    var hi = best_t + types.TWO_PI / @as(f64, @floatFromInt(n));
+    for (0..200) |_| {
+        const m1 = lo + (hi - lo) * 0.381966;
+        const m2 = hi - (hi - lo) * 0.381966;
+        if (vec.distance(e.eval(m1), p) < vec.distance(e.eval(m2), p)) hi = m2 else lo = m1;
+    }
+    return @min(best, vec.distance(e.eval((lo + hi) / 2), p));
+}
+
+test "curves: an ellipse's nearest point is its nearest, inside or outside, thin up to 100 to 1" {
+    // The audit of 2026-11-22 (kind 7, site 8): Newton from the point's angle through the
+    // ellipse's map to a circle stopped where the tangent is square to the way to the
+    // point, which the farthest point is too: an ellipse 100 to 1 and the point (5, 0)
+    // gave the end of the minor axis's opposite, 95 away, where the nearest is under 1
+    const grid = 24;
+    for ([_][2]f64{ .{ 2, 1 }, .{ 8, 1 }, .{ 20, 1 }, .{ 100, 1 }, .{ 1, 30 } }) |axes| {
+        const e: curves.Ellipse = .{ .c = .{ 1, -2, 3 }, .x = vec.X3, .y = vec.Y3, .a = axes[0], .b = axes[1] };
+        const curve: Curve = .{ .ellipse = e };
+        const reach = 1.5 * @max(axes[0], axes[1]);
+        for (0..grid + 1) |i| for (0..grid + 1) |j| for ([_]f64{ 0, 0.7 }) |lift| {
+            const u = -reach + 2 * reach * @as(f64, @floatFromInt(i)) / grid;
+            const v = -reach + 2 * reach * @as(f64, @floatFromInt(j)) / grid;
+            const p: Vec3 = .{ e.c[0] + u, e.c[1] + v, e.c[2] + lift };
+            const want = bruteEllipseDistance(e, p, 4096);
+            const t = curve.project(p, 1e-12, 64);
+            errdefer std.debug.print("axes {any}, the point {any}: t {d}\n", .{ axes, p, t });
+            try testing.expectApproxEqAbs(want, vec.distance(curve.eval(t), p), 1e-9 * reach);
+        };
+    }
+}
