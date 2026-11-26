@@ -31,9 +31,9 @@ const NONE: u32 = std.math.maxInt(u32);
 const MAX_POINTS: usize = 1 << 29;
 /// A triangle's side `i` runs from its vertex `i` to its vertex `i + 1`.
 const SIDES = 3;
-/// How far the triangles' area may differ from the polygon's, relative to it: rounding
-/// in the sums of many small triangles.
-const AREA_SLACK: f64 = 1e-9;
+/// How far the triangles' area may differ from the polygon's, in ulps of the products the
+/// two sums are made of: their rounding (D27's 64 ulps), not a share of the area.
+const AREA_ROUNDING_ULPS: f64 = canonical.AT_TOLERANCE_ULPS;
 /// The most cells along each side of the grid the rings' edges are bucketed in to find a
 /// crossing (`expectNoCrossing`): about the square root of the edge count, this at most.
 const MAX_CROSSING_GRID: usize = 1024;
@@ -182,7 +182,8 @@ pub fn triangulate(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagno
     }
     const covered = trianglesArea(rings.points, triangles.items);
     const area = polygonArea(polygon);
-    if (@abs(covered - area) > AREA_SLACK * @max(area, 1)) return notSimple(diag, covered, area);
+    const rounding = AREA_ROUNDING_ULPS * std.math.floatEps(f64) * (covered.size + area.size);
+    if (@abs(covered.value - area.value) > rounding) return notSimple(diag, covered.value, area.value);
     try expectRingSides(allocator, rings, triangles.items, diag);
     try delaunay(allocator, rings, triangles.items);
     for (triangles.items) |*t| for (t) |*corner| {
@@ -314,20 +315,31 @@ fn reweave(allocator: std.mem.Allocator, polygon: Polygon, diag: *Diagnostics) E
     return .{ .points = points, .starts = try starts.toOwnedSlice(allocator), .source = source, .simple = graph.welded == n };
 }
 
+/// An area summed from terms, and the size of the products the terms were made of: what
+/// the sum's rounding is in proportion to.
+const Area = struct { value: f64, size: f64 };
+
 /// The signed area of the rings: positive for the region on their left. Each ring summed
 /// about its first point, so that the terms are as small as the ring (about the origin, a
-/// sliver 1e7 out summed to an area of 0).
-fn polygonArea(polygon: Polygon) f64 {
+/// sliver 1e7 out summed to an area of 0). Its rounding is the products', not the area's:
+/// a strip 1e5 long and 0.01 wide, turned 0.3, summed products of 1e9 to an area of 1000,
+/// rounded by 1.5e-6, which a slack of 1e-9 of the area refused as not simple (the audit
+/// of 2026-11-22, kind 6, item 8).
+fn polygonArea(polygon: Polygon) Area {
     var twice: f64 = 0;
+    var size: f64 = 0;
     for (0..polygon.rings()) |r| {
         const ring = polygon.ring(r);
         const from = ring[0];
         for (ring, 0..) |p, i| {
             const q = ring[(i + 1) % ring.len];
-            twice += vec.cross2(vec.sub2(p, from), vec.sub2(q, from));
+            const u = vec.sub2(p, from);
+            const v = vec.sub2(q, from);
+            twice += u[0] * v[1] - u[1] * v[0];
+            size += @abs(u[0] * v[1]) + @abs(u[1] * v[0]);
         }
     }
-    return twice / 2;
+    return .{ .value = twice / 2, .size = size / 2 };
 }
 
 /// Every ring edge a side of one triangle, run the ring's way (the region on its left),
@@ -362,10 +374,15 @@ fn directedKey(a: u32, b: u32) u64 {
     return (@as(u64, a) << 32) | b;
 }
 
-fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) f64 {
+fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) Area {
     var twice: f64 = 0;
-    for (triangles) |t| twice += predicates.orient2d(points[t[0]], points[t[1]], points[t[2]]);
-    return twice / 2;
+    var size: f64 = 0;
+    for (triangles) |t| {
+        const turn = predicates.orient2d(points[t[0]], points[t[1]], points[t[2]]);
+        twice += turn;
+        size += @abs(turn);
+    }
+    return .{ .value = twice / 2, .size = size / 2 };
 }
 
 /// No two edges of the rings cross: one passes from one side of the other to the other

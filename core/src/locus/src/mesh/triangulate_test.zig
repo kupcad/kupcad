@@ -599,3 +599,33 @@ test "triangulateWith: a corner the least double off the origin, its flips decid
         try expectInserted(&square, &.{ 0, 4 }, &.{ .{ 0.5, 0.5 }, .{ 0.25, 0.75 }, .{ 0.75, 0.25 }, .{ 0.25, 0.25 } }, 4);
     }
 }
+
+test "triangulate: a long thin strip, turned, and a plate with a hole, scaled up, are triangulated whatever their size" {
+    // The audit of 2026-11-22 (kind 6, item 8): the triangles' area was held to the
+    // polygon's within 1e-9 of it, or of 1 under 1, and the polygon's own sum rounds by
+    // its products: a strip 1e5 long and 0.01 wide, turned 0.3, was refused as not simple
+    const sides = 200;
+    for ([_][2]f64{ .{ 1e4, 0.05 }, .{ 2000, 5e-4 }, .{ 1e5, 0.2 }, .{ 1e5, 0.01 }, .{ 1e6, 1 } }) |size| for ([_]f64{ 0, 0.3, 1.1 }) |turn| {
+        const u = Vec2{ @cos(turn), @sin(turn) };
+        const n = Vec2{ -u[1], u[0] };
+        var points: [2 * sides]Vec2 = undefined;
+        for (0..sides) |i| {
+            const along = size[0] * @as(f64, @floatFromInt(i)) / (sides - 1);
+            points[i] = vec.scale2(u, along);
+            points[2 * sides - 1 - i] = vec.addScaled2(vec.scale2(u, along), n, size[1]);
+        }
+        errdefer std.debug.print("strip {any}, turned {d}\n", .{ size, turn });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        errdefer std.debug.print("{f}\n", .{&diag});
+        const triangles = try triangulate.triangulate(testing.allocator, .{ .points = &points, .starts = &.{ 0, 2 * sides } }, &diag);
+        defer testing.allocator.free(triangles);
+        try testing.expectEqual(@as(usize, 2 * sides - 2), triangles.len);
+    };
+    for ([_]f64{ 1, 1e3, 1e5, 1e7 }) |scale| for ([_]Vec2{ .{ 0, 0 }, .{ 3e5, -3e5 } }) |at| {
+        var holed: [8]Vec2 = undefined;
+        for ([_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } }, &holed) |p, *q| q.* = vec.add2(at, vec.scale2(p, scale));
+        errdefer std.debug.print("plate scaled {e} at {any}\n", .{ scale, at });
+        try expectPolygon(&holed, &.{ 0, 4, 8 });
+    };
+}
