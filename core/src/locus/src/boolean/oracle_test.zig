@@ -49,6 +49,10 @@ pub const OPS = [3]Op{ .@"union", .intersection, .difference };
 /// A boolean step of a chain: its other operand and the operation the chain kept.
 pub const Step = struct { other: Body, op: Op };
 
+/// The plane a chain is mirrored in (`expectMirrored`): x = 0, exact (a coordinate's sign
+/// flips, and nothing rounds).
+const MIRROR_NORMAL = vec.Vec3{ 1, 0, 0 };
+
 /// A refusal by design is clean; the general path failing on valid planar operands
 /// (`NotValid`, `IntersectionFailed`) is a find, and out of memory is the harness's own.
 pub fn clean(err: anyerror) anyerror!void {
@@ -229,12 +233,72 @@ pub fn expectMovedWhole(first: *const Body, steps: []const Step, result: *const 
     errdefer std.debug.print("moved whole: {any}, shells {any}; the chain's: {any}, shells {any}\n", .{ moved.counts(), tests.shellKinds(&moved), result.counts(), tests.shellKinds(result) });
     try testing.expectEqual(result.counts(), moved.counts());
     try testing.expectEqual(tests.shellKinds(result), tests.shellKinds(&moved));
+    try expectSameMeasures(result, &moved, reach, diag);
+}
+
+/// The area and volume of `moved` (a chain's `result` replayed moved) the result's, to the
+/// slab the identities allow and the rounding where the move took them (`reach`).
+fn expectSameMeasures(result: *const Body, moved: *const Body, reach: f64, diag: *Diagnostics) !void {
     const m = try mass.mass(result, .{}, diag);
-    const mm = try mass.mass(&moved, .{}, diag);
+    const mm = try mass.mass(moved, .{}, diag);
     const close = IDENTITY_CLOSE * @max(m.volume, 1) + result.tol.xsect * m.area + MOVE_ROUNDING_ULPS * std.math.floatEps(f64) * reach * @max(m.area, 1);
-    errdefer std.debug.print("moved whole: area {d}, volume {d}; the chain's: area {d}, volume {d}\n", .{ mm.area, mm.volume, m.area, m.volume });
+    errdefer std.debug.print("moved: area {d}, volume {d}; the chain's: area {d}, volume {d}\n", .{ mm.area, mm.volume, m.area, m.volume });
     try testing.expectApproxEqAbs(m.area, mm.area, close);
     try testing.expectApproxEqAbs(m.volume, mm.volume, close);
+}
+
+/// The chain again with its first solid and every other operand mirrored in x = 0: a
+/// mirror rounds nothing, so every step the chain made is made again (sound, its report
+/// fitting) and the result's area and volume are the chain's (`expectSameMeasures`, the
+/// slab the identities allow). Unlike a rigid move's replay (`expectMovedWhole`), a
+/// refusal is a find: no distance moved, so none crossed the tolerance (D27).
+pub fn expectMirrored(first: *const Body, steps: []const Step, result: *const Body, reach: f64, diag: *Diagnostics) !void {
+    var mirrored = (try mirroredChain(first, steps, diag)) orelse return;
+    defer mirrored.deinit();
+    try expectSameMeasures(result, &mirrored, reach, diag);
+}
+
+/// The chain's step after `steps` refused (`other`, `op`), mirrored as `expectMirrored`
+/// has it: refused again, the steps before it made.
+pub fn expectMirroredRefused(first: *const Body, steps: []const Step, other: *const Body, op: Op, diag: *Diagnostics) !void {
+    var mirrored = (try mirroredChain(first, steps, diag)) orelse return;
+    defer mirrored.deinit();
+    var other_mirrored = (try mirroredOperand(other, diag)) orelse return;
+    defer other_mirrored.deinit();
+    var made = pipeline.boolean(testing.allocator, &mirrored, &other_mirrored, op, .{}, diag, null) catch |err| return clean(err);
+    made.deinit();
+    std.debug.print("mirrored: the {s} the chain refused was made\n", .{@tagName(op)});
+    return error.MirrorMade;
+}
+
+/// `first` mirrored through `steps`, each step made and sound; null when the mirror of an
+/// operand is refused (a size the checker refuses either way, cleanly).
+fn mirroredChain(first: *const Body, steps: []const Step, diag: *Diagnostics) !?Body {
+    var mirrored = (try mirroredOperand(first, diag)) orelse return null;
+    errdefer mirrored.deinit();
+    for (steps, 0..) |step, i| {
+        var other = (try mirroredOperand(&step.other, diag)) orelse {
+            mirrored.deinit();
+            return null;
+        };
+        defer other.deinit();
+        var report = pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        errdefer std.debug.print("mirrored: step {d}, the {s}: {any}\n", .{ i, @tagName(step.op), diag.first() });
+        var next = try pipeline.boolean(testing.allocator, &mirrored, &other, step.op, .{}, diag, &report);
+        defer next.deinit();
+        try expectSolid(&next, diag);
+        try tests.expectReportFits(&report, &mirrored, &other, &next, step.op);
+        std.mem.swap(Body, &mirrored, &next);
+    }
+    return mirrored;
+}
+
+fn mirroredOperand(body: *const Body, diag: *Diagnostics) !?Body {
+    return transform.transform(testing.allocator, body, &Affine.mirror(MIRROR_NORMAL), .{}, diag) catch |err| {
+        try clean(err);
+        return null;
+    };
 }
 
 /// A move refused (a solid past the tolerance's reach once moved) ends the check cleanly.

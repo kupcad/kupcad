@@ -16,8 +16,12 @@
 //! through chains of booleans and cuts by planes; every result through the checker, the
 //! overlap rules and its report, the volume identities holding, membership in each
 //! boolean's results the operation on membership in its operands at points clear of
-//! their boundaries (Shapiro's set-membership classification), and the chain moved whole
-//! by a drawn rigid move (near or far out) giving the same result. A fuzz worker writes each
+//! their boundaries (Shapiro's set-membership classification), each kept result's plane
+//! section holding what the result holds at its height, the chain moved whole by a drawn
+//! rigid move (near or far out) giving the same result, every result it made moved alone
+//! by that move still valid (the chain's result sound, a sketch chain's too), and the
+//! chain mirrored made and refused step for step as it was, its result's measures the
+//! same. A fuzz worker writes each
 //! run's draws down as it draws them and runs a watchdog: a run that panics or passes its
 //! wall-clock bound (`RUN_BUDGET_S`) leaves its `replay:` line for `zig build fuzz-run`.
 
@@ -1213,6 +1217,13 @@ fn expectSheetMovedWhole(source: anytype, log: *Log, first: *const Body, steps: 
     const shift = MOVE_SHIFTS_2D[source.index(MOVE_SHIFTS_2D.len)];
     try log.add("moved whole: turned {d} about z, shifted ({d}, {d})\n", .{ angle, shift[0], shift[1] });
     const move = Affine.translate(.{ shift[0], shift[1], 0 }).compose(&Affine.rotate(vec.Z3, angle));
+    // The chain's result moved alone: sound, or a clean refusal
+    if (try resultMoved(result, &move, diag)) |moved_result| {
+        var held = moved_result;
+        defer held.deinit();
+        errdefer std.debug.print("the chain's result, moved\n", .{});
+        try expectSound(&held, diag);
+    }
     var moved = transform.transform(testing.allocator, first, &move, .{}, diag) catch |err| return refusedMove(err);
     defer moved.deinit();
     try expectSound(&moved, diag);
@@ -1429,8 +1440,9 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     // The mesh may have refined an arc's chords where they would cross a neighbour, so it
     // is held to the exact area within the chords' bound, as the outline is; and a
     // vertex sits within the zone of its edges' curves (welded), which moves the outline
-    // by up to the zone along the perimeter
-    const bound = try chordBound(body, diag) + tol.zone * perimeter + AREA_CLOSE * @max(m.area, 1);
+    // by up to the zone along the perimeter: the sheet's own, a section of a solid at a
+    // plate's zone 1e-4 (a sketch chain's is 1e-5)
+    const bound = try chordBound(body, diag) + body.tol.zone * perimeter + AREA_CLOSE * @max(m.area, 1);
     errdefer {
         std.debug.print("exact {d} covered {d} outline {d} bound {d}; faces:", .{ m.area, covered, polygon_area, bound });
         for (mesh.faces) |range| std.debug.print(" {s}", .{@tagName(range.status)});
@@ -1551,29 +1563,45 @@ fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: 
         return;
     };
     defer lying.deinit();
-    var index = try solid_query.FaceIndex.build(testing.allocator, &lying, diag);
+    errdefer std.debug.print("the solid turned about x\n", .{});
+    try expectSliced(&lying, false, diag);
+}
+
+/// The solid's plane section at a height off the grid (`SLICE_AT` of its box): a sound
+/// sheet that holds a point exactly when the solid holds the point at that height (off
+/// the boundary). A refusal of the section or a classification is clean; when `strict`
+/// (a boolean's result, valid and planar), the general path failing (`NotValid`,
+/// `IntersectionFailed`) is a find, as the boolean's own is (`oracle.clean`). Nothing for
+/// the empty solid.
+fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
+    if (solid.isEmpty()) return;
+    var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
     defer index.deinit(testing.allocator);
     const box = index.box;
     const span = box.size();
     const z = box.min[2] + SLICE_AT * span[2];
-    var cut = section.slice(testing.allocator, &lying, z, .{}, diag) catch |err| {
-        _ = try clean(err);
-        return;
-    };
+    var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| return sliceRefused(err, strict);
     defer cut.deinit();
-    errdefer std.debug.print("the section of the solid turned about x at {d}\n", .{z});
+    errdefer std.debug.print("the section at {d}\n", .{z});
     try expectSound(&cut, diag);
     for (0..SLICE_POINTS) |i| {
         const k: f64 = @floatFromInt(i);
         const p: Vec2 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
-        const place = solid_query.point_in_body.classify(testing.allocator, &lying, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
-            _ = try clean(err);
+        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
+            try sliceRefused(err, strict);
             continue;
         };
         if (place == .boundary) continue;
         errdefer std.debug.print("at ({d}, {d}) the solid says {s}\n", .{ p[0], p[1], @tagName(place) });
         try testing.expectEqual(place == .inside, try query.contains(&cut, p, 0, diag));
     }
+}
+
+/// A section's refusal: clean (`clean`), and when `strict` a find where the general path
+/// failed (`oracle.clean`).
+fn sliceRefused(err: anyerror, strict: bool) anyerror!void {
+    if (strict) return oracle.clean(err);
+    _ = try clean(err);
 }
 
 /// Rays across the solid (vertical ones over a skewed grid, horizontal ones at mid
@@ -2585,6 +2613,12 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         for (steps.items) |*step| step.other.deinit();
         steps.deinit(testing.allocator);
     }
+    // Every result the chain made, moved at its end by the move it is moved whole by
+    var made_results: std.ArrayList(Body) = .empty;
+    defer {
+        for (made_results.items) |*r| r.deinit();
+        made_results.deinit(testing.allocator);
+    }
 
     const ops = source.valueRangeAtMost(u8, 1, MAX_SOLID_OPS);
     for (0..ops) |_| {
@@ -2607,6 +2641,8 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             defer back.deinit();
             try expectSolid(&front, &diag);
             try expectSolid(&back, &diag);
+            try keepMade(&made_results, &front);
+            try keepMade(&made_results, &back);
             const whole = try mass.mass(&current, .{}, &diag);
             try testing.expectApproxEqAbs(whole.volume, try solidVolume(&front, &diag) + try solidVolume(&back, &diag), IDENTITY_CLOSE * @max(whole.volume, 1) + current.tol.xsect * whole.area + front_report.shift + back_report.shift);
             continue;
@@ -2626,7 +2662,13 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection, .difference }) |each| {
             var report = solid_boolean.pipeline.Report.init(testing.allocator);
             defer report.deinit();
-            results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| return thinRefused(err, &report, thin, &expected);
+            results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| {
+                const outcome = try thinRefused(err, &report, thin, &expected);
+                // Refused mirrored too (a refusal before any boolean ran, an argument,
+                // is no step's)
+                if (report.failed_in != null) try oracle.expectMirroredRefused(&first, steps.items, &other, each, &diag);
+                return outcome;
+            };
             // A solid below the minimum feature size is no operand of a boolean with a
             // non-empty other
             if (thin and !current.isEmpty() and !other.isEmpty()) {
@@ -2639,6 +2681,7 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             made += 1;
             try expectSolid(&results[made - 1], &diag);
             try solid_boolean.tests.expectReportFits(&report, &current, &other, &results[made - 1], each);
+            try keepMade(&made_results, &results[made - 1]);
             try solid_boolean.step_corpus.add(&results[made - 1], switch (each) {
                 .@"union" => "the solids fuzzer's union",
                 .intersection => "the solids fuzzer's intersection",
@@ -2655,28 +2698,54 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         steps.appendAssumeCapacity(.{ .other = try other.clone(testing.allocator), .op = op });
         current.deinit();
         current = results[keep];
+        // Its section (the kept result only: the run's time)
+        try expectSliced(&current, true, &diag);
         // The kept result is the chain's now; the others are freed
         results[keep] = results[made - 1];
         made -= 1;
     }
-    try expectMovedWhole(source, &log, &first, steps.items, &current, &diag);
+    // Every result the chain made moved alone by the move it was moved whole by: made
+    // (`transform` checks what it makes, its geometry where the move left it) or refused
+    // cleanly; the chain's own result through the overlap rules too (`expectSolid`; each
+    // result's would take a quarter of the replays' time)
+    const move = try expectMovedWhole(source, &log, &first, steps.items, &current, &diag);
+    for (made_results.items, 0..) |*r, i| {
+        errdefer std.debug.print("the chain's result {d} of {d}, moved\n", .{ i + 1, made_results.items.len });
+        var moved = (try resultMoved(r, &move, &diag)) orelse continue;
+        moved.deinit();
+    }
+    if (try resultMoved(&current, &move, &diag)) |moved| {
+        var held = moved;
+        defer held.deinit();
+        errdefer std.debug.print("the chain's result, moved\n", .{});
+        try expectSolid(&held, &diag);
+    }
+    try oracle.expectMirrored(&first, steps.items, &current, SOLID_REACH, &diag);
     return .checked;
 }
 
 const SolidStep = oracle.Step;
 
+/// A copy of a result the chain made, kept for its end (`runSolids`).
+fn keepMade(made_results: *std.ArrayList(Body), result: *const Body) !void {
+    try made_results.ensureUnusedCapacity(testing.allocator, 1);
+    made_results.appendAssumeCapacity(try result.clone(testing.allocator));
+}
+
 /// The chain again with its first solid and every other operand under one drawn rigid move
 /// (§9.2's invariance of measures): the same counts and shells as the chain's result, its
 /// area and volume to the slab the identities allow and the rounding where the move took
 /// them. A step the moved chain refuses is clean: a distance near the tolerance moves by a
-/// rounding, at most onto the refused side (D27); a failure is a find.
-fn expectMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []const SolidStep, result: *const Body, diag: *Diagnostics) !void {
+/// rounding, at most onto the refused side (D27); a failure is a find. The move drawn, for
+/// the chain's results moved alone.
+fn expectMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []const SolidStep, result: *const Body, diag: *Diagnostics) !Affine {
     const axis = vec.normalized(TURN_AXES[source.index(TURN_AXES.len)]).?;
     const angle = TURNS[source.index(TURNS.len)];
     const shift = MOVE_SHIFTS[source.index(MOVE_SHIFTS.len)];
     try log.add("moved whole: turned {d} about ({d}, {d}, {d}), shifted ({d}, {d}, {d})\n", .{ angle, axis[0], axis[1], axis[2], shift[0], shift[1], shift[2] });
     const move = Affine.translate(shift).compose(&Affine.rotate(axis, angle));
     try oracle.expectMovedWhole(first, steps, result, &move, vec.length(shift) + SOLID_REACH, diag);
+    return move;
 }
 
 /// A refusal by design is clean; the general path failing on valid planar operands is a
