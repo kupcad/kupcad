@@ -2744,13 +2744,15 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
         };
         try steps.ensureUnusedCapacity(testing.allocator, 1);
         steps.appendAssumeCapacity(.{ .other = try other.clone(testing.allocator), .op = op });
+        // The kept result is the chain's now, its slot handed over before anything can
+        // fail (the others are freed): checked first, a failing section freed it twice,
+        // once as a result and once as the chain's (find ea's run, a segfault)
         current.deinit();
         current = results[keep];
-        // Its section (the kept result only: the run's time)
-        try expectSliced(&current, true, &diag);
-        // The kept result is the chain's now; the others are freed
         results[keep] = results[made - 1];
         made -= 1;
+        // Its section (the kept result only: the run's time)
+        try expectSliced(&current, true, &diag);
     }
     // Every result the chain made moved alone by the move it was moved whole by: made
     // (`transform` checks what it makes, its geometry where the move left it) or refused
