@@ -101,6 +101,40 @@ pub fn lineDirection(d: Vec3) Vec3 {
     return if (d[vec.maxAxis(d)] < 0) vec.scale(d, -1) else d;
 }
 
+/// Whether two planes of unit normals `n_a` and `n_b` are parallel within the angular
+/// tolerance (`1 − |cos|` against it, either facing): the same, apart, or at it to rounding.
+pub fn parallelPlanes(n_a: Vec3, n_b: Vec3, tol: Tolerance) canonical.Verdict {
+    return canonical.verdict(&.{canonical.Comparison.angle(1.0 - @abs(vec.dot(n_a, n_b)), tol.angle)});
+}
+
+/// The one decision on two planar faces crossing each other parallel within the angular
+/// tolerance (`parallel`, `parallelPlanes`' verdict; `crossing`, whether each face has a
+/// corner beyond the tolerance on each side of the other's plane, the slicing plane, which
+/// has no boundary, crossing any face's): refused, `below_feature_size` naming `entity`;
+/// the angle at that tolerance to rounding, or the crossing hanging on a corner at the
+/// tolerance to rounding, `at_tolerance` (D27). At an angle θ such faces lie within the
+/// tolerance of each other over a strip `2 tol / sin θ` wide across their planes' line, as
+/// far as a corner on the one plane may lie from the other face's trace, and planes
+/// parallel within the angular tolerance have no line of their own: no section of them is
+/// one. A section with no area where the solid held material (`boolean/section.zig`, a
+/// wedge's bottom 6.3e-5 rad off the slicing plane, ea); a box's top kept a hull's edge
+/// as a slit, the hull's base 0.0085 rad off the top and crossing it, hinged on that edge
+/// (`boolean/pave.zig`'s `meetingLine`), and the edge had four coedges (du). Faces that
+/// hinge, one of them on one side of the other's plane, keep their line (a plate's bottom
+/// a hair off another's top, touching along an edge).
+pub fn refuseCrossingParallel(parallel: canonical.Verdict, crossing: canonical.Verdict, n_a: Vec3, n_b: Vec3, tol: Tolerance, entity: diagnostics.EntityRef, diag: *Diagnostics) Error!void {
+    if (parallel == .apart) return;
+    switch (crossing) {
+        .apart => return,
+        .at_tolerance => |c| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two planar faces parallel within the angular tolerance, crossing each other or not by a corner the tolerance from a plane to rounding", .measured = c.measured, .threshold = c.limit }),
+        .same => {},
+    }
+    return switch (parallel) {
+        .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two planar faces crossing each other, parallel or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+        else => diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = entity, .label = "two planar faces crossing each other parallel within the angular tolerance, within the tolerance of each other over a strip wider than it,", .measured = 1.0 - @abs(vec.dot(n_a, n_b)), .threshold = tol.angle }),
+    };
+}
+
 /// Points in lexicographic order (x, then y, then z): an order of the points themselves,
 /// which a choice among points takes so that it is not the order they were made in, which
 /// follows the operands'.

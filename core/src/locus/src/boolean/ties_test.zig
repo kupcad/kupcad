@@ -129,6 +129,36 @@ const DP_DROPS = [_]f64{ 1e-4, 5e-5, 1.5e-4 };
 /// which a joined edge's line decides; each planar face's corners' centroid on its plane,
 /// which the plane a group of faces takes decides, its vertices staying within their
 /// gaps of it), moved back by the move the operands took, the solid checked sound.
+/// The solids of find du (the solids sessions on 9015ab26), as the fuzzer drew them: a box
+/// at the zone the chain's plate left it (1e-4) and a hull turned 0.01414 rad about
+/// (1, 2, 3), whose base lies 0.0085 rad off the box's top and crosses it, a corner of the
+/// base 5.6e-5 over the top and the base's edge from it crossing the top's edge.
+const DU_BOX = struct { size: Vec3 = .{ 4, 1, 1 }, lo: Vec3 = .{ 0, 3, 0 }, move: Vec3 = .{ -0.5, -1, 0 }, nudge: Vec3 = .{ 0, 0, -1.999999995026201e-5 } }{};
+const DU_HULL = [_]Vec3{ .{ 4, 2, 4 }, .{ 1, 2, 1 }, .{ 2, 2, 1 }, .{ 4, 1, 1 }, .{ 0, 1, 1 } };
+const DU_HULL_TURN: f64 = 0.014142253478516982;
+const DU_HULL_NUDGE: Vec3 = .{ -5e-5, 2.0000000005705623e-4, 0 };
+
+/// The box and the slab of the family about du: the slab stands on the box's top, turned
+/// about y through the line across the top at x = `pivot` by `turn` (positive dips the
+/// slab's bottom under the top past the pivot), so its bottom crosses the top there, or
+/// hinges on it where the pivot is the slab's edge or within the reach of it.
+const CROSS_BOX = [2]Vec3{ .{ 0, 0, 0 }, .{ 4, 3, 1 } };
+const CROSS_SLAB = [2]Vec3{ .{ 1, 1, 1 }, .{ 3, 2, 1.5 } };
+const CROSS_CASES = [_]struct { pivot: f64, turn: f64, refused: bool }{
+    .{ .pivot = 2, .turn = 0.0085, .refused = true },
+    .{ .pivot = 2, .turn = -0.0085, .refused = true },
+    .{ .pivot = 2, .turn = 1e-3, .refused = true },
+    .{ .pivot = 1.01, .turn = 0.0085, .refused = true },
+    .{ .pivot = 1.002, .turn = 0.0085, .refused = false },
+    .{ .pivot = 1, .turn = 0.0085, .refused = false },
+    .{ .pivot = 1, .turn = -0.0085, .refused = false },
+    .{ .pivot = 2, .turn = CROSS_PAST_ANGLE, .refused = false },
+};
+/// The family's turn past the angular tolerance. Its crossings at 3e5 lie the coordinates'
+/// rounding over the angle's sine from their place (3e-9, past `SAME_POINT`), so it is
+/// moved by `MOVES` only, out to 2e3: no tie, the measure's own rounding.
+const CROSS_PAST_ANGLE: f64 = 0.02;
+
 const Outcome = struct {
     code: ?diagnostics.Code = null,
     counts: ?@TypeOf(@as(Body, undefined).counts()) = null,
@@ -600,5 +630,50 @@ test "ties: a pocket's wall over a vertex a zone under the face it is cut from i
         var third = try helpers.fuzzPlaced(t, DP_THIRD.size, DP_THIRD.lo, vec.Z3, DP_THIRD.turn, DP_THIRD.move, vec.add(DP_THIRD.nudge, .{ 0, 0, -drop }));
         defer third.deinit();
         try expectAlikeMirrored(&joined, &third);
+    }
+}
+
+test "ties: a hull's base 0.0085 rad off a box's top and crossing it is refused below the feature size, not hinged on the hull's edge (find du)" {
+    // Find du (the solids sessions on 9015ab26, locus_solids): the hull's base is parallel
+    // to the box's top within the angular tolerance and crosses it, a corner of it on the
+    // top within the reach. The paves hinged the two along the base's edge from that
+    // corner, which the top kept as a slit with the base and a side of the hull on it:
+    // four coedges, the union NotValid. Such faces lie within the tolerance of each other
+    // over a strip no section of them holds (`planar_faces.refuseCrossingParallel`)
+    var box = try helpers.fuzzPlaced(Tolerance.fromZone(1e-4), DU_BOX.size, DU_BOX.lo, vec.Z3, 0, DU_BOX.move, DU_BOX.nudge);
+    defer box.deinit();
+    var hull = try degeneracy.fuzzHullPlaced(&DU_HULL, .{ 1, 2, 3 }, DU_HULL_TURN, null, vec.ZERO3, DU_HULL_NUDGE);
+    defer hull.deinit();
+    for (OPS) |op| for ([2]bool{ false, true }) |swapped| {
+        errdefer std.debug.print("{t}, swapped {}\n", .{ op, swapped });
+        const got = if (swapped) try Outcome.of(&hull, &box, op, null) else try Outcome.of(&box, &hull, op, null);
+        defer got.deinit();
+        try testing.expectEqual(@as(?diagnostics.Code, .below_feature_size), got.code);
+    };
+}
+
+test "ties: the family about du, a slab's bottom crossing a box's top within the angular tolerance refused, hinged on it or past the angle made, alike swapped, mirrored and moved far" {
+    // The slab's bottom crossing the top along a line through both faces, at du's angle
+    // either way, at 1e-3, and with its corner 8.5e-5 (past the reach) over the top: each
+    // face has a corner beyond the tolerance either side of the other's plane, refused.
+    // Hinged on its edge, rising or dipping, or with its corner 1.7e-5 (within the reach)
+    // over the top: the bottom keeps to one side of the top's plane, made; and the
+    // crossing past the angular tolerance, along the planes' own line, made
+    var box = try helpers.boxAt(Tolerance.fromZone(1e-5), CROSS_BOX[0], CROSS_BOX[1]);
+    defer box.deinit();
+    for (CROSS_CASES) |case| {
+        errdefer std.debug.print("turned {d} about x = {d}\n", .{ case.turn, case.pivot });
+        var drawn = try helpers.boxAt(Tolerance.fromZone(1e-5), CROSS_SLAB[0], CROSS_SLAB[1]);
+        defer drawn.deinit();
+        var slab = try helpers.turned(&drawn, .{ case.pivot, 0, 1 }, vec.Y3, case.turn);
+        defer slab.deinit();
+        for (OPS) |op| {
+            errdefer std.debug.print("{t}\n", .{op});
+            const got = try Outcome.of(&slab, &box, op, null);
+            defer got.deinit();
+            if (case.refused) try testing.expectEqual(@as(?diagnostics.Code, .below_feature_size), got.code) else try testing.expectEqual(@as(?diagnostics.Code, null), got.code);
+        }
+        try expectAlikeSwappedAndMovedBy(&slab, &box, if (case.turn == CROSS_PAST_ANGLE) &MOVES else &FAR_MOVES);
+        try expectAlikeMirrored(&slab, &box);
     }
 }

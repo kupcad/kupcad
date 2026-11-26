@@ -188,20 +188,18 @@ const Section = struct {
     }
 
     /// Refuses planar face `f` when it crosses the plane, a vertex of it beyond the zone on
-    /// each side, parallel to it within the angular tolerance (`below_feature_size`; at that
-    /// tolerance to rounding, `at_tolerance`, D27): the face then lies within the zone of
-    /// the plane over a strip `2 zone / sin θ` wide, a vertex on the plane within the zone
-    /// lies that far from the face's trace, and the faces about it put the section's
-    /// boundary there while the face puts it on its trace; no outline holds both. As the
-    /// boolean's paves give two planes parallel within that tolerance no line of their own
-    /// (`pave.meetingLine`). A wedge 6e-5 thick, its bottom 6.3e-5 rad off the plane, a
-    /// vertex 6.5e-6 under the plane and 0.12 from the bottom's trace: the section was
-    /// left open, no area, where the solid holds material (the solids oracle's slice on
-    /// 9015ab26, ea).
+    /// each side, parallel to it within the angular tolerance: the faces about a vertex on
+    /// the plane within the zone, as far as `2 zone / sin θ` from the face's trace, put the
+    /// section's boundary there while the face puts it on its trace, and no outline holds
+    /// both (`planar_faces.refuseCrossingParallel`, the boolean's rule for two faces alike;
+    /// the slicing plane crosses any face's plane). A wedge 6e-5 thick, its bottom 6.3e-5
+    /// rad off the plane, a vertex 6.5e-6 under the plane and 0.12 from the bottom's trace:
+    /// the section was left open, no area, where the solid holds material (the solids
+    /// oracle's slice on 9015ab26, ea).
     fn steepEnough(self: *Section, f: types.FaceIndex) Error!void {
         const body = self.body;
         const n = planar_faces.frameOf(body, f).?.z;
-        const parallel = canonical.verdict(&.{canonical.Comparison.angle(1.0 - @abs(vec.dot(n, self.plane.n)), self.tol.angle)});
+        const parallel = planar_faces.parallelPlanes(n, self.plane.n, self.tol);
         if (parallel == .apart) return;
         var below = false;
         var above = false;
@@ -214,11 +212,8 @@ const Section = struct {
                 .on => {},
             };
         }
-        if (!below or !above) return;
-        return switch (parallel) {
-            .at_tolerance => |c| self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a face crossing the slicing plane, parallel to it or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
-            else => self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = "a face crossing the slicing plane parallel to it within the angular tolerance, within the zone of it over a strip wider than the zone,", .measured = 1.0 - @abs(vec.dot(n, self.plane.n)), .threshold = self.tol.angle }),
-        };
+        const crossing: canonical.Verdict = if (below and above) .same else .apart;
+        return planar_faces.refuseCrossingParallel(parallel, crossing, n, self.plane.n, self.tol, .of(.face, @backingInt(f)), self.diag);
     }
 
     /// A refusal of `planeSurface`'s, its finding naming face `f`.
