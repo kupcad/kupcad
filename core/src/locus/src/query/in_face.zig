@@ -34,9 +34,13 @@ const Error = diagnostics.Error;
 
 /// How many times a coedge's piece may be halved while its swept angle is measured.
 const MAX_DEPTH: u8 = 40;
-/// A piece's swept angle is taken from its chord when it and both its halves subtend
-/// below this (radians) and the halves' angles sum to the chord's within `AGREE`
-/// (`sweptAngle`).
+/// The longest piece of a conic's image (a circle's or an ellipse's, in its parameter)
+/// whose hull `sweptAngle` takes as the triangle of its ends and its end tangents'
+/// meeting point: a quarter turn, the meeting point within √2 of the conic's size.
+const CONIC_PIECE: f64 = std.math.pi / 2.0;
+/// A free-form image's piece's swept angle is taken from its chord when it and both its
+/// halves subtend below this (radians) and the halves' angles sum to the chord's within
+/// `AGREE` (`sweptAngle`): sampled, not certified (M5).
 const PIECE_ANGLE: f64 = 0.25;
 const AGREE: f64 = 1e-9;
 /// The Newton bound of the free-form kinds' projections in the queries.
@@ -49,7 +53,7 @@ pub const Place = enum { inside, outside, boundary };
 /// or outside by the winding of its loops.
 pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within: f64, diag: *Diagnostics) Error!Place {
     if (try nearEdge(body, f, p, within, diag)) return .boundary;
-    const inside = try windsPlanar(body, f, uv, diag) orelse try winds(body, f, uv, diag);
+    const inside = try windsPlanar(body, f, uv, diag) orelse (try winds(body, f, uv, diag) orelse return .boundary);
     return if (inside) .inside else .outside;
 }
 
@@ -335,8 +339,9 @@ fn windsPlanar(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnosti
 
 /// Whether the loops of face `f` wind about `uv`: the angle they sweep about it, a whole
 /// number of turns, is not zero (holes wind back). For a face `windsPlanar` does not
-/// answer: a curved one, or a planar one with an elliptic or free-form edge.
-fn winds(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!bool {
+/// answer: a curved one, or a planar one with an elliptic or free-form edge. Null when
+/// `uv` is on an edge's image to rounding (`sweptAngle`).
+fn winds(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Error!?bool {
     const face = body.face(f);
     const surface = body.geometry.surface(face.surface);
     var total: f64 = 0;
@@ -357,7 +362,7 @@ fn winds(body: *const Body, f: types.FaceIndex, uv: Vec2, diag: *Diagnostics) Er
             // tolerance, not to the bit)
             if (last) |prev| total += angleBetween(prev, a);
             if (first == null) first = a;
-            total += sweptAngle(image, from, to, a, b, 0);
+            total += sweptAngle(image, image.shape(), from, to, a, b, 0) orelse return null;
             last = b;
         }
         if (first) |a| if (last) |b| {
@@ -386,30 +391,92 @@ const Image = struct {
         };
         return vec.sub2(uv, self.p);
     }
+
+    /// What the image is, as far as its pieces' angles are certified: a line's (its
+    /// pcurve, or a line on a plane), a conic's (a circle's or an ellipse's, on a plane or
+    /// as a circle pcurve: an affine image of a circle in its parameter, its centre less
+    /// the point), or sampled (free-form pcurves and curves, and projections onto curved
+    /// surfaces, M5).
+    fn shape(self: Image) Shape {
+        if (!self.pcurve.isNone()) return switch (self.body.geometry.pcurve(self.pcurve)) {
+            .line2 => .line,
+            .circle2 => |c| .{ .conic = vec.sub2(c.c, self.p) },
+            .nurbs2 => .sampled,
+        };
+        const plane = switch (self.surface) {
+            .plane => |plane| plane,
+            else => return .sampled,
+        };
+        return switch (self.body.geometry.curve(self.edge.curve)) {
+            .line => .line,
+            .circle => |c| .{ .conic = vec.sub2(plane.project(c.c), self.p) },
+            .ellipse => |e| .{ .conic = vec.sub2(plane.project(e.c), self.p) },
+            .nurbs => .sampled,
+        };
+    }
 };
 
+const Shape = union(enum) { line, conic: Vec2, sampled };
+
 /// The angle the image sweeps about the origin from parameter `ta` (at `a`) to `tb` (at
-/// `b`), halving the piece until it and both its halves subtend under `PIECE_ANGLE` and
-/// the halves agree with it. Each angle is measured the short way, in (−π, π], so a
-/// measure is off by a whole turn exactly when the image it measures winds past a half
-/// turn; the whole piece and one half off by the same turn agree all the same (a disc's
-/// cap of two arcs, the long one winding 2π − 0.2 about a point 0.76 inside the rim,
-/// measured −0.2 whole and by its halves, the point found outside its own cap: the 2D
-/// chain fuzzer's find dg, 2026-11-22, since 9ce2e7e5). Both halves small rules that
-/// out for a conic's piece: about a point inside a circle or ellipse the angle is
-/// monotone along it, and a piece of under half a turn of its parameter subtends under
-/// one and a half turns, so a half measured under `PIECE_ANGLE` is its true angle, and
-/// so is the whole that agrees with the two.
-fn sweptAngle(image: Image, ta: f64, tb: f64, a: Vec2, b: Vec2, depth: u8) f64 {
+/// `b`), halving the piece until its chord's angle is certified to be the piece's; null
+/// when no halving within `MAX_DEPTH` certifies it, the origin on the image to rounding.
+/// Each angle is measured the short way, in (−π, π], so a measure is off by a whole turn
+/// exactly when the image it measures winds past a half turn (a disc's cap of two arcs,
+/// the long one winding 2π − 0.2 about a point 0.76 inside the rim, measured −0.2: the
+/// 2D chain fuzzer's find dg, 2026-11-22). The certificate, as the mesher's chords take
+/// theirs (`mesh/chords.zig`), is a hull of the piece the origin lies outside of, exactly
+/// (`orient2d`): the piece lies in it, the hull in a half-plane seen from the origin, so
+/// the angle from its one end to its other is the chord's. A line's piece is its own
+/// hull. A conic's piece of at most a quarter turn of its parameter lies in the triangle of
+/// its ends and its end tangents' meeting point, the image of its middle moved out from
+/// the centre by `1/cos` of half its span (an affine map keeps tangents' meetings). A
+/// piece and both its halves under a quarter radian, the halves agreeing, held for a
+/// circle's pieces and not for a thin ellipse's: from a point near one end of an ellipse
+/// 12 to 1, a piece's ends and middle all lay one way while it went round the point, which
+/// was put outside (the audit of 2026-11-22, kind 7, site 6). A free-form image keeps
+/// that sampled rule until its pieces have hulls of their own (M5).
+fn sweptAngle(image: Image, shape: Shape, ta: f64, tb: f64, a: Vec2, b: Vec2, depth: u8) ?f64 {
     const whole = angleBetween(a, b);
-    if (depth >= MAX_DEPTH) return whole;
     const tm = ta + (tb - ta) / 2;
     const m = image.at(tm);
-    const left = angleBetween(a, m);
-    const right = angleBetween(m, b);
-    const small = @abs(whole) <= PIECE_ANGLE and @abs(left) <= PIECE_ANGLE and @abs(right) <= PIECE_ANGLE;
-    if (small and @abs(left + right - whole) <= AGREE) return whole;
-    return sweptAngle(image, ta, tm, a, m, depth + 1) + sweptAngle(image, tm, tb, m, b, depth + 1);
+    switch (shape) {
+        .line => if (outsideSegment(a, b)) return whole,
+        .conic => |centre| if (@abs(tb - ta) <= CONIC_PIECE) {
+            const meet = vec.addScaled2(centre, vec.sub2(m, centre), 1 / @cos((tb - ta) / 2));
+            if (outsideTriangle(a, meet, b)) return whole;
+        },
+        .sampled => {
+            const left = angleBetween(a, m);
+            const right = angleBetween(m, b);
+            const small = @abs(whole) <= PIECE_ANGLE and @abs(left) <= PIECE_ANGLE and @abs(right) <= PIECE_ANGLE;
+            if (small and @abs(left + right - whole) <= AGREE) return whole;
+        },
+    }
+    if (depth >= MAX_DEPTH) return null;
+    const first = sweptAngle(image, shape, ta, tm, a, m, depth + 1) orelse return null;
+    return first + (sweptAngle(image, shape, tm, tb, m, b, depth + 1) orelse return null);
+}
+
+/// Whether the origin lies off the segment from `a` to `b`, exactly.
+fn outsideSegment(a: Vec2, b: Vec2) bool {
+    const o: Vec2 = .{ 0, 0 };
+    if (predicates.orient2d(a, b, o) != 0) return true;
+    // On its line: off it past an end
+    return vec.dot2(a, b) > 0;
+}
+
+/// Whether the origin lies outside the triangle `a`, `q`, `b` (on its boundary is not
+/// outside), exactly; a flat triangle is its segment.
+fn outsideTriangle(a: Vec2, q: Vec2, b: Vec2) bool {
+    const o: Vec2 = .{ 0, 0 };
+    const turn = predicates.orient2d(a, q, b);
+    if (turn == 0) return outsideSegment(a, b) and outsideSegment(a, q) and outsideSegment(q, b);
+    for ([_][2]Vec2{ .{ a, q }, .{ q, b }, .{ b, a } }) |side| {
+        const s = predicates.orient2d(side[0], side[1], o);
+        if (s != 0 and (s > 0) != (turn > 0)) return true;
+    }
+    return false;
 }
 
 /// The signed angle from `a` to `b` about the origin, in (−π, π].

@@ -64,6 +64,30 @@ pub fn ellipseSheet(allocator: std.mem.Allocator, tol: Tolerance, diag: *Diagnos
     return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ 0, 0 }, .max = .{ 2.8, 3 } } }}, .sheet);
 }
 
+/// A sheet on z = 0: the ellipse about the origin with semi-axes `a` along `x` and `b`
+/// along `y` (unit, perpendicular, in z = 0), its boundary two edges of the one ellipse,
+/// cut at the parameters `t0` and `t0 + span`.
+pub fn ellipseDisc(allocator: std.mem.Allocator, tol: Tolerance, x: Vec3, y: Vec3, a: f64, b_axis: f64, t0: f64, span: f64, diag: *Diagnostics) !Body {
+    var b = try primitives.Builder.init(allocator, tol, .sheet, diag);
+    defer b.deinit();
+    errdefer b.body.deinit();
+    const e: @import("../geometry/curves.zig").Ellipse = .{ .c = .{ 0, 0, 0 }, .x = x, .y = y, .a = a, .b = b_axis };
+    const ref = try b.body.geometry.addEllipse(allocator, e);
+    const v0 = try b.vertex(e.eval(t0));
+    const v1 = try b.vertex(e.eval(t0 + span));
+    // Counter-clockwise about +z: along the parameter when the ellipse turns that way
+    const forward = vec.cross(x, y)[2] > 0;
+    const edges = if (forward) [2]sew.EdgeSpec{
+        .{ .start = v0, .end = v1, .curve = ref, .t0 = t0, .t1 = t0 + span, .forward = true },
+        .{ .start = v1, .end = v0, .curve = ref, .t0 = t0 + span, .t1 = t0 + 2 * std.math.pi, .forward = true },
+    } else [2]sew.EdgeSpec{
+        .{ .start = v0, .end = v1, .curve = ref, .t0 = t0 + span, .t1 = t0 + 2 * std.math.pi, .forward = false },
+        .{ .start = v1, .end = v0, .curve = ref, .t0 = t0, .t1 = t0 + span, .forward = false },
+    };
+    const plane = try b.plane(geometry.Frame.world, &.{});
+    return b.finish(&.{.{ .surface = plane, .loops = &.{.{ .edges = &edges }}, .uv_box = .{ .min = .{ -a, -a }, .max = .{ a, a } } }}, .sheet);
+}
+
 /// `ellipseSheet` with a square hole of side `side` whose right side lies `inset` inside
 /// the half ellipse's rim at its widest point (2.8, 1.5): a chord of the ellipse, which
 /// may bow up to `Resolution.chordBow` off it, can pass through the hole.

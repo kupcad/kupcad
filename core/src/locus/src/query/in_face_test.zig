@@ -81,3 +81,38 @@ test "in face: points about a disc of two arcs are inside within the rim and out
         };
     };
 }
+
+test "in face: points about an ellipse of two edges, thin up to 100 to 1, inside within it and outside past it, wherever it is cut" {
+    // The audit of 2026-11-22 (kind 7, site 6): a piece and both its halves measured
+    // under a quarter radian was taken for its chord's angle, which holds for a circle's
+    // pieces and not a thin ellipse's: from a point near one end of an ellipse 100 to 1,
+    // a piece's ends and middle all lie one way while the piece goes round the point
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const test_bodies = @import("../construct/test_bodies.zig");
+    // The ellipse's axes turned by quarter turns, and mirrored (its y axis the other way)
+    const axes = [_][2]vec.Vec3{ .{ vec.X3, vec.Y3 }, .{ vec.Y3, vec.neg(vec.X3) }, .{ vec.neg(vec.X3), vec.neg(vec.Y3) }, .{ vec.neg(vec.Y3), vec.X3 }, .{ vec.X3, vec.neg(vec.Y3) }, .{ vec.Y3, vec.X3 } };
+    for ([_]f64{ 2, 8, 12, 20, 50, 100 }) |aspect| for (axes) |axis| for ([_]f64{ 0, 0.7, 2.2, 4.0, 5.5 }) |t0| for ([_]f64{ 0.5, 2.5, std.math.pi, 5 }) |span| {
+        const a = 10.0;
+        const b = a / aspect;
+        var sheet = try test_bodies.ellipseDisc(testing.allocator, tol, axis[0], axis[1], a, b, t0, span, &diag);
+        defer sheet.deinit();
+        const at = struct {
+            fn at(x: vec.Vec3, y: vec.Vec3, u: f64, v: f64) Vec2 {
+                return .{ u * x[0] + v * y[0], u * x[1] + v * y[1] };
+            }
+        }.at;
+        for ([_]f64{ 0.1, 0.5, 0.9, 0.95, 0.99, 1.01, 1.1, 2 }) |share| for (0..POINT_ANGLES) |k| {
+            const angle = 2 * std.math.pi * (@as(f64, @floatFromInt(k)) + 0.5) / POINT_ANGLES;
+            const p = at(axis[0], axis[1], share * a * @cos(angle), share * b * @sin(angle));
+            errdefer std.debug.print("aspect {d}, axes {any}, cut at {d} and {d} on: the point {d} of the way out at {d}\n", .{ aspect, axis, t0, span, share, angle });
+            const want: in_face.Place = if (share < 1) .inside else .outside;
+            try testing.expectEqual(want, try placeOf(&sheet, p, &diag));
+        };
+        // On the major axis, near its ends
+        for ([_]f64{ 0.8, 0.9, 0.95, 0.99 }) |share| for ([_]f64{ -1, 1 }) |side| {
+            errdefer std.debug.print("aspect {d}, axes {any}, cut at {d} and {d} on: the point {d} along the major axis\n", .{ aspect, axis, t0, span, side * share });
+            try testing.expectEqual(in_face.Place.inside, try placeOf(&sheet, at(axis[0], axis[1], side * share * a, 0), &diag));
+        };
+    };
+}

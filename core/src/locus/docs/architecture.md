@@ -1379,13 +1379,19 @@ primitive every query stands on: a point of a face's surface is on the face's bo
 when within the zone of an edge (in space, on the exact curves: `nearestOnEdge`), else
 inside when the face's loops wind about its UV, the winding being the angle each coedge's
 image sweeps about the point (its pcurve; on a plane its curve projected; on a curved face
-without one its curve projected onto the surface), a piece halved until it and both its
-halves subtend under a quarter radian and the halves agree (each angle is measured the short
-way, so a whole and a half off by the same turn agree: a disc's long arc winding 2π − 0.32
-about a point inside read −0.32, and the queries' ray missed its caps; the 2D chain fuzzer,
-dg, 2026-11-22; about a point inside a conic the angle is monotone, and a half of under half
-a turn of parameter subtends under one and a half turns, so a half measured small is its
-true angle), so no polyline of the boundary stands in for it and
+without one its curve projected onto the surface), a piece halved until its chord's angle
+is certified: the point lies outside a hull of the piece, exactly (`orient2d`), so the piece
+lies in a half-plane seen from it. A line's piece is its own hull; a conic's piece (a
+circle's or an ellipse's image, an affine image of a circle) of at most a quarter turn lies
+in the triangle of its ends and its end tangents' meeting point (each angle is measured the
+short way, so a whole and a half off by the same turn agree: a disc's long arc winding
+2π − 0.32 about a point inside read −0.32, and the queries' ray missed its caps; the 2D chain
+fuzzer, dg, 2026-11-22; and the acceptance that mended it, a piece and its halves all under
+a quarter radian, holds for a circle and not for an ellipse 12 to 1, whose piece's ends and
+middle lay one way from a point near its end while it went round it, the audit of
+2026-11-22). A point no halving puts outside is on the image to rounding: on the boundary.
+Free-form images keep the sampled acceptance until their pieces get control-polygon hulls
+(M5). So no polyline of the boundary stands in for it and
 lines, circles, ellipses and NURBS are one case; periodic parameters are moved by whole
 periods into the face's box. A planar face whose edges are lines and circles' arcs takes
 the same answer from the exact crossing parity of a ray in its plane
