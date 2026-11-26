@@ -461,9 +461,14 @@ const Hold = union(enum) { held: CurveRef, apart, at_tolerance: canonical.Compar
 /// parallel to within the angle, every vertex within the intersection tolerance and its
 /// gap of, and that over each edge stays on the edge's faces within the tolerance and the
 /// edge's gap, as the checker holds an edge to its surfaces (on planes a line's height is
-/// linear: its ends decide). Of several, the least record (the boolean's lines are its
+/// linear: its ends decide). Of several, the one lying nearest the chain's faces' planes
+/// (`offFaces`: the least gap the joined edge then needs, as OCCT keeps a merged edge's
+/// tolerance least), as far to rounding by the least record (the boolean's lines are its
 /// sources', D28: which one changes where the edge lies within the tolerance, never which
-/// vertices go). Apart when none holds them; at the tolerance when none does and one is
+/// vertices go). By the least record alone the choice hung on the records' order, which a
+/// mirror changes: a needle's corner edge took a line 1.5e-5 off one of its faces mirrored
+/// and one 1e-5 off it in place, and the solid's area differed by 4% (the solids oracle's
+/// mirrored replay on 9015ab26, dw). Apart when none holds them; at the tolerance when none does and one is
 /// within rounding of it (`decide` refuses it where the chain's count depends on it). The
 /// faces' check: a section's line, through a vertex 1.8e-4 under the plane it lies in at a
 /// tolerance of 2e-4, joined a notch's edge on that line and took the joined edge 3.6e-4
@@ -475,20 +480,53 @@ fn hold(body: *const Body, chain: *const Chain, absorbed: *const Absorbed, lo: u
     for (edges[1..]) |e| {
         if (!body.edge(e).curve.eql(first)) break;
     } else return .{ .held = first };
-    var best: ?CurveRef = null;
+    var best: ?struct { curve: CurveRef, off: Off } = null;
     var at: ?canonical.Comparison = null;
     for (edges) |candidate| {
         const curve = body.edge(candidate).curve;
-        if (best) |b| if (@as(u32, @bitCast(curve)) >= @as(u32, @bitCast(b))) continue;
-        switch (try lineHolds(body, body.geometry.curve(curve).line, chain, absorbed, lo, hi)) {
-            .same => best = curve,
+        if (best) |b| if (curve.eql(b.curve)) continue;
+        const line = body.geometry.curve(curve).line;
+        switch (try lineHolds(body, line, chain, absorbed, lo, hi)) {
+            .same => {
+                const off = offFaces(body, line, chain, lo, hi);
+                if (best) |b| {
+                    const nearer = if (canonical.sameToRounding(off.height, b.off.height, @max(off.scale, b.off.scale))) @as(u32, @bitCast(curve)) < @as(u32, @bitCast(b.curve)) else off.height < b.off.height;
+                    if (!nearer) continue;
+                }
+                best = .{ .curve = curve, .off = off };
+            },
             .apart => {},
             .at_tolerance => |c| at = at orelse c,
         }
     }
-    if (best) |b| return .{ .held = b };
+    if (best) |b| return .{ .held = b.curve };
     if (at) |c| return .{ .at_tolerance = c };
     return .apart;
+}
+
+/// How far a line lies off a chain's faces (`offFaces`), and the size of the coordinates
+/// that was measured at.
+const Off = struct { height: f64, scale: f64 };
+
+/// The greatest height over the planes of the faces of `chain`'s edges `lo` to `hi` of
+/// `line`'s feet at the chain's ends, `lo` and `hi` (on planes a line's height is linear:
+/// its ends bound it); what `hold` chooses a line by.
+fn offFaces(body: *const Body, line: @import("../geometry/curves.zig").Line, chain: *const Chain, lo: usize, hi: usize) Off {
+    var off: Off = .{ .height = 0, .scale = 0 };
+    for (chain.edges.items[lo..hi]) |e| {
+        for (traverse.coedgesOfEdge(body, e)) |c| {
+            if (c == .none) continue;
+            const face = body.face(body.loop(body.coedge(c).loop).face);
+            if (face.surface.kind != .plane) continue;
+            const plane = body.geometry.planes.items[face.surface.index];
+            for ([2]types.VertexIndex{ chain.vertices.items[lo], chain.vertices.items[hi] }) |v| {
+                const end = line.eval(line.project(body.point(v)));
+                off.height = @max(off.height, @abs(plane.height(end)));
+                off.scale = @max(off.scale, canonical.magnitude(&.{ end, plane.frame.origin }));
+            }
+        }
+    }
+    return off;
 }
 
 /// `hold`'s measures of `line` against the edges and vertices `lo` to `hi`.

@@ -20,6 +20,8 @@ const overlap = @import("../query/overlap.zig");
 const pipeline = @import("pipeline.zig");
 const step_corpus = @import("step_corpus.zig");
 const types = @import("../topology/types.zig");
+const traverse = @import("../topology/traverse.zig");
+const planar_faces = @import("../intersect/planar_faces.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 const Op = pipeline.Op;
@@ -85,6 +87,14 @@ const MOVED_FINDS = [_]MovedFind{
 const DX_FIRST = .{ .size = Vec3{ 1, 3, 2 }, .lo = Vec3{ 0, 0, 1 }, .move = Vec3{ 0, 0, 1 }, .nudge = Vec3{ -1.9999999943156583e-5, -1e-5, 0 } };
 const DX_SECOND = .{ .size = Vec3{ 4, 3, 2 }, .lo = Vec3{ 0, 1, 0 }, .move = Vec3{ 1, 0, 0 }, .nudge = Vec3{ 0, 0, -1e-5 } };
 const DX_NUDGES = [_]f64{ -1.9999999943156583e-5, -2e-5, -1.99999e-5, -2.00001e-5 };
+
+/// Find dw's rule (the solids oracle's mirrored replay on 9015ab26): a small box and a large
+/// one side by side, the large one's top `DW_STEP` higher, within the tolerance, so their
+/// tops are one plane (the large top's, moving the least, D28) and the run of top edges
+/// along a side is joined into one edge (`simplify.hold`), of either box's line.
+const DW_SMALL = .{ .lo = Vec3{ 0, 0, 0 }, .hi = Vec3{ 1, 1, 1 } };
+const DW_LARGE = .{ .lo = Vec3{ 1, 0, 0 }, .hi = Vec3{ 5, 1, 1 } };
+const DW_STEP: f64 = 1e-5;
 
 /// A box from `lo` to `hi`.
 pub fn box(lo: Vec3, hi: Vec3) !Body {
@@ -1346,6 +1356,56 @@ test "boolean: boxes whose faces in parallel planes the tolerance apart to round
             if (forward) |r| {
                 try testing.expectEqual(r.counts(), (try swapped).counts());
             } else |e| try testing.expectError(e, swapped);
+        }
+    }
+}
+
+test "boolean: a run of edges joined takes the line nearest its faces, mirrored, turned and either way round (find dw)" {
+    // Find dw: a needle a chain of booleans left, its corner edge a run of two edges joined
+    // (`simplify.hold`), each on a line of its own within the tolerance of the other. Of
+    // the lines that hold the run, the least record was taken: mirrored, the records came
+    // in another order, the edge took a line 1.5e-5 off one of its faces where in place it
+    // took one 1e-5 off, and the solid's area differed by 4%. The line nearest the run's
+    // faces' planes is taken (`offFaces`), wherever the solids are: here a small box's top
+    // edge and a large box's, its top `DW_STEP` higher, joined along the sides; the tops
+    // one plane, the large top's, so the joined edges take the large box's lines
+    const mirror = mat.Affine.mirror(vec.X3);
+    const turn = mat.Affine.rotate(vec.normalized(.{ 1, 2, 3 }).?, 0.3);
+    var small = try box(DW_SMALL.lo, DW_SMALL.hi);
+    defer small.deinit();
+    var large = try box(DW_LARGE.lo, .{ DW_LARGE.hi[0], DW_LARGE.hi[1], DW_LARGE.hi[2] + DW_STEP });
+    defer large.deinit();
+    for ([_]?mat.Affine{ null, mirror, turn }) |move| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var a = if (move) |m| try transform.transform(testing.allocator, &small, &m, .{}, &diag) else try small.clone(testing.allocator);
+        defer a.deinit();
+        var b = if (move) |m| try transform.transform(testing.allocator, &large, &m, .{}, &diag) else try large.clone(testing.allocator);
+        defer b.deinit();
+        for ([2][2]*const Body{ .{ &a, &b }, .{ &b, &a } }) |pair| {
+            var u = try sound(pair[0], pair[1], .@"union");
+            defer u.deinit();
+            try testing.expectEqual(@as(usize, 6), u.counts().faces);
+            // Every edge between the top and a side: on the top's plane
+            const up = if (move) |m| m.vector(vec.Z3) else vec.Z3;
+            var joined: usize = 0;
+            for (u.edges.items, 0..) |e, i| {
+                if (e.flags.tombstone) continue;
+                var top: ?@import("../geometry/surfaces.zig").Plane = null;
+                for (traverse.coedgesOfEdge(&u, .of(@intCast(i)))) |c| {
+                    if (c == .none) continue;
+                    const f = u.loop(u.coedge(c).loop).face;
+                    if (vec.dot(planar_faces.outward(&u, f), up) > 0.5) top = u.geometry.planes.items[u.face(f).surface.index];
+                }
+                const plane = top orelse continue;
+                const curve = u.geometry.curve(e.curve);
+                if (vec.distance(curve.eval(e.t0), curve.eval(e.t1)) < 4.5) continue;
+                joined += 1;
+                errdefer std.debug.print("edge {d}: {e} and {e} off the top's plane\n", .{ i, plane.height(curve.eval(e.t0)), plane.height(curve.eval(e.t1)) });
+                try testing.expect(@abs(plane.height(curve.eval(e.t0))) < CLOSE);
+                try testing.expect(@abs(plane.height(curve.eval(e.t1))) < CLOSE);
+            }
+            try testing.expectEqual(@as(usize, 2), joined);
         }
     }
 }

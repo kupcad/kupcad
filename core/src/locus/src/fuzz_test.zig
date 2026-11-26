@@ -2610,6 +2610,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // tolerance from a left face to rounding, their regions apart; the union's own rules
         // overlaid them, refused one way round only (planar_faces.onPlaneOf, overlay reach)
         "solids 0 0 1 0 3 1 3 1 2 10 6 2 3 1 1 0 0 4 1 4 0 2 2 2 2 0 6 15 0",
+        // The same sessions (locus_solids, dw): (hull − box − wall) ∩ wall, a needle whose
+        // corner edge, a run joined, took a line by the records' order, which the mirror
+        // changed: its area 4% off mirrored (simplify.hold: the line nearest the faces)
+        "solids 1 6 1 1 3 2 1 2 0 4 2 1 0 4 4 4 0 4 3 4 3 2 1 0 8 14 3 2 0 2 4 3 4 0 2 3 0 0 0 2 -1 11 11 10 1 3 3 1 5 3 0 4 2 2 3 0 2 4 0 1 2 6 5 9 16 1 3 3 1 5 1 2 4 4 2 4 0 0 4 0 2 1 1 9 6 14 2 0 3 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
