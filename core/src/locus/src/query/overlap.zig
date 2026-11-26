@@ -562,7 +562,10 @@ fn facePairs(allocator: std.mem.Allocator, body: *const Body, index: *const inde
 /// tetrahedron, a strip extruded, the same whether operand or result. A fin of a
 /// difference, its far edge the intersection tolerance from the pocket's wall to within
 /// rounding once moved to 3e5, read as lying in the wall, was called invalid
-/// (`faces_intersect`; the solids oracle's moved results on 05c27278, dr, 2026-11-26).
+/// (`faces_intersect`; the solids oracle's moved results on 05c27278, dr, 2026-11-26);
+/// that edge, at the tolerance to rounding, is refused since (`planar_faces.onPlaneOf`,
+/// `at_tolerance`; dt, dy), and the rule decides faces back to back clearly within it: a
+/// void's top in its outer shell's top, a fin of no thickness.
 fn backToBack(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, solids: *const Solids) bool {
     const shell_f = body.face(f).shell;
     const shell_g = body.face(g).shell;
@@ -690,15 +693,15 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
 }
 
 /// Whether `p` lies on shell `t` (planar faces): within the intersection tolerance of one
-/// of its faces' planes, its foot there in the face or on its boundary
-/// (`planar_faces.place`, the paves' decision). The winding number of `t` about such a
-/// point is no count of its material.
+/// of its faces' planes (`planar_faces.onPlaneOf`, refused at it to rounding), its foot
+/// there in the face or on its boundary (`planar_faces.place`, the paves' decision). The
+/// winding number of `t` about such a point is no count of its material.
 fn onShell(body: *const Body, t: types.ShellIndex, p: Vec3, tol: Tolerance, diag: *Diagnostics) Error!bool {
     var faces = traverse.Faces.init(body, t);
     while (faces.next() catch return corrupt(diag)) |g| {
         const frame = planar_faces.frameOf(body, g) orelse continue;
+        if (!try planar_faces.onPlaneOf(body, g, planar_faces.planeOf(frame), p, 0, tol, diag)) continue;
         const height = vec.dot(vec.sub(p, frame.origin), frame.z);
-        if (@abs(height) > tol.xsect) continue;
         if (try planar_faces.place(body, g, vec.addScaled(p, frame.z, -height), 0, tol, diag) != .outside) return true;
     }
     return false;

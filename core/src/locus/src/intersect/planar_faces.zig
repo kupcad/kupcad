@@ -269,8 +269,8 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     var marks: std.ArrayList(Mark) = .empty;
     defer marks.deinit(allocator);
     // Each face's boundary on the other's plane
-    const in_b = try crossings(allocator, a, fa, planeOf(frame_b), tol, &marks, diag);
-    const in_a = try crossings(allocator, b, fb, planeOf(frame_a), tol, &marks, diag);
+    const in_b = try crossings(allocator, a, fa, b, fb, planeOf(frame_b), tol, &marks, diag);
+    const in_a = try crossings(allocator, b, fb, a, fa, planeOf(frame_a), tol, &marks, diag);
     if (in_b or in_a) return .{ .coplanar = if (in_a) .first else .second };
     if (marks.items.len == 0) return .apart;
     const along = lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)) orelse return .apart);
@@ -353,13 +353,14 @@ pub fn outward(body: *const Body, f: types.FaceIndex) Vec3 {
     return in_face.outwardNormal(body, f, .{ 0, 0 });
 }
 
-/// Appends to `marks` where face `f`'s edges meet `plane` (an edge lying in it gives those
-/// of its ends on it); true when every edge lies in it, the face then lying in the plane. An
-/// end on the plane is within the intersection tolerance and its vertex's gap, as a boolean
-/// takes a vertex to lie on a face (`boolean/pave.zig`'s vertex–face): an edge leaving such a
-/// vertex at a shallow angle crosses the plane's exact line far from it, inside the other
-/// face, where the boolean, rightly, made no edge (the solids fuzzer, 2026-11-13).
-fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Mark), diag: *Diagnostics) Error!bool {
+/// Appends to `marks` where face `f`'s edges meet `plane`, face `g` of `other`'s (an edge
+/// lying in it gives those of its ends on it); true when every edge lies in it, the face
+/// then lying in the plane. An end on the plane is within the intersection tolerance and its
+/// vertex's gap (`onPlaneOf`), as a boolean takes a vertex to lie on a face
+/// (`boolean/pave.zig`'s vertex–face): an edge leaving such a vertex at a shallow angle
+/// crosses the plane's exact line far from it, inside the other face, where the boolean,
+/// rightly, made no edge (the solids fuzzer, 2026-11-13).
+fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, other: *const Body, g: types.FaceIndex, plane: Plane, tol: Tolerance, marks: *std.ArrayList(Mark), diag: *Diagnostics) Error!bool {
     var every_in = true;
     var any = false;
     var loops = traverse.Loops.init(body, f);
@@ -381,7 +382,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             var on: [2]bool = undefined;
             for ([_]types.VertexIndex{ edge.start, edge.end }, &on) |v, *end_on| {
                 const p = body.point(v);
-                end_on.* = @abs(plane.height(p)) <= incidence.reach(tol, body.vertex(v).gap);
+                end_on.* = try onPlaneOf(other, g, plane, p, body.vertex(v).gap, tol, diag);
                 if (end_on.*) try marks.append(allocator, .{ .p = p, .gap = body.vertex(v).gap });
             }
             // The edge lies in the plane when both its ends do, as a section takes a line
@@ -427,14 +428,37 @@ fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceInd
 
 /// Where `p` (near face `f`'s plane), reaching `gap` beyond the tolerance (a vertex's gap,
 /// 0 for a point that is none), lies against the face: the paves' decision
-/// (`in_face.placeWithin`), on the boundary when at the reach to rounding, since this
-/// reads a body that exists and refuses nothing (`incidence.holds`).
+/// (`in_face.placeWithin`). At its reach of the boundary to rounding it is refused
+/// (`at_tolerance`, naming the face; D27), for the boolean and for the rules that read a
+/// body that exists alike: taken for the boundary there, a body moved far, its distances
+/// rounded into the band, read as overlapping itself where in place it did not, and was
+/// called invalid (the solids oracle's moved results on 9015ab26, dt and dy, 2026-11-26).
 pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
     const decide: incidence.Decider = .{ .tol = tol, .scale = canonical.magnitude(&.{p}) };
     return switch (try in_face.placeWithin(decide, body, f, p, gap, null, diag)) {
         .inside => .inside,
         .outside => .outside,
-        .boundary, .at_tolerance => .boundary,
+        .boundary => .boundary,
+        .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a point on a face's boundary or not", .measured = c.measured, .threshold = c.limit }),
+    };
+}
+
+/// Whether `p`, reaching `gap` beyond the tolerance (its vertex's, 0 for a point that is
+/// none), lies on `plane`, face `g` of `body`'s: within its reach of it
+/// (`incidence.Decider.onPlane`), as the paves put a vertex on a face. At its reach to
+/// rounding it is refused (`at_tolerance`, naming `g`; D27) where the height decides, `p`
+/// in `g` or on its boundary (`place`); outside `g` it is off the plane, as the paves take
+/// it (`boolean/pave.zig`'s `faceVerdict`). The one decision of a point on a face's plane
+/// for the overlap rules (`meet`, `query/overlap.zig`'s `onShell`). Read as within, a box's
+/// bottom the tolerance over another's top to rounding once moved far lay in its plane,
+/// and the two solids' faces "lay on each other" (`faces_intersect`; dt, dy).
+pub fn onPlaneOf(body: *const Body, g: types.FaceIndex, plane: Plane, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    const decide: incidence.Decider = .{ .tol = tol, .scale = @max(canonical.magnitude(&.{p}), @abs(plane.d)) };
+    const height = plane.height(p);
+    return switch (decide.onPlane(height, gap)) {
+        .same => true,
+        .apart => false,
+        .at_tolerance => |c| if (try place(body, g, p, gap, tol, diag) == .outside) false else diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(g)), .label = "a point on a face's plane or not", .measured = c.measured, .threshold = c.limit }),
     };
 }
 

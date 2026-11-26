@@ -1862,8 +1862,9 @@ test "Fuzz solids: a union along a sloped face, its edge within the intersection
 
 /// `result` moved by every rigid move a chain is moved whole by (`TURNS` about each of
 /// `TURN_AXES`, then each of `MOVE_SHIFTS`), each made (`transform` checks what it makes)
-/// or refused cleanly, and moved by each shift alone a sound solid (`expectSolid`: the
-/// overlap rules too, which take most of the time).
+/// or refused cleanly, and moved by each shift alone a sound solid (`expectMovedSolid`:
+/// the overlap rules too, which take most of the time, or their refusal of a relation the
+/// move put at the tolerance to rounding).
 fn expectMovedEverywhere(result: *const Body) !void {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
@@ -1871,7 +1872,7 @@ fn expectMovedEverywhere(result: *const Body) !void {
         errdefer std.debug.print("moved: shifted ({d}, {d}, {d})\n", .{ shift[0], shift[1], shift[2] });
         var moved = (try resultMoved(result, &Affine.translate(shift), &diag)) orelse continue;
         defer moved.deinit();
-        try expectSolid(&moved, &diag);
+        try oracle.expectMovedSolid(&moved, &diag);
         for (TURN_AXES) |axis| for (TURNS) |angle| {
             errdefer std.debug.print("moved: turned {d} about ({d}, {d}, {d}) first\n", .{ angle, axis[0], axis[1], axis[2] });
             var turned = (try resultMoved(result, &Affine.translate(shift).compose(&Affine.rotate(vec.normalized(axis).?, angle)), &diag)) orelse continue;
@@ -2591,8 +2592,8 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         "solids 2 1 4 1 3 0 2 2 0 2 0 2 11 10 7 15 3 2 1 8 0 1 2 2 2 2 0 1 3 1 0 0 0 0 3 2 1 0 2 3 0 3 4 2 1 0 2 0 2 12 12 3 9 1 2 1 8 0 1 1 1 0 0 3 0 2 0 4 3 2 2 2 2 0 1 4 2 1 4 1 2 0 1 7 0 1 2 2 5 13 -1 1 2 4 2",
         // The same sessions (locus_solids, dr): plate − plate turned 1e-6, a fin between
         // the plate's side and the block's 2.0000051e-5 across, made; moved far its faces
-        // read in one plane, back to back, over a region: called invalid, now refused
-        // `pinched` by design (overlap.backToBack: one solid touching itself over an area)
+        // read in one plane, back to back, over a region: called invalid, then refused
+        // `pinched` (overlap.backToBack), now `at_tolerance` (planar_faces.onPlaneOf)
         "solids 2 3 4 3 4 2 3 3 3 6 4 6 15 1 2 2 3 4 2 3 1 4 0 2 7 1 9 4 14 12 1 3 4 2",
         // The overlay's ReleaseSafe session on 05c27278 (locus_overlay, ds): a line and two
         // circles tangent at one vertex, a third circle crossing them where the two are
@@ -2600,6 +2601,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // left the vertex 1.5e-7 left of the line 100 zones along and parted from it to the
         // right: a map of genus one (overlay.Leaving.farther: ordered where they part)
         "overlay 3 2 0 16 3 8 1 1 0 2 7 17 17 8 3 0 1 2 8 1 0 19 1 7 3 2 6 12 4 5 5 6 3 0 0 2 2 1 2 2 1 2 1 0 1 1 1 1 3 0 1 2 0 2 2 8 15 19 2 5 0 7 23 12 5 24 15 3 2 7 7 12 0 5 12 21 3 6 21 5 1 1 1 4 2 0 4 0 0 4 3 0 1 0 0 3 3 1 1 2 1 1 3 0 0 12 19 3 5 0 1 2 1 7 8 7 8 1 24 4 2 3 2 8 13 3 16 13 4 19 4 7 0 13 8 1 0 0 1 3 0 4 2 1 2 3 0 3 0 0 2 2 0 2 2 0 1 7 0 7 1 0 0 7 5 1 6 20 12 7 7 4 6 15 23 1 0 23 7 2 0 1 2 2 0 4 0 0 4 0 1 2 3 0 3 2 0 2 1 1",
+        // The nightly and the step-4 sessions on 9015ab26 (locus_solids, dt, dy): box ∪ box,
+        // a face of one the tolerance from the other's to rounding; moved to 3e5 the faces
+        // read in one plane, on each other, NotValid (planar_faces.onPlaneOf: at_tolerance)
+        "solids 0 2 4 1 4 1 3 2 3 8 10 0 16 1 1 0 0 4 2 4 0 1 0 1 8 1 13 2 10 14 0 0 4 2",
+        "solids 0 2 4 2 4 1 4 3 3 9 -2 14 16 1 1 0 1 4 3 4 2 3 1 3 3 11 13 4 0 2 5 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

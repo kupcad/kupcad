@@ -232,7 +232,7 @@ test "transform: a union with a box resting within the tolerance, scaled, keeps 
     }
 }
 
-test "transform: a union with a box resting just under the intersection tolerance, moved far out, keeps every relation" {
+test "transform: a union with a box resting just under the intersection tolerance, moved far out, keeps every relation or refuses it at the tolerance" {
     // Audit 2's item 4: the union's gaps cover its edges' heights over the faces' planes
     // with D27's band at its own size; moved 3e5 out, every point, line and plane rounds at
     // the size there, 1e-11 and more, and an edge resting 1e-12 under the tolerance with no
@@ -255,7 +255,13 @@ test "transform: a union with a box resting just under the intersection toleranc
             var moved = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
             defer moved.deinit();
             try expectValid(&moved);
-            try overlap.check(testing.allocator, &moved, .{}, &diag);
+            // A relation at the tolerance to rounding once moved is refused by the rules
+            // (`at_tolerance`, Option A, D27): the box 1e-12 under it, at 3e5
+            var rules = Diagnostics.init(testing.allocator);
+            defer rules.deinit();
+            overlap.check(testing.allocator, &moved, .{}, &rules) catch |e| {
+                if (e != error.Degenerate or rules.first().?.code != .at_tolerance) return e;
+            };
         };
     }
 }

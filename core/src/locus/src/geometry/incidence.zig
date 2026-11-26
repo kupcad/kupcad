@@ -19,8 +19,12 @@
 //! plane by its corners' gaps (Leo, 2026-11-16: the 10K session's find af). An edge lies in
 //! a plane when both its end vertices are on it (a line; a curved edge's curve between
 //! them too), a face when every vertex of it is. A distance within rounding of its limit is
-//! neither (D27, `canonical.Verdict.at_tolerance`): the caller refuses it or, checking a
-//! body that exists, takes the plain comparison (`holds`).
+//! neither (D27, `canonical.Verdict.at_tolerance`): the caller refuses it, the boolean and
+//! the rules that check a body that exists alike (`intersect/planar_faces.zig`'s `place`
+//! and `onPlaneOf`, Leo, 2026-11-26: taken for within there, a body moved far, its
+//! distances rounded into the band, read as overlapping itself where in place it did not,
+//! the solids oracle's finds dt and dy). Only a warning, which decides nothing, takes the
+//! plain comparison (`holds`).
 
 const std = @import("std");
 const canonical = @import("canonical.zig");
@@ -88,7 +92,7 @@ pub const Decider = struct {
     }
 };
 
-/// A verdict as a plain comparison, for a rule that checks what exists and refuses
+/// A verdict as a plain comparison, for a warning, which decides nothing and so refuses
 /// nothing: at the tolerance is within it.
 pub fn holds(verdict: Verdict) bool {
     return verdict != .apart;

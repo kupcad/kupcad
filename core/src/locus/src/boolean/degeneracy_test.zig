@@ -1911,7 +1911,9 @@ test "degeneracy: a hull's edge across a box's floor, passing its corner within 
     defer c.deinit();
     try expectIdentities(&b, &c);
     try expectIdentities(&c, &b);
-    // The floor's piece, a triangle (with an apex below it), against the box's side x = 3
+    // The floor's piece, a triangle (with an apex below it), against the box's side x = 3:
+    // its crossing the tolerance and a rounding from the corner, which the rules reading
+    // the pair now refuse (`at_tolerance`, Option A, D27), as the boolean would
     var floor = try tetrahedron(.{ 2.6, 4.3, 1 }, .{ 2.00001, 5, 2 }, .{ 3, 5, 2 }, .{ 3, 3.0000200000000006, 2 });
     defer floor.deinit();
     const planar_faces = @import("../intersect/planar_faces.zig");
@@ -1919,13 +1921,10 @@ test "degeneracy: a hull's edge across a box's floor, passing its corner within 
     const side = types.FaceIndex.of(helpers.facing(&b, .{ 1, 0, 0 }));
     var pieces: std.ArrayList(planar_faces.Piece) = .empty;
     defer pieces.deinit(testing.allocator);
-    try testing.expectEqual(planar_faces.Relation.crossing, try planar_faces.meet(testing.allocator, &floor, top, &b, side, tol, &pieces, &diag));
-    for (pieces.items) |piece| {
-        for ([_]Vec3{ piece.a, piece.b }, [_]f64{ piece.gap_a, piece.gap_b }) |end, gap| {
-            try testing.expect(try planar_faces.place(&floor, top, end, gap, tol, &diag) != .outside);
-            try testing.expect(try planar_faces.place(&b, side, end, gap, tol, &diag) != .outside);
-        }
-    }
+    var rules = Diagnostics.init(testing.allocator);
+    defer rules.deinit();
+    try testing.expectError(error.Degenerate, planar_faces.meet(testing.allocator, &floor, top, &b, side, tol, &pieces, &rules));
+    try testing.expectEqual(diagnostics.Code.at_tolerance, rules.first().?.code);
 }
 
 test "degeneracy: a hull's vertex the zone from a box's edge, a hull's edge from it crossing that edge again 4.1e-5 on: they meet once, at the vertex" {

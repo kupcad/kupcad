@@ -30,18 +30,53 @@ const CLOSE = 1e-9;
 /// them at a zone of 1e-5 (`fuzzPlaced`: size, lower corner, turn about z, nudge): a plate,
 /// and a block turned 1e-6 whose side leaves a fin of the plate; the block's nudges along x
 /// (the find's, a fin 2e-5 across to a few roundings, 1e-10 thicker, and 5e-6 and 1e-5
-/// thicker) and whether the difference moved far is pinched; and the find's move far.
+/// thicker) and whether the difference moved far is refused; and the find's move far.
 const DR_PLATE = .{ .size = Vec3{ 50, 50, 1 }, .lo = Vec3{ 52, 52, 2 }, .nudge = Vec3{ -1e-5, -5e-6, -1e-5 } };
 const DR_BLOCK = .{ .size = Vec3{ 50, 50, 3 }, .lo = Vec3{ 52, 2, 1 }, .turn = 1e-6, .nudge = Vec3{ 0, -5e-6, -2e-3 } };
-const DR_FINS = [_]struct { nudge: f64, pinched: bool }{
-    .{ .nudge = 1.999999855049282e-5, .pinched = true },
-    .{ .nudge = 1.99999e-5, .pinched = true },
-    .{ .nudge = 1.5e-5, .pinched = false },
-    .{ .nudge = 1e-5, .pinched = false },
+const DR_FINS = [_]struct { nudge: f64, refused: bool }{
+    .{ .nudge = 1.999999855049282e-5, .refused = true },
+    .{ .nudge = 1.99999e-5, .refused = true },
+    .{ .nudge = 1.5e-5, .refused = false },
+    .{ .nudge = 1e-5, .refused = false },
 };
 const DR_AXIS = Vec3{ 1, 2, 3 };
 const DR_TURN: f64 = 0.014142253477512098;
 const DR_SHIFT = Vec3{ 1e5, -2e5, 3e5 };
+/// Finds dt and dy (the solids oracle's moved results on 9015ab26), as the fuzzer placed
+/// them (`fuzzPlaced`): two boxes joined, a face of one the intersection tolerance from a
+/// face of the other to a few roundings in place; each with the find's nudge of the second
+/// box across the gap and nudges into it and out of it, and the find's move far.
+const MovedFind = struct {
+    first: struct { size: Vec3, lo: Vec3, move: Vec3, nudge: Vec3 },
+    second: struct { size: Vec3, lo: Vec3, axis: Vec3, turn: f64, move: Vec3, nudge: Vec3 },
+    /// Which coordinate of the second box's nudge crosses the gap.
+    across: usize,
+    /// That coordinate's values: the find's first, then within the tolerance (touching, where
+    /// a vertex within it of a face is refused below the feature size) and beyond it.
+    nudges: [3]f64,
+    axis: Vec3,
+    turn: f64,
+};
+const MOVED_FINDS = [_]MovedFind{
+    // dt: the first box's bottom over the second's top, turned 1e-9 about y
+    .{
+        .first = .{ .size = .{ 2, 3, 2 }, .lo = .{ 2, 1, 1 }, .move = .{ 0, 0, 0 }, .nudge = .{ -2e-5, -1.9999999943156583e-5, 0 } },
+        .second = .{ .size = .{ 4, 2, 1 }, .lo = .{ 0, 2, 0 }, .axis = .{ 0, 1, 0 }, .turn = 1e-9, .move = .{ 0, 1, 0 }, .nudge = .{ 2e-3, 0, -1.9999999928945728e-5 } },
+        .across = 2,
+        .nudges = .{ -1.9999999928945728e-5, -1.5e-5, -3e-5 },
+        .axis = .{ 1, 0, 0 },
+        .turn = 0.014142253477512098,
+    },
+    // dy: the second box beside the first along y
+    .{
+        .first = .{ .size = .{ 2, 2, 3 }, .lo = .{ 2, 2, 1 }, .move = .{ 0, -1, 0 }, .nudge = .{ 1.9999999943156583e-5, 0, -2e-3 } },
+        .second = .{ .size = .{ 3, 1, 1 }, .lo = .{ 1, 3, 2 }, .axis = .{ 0, 0, 1 }, .turn = 0, .move = .{ 0, 0, 0 }, .nudge = .{ 5e-6, 2.000000005684342e-5, 2e-3 } },
+        .across = 1,
+        .nudges = .{ 2.000000005684342e-5, 0, 3e-5 },
+        .axis = .{ 0, 0, 1 },
+        .turn = 0.014142253476507214,
+    },
+};
 
 /// A box from `lo` to `hi`.
 pub fn box(lo: Vec3, hi: Vec3) !Body {
@@ -1220,15 +1255,58 @@ test "boolean: the report keeps the result's nearest features that do not meet, 
     try testing.expect(r.near == null);
 }
 
-test "boolean: a fin the intersection tolerance thick, moved far, is a pinch over an area (find dr)" {
+test "boolean: faces of a union the tolerance apart to rounding, moved far, are refused at_tolerance by the overlap rules (finds dt, dy)" {
+    // Finds dt and dy: two boxes joined, a face of one the intersection tolerance from the
+    // other's to a few roundings, past D27's band in place: made and sound. Moved far (to
+    // 3e5) the distance falls in the band, and the overlap rules read the faces in one
+    // plane (a plain comparison, `incidence.holds`) covering a region: two solids' faces on
+    // each other, `faces_intersect`, NotValid. A decision the rules rest on at the
+    // tolerance to rounding is refused, `at_tolerance` (`planar_faces.onPlaneOf`,
+    // `planar_faces.place`), as the boolean refuses one. Nudged across the gap by more
+    // than a rounding, into the tolerance or out of it, the union stays sound moved;
+    // mirrored, nothing rounds
+    const mirror = mat.Affine.mirror(vec.X3);
+    for (MOVED_FINDS, 0..) |find, k| {
+        var first = try fuzzPlaced(tol, find.first.size, find.first.lo, vec.Z3, 0, find.first.move, find.first.nudge);
+        defer first.deinit();
+        const whole = mat.Affine.translate(DR_SHIFT).compose(&mat.Affine.rotate(vec.normalized(find.axis).?, find.turn));
+        for (find.nudges, 0..) |across, i| {
+            errdefer std.debug.print("find {d}, the second box nudged {e} across the gap\n", .{ k, across });
+            var nudge = find.second.nudge;
+            nudge[find.across] = across;
+            var second = try fuzzPlaced(tol, find.second.size, find.second.lo, find.second.axis, find.second.turn, find.second.move, nudge);
+            defer second.deinit();
+            var u = try sound(&first, &second, .@"union");
+            defer u.deinit();
+            for ([_]mat.Affine{ mirror, whole, whole.compose(&mirror) }, [_]bool{ false, i == 0, i == 0 }) |move, refused| {
+                var diag = Diagnostics.init(testing.allocator);
+                defer diag.deinit();
+                var placed = try transform.transform(testing.allocator, &u, &move, .{}, &diag);
+                defer placed.deinit();
+                if (!refused) {
+                    overlap.check(testing.allocator, &placed, .{}, &diag) catch |e| {
+                        std.debug.print("the overlap rules: {f}\n", .{diag});
+                        return e;
+                    };
+                    continue;
+                }
+                try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &placed, .{}, &diag));
+                try testing.expectEqual(diagnostics.Code.at_tolerance, diag.first().?.code);
+            }
+        }
+    }
+}
+
+test "boolean: a fin the intersection tolerance thick, moved far, is refused at the tolerance (find dr)" {
     // Find dr: a plate less a block turned 1e-6 about z leaves a fin of the plate between
     // the plate's side and the block's, 2.0000051e-5 across at its far edge, past D27's
     // band in place: made, its fin's faces sharing its tip edge. Moved far, the fin's far
-    // edge reads within the tolerance of the plate's side (`incidence.holds`): the two
+    // edge read within the tolerance of the plate's side (a plain comparison): the two
     // faces in one plane, back to back, covering a region, which the overlap rules called
-    // invalid (`faces_intersect`); the solid touching itself over an area, refused
-    // `pinched` by design (`overlap.backToBack`). The block nudged so the fin is thicker
-    // stays sound moved; mirrored alone the fin is as placed
+    // invalid (`faces_intersect`), then a pinch (`overlap.backToBack`). The fin's far edge
+    // is the tolerance from the side's plane to rounding there, and the rules refuse it,
+    // `at_tolerance` (`planar_faces.onPlaneOf`; finds dt, dy). The block nudged so the fin
+    // is thicker stays sound moved; mirrored alone the fin is as placed
     var plate = try fuzzPlaced(tol, DR_PLATE.size, DR_PLATE.lo, vec.Z3, 0, .{ 0, 0, 0 }, DR_PLATE.nudge);
     defer plate.deinit();
     const whole = mat.Affine.translate(DR_SHIFT).compose(&mat.Affine.rotate(vec.normalized(DR_AXIS).?, DR_TURN));
@@ -1239,12 +1317,12 @@ test "boolean: a fin the intersection tolerance thick, moved far, is a pinch ove
         defer block.deinit();
         var d = try sound(&plate, &block, .difference);
         defer d.deinit();
-        for ([_]mat.Affine{ mirror, whole, whole.compose(&mirror) }, [_]bool{ false, fin.pinched, fin.pinched }) |move, pinched| {
+        for ([_]mat.Affine{ mirror, whole, whole.compose(&mirror) }, [_]bool{ false, fin.refused, fin.refused }) |move, refused| {
             var diag = Diagnostics.init(testing.allocator);
             defer diag.deinit();
             var placed = try transform.transform(testing.allocator, &d, &move, .{}, &diag);
             defer placed.deinit();
-            if (!pinched) {
+            if (!refused) {
                 overlap.check(testing.allocator, &placed, .{}, &diag) catch |e| {
                     std.debug.print("the overlap rules: {f}\n", .{diag});
                     return e;
@@ -1252,7 +1330,7 @@ test "boolean: a fin the intersection tolerance thick, moved far, is a pinch ove
                 continue;
             }
             try testing.expectError(error.Degenerate, overlap.check(testing.allocator, &placed, .{}, &diag));
-            try testing.expectEqual(diagnostics.Code.pinched, diag.first().?.code);
+            try testing.expectEqual(diagnostics.Code.at_tolerance, diag.first().?.code);
         }
     }
 }
