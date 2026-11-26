@@ -374,13 +374,20 @@ fn directedKey(a: u32, b: u32) u64 {
     return (@as(u64, a) << 32) | b;
 }
 
+/// The signed area of the triangles, and the size of the products their turns are made
+/// of: a turn is the difference of two products about its third corner, rounded in
+/// proportion to them, not to itself (a sliver's turn is far less than its products: a
+/// face's one triangle 0.66 long and 4.4e-4 wide turned 2.9e-4 from products of 0.39,
+/// and was refused as not simple by 1.3e-17, the bound taken of the turn 8.3e-18; find dq).
 fn trianglesArea(points: []const Vec2, triangles: []const [3]u32) Area {
     var twice: f64 = 0;
     var size: f64 = 0;
     for (triangles) |t| {
-        const turn = predicates.orient2d(points[t[0]], points[t[1]], points[t[2]]);
-        twice += turn;
-        size += @abs(turn);
+        const a = points[t[0]];
+        const b = points[t[1]];
+        const c = points[t[2]];
+        twice += predicates.orient2d(a, b, c);
+        size += @abs((a[0] - c[0]) * (b[1] - c[1])) + @abs((a[1] - c[1]) * (b[0] - c[0]));
     }
     return .{ .value = twice / 2, .size = size / 2 };
 }

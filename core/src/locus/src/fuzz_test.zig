@@ -2584,6 +2584,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // placed by the parity exactly at the vertex's image: inside in place, refused
         // `pinched`, outside mirrored, made (ray_crossing.onSegment: on the image, outside)
         "solids 2 3 4 1 4 0 4 2 0 1 1 1 12 10 0 2 2 3 2 0 3 3 4 3 4 0 2 3 2 9 -1 9 14 0 1 2 2 4 2 4 2 4 2 2 13 10 6 11 0",
+        // The same sessions (locus, dq): a plate less a hull, then with a hull, a face of a
+        // result one triangle 0.66 long over a base 8.9e-4 wide; its turn's products 0.39,
+        // the area check's bound taken of the turn itself, refused not simple by 1.3e-17
+        // (triangulate.trianglesArea: a turn rounds by its products)
+        "solids 2 1 4 1 3 0 2 2 0 2 0 2 11 10 7 15 3 2 1 8 0 1 2 2 2 2 0 1 3 1 0 0 0 0 3 2 1 0 2 3 0 3 4 2 1 0 2 0 2 12 12 3 9 1 2 1 8 0 1 1 1 0 0 3 0 2 0 4 3 2 2 2 2 0 1 4 2 1 4 1 2 0 1 7 0 1 2 2 5 13 -1 1 2 4 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

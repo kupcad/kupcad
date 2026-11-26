@@ -1524,7 +1524,8 @@ one point's two edges is `foldsBack`'s). After the sweep the
 triangles are checked by their count (Euler), their area (against the two sums' own
 rounding, 64 ulps of the products they are summed from, not a share of the area: a strip
 1e5 long and 0.01 wide, turned 0.3, rounded by more than 1e-9 of its area and was refused
-not simple; the audit of 2026-11-22) and their boundary: each ring
+not simple; the audit of 2026-11-22; a triangle's turn by its two products about its third
+corner, not by its value, which a sliver's is far below: find dq, 2026-11-26) and their boundary: each ring
 edge a side of one triangle, run its ring's way, and of none run the other (a ring's
 point on another ring edge, a notch reaching an arc's chord, passes count and area with
 triangles across the edge; 2026-11-16); a polygon failing any of them is not simple, and

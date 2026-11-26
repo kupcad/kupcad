@@ -38,6 +38,14 @@ const TOUCH_SQUARE: f64 = 10;
 const TOUCH_LIFTS_REFUSED = [_]f64{ 0, 1e-15, 1e-14, 1e-13, -1e-15 };
 /// Past it, the polygon triangulated.
 const TOUCH_LIFTS_MESHED = [_]f64{ 1e-12, 1e-9, 1e-6 };
+/// Find dq's face (the overlap rules' triangulation of a solids chain's result, the first
+/// sessions on 05c27278): one triangle, its base 8.9e-4 wide and its apex 0.66 over it, of
+/// area 2.9e-4; and the family about it: the base's widths, the apex's offsets along the
+/// base's line, and the moves of the whole.
+const SLIVER = [_]Vec2{ .{ 8.774965413038618, 4.996003610813204e-16 }, .{ 8.189034666444151, 0.6623949587393234 }, .{ 8.774079144190706, 1.1102230246251565e-16 } };
+const SLIVER_BASES = [_]f64{ 1e-6, 8.86e-4, 1e-2 };
+const SLIVER_APEX_OFFSETS = [_]f64{ -0.586, 0, 3 };
+const SLIVER_MOVES = [_]Vec2{ .{ 0, 0 }, .{ 1e3, -1e3 }, .{ -8.77, 0 } };
 
 /// About the ring's first point: about the origin, a ring far from it sums terms far
 /// larger than its area.
@@ -627,5 +635,39 @@ test "triangulate: a long thin strip, turned, and a plate with a hole, scaled up
         for ([_]Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 }, .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } }, &holed) |p, *q| q.* = vec.add2(at, vec.scale2(p, scale));
         errdefer std.debug.print("plate scaled {e} at {any}\n", .{ scale, at });
         try expectPolygon(&holed, &.{ 0, 4, 8 });
+    };
+}
+
+test "triangulate: a sliver triangle is held to its area by its turn's products, whichever corner it is turned about (find dq)" {
+    // The triangles' area was held to the polygon's by 64 ulps of |orient2d| summed; a
+    // turn is the difference of two products about its third corner and rounds by them,
+    // and a sliver's are far greater than it: find dq's triangle, its turn's products
+    // 0.39 and its area 2.9e-4, was refused as not simple by 1.3e-17. Its corners in each
+    // order round, mirrored, and the family: bases from 1e-6 to 1e-2 wide, the apex over
+    // the base or off along its line, moved
+    try expectSliver(&SLIVER);
+    for (SLIVER_BASES) |base| for (SLIVER_APEX_OFFSETS) |offset| for (SLIVER_MOVES) |at| {
+        errdefer std.debug.print("base {e}, apex offset {d}, at {any}\n", .{ base, offset, at });
+        const x0 = SLIVER[0][0];
+        try expectSliver(&.{ vec.add2(at, .{ x0, 0 }), vec.add2(at, .{ x0 + offset, SLIVER[1][1] }), vec.add2(at, .{ x0 - base, 0 }) });
+    };
+}
+
+/// `triangle` (counter-clockwise) triangulated as one triangle from each corner, and
+/// mirrored in x (its order reversed).
+fn expectSliver(triangle: *const [3]Vec2) !void {
+    for (0..3) |first| for ([2]bool{ false, true }) |mirrored| {
+        var points: [3]Vec2 = undefined;
+        for (&points, 0..) |*p, k| {
+            const q = triangle[(first + (if (mirrored) 3 - k else k)) % 3];
+            p.* = if (mirrored) .{ -q[0], q[1] } else q;
+        }
+        errdefer std.debug.print("{any}, from corner {d}, mirrored {}\n", .{ triangle, first, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        errdefer std.debug.print("{f}\n", .{&diag});
+        const triangles = try triangulate.triangulate(testing.allocator, .{ .points = &points, .starts = &.{ 0, 3 } }, &diag);
+        defer testing.allocator.free(triangles);
+        try testing.expectEqual(@as(usize, 1), triangles.len);
     };
 }
