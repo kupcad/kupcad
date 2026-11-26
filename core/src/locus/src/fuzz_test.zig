@@ -2622,6 +2622,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // tied along a hull face's line with the bottom; in place joined into a sliver
         // triangle, refused, mirrored not, made (planar_faces.Along: the run's end nearer)
         "solids 3 1 5 2 0 2 1 1 3 0 0 3 1 7 9 -1 8 2 1 1 5 0 1 1 4 3 4 1 3 4 4 0 0 0 4 1 3 3 5 5 -1 12 0 1 0 2 4 1 4 1 3 1 3 4 4 -2 16 0",
+        // The same sessions (locus, ea): (wall − plate) ∩ tetrahedron, a wedge 6e-5 thick
+        // sliced across its bottom 6.3e-5 rad off the plane; the section left open, no
+        // area (section.steepEnough: such a face refused below the feature size)
+        "solids 3 1 3 0 0 1 4 0 2 1 0 1 0 2 4 13 7 5 16 3 1 3 0 5 4 0 2 2 2 3 4 1 3 2 -2 -2 -2 4 1 2 3 2 5 0 1 2 2 1 3 0 0 4 2 0 13 1 16 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

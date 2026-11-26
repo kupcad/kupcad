@@ -31,6 +31,7 @@ const diagnostics = @import("../diagnostics.zig");
 const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const traverse = @import("../topology/traverse.zig");
+const planar_faces = @import("../intersect/planar_faces.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const bbox = @import("../topology/bbox.zig");
 const in_face = @import("../query/in_face.zig");
@@ -159,6 +160,7 @@ const Section = struct {
         // rising from them. A curved face no taller than the zone, the same
         if (body.face(f).surface.kind == .plane) {
             if (try self.liesIn(f)) return;
+            try self.steepEnough(f);
         } else if (box.max[2] - box.min[2] <= self.tol.zone) return;
         self.points.clearRetainingCapacity();
         var loops = traverse.Loops.init(body, f);
@@ -183,6 +185,40 @@ const Section = struct {
         if (traced.kind != .curves) return;
         const traces = traced.slice();
         for (traces, 0..) |curve, k| try self.tracePieces(f, curve, traces, k);
+    }
+
+    /// Refuses planar face `f` when it crosses the plane, a vertex of it beyond the zone on
+    /// each side, parallel to it within the angular tolerance (`below_feature_size`; at that
+    /// tolerance to rounding, `at_tolerance`, D27): the face then lies within the zone of
+    /// the plane over a strip `2 zone / sin θ` wide, a vertex on the plane within the zone
+    /// lies that far from the face's trace, and the faces about it put the section's
+    /// boundary there while the face puts it on its trace; no outline holds both. As the
+    /// boolean's paves give two planes parallel within that tolerance no line of their own
+    /// (`pave.meetingLine`). A wedge 6e-5 thick, its bottom 6.3e-5 rad off the plane, a
+    /// vertex 6.5e-6 under the plane and 0.12 from the bottom's trace: the section was
+    /// left open, no area, where the solid holds material (the solids oracle's slice on
+    /// 9015ab26, ea).
+    fn steepEnough(self: *Section, f: types.FaceIndex) Error!void {
+        const body = self.body;
+        const n = planar_faces.frameOf(body, f).?.z;
+        const parallel = canonical.verdict(&.{canonical.Comparison.angle(1.0 - @abs(vec.dot(n, self.plane.n)), self.tol.angle)});
+        if (parallel == .apart) return;
+        var below = false;
+        var above = false;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(self.diag)) |c| switch (try self.sideOf(body.coedgeStart(c))) {
+                .below => below = true,
+                .above => above = true,
+                .on => {},
+            };
+        }
+        if (!below or !above) return;
+        return switch (parallel) {
+            .at_tolerance => |c| self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a face crossing the slicing plane, parallel to it or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
+            else => self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = "a face crossing the slicing plane parallel to it within the angular tolerance, within the zone of it over a strip wider than the zone,", .measured = 1.0 - @abs(vec.dot(n, self.plane.n)), .threshold = self.tol.angle }),
+        };
     }
 
     /// A refusal of `planeSurface`'s, its finding naming face `f`.

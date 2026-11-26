@@ -44,6 +44,13 @@ const TAB_HEIGHTS = [_]f64{ 0, 0.5, 1.11, 1.5, 2.9 };
 /// on the plane within the zone lies farther than the intersection tolerance from the
 /// face's trace (its height over the sine), and how far that vertex is over the slicing
 /// height (in zones, under it negative).
+/// Find ea's shallow bottom (the solids oracle's slice on 9015ab26): a pentagonal prism to
+/// z = 1 whose bottom rises along y at `SHALLOW_TILTS` (within the angular tolerance, at
+/// most 1e-4 rad; past it, 0.02), its corner at `SHALLOW_CORNER` a zone's half under the
+/// slicing height, on the plane by the zone and 0.05 from the bottom's trace there.
+const SHALLOW_BOTTOM = [_]Vec2{ .{ 0, 0 }, .{ 1, 0 }, .{ 1.2, 0.55 }, .{ 1, 1 }, .{ 0, 1 } };
+const SHALLOW_CORNER: usize = 2;
+const SHALLOW_TILTS = [_]struct { slope: f64, refused: bool }{ .{ .slope = 1e-4, .refused = true }, .{ .slope = 6.3e-5, .refused = true }, .{ .slope = 0.02, .refused = false } };
 const WEDGE_SLOPES = [_]f64{ 10, 20, 29 };
 const WEDGE_RISES = [_]f64{ 0.4, 0.6, 0.9, -0.4, -0.6, -0.9 };
 /// The height a wedge is sliced at.
@@ -429,4 +436,65 @@ test "slice: a vertex on the plane within the zone, on a face at under 30° to i
         // The corner taken onto the plane moves the section by under its height
         try testing.expectApproxEqRel(tetrahedronSection(corners, WEDGE_HEIGHT), try areaOf(&sheet), 1e-3);
     };
+}
+
+test "slice: a face crossing the plane parallel to it within the angular tolerance is refused below the feature size (find ea)" {
+    // Find ea: a wedge 6e-5 thick, its bottom 6.3e-5 rad off the slicing plane, sliced
+    // across it. Two of the bottom's corners lay within the zone of the plane (on it), 0.12
+    // from the bottom's trace: the faces rising from them put the section's boundary at
+    // the corners, the bottom at its trace, and the outline was left open, no area, where
+    // the solid holds material. A face crossing the plane parallel to it within the angular
+    // tolerance lies within the zone of the plane over a strip no outline holds consistently
+    // (`Section.steepEnough`). Here a pentagonal prism whose bottom rises along y, its
+    // corner the zone's half under the plane: refused, turned and mirrored; past the
+    // angular tolerance, sliced
+    for (SHALLOW_TILTS) |tilt| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("slope {d}, quarter turns {d}, mirrored {}\n", .{ tilt.slope, quarter, mirrored });
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        const at = tilt.slope * SHALLOW_BOTTOM[SHALLOW_CORNER][1] + tol.zone / 2;
+        var points: [2 * SHALLOW_BOTTOM.len]Vec3 = undefined;
+        for (SHALLOW_BOTTOM, 0..) |p, i| {
+            const q = quarterTurned(p, quarter, mirrored);
+            points[i] = .{ q[0], q[1], tilt.slope * p[1] };
+            points[SHALLOW_BOTTOM.len + i] = .{ q[0], q[1], 1 };
+        }
+        var prism = try hull.hull(testing.allocator, tol, &points, &diag);
+        defer prism.deinit();
+        if (tilt.refused) {
+            try testing.expectError(error.Degenerate, section.slice(testing.allocator, &prism, at, .{}, &diag));
+            try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+            continue;
+        }
+        var cut = try section.slice(testing.allocator, &prism, at, .{}, &diag);
+        defer cut.deinit();
+        // The solid just above the plane: the bottom below it, where y < at / slope, to
+        // the strip the corner on the plane by the zone moves the outline across (the zone
+        // over the slope, along the prism's width)
+        try testing.expectApproxEqAbs(clippedArea(&SHALLOW_BOTTOM, at / tilt.slope), try areaOf(&cut), tol.zone / tilt.slope * 1.2);
+    };
+}
+
+/// The area of the convex polygon `ring` where y is below `y_max` (one clip, shoelace).
+fn clippedArea(ring: []const Vec2, y_max: f64) f64 {
+    var clipped: [2 * SHALLOW_BOTTOM.len]Vec2 = undefined;
+    var n: usize = 0;
+    for (ring, 0..) |p, i| {
+        const q = ring[(i + 1) % ring.len];
+        if (p[1] <= y_max) {
+            clipped[n] = p;
+            n += 1;
+        }
+        if ((p[1] < y_max) != (q[1] < y_max)) {
+            const t = (y_max - p[1]) / (q[1] - p[1]);
+            clipped[n] = .{ p[0] + t * (q[0] - p[0]), y_max };
+            n += 1;
+        }
+    }
+    var twice: f64 = 0;
+    for (clipped[0..n], 0..) |p, i| {
+        const q = clipped[(i + 1) % n];
+        twice += p[0] * q[1] - q[0] * p[1];
+    }
+    return @abs(twice) / 2;
 }
