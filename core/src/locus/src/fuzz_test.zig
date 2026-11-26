@@ -2594,6 +2594,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // read in one plane, back to back, over a region: called invalid, now refused
         // `pinched` by design (overlap.backToBack: one solid touching itself over an area)
         "solids 2 3 4 3 4 2 3 3 3 6 4 6 15 1 2 2 3 4 2 3 1 4 0 2 7 1 9 4 14 12 1 3 4 2",
+        // The overlay's ReleaseSafe session on 05c27278 (locus_overlay, ds): a line and two
+        // circles tangent at one vertex, a third circle crossing them where the two are
+        // within the zone; the smaller's piece, to a vertex welded 8e-6 off its circle,
+        // left the vertex 1.5e-7 left of the line 100 zones along and parted from it to the
+        // right: a map of genus one (overlay.Leaving.farther: ordered where they part)
+        "overlay 3 2 0 16 3 8 1 1 0 2 7 17 17 8 3 0 1 2 8 1 0 19 1 7 3 2 6 12 4 5 5 6 3 0 0 2 2 1 2 2 1 2 1 0 1 1 1 1 3 0 1 2 0 2 2 8 15 19 2 5 0 7 23 12 5 24 15 3 2 7 7 12 0 5 12 21 3 6 21 5 1 1 1 4 2 0 4 0 0 4 3 0 1 0 0 3 3 1 1 2 1 1 3 0 0 12 19 3 5 0 1 2 1 7 8 7 8 1 24 4 2 3 2 8 13 3 16 13 4 19 4 7 0 13 8 1 0 0 1 3 0 4 2 1 2 3 0 3 0 0 2 2 0 2 2 0 1 7 0 7 1 0 0 7 5 1 6 20 12 7 7 4 6 15 23 1 0 23 7 2 0 1 2 2 0 4 0 0 4 0 1 2 3 0 3 2 0 2 1 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

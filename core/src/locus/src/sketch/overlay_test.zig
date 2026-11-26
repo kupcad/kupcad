@@ -113,6 +113,19 @@ const LOWEST_TO = [_]Vec2{ .{ -1, -2 }, .{ -2, -1 }, .{ 1, -2 } };
 const LOWEST_LAST: Vec2 = .{ 4.5, -1 };
 const LOWEST_ISLAND: Vec2 = .{ 1.5, 0 };
 const LOWEST_ISLAND_RADIUS: f64 = 0.25;
+/// Find ds's tangent cluster (`tangentCluster`): the tangency, the larger and smaller
+/// circles' radii, the crossing circle's radius and its centre's offset east of the line,
+/// how far the line runs each way; the crossings' rises along the line (the find's
+/// 0.0247, where the two circles are 7.8e-6 apart, nearer the tangency and farther, where
+/// they are a zone apart and more) and the shifts (none, and far out).
+const CLUSTER_TANGENCY: Vec2 = .{ 0, 4.75 };
+const CLUSTER_LARGE: f64 = 3.25;
+const CLUSTER_SMALL: f64 = 3;
+const CLUSTER_CROSS_R: f64 = 2.3717082451262845;
+const CLUSTER_CROSS_DX: f64 = 2;
+const CLUSTER_LINE: f64 = 1;
+const CLUSTER_RISES = [_]f64{ 0.024754878398197, 0.015, 0.02, 0.028, 0.035, 0.05 };
+const CLUSTER_SHIFTS = [_]Vec2{ .{ 0, 0 }, .{ 3e5, -3e5 } };
 
 /// Where a circle's four arcs end: at its extremes exactly; at its extremes as their
 /// angles' cosine and sine give them (`angled`: as the fuzzer and a caller working in
@@ -1582,5 +1595,67 @@ test "overlay: an island beside two tangent circles is labelled by its discs in 
         try o.run();
         try expectPlanar(&o);
         try expectDiscWindings(&o, &discs);
+    };
+}
+
+/// The tangent cluster's arrangement (find ds): two circles tangent inside at their west
+/// points, the smaller given as two arcs from that point, the larger through it, the line
+/// through that point tangent to both, and a circle crossing all three
+/// where the two tangent ones are within the zone of each other, `rise` along the line
+/// from the tangency: the smaller circle's crossing welded onto the larger's, its piece
+/// from the tangency turned by that. Mirrored in the y axis when `mirrored`, turned
+/// `quarter` quarter turns, then shifted by `shift`.
+fn tangentCluster(o: *Overlay, rise: f64, quarter: usize, mirrored: bool, shift: Vec2) !void {
+    const v = CLUSTER_TANGENCY;
+    const small: Vec2 = .{ v[0] + CLUSTER_SMALL, v[1] };
+    const large: Vec2 = .{ v[0] + CLUSTER_LARGE, v[1] };
+    // The crossing circle through the line at `rise`, its centre to the east of it
+    const cross_r = CLUSTER_CROSS_R;
+    const cross_c: Vec2 = .{ v[0] + CLUSTER_CROSS_DX, v[1] + rise - @sqrt(cross_r * cross_r - CLUSTER_CROSS_DX * CLUSTER_CROSS_DX) };
+    const top: Vec2 = .{ v[0], v[1] + CLUSTER_LINE };
+    const bottom: Vec2 = .{ v[0], v[1] - CLUSTER_LINE };
+    const corner: Vec2 = .{ v[0] - CLUSTER_LINE, v[1] };
+    const rings = [_][]const overlay.InputEdge{
+        &.{ .{ .a = .{ small[0] + CLUSTER_SMALL, small[1] }, .b = v, .arc = .{ .c = small, .r = CLUSTER_SMALL, .ccw = true } }, .{ .a = v, .b = .{ small[0] + CLUSTER_SMALL, small[1] }, .arc = .{ .c = small, .r = CLUSTER_SMALL, .ccw = true } } },
+        &.{ .{ .a = .{ large[0], large[1] + CLUSTER_LARGE }, .b = .{ large[0], large[1] - CLUSTER_LARGE }, .arc = .{ .c = large, .r = CLUSTER_LARGE, .ccw = true } }, .{ .a = .{ large[0], large[1] - CLUSTER_LARGE }, .b = .{ large[0], large[1] + CLUSTER_LARGE }, .arc = .{ .c = large, .r = CLUSTER_LARGE, .ccw = true } } },
+        &.{ .{ .a = .{ cross_c[0] + cross_r, cross_c[1] }, .b = .{ cross_c[0] - cross_r, cross_c[1] }, .arc = .{ .c = cross_c, .r = cross_r, .ccw = true } }, .{ .a = .{ cross_c[0] - cross_r, cross_c[1] }, .b = .{ cross_c[0] + cross_r, cross_c[1] }, .arc = .{ .c = cross_c, .r = cross_r, .ccw = true } } },
+        &.{ .{ .a = top, .b = corner }, .{ .a = corner, .b = bottom }, .{ .a = bottom, .b = top } },
+    };
+    for (rings) |ring| {
+        _ = try o.addInput();
+        for (ring) |e| try o.addEdge(movedEdge(if (mirrored) mirroredEdge(e) else e, EXTREME_ENDS[quarter], shift));
+    }
+}
+
+test "overlay: a line tangent to two circles tangent inside at a vertex, crossed where the circles are within the zone, is planar (find ds)" {
+    // The overlay's ReleaseSafe session on 05c27278 (ds): circles of radii 3 and 3.25
+    // tangent inside at (0, 4.75), the line x = 0 tangent to both there, and a circle
+    // crossing all three 0.0247 up, where the two are 7.8e-6 apart: the smaller's crossing
+    // is welded onto the larger's, so the smaller's piece from the tangency runs to a
+    // vertex 8e-6 off its circle, its tangent turned 3.2e-4 rad left. 100 zones along it
+    // lay 1.5e-7 left of the line, from 4e-3 on to its end on the right: the order about
+    // the tangency put it left, and the map had genus one (V - E + F short by 2). Curves
+    // within the zone of each other where sampled are ordered where they part
+    // (`Leaving.farther`)
+    var o = Overlay.init(testing.allocator, tol);
+    defer o.deinit();
+    try tangentCluster(&o, CLUSTER_RISES[0], 0, false, .{ 0, 0 });
+    try o.run();
+    try expectPlanar(&o);
+}
+
+test "overlay: the tangent cluster crossed nearer and farther from the tangency is planar alike in each quarter turn and mirrored, and far out" {
+    for (CLUSTER_RISES) |rise| for (CLUSTER_SHIFTS) |shift| {
+        var first: ?[3]usize = null;
+        for (0..QUARTER_TURNS) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("crossed {d} up, shifted ({d}, {d}), quarter turns {d}, mirrored {}\n", .{ rise, shift[0], shift[1], quarter, mirrored });
+            var o = Overlay.init(testing.allocator, tol);
+            defer o.deinit();
+            try tangentCluster(&o, rise, quarter, mirrored, shift);
+            try o.run();
+            try expectPlanar(&o);
+            const counts = [3]usize{ o.points.items.len, o.edges.items.len, o.faces.items.len };
+            if (first) |f| try testing.expectEqual(f, counts) else first = counts;
+        };
     };
 }

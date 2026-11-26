@@ -589,7 +589,15 @@ within its rounding of the x axis is put in the half its bend takes it to (`leav
 `Leaving.upperHalf`; the bend a reach along, `s²/2r`, is under the rounding of a sample at
 the arc's coordinates for large radii or far out: a disc of radius 1e5 tangent inside a
 rectangle's side, and two discs of radii 10 and 10.001 tangent inside moved 3e5 out, had
-their unions empty; the audit of 2026-11-22, kind 6), and nesting by
+their unions empty; the audit of 2026-11-22, kind 6). Two samples within the zone of each
+other's line through the vertex (or an arc's within the zone of the x axis) have not
+parted: the welding moved the pieces' ends up to the zone and turned an arc's piece by
+that, so both are taken twice as far along, as far as the shorter reaches, until they part
+(`Leaving.farther`; OCCT's wire splitter refines near angles by points farther along
+the edges, `RefineAngles`): a line and two circles tangent at a vertex, crossed by a third
+circle where the two are within the zone, the smaller's piece to a vertex 8e-6 off it,
+lay 1.5e-7 left of the line 100 zones along and parted to the right, a map of genus one
+(2026-11-26, the overlay's session on 05c27278, ds). And nesting by
 the exact ray rule. An end of a segment is on another segment's line by one measure, its
 exact turn over the segment's length against the zone, at the zone to rounding refused
 (`at_tolerance`, `onLine`), whether the question is a crossing or a cut: measured by the

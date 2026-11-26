@@ -43,7 +43,8 @@ const SPAN_SLACK: f64 = 1e-9;
 /// the vertex is the order past the crossing, and the tangents at the vertex told the
 /// order before it, a rotation system of genus one), and far enough that most arcs' bend
 /// outweighs the arithmetic of their sample (a radius of 1000 bends 5e-10 in 1e-3; where
-/// it does not, the bends are compared, `leavingSide`).
+/// it does not, the bends are compared, `leavingSide`); two curves not yet apart by the
+/// zone there are compared farther along (`Leaving.farther`).
 const ORDER_REACH: f64 = 100;
 
 /// A circular arc's circle: the arc runs from the edge's `a` to its `b` about `c`,
@@ -1147,9 +1148,9 @@ pub fn turnAt(v: Vec2, a: Vec2, arc: ?Arc, t1: Vec2, b: Vec2, next_arc: ?Arc, t2
 /// that point's arithmetic may have put it off the curve, and how the curve bends.
 pub const Leaving = struct {
     /// The point the curve is ordered by among the curves leaving the vertex:
-    /// `ORDER_REACH` zones along it, or its middle when it is shorter than twice that; its
-    /// far end for a line, whose direction from the vertex is the same anywhere along it
-    /// and exact there.
+    /// `ORDER_REACH` zones along it at first (`reach`), or its middle when it is shorter
+    /// than twice that; its far end for a line, whose direction from the vertex is the
+    /// same anywhere along it and exact there.
     sample: Vec2,
     /// The sample's rounding: none for a line, whose sample is its far end; D27's band at
     /// the arc's coordinates for an arc, whose sample is computed.
@@ -1158,6 +1159,43 @@ pub const Leaving = struct {
     radius: ?f64 = null,
     /// Whether the arc turns left as it leaves the vertex.
     left: bool = false,
+    /// The welding's zone: samples nearer than it to another curve's, or to the x axis,
+    /// have not parted from it (`farther`).
+    zone: f64 = 0,
+    /// The arc's circle through its ends (`throughEnds`), the angle of the vertex about
+    /// it, how far along the sample is and how far it may go (the arc's middle).
+    circle: ?Arc = null,
+    start: f64 = 0,
+    reach: f64 = 0,
+    limit: f64 = 0,
+
+    /// The arc sampled twice as far along, up to its middle and to `cap`; null for a
+    /// line, whose sample is its far end, or an arc sampled as far as it may go. Two
+    /// curves leaving a vertex
+    /// within the zone of each other there have not parted: the welding moved their ends
+    /// up to the zone, and an arc's piece runs through its welded ends (`throughEnds`), so
+    /// its tangent may be turned by that over its length, and their side there says
+    /// nothing of the side they part to, which the faces between them take. A line tangent
+    /// to a circle at a vertex and an arc's piece of that circle to a vertex 8e-6 off it,
+    /// 0.025 along, the piece's tangent turned 3.2e-4 rad: 100 zones along it lay 1.5e-7
+    /// left of the line, and from 4e-3 along to its end on the right, a map of genus one
+    /// (the overlay's ReleaseSafe session on 05c27278, ds, 2026-11-26). OCCT's wire
+    /// splitter likewise refines the angles of edges that leave a vertex nearly together
+    /// by points farther along them (`BOPAlgo_WireSplitter`, `RefineAngles`).
+    fn farther(self: Leaving, cap: f64) ?Leaving {
+        const circle = self.circle orelse return null;
+        const reach = @min(2 * self.reach, self.limit, cap);
+        if (reach <= self.reach) return null;
+        var next = self;
+        next.reach = reach;
+        next.sample = arcPoint(circle, self.start, reach);
+        return next;
+    }
+
+    /// How far along the curve may be sampled: an arc to its middle, a line its length.
+    fn extent(self: Leaving, v: Vec2) f64 {
+        return if (self.circle == null) vec.distance2(self.sample, v) else self.limit;
+    }
 
     /// Whether the curve leaves `v` into the upper half-plane, the positive x axis
     /// included: by its sample's side of `v`, or, where its sample is within its rounding
@@ -1165,10 +1203,19 @@ pub const Leaving = struct {
     /// curves leaving along the axis are put in their halves as `leavingSide` orders them
     /// (two discs tangent inside at their tops, moved 1e6 out: the smaller one's sample
     /// eastward rounded onto the axis, put it first round the vertex instead of last).
+    /// An arc's sample within the zone of the axis is taken farther along until it parts
+    /// from it (`farther`), as two curves' samples are.
     fn upperHalf(self: Leaving, v: Vec2) bool {
-        const d = vec.sub2(self.sample, v);
-        if (self.radius != null and @abs(d[1]) <= self.rounding) return (d[0] > 0) == (bendSign(self) > 0);
-        return d[1] > 0 or (d[1] == 0 and d[0] > 0);
+        var x = self;
+        while (true) {
+            const d = vec.sub2(x.sample, v);
+            if (x.radius != null and @abs(d[1]) <= x.rounding) return (d[0] > 0) == (bendSign(x) > 0);
+            if (@abs(d[1]) <= x.zone) if (x.farther(x.limit)) |f| {
+                x = f;
+                continue;
+            };
+            return d[1] > 0 or (d[1] == 0 and d[0] > 0);
+        }
     }
 };
 
@@ -1176,16 +1223,27 @@ pub const Leaving = struct {
 /// order about a vertex goes by it, and so does the offset's turn at a cusp (offset.zig),
 /// so the two read curves leaving a vertex one way alike.
 pub fn leaving(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Leaving {
-    const circle = throughEnds(a, b, arc orelse return .{ .sample = b });
+    const circle = throughEnds(a, b, arc orelse return .{ .sample = b, .zone = zone });
     const span = arcSpan(a, b, circle);
-    const s = @min(ORDER_REACH * zone, circle.r * span.sweep / 2.0);
-    const angle = span.start + (if (circle.ccw) s else -s) / circle.r;
+    const limit = circle.r * span.sweep / 2.0;
+    const s = @min(ORDER_REACH * zone, limit);
     return .{
-        .sample = vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r),
+        .sample = arcPoint(circle, span.start, s),
         .rounding = canonical.Comparison.distance(0, 0, magnitude2(circle.c) + circle.r).band,
         .radius = circle.r,
         .left = circle.ccw,
+        .zone = zone,
+        .circle = circle,
+        .start = span.start,
+        .reach = s,
+        .limit = limit,
     };
+}
+
+/// The point `s` along `circle` from the angle `start`, its way round.
+fn arcPoint(circle: Arc, start: f64, s: f64) Vec2 {
+    const angle = start + (if (circle.ccw) s else -s) / circle.r;
+    return vec.addScaled2(circle.c, .{ @cos(angle), @sin(angle) }, circle.r);
 }
 
 /// Which way round `q` leaves `v` from `p`: +1 counter-clockwise, −1 clockwise, 0 along
@@ -1199,16 +1257,36 @@ pub fn leaving(a: Vec2, b: Vec2, arc: ?Arc, zone: f64) Leaving {
 /// the origin: a disc of radius 1e5 tangent inside a rectangle's side lost the order of
 /// its arc and the side about their touch, and the union was empty; two discs of radii 10
 /// and 10.001 tangent inside, moved 3e5 out, likewise (the audit of 2026-11-22, kind 6,
-/// item 6).
+/// item 6). Samples within the zone of each other's line through the vertex have not
+/// parted: both are taken farther along until they do, as far as the shorter curve
+/// reaches (`Leaving.farther`): a piece within the zone of the vertex has no farther
+/// point to part at.
 pub fn leavingSide(v: Vec2, p: Leaving, q: Leaving) f64 {
-    const side = predicates.orient2d(v, p.sample, q.sample);
-    const band = p.rounding * vec.distance2(q.sample, v) + q.rounding * vec.distance2(p.sample, v);
-    if (@abs(side) <= band) {
-        // Leaving the opposite ways along one line: neither side
-        if (vec.dot2(vec.sub2(p.sample, v), vec.sub2(q.sample, v)) <= 0) return 0;
-        return bendOrder(q, p);
+    var x = p;
+    var y = q;
+    while (true) {
+        const side = predicates.orient2d(v, x.sample, y.sample);
+        const to_x = vec.distance2(x.sample, v);
+        const to_y = vec.distance2(y.sample, v);
+        const band = x.rounding * to_y + y.rounding * to_x;
+        if (@abs(side) <= band) {
+            // Leaving the opposite ways along one line: neither side
+            if (vec.dot2(vec.sub2(x.sample, v), vec.sub2(y.sample, v)) <= 0) return 0;
+            return bendOrder(y, x);
+        }
+        // The nearer sample's distance from the farther one's line, against the zone
+        if (@abs(side) <= @max(x.zone, y.zone) * @max(to_x, to_y)) {
+            const cap = @min(x.extent(v), y.extent(v));
+            const fx = x.farther(cap);
+            const fy = y.farther(cap);
+            if (fx != null or fy != null) {
+                x = fx orelse x;
+                y = fy orelse y;
+                continue;
+            }
+        }
+        return if (side > 0) 1 else -1;
     }
-    return if (side > 0) 1 else -1;
 }
 
 /// +1 when `x` bends further left than `y`, −1 further right, 0 alike.
