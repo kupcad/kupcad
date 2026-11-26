@@ -1975,7 +1975,7 @@ const Filler = struct {
                 continue;
             }
             if (both.items.len < 2) continue;
-            const line = switch (try self.meetingLine(fa, fb, frame_a, frame_b, both.items, .of(.face, @backingInt(fb)))) {
+            const line = switch (try self.meetingLine(frame_a, frame_b, both.items, .of(.face, @backingInt(fb)))) {
                 .line => |d| d,
                 .one_plane => {
                     try p.coplanar.append(self.allocator, .{ @backingInt(fa), @backingInt(fb) });
@@ -2121,50 +2121,18 @@ const Filler = struct {
     /// angular tolerance have no line of their own, so the vertices' (`lineThrough`), or
     /// one plane when they are off one line; at that tolerance to rounding, refused
     /// (`at_tolerance`, D27). Along the vertices' line the two planes hinge, which they do
-    /// only within the tolerance of each other there (`hingedWithin`), and only where one
-    /// face keeps to one side of the other's plane: faces `fa` of `a` and `fb` of `b`
-    /// crossing each other are refused (`planar_faces.refuseCrossingParallel`, the slice's
-    /// rule alike; a hull's base 0.0085 rad off a box's top and crossing it, hinged on the
-    /// hull's edge, which the top kept as a slit with the base and a side of the hull on
-    /// it, four coedges: the solids sessions on 9015ab26, du).
-    fn meetingLine(self: *Filler, fa: types.FaceIndex, fb: types.FaceIndex, frame_a: Frame, frame_b: Frame, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
-        const parallel = planar_faces.parallelPlanes(frame_a.z, frame_b.z, self.p.tol);
-        switch (parallel) {
+    /// only within the tolerance of each other there and without crossing each other along
+    /// it (`hingedWithin`).
+    fn meetingLine(self: *Filler, frame_a: Frame, frame_b: Frame, vertices: []const u32, entity: diagnostics.EntityRef) Error!union(enum) { line: Vec3, one_plane } {
+        switch (planar_faces.parallelPlanes(frame_a.z, frame_b.z, self.p.tol)) {
             .apart => return .{ .line = planar_faces.lineDirection(vec.normalized(vec.cross(frame_a.z, frame_b.z)).?) },
             .at_tolerance => |c| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = entity, .label = "two faces of the operands sharing merged vertices, parallel or not, the angle between them the angular tolerance to rounding", .measured = c.measured, .threshold = c.limit }),
             .same => {
-                const crossing = canonical.both(try self.crossesPlane(0, fa, frame_b), try self.crossesPlane(1, fb, frame_a));
-                try planar_faces.refuseCrossingParallel(parallel, crossing, frame_a.z, frame_b.z, self.p.tol, entity, self.diag);
                 const d = (try self.lineThrough(vertices, entity)) orelse return .one_plane;
                 try self.hingedWithin(frame_a, frame_b, vertices, entity);
                 return .{ .line = planar_faces.lineDirection(d) };
             },
         }
-    }
-
-    /// Whether face `f` of operand `k` crosses `frame`'s plane: a merged vertex at its
-    /// corners beyond its reach of the plane on each side (`same`), on one side none
-    /// (`apart`), else one at its reach to rounding decides (`at_tolerance`).
-    fn crossesPlane(self: *Filler, k: usize, f: types.FaceIndex, frame: Frame) Error!Verdict {
-        const p = self.p;
-        const plane = planar_faces.planeOf(frame);
-        const body_k = self.body(k);
-        var below: Verdict = .apart;
-        var above: Verdict = .apart;
-        var loops = traverse.Loops.init(body_k, f);
-        while (loops.next() catch return corrupt(self.diag)) |l| {
-            var it = traverse.Coedges.init(body_k, l);
-            while (it.next() catch return corrupt(self.diag)) |c| {
-                const v = p.vertex_of[k][@backingInt(body_k.coedgeStart(c))];
-                const beyond: Verdict = switch (self.planeVerdict(plane, v)) {
-                    .same => continue,
-                    .apart => .same,
-                    .at_tolerance => |at| .{ .at_tolerance = at },
-                };
-                if (plane.height(p.point(v)) < 0) below = canonical.either(below, beyond) else above = canonical.either(above, beyond);
-            }
-        }
-        return canonical.both(below, above);
     }
 
     /// Two faces' planes (`frame_a`, `frame_b`), parallel within the angular tolerance and
@@ -2184,6 +2152,21 @@ const Filler = struct {
     /// ordered about it by the same noise, `edge_coedge_count`: the locus session on
     /// 8a0a4a2c, bn). Refused (`below_feature_size`), naming `entity`.
     ///
+    /// Nor do they hinge where the difference of heights changes sign between two of the
+    /// vertices, each past rounding: the planes' own line crosses the vertices' line there,
+    /// the faces cross each other along where they meet, and their order about that line,
+    /// one above the other at one end and under it at the other, is no order: a hull's
+    /// base 0.0085 rad off a box's top, tilted along the base's edge from a corner 5.6e-5
+    /// over the top to where the edge crossed the top's edge 1e-5 under it, was hinged on
+    /// that edge, which the top kept as a slit with the base and a side of the hull on it,
+    /// and the result's faces about it were ordered by a turn of 4e-5 rad that put the base
+    /// under the top: four coedges, NotValid (the solids sessions on 9015ab26, du). Refused
+    /// as the slice refuses a face crossing its plane so (`planar_faces.refuseCrossingParallel`).
+    /// Planes whose own line runs along the vertices' line, or crosses it at a vertex or
+    /// away from them, keep the difference's sign there and hinge (a hull's top at the
+    /// angular tolerance to a plate's, met along its corners' line 0.0127 from the planes'
+    /// own, bl; a keel's flat bottom crossing a plate's face along its ridge).
+    ///
     /// The vertex's own gap is no part of the measure: it is how far the vertex may lie
     /// from what was merged into it, and planes this near parallel are as far apart at any
     /// of those places. Held to the vertex's reach, a box's bottom 2.1e-4 over a slab's
@@ -2197,13 +2180,20 @@ const Filler = struct {
         const facing: f64 = if (vec.dot(frame_a.z, frame_b.z) < 0) -1 else 1;
         var verdict: Verdict = .same;
         var apart: f64 = 0;
+        var over = false;
+        var under = false;
         for (vertices) |v| {
-            const gap = @abs(plane_a.height(p.point(v)) - facing * plane_b.height(p.point(v)));
+            const difference = plane_a.height(p.point(v)) - facing * plane_b.height(p.point(v));
+            const gap = @abs(difference);
             apart = @max(apart, gap);
             verdict = canonical.both(verdict, p.decide.within(gap, p.tol.xsect));
+            if (gap > p.rounding) {
+                if (difference > 0) over = true else under = true;
+            }
         }
-        if (try self.settle(verdict, entity)) return;
-        return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = entity, .label = "two faces of the operands parallel within the angular tolerance, an edge of one on the other, their planes farther apart along it than the tolerance,", .measured = apart, .threshold = p.tol.xsect });
+        if (!try self.settle(verdict, entity)) return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = entity, .label = "two faces of the operands parallel within the angular tolerance, an edge of one on the other, their planes farther apart along it than the tolerance,", .measured = apart, .threshold = p.tol.xsect });
+        const crossing: Verdict = if (over and under) .same else .apart;
+        return planar_faces.refuseCrossingParallel(.same, crossing, frame_a.z, frame_b.z, p.tol, entity, self.diag);
     }
 
     /// The direction of the line through merged vertices `vertices` (at least two, each

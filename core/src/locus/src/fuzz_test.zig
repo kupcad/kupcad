@@ -2623,9 +2623,9 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // area (section.steepEnough: such a face refused below the feature size)
         "solids 3 1 3 0 0 1 4 0 2 1 0 1 0 2 4 13 7 5 16 3 1 3 0 5 4 0 2 2 2 3 4 1 3 2 -2 -2 -2 4 1 2 3 2 5 0 1 2 2 1 3 0 0 4 2 0 13 1 16 2",
         // The same sessions (locus_solids, du): (box − plate) ∪ box, ∩ hull, the hull's base
-        // 0.0085 rad off the box's top and crossing it, hinged on the base's edge, which the
-        // top kept as a slit: four coedges, NotValid (planar_faces.refuseCrossingParallel:
-        // faces crossing each other parallel within the angular tolerance refused)
+        // 0.0085 rad off the box's top, hinged on the base's edge, which the top kept as a
+        // slit, the planes crossing along it: four coedges, NotValid (pave.hingedWithin:
+        // faces parallel within the angular tolerance crossing along the hinge refused)
         "solids 0 0 4 3 4 0 1 2 1 -1 -2 10 10 3 3 2 0 3 0 3 3 4 1 0 0 1 1 8 12 10 13 1 1 0 1 2 2 4 2 4 3 2 -2 7 5 2 0 2 1 5 4 2 4 1 2 1 2 2 1 4 1 1 0 1 1 0 3 6 2 4 11 0 15 2",
     };
     for (finds) |line| {

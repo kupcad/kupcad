@@ -107,21 +107,23 @@ pub fn parallelPlanes(n_a: Vec3, n_b: Vec3, tol: Tolerance) canonical.Verdict {
     return canonical.verdict(&.{canonical.Comparison.angle(1.0 - @abs(vec.dot(n_a, n_b)), tol.angle)});
 }
 
-/// The one decision on two planar faces crossing each other parallel within the angular
-/// tolerance (`parallel`, `parallelPlanes`' verdict; `crossing`, whether each face has a
-/// corner beyond the tolerance on each side of the other's plane, the slicing plane, which
-/// has no boundary, crossing any face's): refused, `below_feature_size` naming `entity`;
-/// the angle at that tolerance to rounding, or the crossing hanging on a corner at the
-/// tolerance to rounding, `at_tolerance` (D27). At an angle θ such faces lie within the
-/// tolerance of each other over a strip `2 tol / sin θ` wide across their planes' line, as
-/// far as a corner on the one plane may lie from the other face's trace, and planes
-/// parallel within the angular tolerance have no line of their own: no section of them is
-/// one. A section with no area where the solid held material (`boolean/section.zig`, a
-/// wedge's bottom 6.3e-5 rad off the slicing plane, ea); a box's top kept a hull's edge
-/// as a slit, the hull's base 0.0085 rad off the top and crossing it, hinged on that edge
-/// (`boolean/pave.zig`'s `meetingLine`), and the edge had four coedges (du). Faces that
-/// hinge, one of them on one side of the other's plane, keep their line (a plate's bottom
-/// a hair off another's top, touching along an edge).
+/// The one decision on two planar faces crossing each other where they meet, parallel within
+/// the angular tolerance (`parallel`, `parallelPlanes`' verdict; `crossing`, whether they
+/// cross there): refused, `below_feature_size` naming `entity`; the angle at that tolerance
+/// to rounding, or the crossing hanging on a measure at the tolerance to rounding,
+/// `at_tolerance` (D27). Planes parallel within the angular tolerance have no line of their
+/// own, and where such faces cross they lie within the tolerance of each other over a strip
+/// `2 tol / sin θ` wide, along which one is over the other on one side and under it on the
+/// other: whatever meets them there takes one side of the two for both. Where they meet
+/// is each caller's own: the slicing plane, which has no boundary, meets a face over all of
+/// it, which crosses it with a corner beyond the zone either side (`boolean/section.zig`:
+/// the section had no area where the solid held material, a wedge's bottom 6.3e-5 rad off
+/// the plane, ea); two faces of the boolean's operands meet along the line of the merged
+/// vertices both hold (`boolean/pave.zig`'s `hingedWithin`), which they cross along where
+/// their planes' heights differ either way at its vertices (a hull's base and a box's top,
+/// the top's slit hinged on the base's edge, four coedges, du). Two such faces whose planes
+/// cross along that line or away from it hinge on it, one face on one side of the other
+/// there, and are classified by their corners and turns (`boolean/classify.zig`).
 pub fn refuseCrossingParallel(parallel: canonical.Verdict, crossing: canonical.Verdict, n_a: Vec3, n_b: Vec3, tol: Tolerance, entity: diagnostics.EntityRef, diag: *Diagnostics) Error!void {
     if (parallel == .apart) return;
     switch (crossing) {

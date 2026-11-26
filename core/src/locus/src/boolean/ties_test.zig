@@ -131,33 +131,41 @@ const DP_DROPS = [_]f64{ 1e-4, 5e-5, 1.5e-4 };
 /// gaps of it), moved back by the move the operands took, the solid checked sound.
 /// The solids of find du (the solids sessions on 9015ab26), as the fuzzer drew them: a box
 /// at the zone the chain's plate left it (1e-4) and a hull turned 0.01414 rad about
-/// (1, 2, 3), whose base lies 0.0085 rad off the box's top and crosses it, a corner of the
-/// base 5.6e-5 over the top and the base's edge from it crossing the top's edge.
+/// (1, 2, 3), whose base lies 0.0085 rad off the box's top, a corner of the base 5.6e-5
+/// over the top and the base's edge from it crossing the top's edge 1e-5 under it.
 const DU_BOX = struct { size: Vec3 = .{ 4, 1, 1 }, lo: Vec3 = .{ 0, 3, 0 }, move: Vec3 = .{ -0.5, -1, 0 }, nudge: Vec3 = .{ 0, 0, -1.999999995026201e-5 } }{};
 const DU_HULL = [_]Vec3{ .{ 4, 2, 4 }, .{ 1, 2, 1 }, .{ 2, 2, 1 }, .{ 4, 1, 1 }, .{ 0, 1, 1 } };
 const DU_HULL_TURN: f64 = 0.014142253478516982;
 const DU_HULL_NUDGE: Vec3 = .{ -5e-5, 2.0000000005705623e-4, 0 };
 
-/// The box and the slab of the family about du: the slab stands on the box's top, turned
-/// about y through the line across the top at x = `pivot` by `turn` (positive dips the
-/// slab's bottom under the top past the pivot), so its bottom crosses the top there, or
-/// hinges on it where the pivot is the slab's edge or within the reach of it.
-const CROSS_BOX = [2]Vec3{ .{ 0, 0, 0 }, .{ 4, 3, 1 } };
-const CROSS_SLAB = [2]Vec3{ .{ 1, 1, 1 }, .{ 3, 2, 1.5 } };
-const CROSS_CASES = [_]struct { pivot: f64, turn: f64, refused: bool }{
-    .{ .pivot = 2, .turn = 0.0085, .refused = true },
-    .{ .pivot = 2, .turn = -0.0085, .refused = true },
-    .{ .pivot = 2, .turn = 1e-3, .refused = true },
-    .{ .pivot = 1.01, .turn = 0.0085, .refused = true },
-    .{ .pivot = 1.002, .turn = 0.0085, .refused = false },
-    .{ .pivot = 1, .turn = 0.0085, .refused = false },
-    .{ .pivot = 1, .turn = -0.0085, .refused = false },
-    .{ .pivot = 2, .turn = CROSS_PAST_ANGLE, .refused = false },
+/// The box and the slab of the family about du: the slab's bottom a square `HINGE_SIDE`
+/// on a side, turned 45° about z, its corner X `HINGE_CORNER`, 0.005 past the top's front
+/// edge (y = 0), and its two edges from X crossing that edge; the bottom's heights over
+/// the top from X's by its slopes (`HINGE_CASES`) along the edge from X to +x (the hinge,
+/// X to its crossing of the top's edge, both on the top within the reach) and along the
+/// other edge from X, which leaves the top's tolerance before the top's edge, so the two
+/// faces share X and the hinge's crossing alone.
+const HINGE_BOX = [2]Vec3{ .{ 0, 0, 0 }, .{ 4, 3, 1 } };
+const HINGE_CORNER: Vec3 = .{ 2, 0.005, 1 };
+const HINGE_SIDE: f64 = 1;
+const HINGE_THICKNESS: f64 = 0.5;
+/// Each case: X's height over the top, the bottom's slopes along the hinge (from X) and
+/// along the other edge, and whether refused. The planes' heights differ either way at the
+/// hinge's ends (X over, its crossing under, or the other way): they cross along it,
+/// refused. One sign at both ends: the hinge holds, made; so too past the angular
+/// tolerance, where the hinge's crossing is off the top and the planes meet along their
+/// own line.
+const HINGE_CASES = [_]struct { lift: f64, along: f64, other: f64, refused: bool }{
+    .{ .lift = 1.2e-5, .along = -3.1e-3, .other = 3.1e-3, .refused = true },
+    .{ .lift = -1.2e-5, .along = 3.1e-3, .other = -3.1e-3, .refused = true },
+    .{ .lift = 1.2e-5, .along = -1e-3, .other = 3.1e-3, .refused = false },
+    .{ .lift = 1.2e-5, .along = 0, .other = 4.4e-3, .refused = false },
+    .{ .lift = 1.2e-5, .along = -HINGE_PAST_ANGLE, .other = HINGE_PAST_ANGLE, .refused = false },
 };
-/// The family's turn past the angular tolerance. Its crossings at 3e5 lie the coordinates'
-/// rounding over the angle's sine from their place (3e-9, past `SAME_POINT`), so it is
-/// moved by `MOVES` only, out to 2e3: no tie, the measure's own rounding.
-const CROSS_PAST_ANGLE: f64 = 0.02;
+/// The family's slope past the angular tolerance. Its crossings at 3e5 lie the
+/// coordinates' rounding over the slope from their place (3e-9, past `SAME_POINT`), so it
+/// is moved by `MOVES` only, out to 2e3: no tie, the measure's own rounding.
+const HINGE_PAST_ANGLE: f64 = 0.02;
 
 const Outcome = struct {
     code: ?diagnostics.Code = null,
@@ -633,13 +641,15 @@ test "ties: a pocket's wall over a vertex a zone under the face it is cut from i
     }
 }
 
-test "ties: a hull's base 0.0085 rad off a box's top and crossing it is refused below the feature size, not hinged on the hull's edge (find du)" {
+test "ties: a hull's base 0.0085 rad off a box's top, hinged on its edge and crossing the top along it, is refused below the feature size (find du)" {
     // Find du (the solids sessions on 9015ab26, locus_solids): the hull's base is parallel
-    // to the box's top within the angular tolerance and crosses it, a corner of it on the
-    // top within the reach. The paves hinged the two along the base's edge from that
-    // corner, which the top kept as a slit with the base and a side of the hull on it:
-    // four coedges, the union NotValid. Such faces lie within the tolerance of each other
-    // over a strip no section of them holds (`planar_faces.refuseCrossingParallel`)
+    // to the box's top within the angular tolerance; the two share the base's corner, 5.6e-5
+    // over the top, and the crossing of the base's edge from it with the top's edge, 1e-5
+    // under it. The paves hinged the two along that edge, which the top kept as a slit with
+    // the base and a side of the hull on it, and the result's faces about it were ordered
+    // by a turn of 4e-5 rad that put the base under the top: four coedges, the union
+    // NotValid. The planes cross along the hinge, refused (`pave.hingedWithin`,
+    // `planar_faces.refuseCrossingParallel`)
     var box = try helpers.fuzzPlaced(Tolerance.fromZone(1e-4), DU_BOX.size, DU_BOX.lo, vec.Z3, 0, DU_BOX.move, DU_BOX.nudge);
     defer box.deinit();
     var hull = try degeneracy.fuzzHullPlaced(&DU_HULL, .{ 1, 2, 3 }, DU_HULL_TURN, null, vec.ZERO3, DU_HULL_NUDGE);
@@ -652,28 +662,43 @@ test "ties: a hull's base 0.0085 rad off a box's top and crossing it is refused 
     };
 }
 
-test "ties: the family about du, a slab's bottom crossing a box's top within the angular tolerance refused, hinged on it or past the angle made, alike swapped, mirrored and moved far" {
-    // The slab's bottom crossing the top along a line through both faces, at du's angle
-    // either way, at 1e-3, and with its corner 8.5e-5 (past the reach) over the top: each
-    // face has a corner beyond the tolerance either side of the other's plane, refused.
-    // Hinged on its edge, rising or dipping, or with its corner 1.7e-5 (within the reach)
-    // over the top: the bottom keeps to one side of the top's plane, made; and the
-    // crossing past the angular tolerance, along the planes' own line, made
-    var box = try helpers.boxAt(Tolerance.fromZone(1e-5), CROSS_BOX[0], CROSS_BOX[1]);
+/// The family about du's slab (`HINGE_*`), its bottom's slopes along the hinge and along
+/// the other edge from X as `case` has them.
+fn hingeSlab(case: @TypeOf(HINGE_CASES[0])) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const r = HINGE_SIDE / @sqrt(2.0);
+    // X, then along the hinge (+x, −y), the far corner, along the other edge (−x, −y)
+    const corners = [_][2]f64{ .{ 0, 0 }, .{ r, -r }, .{ 0, -2 * r }, .{ -r, -r } };
+    const slopes = [_]f64{ 0, case.along * HINGE_SIDE, (case.along + case.other) * HINGE_SIDE, case.other * HINGE_SIDE };
+    var points: [2 * corners.len]Vec3 = undefined;
+    for (corners, slopes, 0..) |c, rise, i| {
+        const z = HINGE_CORNER[2] + case.lift + rise;
+        points[i] = .{ HINGE_CORNER[0] + c[0], HINGE_CORNER[1] + c[1], z };
+        points[corners.len + i] = .{ HINGE_CORNER[0] + c[0], HINGE_CORNER[1] + c[1], z + HINGE_THICKNESS };
+    }
+    return hull_mod.hull(testing.allocator, Tolerance.fromZone(1e-5), &points, &diag);
+}
+
+test "ties: the family about du, a slab's bottom hinged on a box's top within the angular tolerance and crossing it along the hinge refused, one side of it made, alike swapped, mirrored and moved far" {
+    // The slab's corner X over the top and the hinge's crossing of the top's edge under it,
+    // or the other way round: the planes cross along the hinge, refused. Both over (a
+    // smaller slope along the hinge, or none), the hinge holds: the slab touches the top
+    // along it, made; and past the angular tolerance, where the planes meet along their
+    // own line, made
+    var box = try helpers.boxAt(Tolerance.fromZone(1e-5), HINGE_BOX[0], HINGE_BOX[1]);
     defer box.deinit();
-    for (CROSS_CASES) |case| {
-        errdefer std.debug.print("turned {d} about x = {d}\n", .{ case.turn, case.pivot });
-        var drawn = try helpers.boxAt(Tolerance.fromZone(1e-5), CROSS_SLAB[0], CROSS_SLAB[1]);
-        defer drawn.deinit();
-        var slab = try helpers.turned(&drawn, .{ case.pivot, 0, 1 }, vec.Y3, case.turn);
+    for (HINGE_CASES) |case| {
+        errdefer std.debug.print("X lifted {e}, slopes {e} along the hinge and {e} along the other edge\n", .{ case.lift, case.along, case.other });
+        var slab = try hingeSlab(case);
         defer slab.deinit();
         for (OPS) |op| {
             errdefer std.debug.print("{t}\n", .{op});
             const got = try Outcome.of(&slab, &box, op, null);
             defer got.deinit();
-            if (case.refused) try testing.expectEqual(@as(?diagnostics.Code, .below_feature_size), got.code) else try testing.expectEqual(@as(?diagnostics.Code, null), got.code);
+            try testing.expectEqual(@as(?diagnostics.Code, if (case.refused) .below_feature_size else null), got.code);
         }
-        try expectAlikeSwappedAndMovedBy(&slab, &box, if (case.turn == CROSS_PAST_ANGLE) &MOVES else &FAR_MOVES);
+        try expectAlikeSwappedAndMovedBy(&slab, &box, if (case.other == HINGE_PAST_ANGLE) &MOVES else &FAR_MOVES);
         try expectAlikeMirrored(&slab, &box);
     }
 }

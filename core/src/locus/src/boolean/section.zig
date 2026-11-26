@@ -191,8 +191,9 @@ const Section = struct {
     /// each side, parallel to it within the angular tolerance: the faces about a vertex on
     /// the plane within the zone, as far as `2 zone / sin θ` from the face's trace, put the
     /// section's boundary there while the face puts it on its trace, and no outline holds
-    /// both (`planar_faces.refuseCrossingParallel`, the boolean's rule for two faces alike;
-    /// the slicing plane crosses any face's plane). A wedge 6e-5 thick, its bottom 6.3e-5
+    /// both (`planar_faces.refuseCrossingParallel`, as the boolean refuses two such faces
+    /// crossing along where they meet; the slicing plane, unbounded, meets the face over
+    /// all of it). A wedge 6e-5 thick, its bottom 6.3e-5
     /// rad off the plane, a vertex 6.5e-6 under the plane and 0.12 from the bottom's trace:
     /// the section was left open, no area, where the solid holds material (the solids
     /// oracle's slice on 9015ab26, ea).
