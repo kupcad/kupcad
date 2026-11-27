@@ -122,6 +122,14 @@ const EL_SECOND_XSECTS: f64 = 2.5;
 const EL_SECOND_NUDGE: vec.Vec3 = .{ 1.9999999943156583e-5, -2.000000005684342e-5, 0 };
 const EL_SECOND_Z_AT_TOP: f64 = 2.6e-5;
 const EL_UNDER_TOP = [_]f64{ 2e-6, 6e-6, 1e-5, 1.5e-5 };
+/// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
+/// past the zone from another edge's line, decided apart in place, read at the zone to
+/// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
+/// and a half-height one beside it, `EJ_PAST_ZONE` past the zone from it (the find's, and
+/// farther), moved by `EJ_TURNS` about z, mirrored in x, then by each of `EJ_SHIFTS`.
+const EJ_PAST_ZONE = [_]f64{ 3.95e-10, 1e-9, 1e-8 };
+const EJ_TURNS = [_]f64{ 0, std.math.pi / 2.0, std.math.pi, std.math.pi / 4.0 };
+const EJ_SHIFTS = [_]vec.Vec3{ vec.ZERO3, .{ 3e5, -3e5, 0 }, .{ 2e6, -3e6, 0 } };
 /// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps, or, one chain in
 /// EXTREME_ONE_IN, a value a script would never write (a parameter sweep inside the
 /// chains, beside sketch/parameters_test.zig's table on fixed sheets).
@@ -1245,18 +1253,20 @@ const SheetStep = union(enum) {
 /// check: it takes each arc's extreme points along the axes, which a turn moves (D24's
 /// stand-in, refused by KupCAD as `curved_hull`; the fuzzer, 2026-11-14: 16.52 turned,
 /// 17.19 not). A step the moved chain refuses is clean (D27: a distance near the tolerance
-/// moves by a rounding, at most onto the refused side); a failure is a find.
+/// moves by a rounding, at most onto the refused side), and the chain's result moved alone
+/// may be refused by the overlap rule so (`expectMovedSheet`); a failure is a find.
 fn expectSheetMovedWhole(source: anytype, log: *Log, first: *const Body, steps: []const SheetStep, result: *const Body, diag: *Diagnostics) !void {
     const angle = TURNS[source.index(TURNS.len)];
     const shift = MOVE_SHIFTS_2D[source.index(MOVE_SHIFTS_2D.len)];
     try log.add("moved whole: turned {d} about z, shifted ({d}, {d})\n", .{ angle, shift[0], shift[1] });
     const move = Affine.translate(.{ shift[0], shift[1], 0 }).compose(&Affine.rotate(vec.Z3, angle));
-    // The chain's result moved alone: sound, or a clean refusal
+    // The chain's result moved alone: sound, a clean refusal of the move, or the overlap
+    // rule's refusal by design
     if (try resultMoved(result, &move, diag)) |moved_result| {
         var held = moved_result;
         defer held.deinit();
         errdefer std.debug.print("the chain's result, moved\n", .{});
-        try expectSound(&held, diag);
+        try expectMovedSheet(&held, diag);
     }
     var moved = transform.transform(testing.allocator, first, &move, .{}, diag) catch |err| return refusedMove(err);
     defer moved.deinit();
@@ -1434,6 +1444,21 @@ fn sheet(smith: anytype, log: *Log, diag: *Diagnostics) !?Body {
 /// The sheet passes every rule of the checker and the overlap rule (sketch/overlap.zig),
 /// and has an area unless it is the empty sheet (a boolean's empty result).
 fn expectSound(body: *const Body, diag: *Diagnostics) !void {
+    return expectSheet(body, false, diag);
+}
+
+/// A made sheet under a rigid move (`transform` made it): `expectSound`, or the overlap
+/// rule's refusal by design. A distance at the tolerance moves by a rounding, at most onto
+/// the refused side (D27: a point 3.95e-10 past the zone of a line, decided in place by a
+/// band of 7.7e-14, read at the zone to rounding 3.6e6 out, where the band is 4.3e-8; find
+/// ej, 2026-11-27), as the chain moved whole may be refused (`expectSheetMovedWhole`) and
+/// a moved solid by its rules (`oracle.expectMovedSolid`, find do); the rule failing
+/// (`NotValid`) is a find.
+fn expectMovedSheet(body: *const Body, diag: *Diagnostics) !void {
+    return expectSheet(body, true, diag);
+}
+
+fn expectSheet(body: *const Body, moved: bool, diag: *Diagnostics) !void {
     var report = try check.run(testing.allocator, body, .global);
     defer report.deinit(testing.allocator);
     if (!report.ok()) {
@@ -1442,6 +1467,9 @@ fn expectSound(body: *const Body, diag: *Diagnostics) !void {
     }
     // No two faces over one region (the rule the checker cannot run: it needs the overlay)
     overlap.check(testing.allocator, body, diag) catch |err| {
+        if (moved) {
+            if (oracle.clean(err)) |_| return else |_| {}
+        }
         std.debug.print("the overlap rule: {f}\n", .{diag});
         return err;
     };
@@ -2048,6 +2076,44 @@ fn cornerOnFaceOperands(off_face: f64, quarter: usize, mirrored: bool, shift: ve
     var points: [EI_HULL.len]vec.Vec3 = undefined;
     for (EI_HULL, &points) |q, *moved| moved.* = vec.add(degeneracy.tieMove(vec.add(q, EI_HULL_NUDGE), quarter, mirrored), shift);
     return .{ plate, try solid_hull.hull(testing.allocator, tol, &points, &diag) };
+}
+
+test "Fuzz chains: a sheet whose corner is a rounding past the zone from an edge, moved far, is sound or refused by the overlap rule at the tolerance" {
+    // Find ej: a sketch chain's result, a corner 3.95e-10 past the zone of another edge's
+    // line, decided apart in place (D27's band 7.7e-14 there). Moved whole, turned π/4 and
+    // shifted (2e6, -3e6), the corner read 3.76e-10 past it, within the band of 4.3e-8 at
+    // that size: the overlap rule refused the moved result `at_tolerance`, by design (D27),
+    // where the oracle asked it sound. Here a square's corners `EJ_PAST_ZONE` past the zone
+    // from a neighbour's side, turned, mirrored and moved near and far: sound, or refused
+    // so (`expectMovedSheet`); the find's corner moved as the find was is refused
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var refused: usize = 0;
+    for (EJ_PAST_ZONE) |past| {
+        const gap = tol.zone + past;
+        const left = [_]Vec2{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+        const right = [_]Vec2{ .{ 1 + gap, 0.25 }, .{ 2, 0.25 }, .{ 2, 0.75 }, .{ 1 + gap, 0.75 } };
+        var sheet_body = try primitives.polygonsEvenOdd(testing.allocator, tol, &.{ &left, &right }, &diag);
+        defer sheet_body.deinit();
+        try expectSound(&sheet_body, &diag);
+        for (EJ_TURNS) |angle| for ([_]bool{ false, true }) |mirrored| for (EJ_SHIFTS) |shift| {
+            errdefer std.debug.print("{e} past the zone, turned {d}, mirrored {}, shifted {any}\n", .{ past, angle, mirrored, shift });
+            var move = Affine.translate(shift).compose(&Affine.rotate(vec.Z3, angle));
+            if (mirrored) move = move.compose(&Affine.mirror(vec.X3));
+            var moved = (try resultMoved(&sheet_body, &move, &diag)) orelse continue;
+            defer moved.deinit();
+            try expectMovedSheet(&moved, &diag);
+            overlap.check(testing.allocator, &moved, &diag) catch |err| {
+                try testing.expectEqual(error.Degenerate, err);
+                try testing.expectEqual(diagnostics.Code.at_tolerance, diag.first().?.code);
+                try testing.expect(shift[0] != 0);
+                refused += 1;
+            };
+            diag.clear();
+        };
+    }
+    // Some of the far moves of the find's corner, and none in place
+    try testing.expect(refused > 0);
 }
 
 test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and the nightly's" {
@@ -2840,6 +2906,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // The locus_solids session on 5e73cbcd (en): ei at 50 to 100, a plate turned 1e-6 whose
         // side's edges lie up to 2e-5 off the side's plane (the same)
         "solids 2 3 4 2 3 2 4 0 3 7 1 8 10 13 8 1 2 2 3 4 3 4 3 4 3 2 13 0 11 7 2",
+        // The locus session on 5e73cbcd (ej): a sketch chain's result, a corner 3.95e-10 past
+        // the zone from an edge's line, moved whole to (2e6, -3e6): the overlap rule at the
+        // tolerance to rounding, at_tolerance by design (expectMovedSheet, D27)
+        "chain 1 3 5 5 3 6 2 6 2 3 4 3 1 1 10 3 8 0 3 7 6 1 4 5 0 3 5 5 1 1 3 4 1 0 4 3 4 2 2 4 3 7 4 6 4 5 3 3 4 6 3 0 2 3 3 5 1 3 1 2 4 4 4 3 4 8 3 2 3 5 5 3 6 6 3 6 4 1 0 1 2 2 1 3 0 1 3 1 3 3 2 1 0 1 4 2 0 3 2 2 3",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
