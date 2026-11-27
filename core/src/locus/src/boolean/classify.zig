@@ -607,9 +607,11 @@ pub fn cornersSide(paves: *const Paves, fragments: *const Fragments, i: usize, b
     const origin = planar_faces.frameOf(body, g).?.origin;
     var front = false;
     var behind = false;
-    const other: u1 = 1 - fragments.items.items[i].operand;
+    // `g`'s operand: the other's in the classification, either in the result's order
+    // about an edge (`pipeline.Sides`)
+    const of: u1 = if (body == paves.operands[0]) 0 else 1;
     for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
-        if (paves.onFace(other, @backingInt(g), m)) continue;
+        if (paves.onFace(of, @backingInt(g), m)) continue;
         const height = vec.dot(vec.sub(paves.point(m), origin), n_g);
         if (@abs(height) <= paves.rounding) continue;
         if (height > 0) front = true else behind = true;
