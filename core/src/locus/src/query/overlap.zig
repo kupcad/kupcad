@@ -603,9 +603,9 @@ fn touching(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Pi
     return true;
 }
 
-/// A point of a piece, its reach beyond the tolerance, and the vertex it is when an end is
-/// one.
-const At = struct { p: Vec3, gap: f64, vertex: planar_faces.VertexOf = .{} };
+/// A point of a piece, its reach beyond the tolerance, the vertex it is when an end is
+/// one, and for the middle the vertices the ends are.
+const At = struct { p: Vec3, gap: f64, vertex: planar_faces.VertexOf = .{}, ends: [2]planar_faces.VertexOf = .{ .{}, .{} } };
 
 /// The points a piece is judged at: its ends and its middle, or its one point.
 const Points = struct { items: [3]At, count: usize };
@@ -613,7 +613,7 @@ const Points = struct { items: [3]At, count: usize };
 fn pointsOf(piece: Piece) Points {
     const a: At = .{ .p = piece.a, .gap = piece.gap_a, .vertex = piece.vertex_a };
     if (piece.isPoint()) return .{ .items = .{ a, a, a }, .count = 1 };
-    return .{ .items = .{ a, .{ .p = vec.lerp(piece.a, piece.b, 0.5), .gap = piece.gapBetween() }, .{ .p = piece.b, .gap = piece.gap_b, .vertex = piece.vertex_b } }, .count = 3 };
+    return .{ .items = .{ a, .{ .p = vec.lerp(piece.a, piece.b, 0.5), .gap = piece.gapBetween(), .ends = .{ piece.vertex_a, piece.vertex_b } }, .{ .p = piece.b, .gap = piece.gap_b, .vertex = piece.vertex_b } }, .count = 3 };
 }
 
 /// Whether `p`, reaching `gap` beyond the tolerance (its gap, when it is a vertex), lies
@@ -625,8 +625,10 @@ fn pointsOf(piece: Piece) Points {
 /// solids fuzzer, 2026-11-14: a merged vertex with a gap of 9.75e-5 on a box's front, its
 /// edge to the box's corner in the box's left face's plane by that gap, 2.05e-4 from that
 /// face's edges at a tolerance of 2e-4). A vertex of the face is on it by record
-/// (`planar_faces.VertexOf`; eh).
+/// (`planar_faces.VertexOf`; eh), and so is the middle of a piece between the two ends of
+/// one of its straight edges (`VertexOf.endsAnEdgeOf`; es).
 fn onBoundary(body: *const Body, f: types.FaceIndex, at: At, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    if (try at.ends[0].endsAnEdgeOf(at.ends[1], body, f, diag)) return true;
     return try planar_faces.placeVertex(body, f, at.p, at.gap, at.vertex, tol, diag) == .boundary;
 }
 

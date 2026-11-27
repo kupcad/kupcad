@@ -63,6 +63,29 @@ pub const VertexOf = struct {
         }
         return false;
     }
+
+    /// Whether this and `other` are the two ends of one straight edge of face `f` of
+    /// `body`: a segment between their points is that edge's chord, on the face's boundary
+    /// by record, as a vertex of the face is (`bounds`; eh) and a section's trace between
+    /// the ends of the face's own edge is that edge (`boolean/section.zig`'s
+    /// `ownEdgeInPlane`; ed). Measured, the middle of a copy of the face's edge (two
+    /// solids of a body touching along it, one edge for each) stood from the edge's line
+    /// as its ends do, the tolerance and their gaps less a band by construction, and the
+    /// overlap rules refused it at the tolerance to rounding (the locus session's find es on
+    /// 621b9ee0, the chain moved whole).
+    pub fn endsAnEdgeOf(self: VertexOf, other: VertexOf, body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error!bool {
+        if (self.body != body or other.body != body or self.v == .none or other.v == .none) return false;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(diag)) |l| {
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(diag)) |c| {
+                const edge = body.edge(body.coedge(c).edge);
+                if (edge.curve.kind != .line) continue;
+                if ((edge.start == self.v and edge.end == other.v) or (edge.start == other.v and edge.end == self.v)) return true;
+            }
+        }
+        return false;
+    }
 };
 
 pub const Relation = union(enum) {

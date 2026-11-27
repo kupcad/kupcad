@@ -182,6 +182,35 @@ const ER_MOVES = [_]struct { axis: vec.Vec3, angle: f64, shift: vec.Vec3 }{
     .{ .axis = vec.Z3, .angle = std.math.pi / 2.0, .shift = vec.ZERO3 },
     .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 3e5, -3e5, 3e5 } },
 };
+/// Find es (the locus session on 621b9ee0), as the solids fuzzer drew it: the box over
+/// `ES_BOX` nudged `ES_BOX_NUDGE` (zone 1e-5), less the plate over `ES_PLATE` at zone
+/// `ES_COARSE`, moved `ES_PLATE_MOVE` and nudged `ES_PLATE_NUDGE`; with the plate
+/// `ES_GAP_XSECTS` tolerances thick about z = 3 over `ES_GAP`, at zone `ES_COARSE`, nudged
+/// `ES_GAP_NUDGE` and in y `ES_BANDS` of D27's band at its size (`ES_BAND`, 64 ulps of 4; the
+/// find's one first); with the box over `ES_LAST` turned `ES_LAST_TURN` about x through the
+/// grid's middle, moved `ES_LAST_MOVE` and nudged `ES_LAST_NUDGE`. The chain moved whole by
+/// `ES_MOVES` (the find's second), mirrored in x or not.
+const ES_BOX = [2]vec.Vec3{ .{ 2, 2, 1 }, .{ 4, 3, 4 } };
+const ES_BOX_NUDGE: vec.Vec3 = .{ 2e-3, 1e-5, 5e-6 };
+const ES_COARSE: f64 = 1e-4;
+const ES_PLATE = [2]vec.Vec3{ .{ 2, -48, 1 }, .{ 102, 52, 4 } };
+const ES_PLATE_MOVE: vec.Vec3 = .{ 1, 0, 0 };
+const ES_PLATE_NUDGE: vec.Vec3 = .{ 0, 2e-2, 1e-4 };
+const ES_GAP = [2]vec.Vec3{ .{ 3, 3, 3 }, .{ 4, 4, 3 } };
+const ES_GAP_XSECTS: f64 = 2.5;
+const ES_GAP_NUDGE: vec.Vec3 = .{ -1e-4, 2e-4, -1e-4 };
+const ES_BAND: f64 = 64 * std.math.floatEps(f64) * 4;
+const ES_BANDS = [_]f64{ 1, 0, 2, 0.5, 3 };
+const ES_LAST = [2]vec.Vec3{ .{ 1, 0, 0 }, .{ 3, 1, 1 } };
+const ES_LAST_TURN: f64 = 1e-6;
+const ES_LAST_MOVE: vec.Vec3 = .{ 0, 0, 0.5 };
+const ES_LAST_NUDGE: vec.Vec3 = .{ 5e-5, 0, 0 };
+const ES_MOVES = [_]struct { axis: vec.Vec3, angle: f64, shift: vec.Vec3 }{
+    .{ .axis = vec.Z3, .angle = 0, .shift = vec.ZERO3 },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 1e-6, .shift = .{ 0.5, -1, 2 } },
+    .{ .axis = vec.Z3, .angle = std.math.pi / 2.0, .shift = vec.ZERO3 },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 3e5, -3e5, 3e5 } },
+};
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2239,6 +2268,73 @@ test "Fuzz solids: a box's edge crossing a union's face at the band's edge past 
     }
 }
 
+test "Fuzz solids: a copy of a face's edge where two solids touch along it lies on the face's boundary by record, the chain moved whole, mirrored and either way round" {
+    // The locus session's find es on 621b9ee0, as the fuzzer drew it, at mixed zones: (box
+    // - plate) ∪ plate ∪ box. The last union keeps two solids touching along a line, one
+    // edge for each there, both on one line record, their vertices the intersection
+    // tolerance and their gaps less a band off it (D28's cover). Moved whole (turned 1e-6,
+    // shifted), the overlap rules measured the middle of the one solid's edge against the
+    // other's face, whose own edge it copies: 2.1470910558559392e-4 against its reach
+    // 2.147091056564305e-4 (2e-4 and the ends' gap), the tolerance to rounding, refused
+    // `at_tolerance`. A piece between the two ends of one of a face's straight edges is on
+    // its boundary by record (`VertexOf.endsAnEdgeOf`), as a vertex of the face is (eh).
+    // The gap plate nudged by `ES_BANDS`, the chain moved by `ES_MOVES`, mirrored or not,
+    // each union either way round: every step made sound (the overlap rules too) or
+    // refused by design
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const coarse = tolerance.Tolerance.fromZone(ES_COARSE);
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    const half = ES_GAP_XSECTS * coarse.xsect / 2;
+    var shapes = [4]Body{
+        try boxFrom(ES_BOX[0], ES_BOX[1], tol, &diag),
+        try boxFrom(ES_PLATE[0], ES_PLATE[1], coarse, &diag),
+        try boxFrom(.{ ES_GAP[0][0], ES_GAP[0][1], ES_GAP[0][2] - half }, .{ ES_GAP[1][0], ES_GAP[1][1], ES_GAP[1][2] + half }, coarse, &diag),
+        try boxFrom(ES_LAST[0], ES_LAST[1], tol, &diag),
+    };
+    defer for (&shapes) |*body| body.deinit();
+    for (ES_BANDS) |bands| {
+        const places = [4]Affine{
+            Affine.translate(ES_BOX_NUDGE),
+            Affine.translate(ES_PLATE_NUDGE).compose(&Affine.translate(ES_PLATE_MOVE)),
+            Affine.translate(.{ ES_GAP_NUDGE[0], ES_GAP_NUDGE[1] + bands * ES_BAND, ES_GAP_NUDGE[2] }),
+            Affine.translate(ES_LAST_NUDGE).compose(&Affine.translate(ES_LAST_MOVE).compose(&Affine.rotateAbout(middle, vec.X3, ES_LAST_TURN))),
+        };
+        var drawn: [4]Body = undefined;
+        var built: usize = 0;
+        defer for (drawn[0..built]) |*body| body.deinit();
+        for (&shapes, places) |*shape, place| {
+            drawn[built] = try transform.transform(testing.allocator, shape, &place, .{}, &diag);
+            built += 1;
+        }
+        for (ES_MOVES, 0..) |m, mi| for ([_]bool{ false, true }) |mirrored| for ([_]bool{ false, true }) |swapped| {
+            errdefer std.debug.print("the gap plate nudged {d} bands, move {d}, mirrored {}, swapped {}\n", .{ bands, mi, mirrored, swapped });
+            const turn = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
+            const move = if (mirrored) Affine.mirror(vec.X3).compose(&turn) else turn;
+            var operands: [4]Body = undefined;
+            var moved: usize = 0;
+            defer for (operands[0..moved]) |*body| body.deinit();
+            for (&drawn) |*body| {
+                operands[moved] = if (mi == 0 and !mirrored) try body.clone(testing.allocator) else try transform.transform(testing.allocator, body, &move, .{}, &diag);
+                moved += 1;
+            }
+            var current = try operands[0].clone(testing.allocator);
+            defer current.deinit();
+            for ([_]solid_boolean.pipeline.Op{ .difference, .@"union", .@"union" }, operands[1..]) |op, *other| {
+                const either = op != .difference and swapped;
+                var next = (if (either) solid_boolean.pipeline.boolean(testing.allocator, other, &current, op, .{}, &diag, null) else solid_boolean.pipeline.boolean(testing.allocator, &current, other, op, .{}, &diag, null)) catch |err| {
+                    try oracle.clean(err);
+                    break;
+                };
+                errdefer next.deinit();
+                try expectSolid(&next, &diag);
+                current.deinit();
+                current = next;
+            }
+        };
+    }
+}
+
 /// A boolean's outcome: the counts made, or the code refused.
 const BooleanOutcome = union(enum) { made: Body.Counts, refused: diagnostics.Code };
 
@@ -3200,6 +3296,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // renormalized by transform, a hull edge's end 1 ulp off the mirror image
         // (geometry/transform.zig: a line under a similarity maps by the factor)
         "solids 3 0 5 2 1 4 0 2 3 3 0 3 1 2 1 0 14 2 2 1 6 4 3 1 1 2 1 4 4 4 4 0 1 4 4 3 1 1 3 1 1 0 0 0 4 0 1 0 3 4 3 4 0 4 3 3 2 11 -1 16 2",
+        // The locus session on 621b9ee0 (es): (box - plate) ∪ plate ∪ box at mixed zones,
+        // moved whole: the middle of one solid's copy of the other's face edge measured
+        // against that face at its reach to rounding, refused at_tolerance by the overlap
+        // rules (planar_faces.VertexOf.endsAnEdgeOf: on the face's boundary by record)
+        "solids 0 2 4 2 3 1 4 2 3 13 5 3 11 3 3 2 2 4 1 3 1 4 1 1 2 13 5 3 1 2 3 0 4 3 3 4 2 3 4 3 1 2 2 6 11 6 2 0 1 0 1 3 0 1 0 1 0 0 7 3 3 0 1 10 0 3 7 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
