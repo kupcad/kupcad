@@ -408,15 +408,19 @@ test "Fuzz solids: membership finds a union of the right volume misplaced, which
 /// section refused cleanly or not, as the boolean (`clean`). The class of finds where the
 /// section and the classification read a body's boundary differently (ei, el, en, ep;
 /// the audit of classification and section, 2026-11-28), on every result the matrix makes.
-pub fn expectSliced(solid: *const Body, diag: *Diagnostics) !void {
+/// Its findings are its own: a refusal of the section left in the caller's diagnostics
+/// named a later operation's refusal (the matrix reads the first finding).
+pub fn expectSliced(solid: *const Body) !void {
     if (solid.isEmpty()) return;
-    var index = try FaceIndex.build(testing.allocator, solid, diag);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var index = try FaceIndex.build(testing.allocator, solid, &diag);
     defer index.deinit(testing.allocator);
     const z = index.box.min[2] + SLICE_AT * index.box.size()[2];
-    var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| return clean(err);
+    var cut = section.slice(testing.allocator, solid, z, .{}, &diag) catch |err| return clean(err);
     defer cut.deinit();
     errdefer std.debug.print("the section at {d}\n", .{z});
-    try expectSliceHolds(solid, &index, &cut, z, true, diag);
+    try expectSliceHolds(solid, &index, &cut, z, true, &diag);
 }
 
 /// Section `cut` of `solid` (its faces in `index`) at height `z` holds each of `SLICE_POINTS` points over the

@@ -400,7 +400,7 @@ fn operate(a: *const Body, b: *const Body, thin: bool, results: *[3]Body, made: 
         gaps[made.* - 1] = report.max_gap;
         try oracle.expectSolid(&results[made.* - 1], diag);
         try helpers.expectReportFits(&report, a, b, &results[made.* - 1], op);
-        try oracle.expectSliced(&results[made.* - 1], diag);
+        try oracle.expectSliced(&results[made.* - 1]);
     }
     try oracle.expectStep(a, b, results, shifts, gaps, diag);
     return null;
