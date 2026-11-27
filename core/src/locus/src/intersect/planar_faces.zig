@@ -566,16 +566,42 @@ pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64
 }
 
 /// Whether `p`, reaching `gap` beyond the tolerance (the vertex `vertex`, when it is one),
-/// lies in both faces, their boundaries included.
+/// lies in both faces, their boundaries included: placed in both before either decides
+/// (as the paves' `placeInBoth`), outside either settling it, else at one's boundary to
+/// rounding refused (`place`'s refusal). Placed in the first face alone first, a gap's
+/// middle the tolerance to rounding from the first face's boundary was refused while it
+/// lay clearly outside the second, and the faces the other way round shared their pieces
+/// (the audit of order and frame, 2026-11-27: the overlap rules take two faces of a body in
+/// their index order, which the operands' order sets for a boolean's result).
 fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, p: Vec3, gap: f64, vertex: VertexOf, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    if (try placeVertex(a, fa, p, gap, vertex, tol, diag) == .outside) return false;
-    return try placeVertex(b, fb, p, gap, vertex, tol, diag) != .outside;
+    const in_a = try placedVertex(a, fa, p, gap, vertex, tol, diag);
+    const in_b = try placedVertex(b, fb, p, gap, vertex, tol, diag);
+    if (in_a == .outside or in_b == .outside) return false;
+    _ = try settled(in_a, fa, diag);
+    _ = try settled(in_b, fb, diag);
+    return true;
 }
 
 /// `place`, a vertex of the face (`vertex`, `VertexOf.bounds`) on its boundary by record.
 pub fn placeVertex(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, vertex: VertexOf, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
+    return settled(try placedVertex(body, f, p, gap, vertex, tol, diag), f, diag);
+}
+
+/// `placeVertex`'s decision, at the boundary to rounding answered, not refused (`placed`).
+fn placedVertex(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, vertex: VertexOf, tol: Tolerance, diag: *Diagnostics) Error!in_face.Placed {
     if (try vertex.bounds(body, f, diag)) return .boundary;
-    return place(body, f, p, gap, tol, diag);
+    return placed(body, f, p, gap, tol, diag);
+}
+
+/// A place in face `f` (`placed`'s), at its boundary to rounding refused (`at_tolerance`,
+/// naming the face; D27).
+fn settled(at: in_face.Placed, f: types.FaceIndex, diag: *Diagnostics) Error!in_face.Place {
+    return switch (at) {
+        .inside => .inside,
+        .outside => .outside,
+        .boundary => .boundary,
+        .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a point on a face's boundary or not", .measured = c.measured, .threshold = c.limit }),
+    };
 }
 
 /// Where `p` (near face `f`'s plane), reaching `gap` beyond the tolerance (a vertex's gap,
@@ -586,12 +612,7 @@ pub fn placeVertex(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, ver
 /// rounded into the band, read as overlapping itself where in place it did not, and was
 /// called invalid (the solids oracle's moved results on 9015ab26, dt and dy, 2026-11-26).
 pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
-    return switch (try placed(body, f, p, gap, tol, diag)) {
-        .inside => .inside,
-        .outside => .outside,
-        .boundary => .boundary,
-        .at_tolerance => |c| diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a point on a face's boundary or not", .measured = c.measured, .threshold = c.limit }),
-    };
+    return settled(try placed(body, f, p, gap, tol, diag), f, diag);
 }
 
 /// `place`'s decision, at the boundary to rounding answered (`at_tolerance`), not refused:

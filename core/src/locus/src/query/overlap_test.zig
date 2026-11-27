@@ -26,6 +26,13 @@ const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
 const tol = Tolerance.fromZone(1e-5);
+/// Two sheets whose faces cross along the x axis (the audit of order and frame,
+/// 2026-11-27): one in z = 0, a square with a V notch from its top whose apex lies
+/// `NOTCH_APEX` intersection tolerances over the axis; one in y = 0, drawn in (x, z), a
+/// rectangle with a notch up from its bottom over x 4..6, so the gap of the faces' line
+/// between that notch's sides lies outside it, its middle under the V's apex.
+const NOTCH_APEX = [_]f64{ 1, 0.5, 1.5 };
+const NOTCH_SHIFTS = [_]Vec3{ vec.ZERO3, .{ 1e5, -2e5, 3e5 } };
 /// A corner of an extruded sheet where a narrow side face folds back over its long
 /// neighbour within the zone of their shared edge: the sheet's outline, the long side
 /// first, the narrow one second, its far end 1.9e-5 over the long side's line (the
@@ -471,5 +478,55 @@ test "overlap: a vertex its gap covers at its edges' lines to rounding is on its
             defer moved.deinit();
             try expectSound(&moved);
         }
+    };
+}
+
+/// The sheet in z = 0 with the V notch whose apex is `apex` over the x axis, and the sheet
+/// in y = 0 with the notch up from its bottom (`NOTCH_APEX`), each mirrored in x = 0 when
+/// `mirrored` and moved by `shift`.
+fn notchedSheets(apex: f64, mirrored: bool, shift: Vec3, diag: *Diagnostics) ![2]Body {
+    const level = [_]vec.Vec2{ .{ 0, -5 }, .{ 10, -5 }, .{ 10, 5 }, .{ 5.5, 5 }, .{ 5, apex }, .{ 4.5, 5 }, .{ 0, 5 } };
+    const upright = [_]vec.Vec2{ .{ -1, -1 }, .{ 4, -1 }, .{ 4, 0.5 }, .{ 6, 0.5 }, .{ 6, -1 }, .{ 11, -1 }, .{ 11, 1 }, .{ -1, 1 } };
+    // (x, y, 0) to (x, 0, y), exactly; then the mirror and the move
+    const stand: mat.Affine = .{ .linear = .{ 1, 0, 0, 0, 0, 1, 0, 1, 0 } };
+    var place = mat.Affine.translate(shift);
+    if (mirrored) place = place.compose(&mat.Affine.mirror(vec.X3));
+    var sheets: [2]Body = undefined;
+    for ([2][]const vec.Vec2{ &level, &upright }, [2]mat.Affine{ place, place.compose(&stand) }, &sheets, 0..) |points, map, *sheet, k| {
+        var drawn = try primitives.polygon(testing.allocator, tol, points, diag);
+        defer drawn.deinit();
+        sheet.* = transform.transform(testing.allocator, &drawn, &map, .{}, diag) catch |err| {
+            if (k == 1) sheets[0].deinit();
+            return err;
+        };
+    }
+    return sheets;
+}
+
+test "overlap: two faces' shared pieces are found alike whichever face comes first, a gap's middle at one's boundary to rounding and outside the other" {
+    // The audit of order and frame, 2026-11-27: `planar_faces.meet` judged a gap between
+    // two marks on the faces' line by its middle in the first face, then in the second;
+    // the middle the tolerance to rounding from the first's boundary (the V's apex) was
+    // refused (`at_tolerance`) though it lies clearly outside the second (in its notch),
+    // which settles it whatever the first says, and the other way round the pieces were
+    // found. Both faces are placed before either decides, as the paves' `placeInBoth`
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const planar_faces = @import("../intersect/planar_faces.zig");
+    const f = types.FaceIndex.of(0);
+    for (NOTCH_APEX) |apex| for ([_]bool{ false, true }) |mirrored| for (NOTCH_SHIFTS) |shift| {
+        errdefer std.debug.print("apex {d} tolerances over the line, mirrored {}, moved {any}\n", .{ apex, mirrored, shift });
+        var sheets = try notchedSheets(apex * tol.xsect, mirrored, shift, &diag);
+        defer for (&sheets) |*sheet| sheet.deinit();
+        var counts: [2]usize = undefined;
+        for ([2][2]*const Body{ .{ &sheets[0], &sheets[1] }, .{ &sheets[1], &sheets[0] } }, &counts) |order, *count| {
+            var pieces: std.ArrayList(planar_faces.Piece) = .empty;
+            defer pieces.deinit(testing.allocator);
+            const relation = try planar_faces.meet(testing.allocator, order[0], f, order[1], f, tol, &pieces, &diag);
+            try testing.expect(relation == .crossing);
+            count.* = pieces.items.len;
+        }
+        try testing.expectEqual(counts[0], counts[1]);
+        try testing.expectEqual(@as(usize, 2), counts[0]);
     };
 }
