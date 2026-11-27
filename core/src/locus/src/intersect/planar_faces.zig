@@ -618,13 +618,19 @@ pub fn placed(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tol
 /// bottom the tolerance over another's top to rounding once moved far lay in its plane,
 /// and the two solids' faces "lay on each other" (`faces_intersect`; dt, dy).
 pub fn onPlaneOf(body: *const Body, g: types.FaceIndex, plane: Plane, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    const decide: incidence.Decider = .{ .tol = tol, .scale = @max(canonical.magnitude(&.{p}), @abs(plane.d)) };
-    const height = plane.height(p);
-    return switch (decide.onPlane(height, gap)) {
+    return switch (planeVerdict(plane, p, gap, tol)) {
         .same => true,
         .apart => false,
         .at_tolerance => |c| if (try place(body, g, p, gap, tol, diag) == .outside) false else diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(g)), .label = "a point on a face's plane or not", .measured = c.measured, .threshold = c.limit }),
     };
+}
+
+/// `onPlaneOf`'s height decision, at its reach to rounding answered (`at_tolerance`), not
+/// refused: for a probe, a point the caller chose (`query/overlap.zig`'s `onShell`), which
+/// says nothing there, as `placed` answers for `place`.
+pub fn planeVerdict(plane: Plane, p: Vec3, gap: f64, tol: Tolerance) canonical.Verdict {
+    const decide: incidence.Decider = .{ .tol = tol, .scale = @max(canonical.magnitude(&.{p}), @abs(plane.d)) };
+    return decide.onPlane(plane.height(p), gap);
 }
 
 /// Face `f`'s loops (planar, lines and arcs) as edges of the overlay's current input, in

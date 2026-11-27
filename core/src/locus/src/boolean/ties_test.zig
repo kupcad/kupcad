@@ -58,6 +58,23 @@ const BE_HULL = [_]Vec3{ .{ 3, 1, 4 }, .{ 3, 3, 2 }, .{ 0, 3, 0 }, .{ 4, 4, 1 },
 const BE_HULL_NUDGE: Vec3 = .{ -2.000000005684342e-5, -1e-5, -1.9999999943156583e-5 };
 const BE_BOX = [2]Vec3{ .{ -1.748, 2.00002, -1e-5 }, .{ 0.0020299999999999745, 3.00002, 0.99999 } };
 
+/// The solids of the tests of a shell's probe point at a face's reach to rounding (the
+/// audit of order and frame, 2026-11-27; the edge matrix's families "ridge in a face" and
+/// "solids touching along a line" run mirrored and swapped): the result's overlap rules
+/// count each shell at a point of one of its faces, the centroid of a triangle of it, which
+/// a mirror's triangulation or the other operand order's numbering moves. A plate (zone
+/// `PROBE_ZONE`) and a wedge on its face y = 0, turned `PROBE_RIDGE_TURNS` about its ridge
+/// and lifted `PROBE_RIDGE_LIFTS` intersection tolerances off the face; two boxes touching
+/// along x = y = 1 and a box turned 3π/4 about that line, `PROBE_CUTTER_OFFS` tolerances
+/// off it, at the zones `PROBE_CUTTER_ZONES`.
+const PROBE_ZONE: f64 = 1e-5;
+const PROBE_PLATE = [2]Vec3{ .{ -5, -2, -1 }, .{ 5, 0, 3 } };
+const PROBE_RIDGE_TURNS = [_]f64{ 1e-5, -1e-5 };
+const PROBE_RIDGE_LIFTS = [_]f64{ 0, 0.5 };
+const PROBE_CUTTER_TURN: f64 = 3.0 * std.math.pi / 4.0;
+const PROBE_CUTTER_OFFS = [_]f64{ 1.5, -1.5 };
+const PROBE_CUTTER_ZONES = [_]f64{ 1e-5, 1e-4 };
+
 /// How far the box's side (x) and its bottom edge's line (y) are moved in the family about
 /// be: the two ends across the faces' line 3.2e-5 apart in the find, closer and farther by
 /// half a zone and a zone.
@@ -887,4 +904,82 @@ test "ties: a hull's face at the angular tolerance to a box's top, turned from i
     // farther out (2e-9 at 3e5)
     try expectAlikeSwappedAndMovedBy(&joined, &cut, &MOVES);
     try expectAlikeMirrored(&joined, &cut);
+}
+
+/// Each operation of `a` and `b` mirrored in each of `MIRROR_NORMALS` as it is in place:
+/// made alike, point for point, mirrored back, or refused with one code (`expectAlikeMirrored`
+/// with the union too). Every case that differs is printed before the test fails.
+fn expectEveryOpAlikeMirrored(a: *const Body, b: *const Body) !void {
+    var differing: usize = 0;
+    for (OPS) |op| {
+        const want = try Outcome.of(a, b, op, null);
+        defer want.deinit();
+        for (MIRROR_NORMALS) |normal| {
+            var ma = try helpers.mirrored(a, normal);
+            defer ma.deinit();
+            var mb = try helpers.mirrored(b, normal);
+            defer mb.deinit();
+            const got = try Outcome.of(&ma, &mb, op, mat.Affine.mirror(normal));
+            defer got.deinit();
+            if (want.alike(got)) continue;
+            std.debug.print("{s}, mirrored in {any}: want {f}, got {f}\n", .{ @tagName(op), normal, want, got });
+            differing += 1;
+        }
+    }
+    try testing.expectEqual(0, differing);
+}
+
+/// Two boxes touching along the line x = y = 1, z 0..2, at `zone`, united: one body of two
+/// solids (the edge matrix's `touchingPair`).
+fn probeTouchingPair(zone: f64) !Body {
+    var left = try helpers.boxAt(Tolerance.fromZone(zone), .{ 0, 0, 0 }, .{ 1, 1, 2 });
+    defer left.deinit();
+    var right = try helpers.boxAt(Tolerance.fromZone(zone), .{ 1, 1, 0 }, .{ 2, 2, 2 });
+    defer right.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return pipeline.boolean(testing.allocator, &left, &right, .@"union", .{}, &diag, null);
+}
+
+/// A box whose face lies on y = 1 + `off`, turned by `PROBE_CUTTER_TURN` about the line
+/// x = y = 1 (the edge matrix's `turnedCutter`).
+fn probeCutter(zone: f64, off: f64) !Body {
+    var b = try helpers.boxAt(Tolerance.fromZone(zone), .{ -2, -0.5 + off, -0.5 }, .{ 4, 1 + off, 2.5 });
+    defer b.deinit();
+    return helpers.turned(&b, .{ 1, 1, 0 }, vec.Z3, PROBE_CUTTER_TURN);
+}
+
+test "ties: a shell's probe point at a face's reach to rounding says nothing, a wedge on a plate made alike mirrored and swapped" {
+    // The edge matrix run mirrored (the audit of order and frame, 2026-11-27): the union of
+    // a plate and a wedge turned 1e-5 on its face was made in place and refused mirrored
+    // (`at_tolerance`, "a point on a face's plane or not"): the result's overlap rules count
+    // the wedge's shell at the centroid of a triangle of its first face, which the mirror's
+    // triangulation put 2e-5 to rounding off the plate's face
+    const x = Tolerance.fromZone(PROBE_ZONE).xsect;
+    var plate = try helpers.boxAt(Tolerance.fromZone(PROBE_ZONE), PROBE_PLATE[0], PROBE_PLATE[1]);
+    defer plate.deinit();
+    for (PROBE_RIDGE_TURNS) |turn| for (PROBE_RIDGE_LIFTS) |lift| for ([_]bool{ false, true }) |drawn_mirrored| {
+        errdefer std.debug.print("the wedge turned {e}, lifted {d} tolerances, drawn mirrored {}\n", .{ turn, lift, drawn_mirrored });
+        var wedge = try degeneracy.ridgePrism(&degeneracy.RIDGE_WEDGE, turn, drawn_mirrored, lift * x);
+        defer wedge.deinit();
+        try expectEveryOpAlikeMirrored(&plate, &wedge);
+        try expectAlikeSwappedAndMovedBy(&plate, &wedge, &FAR_MOVES);
+    };
+}
+
+test "ties: a shell's probe point at a face's boundary to rounding says nothing, two solids touching along a line cut alike swapped and mirrored" {
+    // The edge matrix run swapped (the audit of order and frame, 2026-11-27): two boxes
+    // touching along a line, intersected with a box turned 3π/4 about it 1.5 tolerances
+    // off, were refused one way round (`at_tolerance`, "a point on a face's boundary or
+    // not") and made the other: the shell counted first, and its face's centroid, follow
+    // the operands' order
+    for (PROBE_CUTTER_ZONES) |zone| for (PROBE_CUTTER_OFFS) |off| {
+        errdefer std.debug.print("zone {e}, the cutter {d} tolerances off\n", .{ zone, off });
+        var pair = try probeTouchingPair(PROBE_ZONE);
+        defer pair.deinit();
+        var cutter = try probeCutter(zone, off * Tolerance.merge(Tolerance.fromZone(PROBE_ZONE), Tolerance.fromZone(zone)).xsect);
+        defer cutter.deinit();
+        try expectAlikeSwappedAndMovedBy(&pair, &cutter, &FAR_MOVES);
+        try expectEveryOpAlikeMirrored(&pair, &cutter);
+    };
 }

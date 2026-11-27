@@ -696,17 +696,24 @@ fn shellCounts(allocator: std.mem.Allocator, body: *const Body, options: diagnos
     }
 }
 
-/// Whether `p` lies on shell `t` (planar faces): within the intersection tolerance of one
-/// of its faces' planes (`planar_faces.onPlaneOf`, refused at it to rounding), its foot
-/// there in the face or on its boundary (`planar_faces.place`, the paves' decision). The
-/// winding number of `t` about such a point is no count of its material.
+/// Whether probe `p` lies on shell `t` (planar faces), or may: within the intersection
+/// tolerance of one of its faces' planes (`planar_faces.planeVerdict`), its foot there in
+/// the face or on its boundary (`planar_faces.placed`, the paves' decision), or either at
+/// its limit to rounding. The winding number of `t` about such a point is no count of its
+/// material, and a probe at D27's band says nothing either (`planar_faces.placed`): the
+/// next face's point is asked. The probe is a triangle's centroid, which a mirror's
+/// triangulation and the other order's numbering move; refused at the band, a plate united
+/// with a wedge on its face was made in place and refused mirrored ("a point on a face's
+/// plane or not"), and two solids touching along a line cut by a box were made one way
+/// round and refused the other ("a point on a face's boundary or not"; the edge matrix run
+/// mirrored and swapped, the audit of order and frame, 2026-11-27).
 fn onShell(body: *const Body, t: types.ShellIndex, p: Vec3, tol: Tolerance, diag: *Diagnostics) Error!bool {
     var faces = traverse.Faces.init(body, t);
     while (faces.next() catch return corrupt(diag)) |g| {
         const frame = planar_faces.frameOf(body, g) orelse continue;
-        if (!try planar_faces.onPlaneOf(body, g, planar_faces.planeOf(frame), p, 0, tol, diag)) continue;
+        if (planar_faces.planeVerdict(planar_faces.planeOf(frame), p, 0, tol) == .apart) continue;
         const height = vec.dot(vec.sub(p, frame.origin), frame.z);
-        if (try planar_faces.place(body, g, vec.addScaled(p, frame.z, -height), 0, tol, diag) != .outside) return true;
+        if (try planar_faces.placed(body, g, vec.addScaled(p, frame.z, -height), 0, tol, diag) != .outside) return true;
     }
     return false;
 }
