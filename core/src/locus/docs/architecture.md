@@ -1519,7 +1519,12 @@ point to its foot on one of the six nearest faces (along that face's normal, met
 then along a table of twelve skewed directions, the nearest meeting deciding when it is
 clean and alone in its place (`raycast.onePlace`, as `cast` groups them), a ray meeting
 nothing being outside, and a refusal with a finding when every ray met
-an edge or a tangency first. `distance.zig`: branch and bound over the two meshes'
+an edge or a tangency first. A ray that comes within the zone of an edge before its
+meeting has met that edge (`passesEdge`, as a point that near is on the boundary): a
+boolean's edge kept off its faces' surfaces (D28) leaves a crack between them as wide as
+its gap, which a ray meeting neither surface slips through (a wedge 2e-5 thick at its far
+side, a point past its thin edge between the planes classified inside, find ep,
+2026-11-27). `distance.zig`: branch and bound over the two meshes'
 triangle BVHs (RTCD's triangle and segment distances) keeps every face pair within the
 meshes' deviation (twice `chordBow` of the longest triangle side, per mesh) of the
 nearest, and each is polished on the exact faces by alternating projection (a face's

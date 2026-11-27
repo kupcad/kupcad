@@ -122,6 +122,25 @@ const EL_SECOND_XSECTS: f64 = 2.5;
 const EL_SECOND_NUDGE: vec.Vec3 = .{ 1.9999999943156583e-5, -2.000000005684342e-5, 0 };
 const EL_SECOND_Z_AT_TOP: f64 = 2.6e-5;
 const EL_UNDER_TOP = [_]f64{ 2e-6, 6e-6, 1e-5, 1.5e-5 };
+/// Find ep (the locus session on 621b9ee0), as the solids fuzzer drew it: the box over
+/// `EP_BOX` turned by each of `EP_TURNS` (the find's 1e-6 first) about x through the grid's
+/// middle, moved `EP_BOX_MOVE` and nudged `EP_BOX_NUDGE`; the plate over `EP_PLATE` turned
+/// `EP_PLATE_TURN` about z through the middle, scaled `EP_PLATE_SCALE`, moved
+/// `EP_PLATE_MOVE` and nudged `EP_PLATE_NUDGE`, lifted by each of `EP_LIFTS` (the find's 0
+/// first). Their intersection is a wedge between the box's top and the plate's bottom,
+/// about 2e-5 apart, their faces meeting by the tolerance at the plate's side edge; the
+/// probe `EP_PROBE` lies past that edge between the two planes.
+const EP_BOX = [2]vec.Vec3{ .{ 1, 1, 3 }, .{ 3, 4, 4 } };
+const EP_TURNS = [_]f64{ 1e-6, 5e-7, 2e-6 };
+const EP_BOX_MOVE: vec.Vec3 = .{ 0, -0.5, 0 };
+const EP_BOX_NUDGE: vec.Vec3 = .{ -2.0000000056843448e-5, 0, 0 };
+const EP_PLATE = [2]vec.Vec3{ .{ -48, 2, 2 }, .{ 102, 102, 3 } };
+const EP_PLATE_TURN: f64 = 0.3;
+const EP_PLATE_SCALE: vec.Vec3 = .{ 0.5, 0.5, 2 };
+const EP_PLATE_MOVE: vec.Vec3 = .{ 1, 0, 0 };
+const EP_PLATE_NUDGE: vec.Vec3 = .{ 0, 0, -2e-5 };
+const EP_LIFTS = [_]f64{ 0, 1e-6, -1e-6, 5e-6, -5e-6 };
+const EP_PROBE: vec.Vec3 = .{ 1.5999799999957902, 0.8030311810994064, 3.9999881399996298 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2023,6 +2042,64 @@ test "Fuzz solids: a plate's face put on the plane of its coplanar group off its
     };
 }
 
+test "Fuzz solids: a point past a wedge's thin edge, between its faces' planes, is classified as the section holds it, turned, mirrored, far and either way round" {
+    // The locus session's find ep on 621b9ee0, as the fuzzer drew it: a box turned 1e-6
+    // about x, intersected with a plate turned 0.3 about z, the plate's bottom about 2e-5
+    // under the box's top. The result is a wedge, the two faces meeting by the tolerance at
+    // the plate's side edge, their planes still 1.99e-5 apart there. A point past that edge
+    // (0.07 off the wedge), between the planes, was classified inside: its ray along the
+    // far side's normal ran between the planes, through the crack at the edge, to the far
+    // side, met from inside; the section held it outside. A ray within the zone of an edge
+    // has met the edge and says nothing (`point_in_body.passesEdge`). The box turned
+    // `EP_TURNS`, the plate lifted `EP_LIFTS`, moved by each of the moves, either way round
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box_shape = try boxFrom(EP_BOX[0], EP_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    var plate_shape = try boxFrom(EP_PLATE[0], EP_PLATE[1], tol, &diag);
+    defer plate_shape.deinit();
+    for (EP_TURNS) |turn| for (EP_LIFTS) |lift| for (moves, 0..) |move, m| {
+        errdefer std.debug.print("the box turned {e}, the plate lifted {e}, move {d}\n", .{ turn, lift, m });
+        const box_place = Affine.translate(EP_BOX_NUDGE).compose(&Affine.translate(EP_BOX_MOVE).compose(&Affine.rotateAbout(middle, vec.X3, turn)));
+        const plate_place = Affine.translate(vec.add(EP_PLATE_NUDGE, .{ 0, 0, lift })).compose(&Affine.translate(EP_PLATE_MOVE).compose(&Affine.scaleBy(EP_PLATE_SCALE).compose(&Affine.rotateAbout(middle, vec.Z3, EP_PLATE_TURN))));
+        var placed = [2]Body{ try transform.transform(testing.allocator, &box_shape, &box_place, .{}, &diag), try transform.transform(testing.allocator, &plate_shape, &plate_place, .{}, &diag) };
+        defer for (&placed) |*body| body.deinit();
+        var operands = [2]Body{ try transform.transform(testing.allocator, &placed[0], &move, .{}, &diag), try transform.transform(testing.allocator, &placed[1], &move, .{}, &diag) };
+        defer for (&operands) |*body| body.deinit();
+        try expectSlicedEitherWay(&operands, .intersection, 0);
+        for ([2][2]*const Body{ .{ &operands[0], &operands[1] }, .{ &operands[1], &operands[0] } }) |pair| {
+            var result = solid_boolean.pipeline.boolean(testing.allocator, pair[0], pair[1], .intersection, .{}, &diag, null) catch |err| {
+                try oracle.clean(err);
+                continue;
+            };
+            defer result.deinit();
+            try expectProbeSliced(&result, move.point(EP_PROBE), &diag);
+        }
+    };
+}
+
+/// `probe` classified in `solid` as far as it knows its boundary (`knownTo`) as the
+/// section at its height holds it, unless on the boundary; a refusal as `expectSliced`'s.
+fn expectProbeSliced(solid: *const Body, probe: vec.Vec3, diag: *Diagnostics) !void {
+    var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
+    defer index.deinit(testing.allocator);
+    const place = solid_query.point_in_body.classifyWithin(testing.allocator, solid, &index, probe, knownTo(solid), .{}, diag) catch |err| return sliceRefused(err, true);
+    if (place == .boundary) return;
+    var cut = section.slice(testing.allocator, solid, probe[2], .{}, diag) catch |err| return sliceRefused(err, true);
+    defer cut.deinit();
+    errdefer std.debug.print("the probe {any}: the solid says {t}\n", .{ probe, place });
+    try testing.expectEqual(place == .inside, try query.contains(&cut, .{ probe[0], probe[1] }, 0, diag));
+}
+
 /// `op` of `operands` either way round: refused alike both ways for the same finding (a
 /// refusal by design: `oracle.clean`), or made sound both ways, its band (`knownTo`) at
 /// least the zone and `off` (an offset by design, of an edge off a face it bounds), and
@@ -2920,6 +2997,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // `at_tolerance`, made in place, where the triangulation's tied samples came in the
         // other order (pipeline.lyingOn: such a sample says nothing, planar_faces.placed)
         "solids 0 1 2 3 4 0 4 3 3 8 5 6 4 3 1 3 0 4 0 2 4 2 3 4 4 0 1 1 6 4 11 9 0 3 1 6 2 1 4 4 3 1 2 4 2 2 2 4 1 3 4 4 1 0 2 0 0 1 0 4 8 5 9 1 1 1 8 4 4 1 3 2 1 4 4 4 4 2 1 1 1 4 2 4 4 0 0 2 0 0 3 2 0 2 1 0 6 7 -2 6 2",
+        // The locus session on 621b9ee0 (ep): box ∩ plate, a wedge 2e-5 thick at its far
+        // side, a point past its thin edge between the faces' planes classified inside by a
+        // ray through the crack at that edge, the section holding it outside
+        // (point_in_body.passesEdge: a ray within the zone of an edge has met it)
+        "solids 0 1 3 1 4 3 4 0 0 7 1 12 -1 0 15 1 2 2 1 4 2 4 2 3 0 2 3 0 0 0 2 2 0 8 7 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
