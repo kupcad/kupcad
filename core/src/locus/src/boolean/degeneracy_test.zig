@@ -89,6 +89,10 @@ const CARRIED_SIDE: f64 = 1e-4;
 /// zone from the edge's line, within the two gaps; and past them.
 const CARRIED_DEPTHS = [_]f64{ 3.35e-4, 3.6e-4 };
 const CARRIED_PAST: f64 = 3.9e-4;
+/// The tilted tops' tilts, their corners' gaps and their lifts at the middle.
+const CARRIED_TILTS = [_]f64{ 1.2e-4, 1.4e-4 };
+const CARRIED_TOP_GAPS = [_]f64{ 5e-5, 8e-5, 1e-4 };
+const CARRIED_LIFTS = [_]f64{ 0, 5e-5 };
 /// The chain of the guard test (`carriedChain`), and how far its gaps moved 3e5 out may
 /// differ from in place: twice the rounding of a distance there (D27's band at the
 /// chain's farthest coordinate, which a needed gap covers: the band in place and the
@@ -6617,6 +6621,56 @@ test "degeneracy: a corner with a gap put on an edge between gapped ends, past t
         }
     }
     try testing.expectEqual(Outcome{ .refused = .gap_too_large }, past[0][1].?);
+}
+
+/// A box (1, 1, 0.5)–(3, 3, ~1) at `CARRIED_TOL` whose top is tilted `tilt` about y
+/// through height 1 + `lift` at x = 2, its top's corners `gap` over their lines with that
+/// gap (a chain's merged vertices).
+fn tiltedGappedTop(tilt: f64, gap: f64, lift: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const points = [_]Vec3{ .{ 1, 1, 0.5 }, .{ 3, 1, 0.5 }, .{ 1, 3, 0.5 }, .{ 3, 3, 0.5 }, .{ 1, 1, 1 + lift - tilt }, .{ 3, 1, 1 + lift + tilt }, .{ 1, 3, 1 + lift - tilt }, .{ 3, 3, 1 + lift + tilt } };
+    var body = try @import("../construct/hull.zig").hull(testing.allocator, CARRIED_TOL, &points, &diag);
+    errdefer body.deinit();
+    for (body.vertices.items) |*v| {
+        const p = &body.geometry.points.items[@backingInt(v.point)];
+        if (p[2] < 0.9) continue;
+        p[2] += gap;
+        v.gap = gap;
+    }
+    var report = try check.run(testing.allocator, &body, .global);
+    defer report.deinit(testing.allocator);
+    try testing.expect(report.ok());
+    return body;
+}
+
+test "degeneracy: a tilted top whose corners carry gaps, in another top's plane by their reach, takes a plane that holds the group by the same reach, turned, mirrored, far and either way round" {
+    // Audit B's B22 (Leo 2026-11-28, audit step D): the paves found two faces in one plane
+    // by their corners' reach (the tolerance and their gaps); the group's plane was then
+    // chosen holding every point within the tolerance alone. A box's top tilted 1.2e-4 or
+    // 1.4e-4 rad about y over a plate's top (zone 1e-4), its corners 5e-5 to 1e-4 over
+    // their lines with those gaps: in the plate's plane by the paves, in neither plane by
+    // the tolerance alone (the corners past it over the plate's, the plate's far corners
+    // past it off the tilted one), every operation refused `gap_too_large` or
+    // `at_tolerance`. Each point is held within its reach: made, sound
+    var plate = try helpers.boxAt(CARRIED_TOL, .{ 0, 0, 0 }, .{ 4, 4, 1 });
+    defer plate.deinit();
+    for (carriedMoves(), 0..) |move, m| {
+        var moved_plate = try carriedMoved(&plate, &move);
+        defer moved_plate.deinit();
+        for (CARRIED_TILTS) |tilt| for (CARRIED_TOP_GAPS) |gap| for (CARRIED_LIFTS) |lift| {
+            errdefer std.debug.print("move {d}, tilt {e}, gap {e}, lift {e}\n", .{ m, tilt, gap, lift });
+            var top = try tiltedGappedTop(tilt, gap, lift);
+            defer top.deinit();
+            var moved_top = try carriedMoved(&top, &move);
+            defer moved_top.deinit();
+            for ([2][2]*const Body{ .{ &moved_plate, &moved_top }, .{ &moved_top, &moved_plate } }) |operands| for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+                errdefer std.debug.print("{t}\n", .{op});
+                var made = try sound(operands[0], operands[1], op);
+                made.deinit();
+            };
+        };
+    }
 }
 
 /// A step of the chain of `carriedChain`: a union with `carriedApex` at `y`, or a

@@ -1096,11 +1096,14 @@ const Provenance = struct {
     /// The records copied into the result, by source.
     planes: std.AutoHashMapUnmanaged(Copy, geometry.SurfaceRef) = .empty,
     lines: std.AutoHashMapUnmanaged(Copy, geometry.CurveRef) = .empty,
-    /// Scratch: a face's points.
-    points: std.ArrayList(Vec3) = .empty,
+    /// Scratch: a face's points, each with how far it reaches (`Reaching`).
+    points: std.ArrayList(Reaching) = .empty,
     merged: std.ArrayList(u32) = .empty,
 
     const Face = struct { operand: u1, face: u32 };
+    /// A point of a face and its gap: a plane holds it within the tolerance and that gap,
+    /// as the paves found it in the plane (`incidence.reach`).
+    const Reaching = struct { at: Vec3, gap: f64 };
     const Source = union(enum) { edge: struct { operand: u1, edge: u32 }, section: u32 };
     /// A record by where it comes from: an operand's (0, 1) or a section line (2), and its
     /// index there.
@@ -1289,7 +1292,12 @@ const Provenance = struct {
     /// the farthest point alone the two tied, and turning the operands whole turned the
     /// tie. A face's points: its corners,
     /// the merged vertices on it and the ends of its kept fragments' pieces on their lines,
-    /// since each piece keeps its source's line (the pairs were found by one face lying in
+    /// since each piece keeps its source's line, each held within its reach, the tolerance
+    /// and its gap, as the paves found the faces in one plane (`facePoints`; Leo
+    /// 2026-11-28, audit B's B22: within the tolerance alone, a box's top tilted 1.2e-4
+    /// rad, its corners with gaps of 1e-4 over its lines, was in another box's top plane
+    /// by the paves and in no plane of the group here, refused `gap_too_large`; a gap the
+    /// paves accepted is carried, not measured again) (the pairs were found by one face lying in
     /// the other's plane, which a face a hair off parallel and larger need not; and a
     /// plate's bottom 1e-5 under another's, given its plane, left a hull's edge lying on
     /// the upper one 2.4e-5 off, past the tolerance the checker holds an edge to: the 10K
@@ -1339,7 +1347,7 @@ const Provenance = struct {
     fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Face {
         const p = self.paves;
         // Every face's points, measured against each candidate's plane
-        var points: std.ArrayList(Vec3) = .empty;
+        var points: std.ArrayList(Reaching) = .empty;
         defer points.deinit(self.allocator);
         for (group) |member| {
             try self.facePoints(nodeFace(member, n_a), diag);
@@ -1349,13 +1357,14 @@ const Provenance = struct {
         var holding: std.ArrayList(Candidate) = .empty;
         defer holding.deinit(self.allocator);
         var at: ?struct { face: Face, comparison: canonical.Comparison } = null;
-        var scale = canonical.magnitude(points.items);
+        var scale: f64 = 0;
+        for (points.items) |pt| scale = @max(scale, canonical.magnitude(&.{pt.at}));
         for (group) |candidate| {
             const c = nodeFace(candidate, n_a);
             const candidate_plane = planeOf(p.operands[c.operand], c.face);
             scale = @max(scale, canonical.magnitude(&.{candidate_plane.frame.origin}));
             var tally: canonical.Tally = .{};
-            for (points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt)), p.tol.xsect, canonical.magnitude(&.{ pt, candidate_plane.frame.origin })));
+            for (points.items) |pt| tally.add(canonical.Comparison.distance(@abs(candidate_plane.height(pt.at)), incidence.reach(p.tol, pt.gap), canonical.magnitude(&.{ pt.at, candidate_plane.frame.origin })));
             switch (tally.verdict()) {
                 .same => try holding.append(self.allocator, .{ .face = c, .plane = candidate_plane, .moved = self.moved(group, n_a, candidate_plane) }),
                 .at_tolerance => |comparison| at = at orelse .{ .face = c, .comparison = comparison },
@@ -1368,7 +1377,7 @@ const Provenance = struct {
         var least = std.math.inf(f64);
         for (holding.items) |candidate| least = @min(least, candidate.moved);
         var centroid = vec.ZERO3;
-        for (points.items) |pt| centroid = vec.add(centroid, pt);
+        for (points.items) |pt| centroid = vec.add(centroid, pt.at);
         if (points.items.len > 0) centroid = vec.scale(centroid, 1 / @as(f64, @floatFromInt(points.items.len)));
         const Order = struct {
             least: f64,
@@ -1469,8 +1478,10 @@ const Provenance = struct {
         return try in_face.classify(body, f, q, in_face.uvOf(body, f, q), 0, diag) != .outside;
     }
 
-    /// Face `g`'s corners, the merged vertices on it and where its kept fragments' pieces
-    /// end on their lines, into `points`.
+    /// Face `g`'s corners and the merged vertices on it, each its merged vertex with its gap
+    /// (as the paves found the face in a plane, `Paves.onPlane`), and where its kept
+    /// fragments' pieces end on their lines, each with the piece's merged ends' larger gap
+    /// (an edge's reach, `incidence.edgeGap`), into `points`.
     fn facePoints(self: *Provenance, g: Face, diag: *Diagnostics) Error!void {
         const p = self.paves;
         const body = p.operands[g.operand];
@@ -1478,10 +1489,10 @@ const Provenance = struct {
         var loops = traverse.Loops.init(body, types.FaceIndex.of(g.face));
         while (loops.next() catch return corrupt(diag)) |l| {
             var it = traverse.Coedges.init(body, l);
-            while (it.next() catch return corrupt(diag)) |c| try self.points.append(self.allocator, body.point(body.coedgeStart(c)));
+            while (it.next() catch return corrupt(diag)) |c| try self.points.append(self.allocator, self.reaching(p.vertex_of[g.operand][@backingInt(body.coedgeStart(c))]));
         }
         try p.verticesOn(g.operand, g.face, &self.merged);
-        for (self.merged.items) |m| try self.points.append(self.allocator, p.point(m));
+        for (self.merged.items) |m| try self.points.append(self.allocator, self.reaching(m));
         for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
             if (keep == .drop or fragment.operand != g.operand or fragment.face != g.face) continue;
             for (self.fragments.loopsOf(i)) |loop| {
@@ -1489,10 +1500,16 @@ const Provenance = struct {
                 for (vertices, 0..) |x, j| {
                     const y = vertices[(j + 1) % vertices.len];
                     const line = self.lineOf(x, y) orelse continue;
-                    for ([_]u32{ x, y }) |m| try self.points.append(self.allocator, line.eval(line.project(p.point(m))));
+                    const gap = incidence.edgeGap(p.gaps.items[x], p.gaps.items[y]);
+                    for ([_]u32{ x, y }) |m| try self.points.append(self.allocator, .{ .at = line.eval(line.project(p.point(m))), .gap = gap });
                 }
             }
         }
+    }
+
+    /// Merged vertex `m` as a point of a face: its point and its gap.
+    fn reaching(self: *const Provenance, m: u32) Reaching {
+        return .{ .at = self.paves.point(m), .gap = self.paves.gaps.items[m] };
     }
 
     /// The line the piece between merged vertices `x` and `y` takes, its source's; null for
