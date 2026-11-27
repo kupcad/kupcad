@@ -45,6 +45,10 @@ pub const EdgeSpec = struct {
     /// per passage, so two solids touching along the line or the circle each have an edge
     /// of their own there.
     copy: u32 = 0,
+    /// The edge's gap, the larger of its uses' (the boolean's builder gives a piece the
+    /// share of its ends' distances from its line their own gaps do not hold,
+    /// `cover.coverLine`).
+    gap: f64 = 0,
 };
 
 pub const LoopSpec = struct {
@@ -99,12 +103,13 @@ pub fn sew(body: *Body, faces: []const FaceSpec, kind: types.ShellKind) Error!ty
                 if (!entry.found_existing) {
                     const start = if (e.forward) e.start else e.end;
                     const end = if (e.forward) e.end else e.start;
-                    edge = try body.addEdge(.{ .curve = e.curve, .t0 = e.t0, .t1 = e.t1, .start = start, .end = end, .flags = e.flags, .regularity = e.regularity });
+                    edge = try body.addEdge(.{ .curve = e.curve, .t0 = e.t0, .t1 = e.t1, .start = start, .end = end, .flags = e.flags, .regularity = e.regularity, .gap = e.gap });
                     entry.value_ptr.* = edge;
                 } else {
                     edge = entry.value_ptr.*;
                     const rec = body.edge(edge);
                     if (rec.coedge == .none or body.coedge(rec.coedge).partner != .none) return error.NotManifold;
+                    rec.gap = @max(rec.gap, e.gap);
                 }
                 // Whether this use runs the edge from its start to its end: told by the
                 // vertices, or by `forward` when they are one (a closed edge)

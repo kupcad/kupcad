@@ -22,7 +22,8 @@ const Error = diagnostics.Error;
 /// tolerance, as the checker holds an edge's ends to its curve (`vertex_off_curve`) and OCCT
 /// grows a vertex's tolerance to the edges it ends (`UpdateVertex`): the one rule for
 /// whatever puts a vertex at the end of an edge off its line, the boolean's builder (a
-/// pave on an edge by the segment between its merged ends, `Provenance.piece`) and the
+/// pave on an edge by the segment between its merged ends, `Provenance.piece`, through
+/// `carryLine`, whose edge carries what passes the zone) and the
 /// short-edge collapse (an edge moved from the vertex gone to the one kept; the 10K session
 /// on 6007ab01: a hull's edge moved to a box's corner 2.0138e-5 off its line, at a
 /// tolerance of 2e-5, with no gap). The gap covers the distance's rounding too (D27's
@@ -37,6 +38,40 @@ pub fn coverLine(body: *Body, v: types.VertexIndex, line: curves.Line, entity: d
     if (gap <= body.vertex(v).gap) return;
     if (gap > body.tol.zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = entity, .label = label, .measured = gap, .threshold = body.tol.zone });
     body.vertex(v).gap = gap;
+}
+
+/// The gaps of a new edge on `line` from vertex `ends[0]` to `ends[1]`, each of which the
+/// paves put on an edge of that line within the tolerance, its gap and the edge's
+/// (`incidence.Decider.onEdge`, from the segment between the edge's merged ends): each
+/// vertex's gap grown to cover its distance from the line beyond the intersection
+/// tolerance up to the zone, as `coverLine` grows it, and the rest carried by the edge;
+/// returns the edge's gap. The checker holds an edge's end within the tolerance and both
+/// gaps (`vertex_off_curve`), and the paves accepted the vertex on the edge by both: a
+/// vertex with a gap on an edge with one may lie past the tolerance and the zone from the
+/// line, and held by its own gap alone it was refused (audit B's B23; Leo 2026-11-28: a
+/// gap the paves accepted is carried, not measured again; `coverLine`'s other callers,
+/// the short-edge collapse and a map, put no vertex on an edge the paves accepted and keep
+/// the vertex's gap alone). Taken over both ends at once, so neither end's order decides
+/// the other's gap; `coverEdge` then raises the ends to the edge's gap (`gap_order`). Each
+/// needed gap covers the distance's rounding (D27's band, as `coverLine`). Past what the
+/// two gaps hold, the tolerance and twice the zone, refused (`gap_too_large`), naming the
+/// farther end's entry of `entities` with `label`: the paves measure from the segment
+/// between the edge's merged ends, the result keeps the line (D28), and an end gapped off
+/// the line moves the segment off it by up to its own reach.
+pub fn carryLine(body: *Body, ends: [2]types.VertexIndex, line: curves.Line, entities: [2]diagnostics.EntityRef, label: []const u8, diag: *Diagnostics) Error!f64 {
+    const zone = body.tol.zone;
+    var needed: [2]f64 = undefined;
+    var gap: f64 = 0;
+    for (ends, &needed) |v, *n| {
+        const p = body.point(v);
+        const offset = canonical.lineOffset(line, p);
+        n.* = offset - body.tol.xsect + canonical.Comparison.distance(offset, body.tol.xsect, canonical.magnitude(&.{ p, line.o })).band;
+        gap = @max(gap, n.* - zone);
+    }
+    const farther: usize = if (needed[1] > needed[0]) 1 else 0;
+    if (gap > zone) return diag.fail(error.Degenerate, .{ .code = .gap_too_large, .entity = entities[farther], .label = label, .measured = needed[farther], .threshold = 2 * zone });
+    for (ends, needed) |v, n| body.vertex(v).gap = @max(body.vertex(v).gap, @min(n, zone));
+    return gap;
 }
 
 /// Edge `e`'s gap grown to cover its line's height over each of its faces' planes past the

@@ -1562,13 +1562,15 @@ const Provenance = struct {
 
     /// The edge from merged vertex `x` to `y` (result vertices `u`, `w`) on its source line,
     /// each end's gap grown to cover its distance from that line beyond the intersection
-    /// tolerance, as OCCT grows a vertex's tolerance to the edge it is put on: the paves put
-    /// a vertex on an edge by the segment between the edge's merged ends, which lies within
-    /// their larger gap of its line (`incidence.Decider.onEdge`), and the result keeps the
-    /// line. A hull's corner 1.68e-4 from a box's edge between ends with gaps of 1e-4 and 0,
-    /// at a tolerance of 2e-4, was 2.06e-4 from the edge's line with no gap, and the checker
-    /// refused the union (the 10K session on 06478dc2). Past the zone, refused
-    /// (`gap_too_large`), as a weld is.
+    /// tolerance, as OCCT grows a vertex's tolerance to the edge it is put on, and past the
+    /// zone the edge's gap the rest (`cover.carryLine`): the paves put a vertex on an edge
+    /// within the tolerance, its gap and the edge's from the segment between the edge's
+    /// merged ends (`incidence.Decider.onEdge`), and the result keeps the line. A hull's
+    /// corner 1.68e-4 from a box's edge between ends with gaps of 1e-4 and 0, at a
+    /// tolerance of 2e-4, was 2.06e-4 from the edge's line with no gap, and the checker
+    /// refused the union (the 10K session on 06478dc2); a corner with a gap of 1e-4 3.5e-4
+    /// from such a line, held by its own gap alone, was refused past the zone (audit B's
+    /// B23). Past what two gaps hold, refused (`gap_too_large`).
     fn piece(self: *Provenance, b: *primitives.Builder, x: u32, y: u32, u: types.VertexIndex, w: types.VertexIndex) Error!sew.EdgeSpec {
         const source = self.line_of.get(.{ @min(x, y), @max(x, y) }) orelse
             return b.diag.fail(error.IntersectionFailed, .{ .code = .imprint_unmatched, .entity = .of(.vertex, x), .label = "a piece of a fragment's loop that is neither a piece of an operand's edge nor a section segment" });
@@ -1582,12 +1584,10 @@ const Provenance = struct {
         };
         const entry = try self.lines.getOrPut(self.allocator, key);
         if (!entry.found_existing) entry.value_ptr.* = b.body.geometry.addLine(b.allocator, line) catch |e| return b.fail(e);
-        for ([_]types.VertexIndex{ u, w }, [_]u32{ x, y }) |v, m| {
-            try cover.coverLine(&b.body, v, line, .of(.vertex, m), "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", b.diag);
-        }
+        const gap = try cover.carryLine(&b.body, .{ u, w }, line, .{ .of(.vertex, x), .of(.vertex, y) }, "a vertex the paves put on an edge, off the edge's line past the intersection tolerance by", b.diag);
         const ta = line.project(b.body.point(u));
         const tb = line.project(b.body.point(w));
-        return .{ .start = u, .end = w, .curve = entry.value_ptr.*, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb };
+        return .{ .start = u, .end = w, .curve = entry.value_ptr.*, .t0 = @min(ta, tb), .t1 = @max(ta, tb), .forward = ta < tb, .gap = gap };
     }
 
     fn nodeFace(node: u32, n_a: u32) Face {

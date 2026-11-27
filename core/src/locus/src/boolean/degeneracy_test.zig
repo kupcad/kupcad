@@ -13,6 +13,7 @@
 const std = @import("std");
 const testing = std.testing;
 const vec = @import("../math/vec.zig");
+const canonical = @import("../geometry/canonical.zig");
 const Tolerance = @import("../tolerance.zig").Tolerance;
 const diagnostics = @import("../diagnostics.zig");
 const mat = @import("../math/mat.zig");
@@ -78,6 +79,31 @@ pub const RIDGE_NOTCHED = [_]vec.Vec2{ .{ -4, -3 }, .{ 3, -3 }, .{ 3, 0 }, .{ 0,
 /// paves hold it) and past it (2.1e-5).
 const RIDGE_STRIP_TURN_ON: f64 = 0.018;
 const RIDGE_STRIP_TURN_OFF: f64 = 0.021;
+/// The tolerance and the gap of the tests of gaps carried over (audit step D), how far
+/// out they move (`carriedMoves`), and the apex's distance off the block's side.
+const CARRIED_TOL = Tolerance.fromZone(1e-4);
+const CARRIED_GAP: f64 = 1e-4;
+const CARRIED_FAR: Vec3 = .{ 3e5, -3e5, 3e5 };
+const CARRIED_SIDE: f64 = 1e-4;
+/// How far under the block's gapped top edge the apex lies: past the tolerance and the
+/// zone from the edge's line, within the two gaps; and past them.
+const CARRIED_DEPTHS = [_]f64{ 3.35e-4, 3.6e-4 };
+const CARRIED_PAST: f64 = 3.9e-4;
+/// The chain of the guard test (`carriedChain`), and how far its gaps moved 3e5 out may
+/// differ from in place: twice the rounding of a distance there (D27's band at the
+/// chain's farthest coordinate, which a needed gap covers: the band in place and the
+/// band out there).
+const CARRIED_CHAIN = [_]CarriedStep{
+    .{ .op = .@"union", .y = 0.5 },
+    .{ .op = .@"union", .y = 1 },
+    .{ .op = .difference, .y = 1.3 },
+    .{ .op = .@"union", .y = 1.6 },
+    .{ .op = .@"union", .y = 2.2 },
+    .{ .op = .difference, .y = 0.2 },
+};
+const CARRIED_ROUNDING: f64 = 2 * canonical.Comparison.distance(0, 0, 3e5 + 4).band;
+/// How many of the chain's first steps run each kind of step once.
+const CARRIED_EACH_RUN: usize = 3;
 /// The hull of the tests of a slab's top with an edge over its plane, as the solids fuzzer
 /// drew it (its corners at z = 2 the ends of that edge); the turns of the plate that cuts
 /// the slab from it, the find's and its neighbours (a top 2.7e-7 rad off level either
@@ -6487,5 +6513,182 @@ test "degeneracy: a strip's probe the tolerance from a face's boundary to roundi
                 }
             }
         }
+    }
+}
+
+/// The moves of the tests of gaps carried over (audit step D): in place, a quarter turn
+/// about z, mirrored in x, 3e5 out and 3e5 out mirrored.
+fn carriedMoves() [5]mat.Affine {
+    return .{
+        mat.Affine.translate(vec.ZERO3),
+        mat.Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        mat.Affine.mirror(vec.X3),
+        mat.Affine.translate(CARRIED_FAR),
+        mat.Affine.translate(CARRIED_FAR).compose(&mat.Affine.mirror(vec.X3)),
+    };
+}
+
+/// `body` moved by `move` (`construct/transform`).
+fn carriedMoved(body: *const Body, move: *const mat.Affine) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    return @import("../construct/transform.zig").transform(testing.allocator, body, move, .{}, &diag);
+}
+
+/// The box (3, 0, 2)–(4, 2.5, 3) at a zone of 1e-4 whose top's corners at y = 2.5 lie
+/// their gap of 1e-4 under its plane, its edges' lines in place (what a chain's merges
+/// leave): the edges along y at its top run between ends with gaps of 0 and 1e-4.
+fn carriedBlock() !Body {
+    var block = try helpers.boxAt(CARRIED_TOL, .{ 3, 0, 2 }, .{ 4, 2.5, 3 });
+    errdefer block.deinit();
+    for (block.vertices.items) |*v| {
+        const p = &block.geometry.points.items[@backingInt(v.point)];
+        if (p[1] != 2.5 or p[2] != 3) continue;
+        p[2] -= CARRIED_GAP;
+        v.gap = CARRIED_GAP;
+    }
+    return block;
+}
+
+/// A tetrahedron at `CARRIED_TOL` reaching away from `carriedBlock` in -x, its apex
+/// `depth` under the block's top edge at x = 3 at `y`, `CARRIED_SIDE` off its side, the
+/// apex with a gap of `CARRIED_GAP` (a chain's merged vertex).
+fn carriedApex(y: f64, depth: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const apex: Vec3 = .{ 3 - CARRIED_SIDE, y, 3 - depth };
+    const points = [_]Vec3{ apex, .{ 2, y + 2, 0 }, .{ 1, y, 4 }, .{ 2, y - 2, 2 } };
+    const n = vec.cross(vec.sub(points[2], points[1]), vec.sub(points[3], points[1]));
+    const base: [3]u32 = if (vec.dot(n, vec.sub(apex, points[1])) > 0) .{ 1, 3, 2 } else .{ 1, 2, 3 };
+    var t = try primitives.polyhedron(testing.allocator, CARRIED_TOL, &points, &.{ base, .{ 0, base[1], base[0] }, .{ 0, base[2], base[1] }, .{ 0, base[0], base[2] } }, &diag);
+    errdefer t.deinit();
+    for (t.vertices.items) |*v| {
+        if (std.meta.eql(t.geometry.points.items[@backingInt(v.point)], apex)) v.gap = CARRIED_GAP;
+    }
+    return t;
+}
+
+test "degeneracy: a corner with a gap put on an edge between gapped ends, past the tolerance and the zone from the edge's line, gives the edge the rest, turned, mirrored, far and either way round" {
+    // Audit B's B23 (Leo 2026-11-28, audit step D): the paves put a vertex on an edge
+    // within the tolerance, its gap and the edge's from the segment between the edge's
+    // merged ends; the builder held it to the edge's line by its own gap alone, up to the
+    // zone. A tetrahedron's apex with a gap of 1e-4, 1e-4 off a box's side and 3.35e-4 or
+    // 3.6e-4 under its top edge, whose far end carries a gap of 1e-4 (zone 1e-4): on the
+    // edge by the paves (2.7e-4 and 2.9e-4 from the segment, within 4e-4), 3.5e-4 and
+    // 3.7e-4 from the line, past the tolerance and the zone (3e-4); the union and the
+    // difference were refused `gap_too_large`. The apex's gap covers the distance up to the
+    // zone and the edge's the rest, as the checker holds an edge's end (the tolerance and
+    // both gaps). At 3.9e-4 under the edge (4.03e-4 from the line) no two gaps hold it:
+    // the union refused `gap_too_large` (the block less the apex too, which keeps the
+    // edge; the apex less the block keeps no piece of it), alike every way
+    var block = try carriedBlock();
+    defer block.deinit();
+    // The apex past the two gaps: each order's intersection and difference as in place
+    var past: [2][2]?Outcome = .{ .{ null, null }, .{ null, null } };
+    for (carriedMoves(), 0..) |move, m| {
+        var moved_block = try carriedMoved(&block, &move);
+        defer moved_block.deinit();
+        for (CARRIED_DEPTHS) |depth| {
+            errdefer std.debug.print("move {d}, the apex {e} under the edge\n", .{ m, depth });
+            var apex = try carriedApex(2, depth);
+            defer apex.deinit();
+            var moved_apex = try carriedMoved(&apex, &move);
+            defer moved_apex.deinit();
+            try expectAllSound(&moved_block, &moved_apex);
+            var joined = try sound(&moved_block, &moved_apex, .@"union");
+            defer joined.deinit();
+            var carried: f64 = 0;
+            for (joined.edges.items) |e| {
+                if (!e.flags.tombstone) carried = @max(carried, e.gap);
+            }
+            try testing.expect(carried > 0);
+        }
+        var apex = try carriedApex(2, CARRIED_PAST);
+        defer apex.deinit();
+        var moved_apex = try carriedMoved(&apex, &move);
+        defer moved_apex.deinit();
+        for ([2][2]*const Body{ .{ &moved_block, &moved_apex }, .{ &moved_apex, &moved_block } }, 0..) |operands, k| {
+            errdefer std.debug.print("move {d}, the apex {e} under the edge, order {d}\n", .{ m, CARRIED_PAST, k });
+            try testing.expectEqual(Outcome{ .refused = .gap_too_large }, try outcomeOf(operands[0], operands[1], .@"union"));
+            for ([_]pipeline.Op{ .intersection, .difference }, 0..) |op, o| {
+                const this = try outcomeOf(operands[0], operands[1], op);
+                if (past[k][o]) |first| try testing.expectEqual(first, this) else past[k][o] = this;
+            }
+        }
+    }
+    try testing.expectEqual(Outcome{ .refused = .gap_too_large }, past[0][1].?);
+}
+
+/// A step of the chain of `carriedChain`: a union with `carriedApex` at `y`, or a
+/// difference with a notch across the block's gapped top edge from `y` to `y` + 0.1.
+const CarriedStep = struct { op: pipeline.Op, y: f64 };
+
+/// The largest vertex and edge gaps of `body`.
+fn largestGaps(body: *const Body) [2]f64 {
+    var largest: [2]f64 = .{ 0, 0 };
+    for (body.vertices.items) |v| {
+        if (!v.tombstone) largest[0] = @max(largest[0], v.gap);
+    }
+    for (body.edges.items) |e| {
+        if (!e.flags.tombstone) largest[1] = @max(largest[1], e.gap);
+    }
+    return largest;
+}
+
+/// `carriedBlock` put through `CARRIED_CHAIN` moved by `move`, each step's result sound;
+/// the largest vertex and edge gaps after each step in `gaps`.
+fn carriedChain(move: *const mat.Affine, gaps: *[CARRIED_CHAIN.len][2]f64) !Body {
+    var block = try carriedBlock();
+    defer block.deinit();
+    var running = try carriedMoved(&block, move);
+    errdefer running.deinit();
+    for (CARRIED_CHAIN, gaps) |step, *after| {
+        var drawn = switch (step.op) {
+            .@"union" => try carriedApex(step.y, CARRIED_DEPTHS[0]),
+            else => try helpers.boxAt(CARRIED_TOL, .{ 2.9, step.y, 2.9 }, .{ 3.1, step.y + 0.1, 3.1 }),
+        };
+        defer drawn.deinit();
+        var operand = try carriedMoved(&drawn, move);
+        defer operand.deinit();
+        const next = try sound(&running, &operand, step.op);
+        running.deinit();
+        running = next;
+        after.* = largestGaps(&running);
+    }
+    return running;
+}
+
+test "degeneracy: gaps carried through a chain of booleans on gapped results stay bounded, in place, turned, mirrored and far" {
+    // Audit step D's guard (Leo 2026-11-28): a gap the paves accepted is carried, and the
+    // bound on it (`gap_too_large`) is applied once, where it is accepted; no operation
+    // grows a gap an earlier one left because it meets it again (OCCT's tolerances grow
+    // with each operation that meets an edge again). The gapped block of the tests above
+    // through four unions with gapped apexes on its gapped edge, each 3.5e-4 from the
+    // edge's line (each needing the edge's share of the gap), and two notches across that
+    // edge, through the pieces the unions left: every step sound, and once a union and a
+    // notch have run (the first three steps: the apex's edge carries 5e-5, a notch's
+    // section through gapped vertices 8.8e-5), the largest vertex and edge gaps grow no
+    // more; the same moved as in place, to the rounding at 3e5
+    var in_place: [CARRIED_CHAIN.len][2]f64 = undefined;
+    var placed = try carriedChain(&carriedMoves()[0], &in_place);
+    defer placed.deinit();
+    try testing.expect(in_place[0][1] > 0);
+    var settled: [2]f64 = .{ 0, 0 };
+    for (in_place[0..CARRIED_EACH_RUN]) |after| for (after, &settled) |gap, *most| {
+        most.* = @max(most.*, gap);
+    };
+    for (in_place[CARRIED_EACH_RUN..], CARRIED_EACH_RUN..) |after, i| for (after, settled) |gap, most| {
+        errdefer std.debug.print("after step {d}: {any}, after the first {d}: {any}\n", .{ i + 1, after, CARRIED_EACH_RUN, settled });
+        try testing.expect(gap <= most + CARRIED_ROUNDING);
+    };
+    for (carriedMoves()[1..], 1..) |move, m| {
+        errdefer std.debug.print("move {d}\n", .{m});
+        var gaps: [CARRIED_CHAIN.len][2]f64 = undefined;
+        var moved = try carriedChain(&move, &gaps);
+        defer moved.deinit();
+        try testing.expectEqual(placed.counts(), moved.counts());
+        for (gaps, in_place) |after, before| for (after, before) |gap, was| {
+            try testing.expectApproxEqAbs(was, gap, CARRIED_ROUNDING);
+        };
     }
 }
