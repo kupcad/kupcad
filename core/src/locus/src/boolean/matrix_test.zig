@@ -375,7 +375,8 @@ fn step(a: *const Body, b: *const Body, thin: bool, reach: f64, results: *[3]Bod
 }
 
 /// The three operations on `a` and `b` under the fuzzer's oracles: each made and sound, its
-/// report fitting it, and the identities, membership and the operands the other way round;
+/// report fitting it and sliced as it holds itself (`oracle.expectSliced`), and the
+/// identities, membership and the operands the other way round;
 /// or the code of the first refused, null when all three are made. The results made are in
 /// `results`, `made` of them, for the caller to free.
 fn operate(a: *const Body, b: *const Body, thin: bool, results: *[3]Body, made: *usize, diag: *Diagnostics) !?diagnostics.Code {
@@ -399,6 +400,7 @@ fn operate(a: *const Body, b: *const Body, thin: bool, results: *[3]Body, made: 
         gaps[made.* - 1] = report.max_gap;
         try oracle.expectSolid(&results[made.* - 1], diag);
         try helpers.expectReportFits(&report, a, b, &results[made.* - 1], op);
+        try oracle.expectSliced(&results[made.* - 1], diag);
     }
     try oracle.expectStep(a, b, results, shifts, gaps, diag);
     return null;

@@ -24,6 +24,8 @@ const overlap = @import("../query/overlap.zig");
 const distance_mod = @import("../query/distance.zig");
 const FaceIndex = @import("../query/index.zig").FaceIndex;
 const point_in_body = @import("../query/point_in_body.zig");
+const section = @import("section.zig");
+const sketch_query = @import("../sketch/query.zig");
 const in_face = @import("../query/in_face.zig");
 const types = @import("../topology/types.zig");
 const traverse = @import("../topology/traverse.zig");
@@ -38,6 +40,10 @@ const Op = pipeline.Op;
 /// result's area may differ from its operands' own by the zone times their perimeters;
 /// this is the rounding on top.
 pub const IDENTITY_CLOSE = 1e-9;
+/// Where between its ends a solid is sliced off the grid (`expectSliced`), and how many
+/// points of the section are checked against the solid.
+pub const SLICE_AT = 0.37;
+const SLICE_POINTS = 16;
 /// How many points along each edge, its ends among them, `faceKnownTo` measures against
 /// the face.
 const KNOWN_TO_SAMPLES = 8;
@@ -395,6 +401,43 @@ test "Fuzz solids: membership finds a union of the right volume misplaced, which
     // A point of a the union no longer covers
     try testing.expectEqual(.inside, fault.places[0]);
     try testing.expectEqual(.outside, fault.places[2]);
+}
+
+/// A made result's plane section at a height off the grid (`SLICE_AT` of its box) holds a
+/// point exactly when the result holds it at that height (`expectSliceHolds`); the
+/// section refused cleanly or not, as the boolean (`clean`). The class of finds where the
+/// section and the classification read a body's boundary differently (ei, el, en, ep;
+/// the audit of classification and section, 2026-11-28), on every result the matrix makes.
+pub fn expectSliced(solid: *const Body, diag: *Diagnostics) !void {
+    if (solid.isEmpty()) return;
+    var index = try FaceIndex.build(testing.allocator, solid, diag);
+    defer index.deinit(testing.allocator);
+    const z = index.box.min[2] + SLICE_AT * index.box.size()[2];
+    var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| return clean(err);
+    defer cut.deinit();
+    errdefer std.debug.print("the section at {d}\n", .{z});
+    try expectSliceHolds(solid, &index, &cut, z, true, diag);
+}
+
+/// Section `cut` of `solid` (its faces in `index`) at height `z` holds each of `SLICE_POINTS` points over the
+/// solid's box exactly when the solid holds it, unless on the solid's boundary or where it
+/// knows a face only so far (`knownNear`). A classification refused: when `strict` (a
+/// boolean's result, valid and planar) as the boolean (`clean`), else any refusal.
+pub fn expectSliceHolds(solid: *const Body, index: *const FaceIndex, cut: *const Body, z: f64, strict: bool, diag: *Diagnostics) !void {
+    const box = index.box;
+    const span = box.size();
+    for (0..SLICE_POINTS) |i| {
+        const k: f64 = @floatFromInt(i);
+        const p: [2]f64 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
+        const place = point_in_body.classify(testing.allocator, solid, index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
+            if (strict) try clean(err) else if (err == error.OutOfMemory) return err;
+            continue;
+        };
+        if (place == .boundary) continue;
+        if ((place == .inside) == try sketch_query.contains(cut, p, 0, diag)) continue;
+        errdefer std.debug.print("at ({d}, {d}) the solid says {t}, the section the other\n", .{ p[0], p[1], place });
+        try testing.expect(try knownNear(solid, .{ p[0], p[1], z }, diag));
+    }
 }
 
 /// Whether `p` lies within the band about a face of `solid` within which the solid knows

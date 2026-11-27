@@ -87,8 +87,6 @@ const MAX_OPS = 4;
 const QUERY_RAYS = 4;
 /// Where between its ends a fuzz solid is sliced off the grid, and how many points of the
 /// turned solid's section are checked against the solid.
-const SLICE_AT = 0.37;
-const SLICE_POINTS = 16;
 /// Find ei (the locus session on 5e73cbcd), as the solids fuzzer drew it: a plate
 /// `EI_PLATE_XSECTS` intersection tolerances thick about z = 2 over `EI_PLATE` in x and y,
 /// moved `EI_PLATE_MOVE` (the fuzzer's move and its z nudge), and the hull of `EI_HULL`
@@ -1702,7 +1700,7 @@ fn expectSolidMesh(sheet_body: *const Body, height: f64, diag: *Diagnostics) !vo
 /// holds the point at that height (off the boundary). A refusal of a section is clean.
 fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: *Diagnostics) !void {
     const a_sheet = (try mass.mass(sheet_body, .{}, diag)).area;
-    for ([_]f64{ 0, height * SLICE_AT, height }) |z| {
+    for ([_]f64{ 0, height * oracle.SLICE_AT, height }) |z| {
         var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| {
             _ = try clean(err);
             continue;
@@ -1739,27 +1737,13 @@ fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
     if (solid.isEmpty()) return;
     var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
     defer index.deinit(testing.allocator);
-    const box = index.box;
-    const span = box.size();
-    const z = box.min[2] + SLICE_AT * span[2];
+    const z = index.box.min[2] + oracle.SLICE_AT * index.box.size()[2];
     var cut = section.slice(testing.allocator, solid, z, .{}, diag) catch |err| return sliceRefused(err, strict);
     defer cut.deinit();
     errdefer std.debug.print("the section at {d}\n", .{z});
     try expectSound(&cut, diag);
-    for (0..SLICE_POINTS) |i| {
-        const k: f64 = @floatFromInt(i);
-        const p: Vec2 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
-        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
-            try sliceRefused(err, strict);
-            continue;
-        };
-        if (place == .boundary) continue;
-        if ((place == .inside) == try query.contains(&cut, p, 0, diag)) continue;
-        errdefer std.debug.print("at ({d}, {d}) the solid says {s}, the section the other\n", .{ p[0], p[1], @tagName(place) });
-        try testing.expect(try oracle.knownNear(solid, .{ p[0], p[1], z }, diag));
-    }
+    try oracle.expectSliceHolds(solid, &index, &cut, z, strict, diag);
 }
-
 /// A section's refusal: clean (`clean`), and when `strict` a find where the general path
 /// failed (`oracle.clean`).
 fn sliceRefused(err: anyerror, strict: bool) anyerror!void {
