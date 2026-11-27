@@ -229,6 +229,17 @@ const EG_HULL_NUDGE: Vec3 = .{ -1e-5, 0, 2.0000000057109944e-5 };
 const EG_BOX = struct { size: Vec3 = .{ 1, 3, 1 }, lo: Vec3 = .{ 1, 0, 1 }, nudge: Vec3 = .{ -1.9999999957367437e-5, 5e-6, -2e-3 } }{};
 const EG_CUT = struct { size: Vec3 = .{ 2, 2, 4 }, lo: Vec3 = .{ 0, 2, 0 }, move: Vec3 = .{ 0, -1, 0 }, nudge: Vec3 = .{ -1e-5, 0, -1e-5 } }{};
 
+/// The plate and the hull corners of the tests of a block lying across its own edge (the
+/// audit of the later phases, 2026-11-27: audit-8-9 A2 and A3, a short edge of the hull
+/// from the plate's top, `ACROSS_OFFSETS` in from the plate's edge x = 4, z = 1, to its
+/// side the same under the edge, `ACROSS_SHIFTS` along it, so the edge's two paves lie
+/// across it at one place along it), and the hull's two far corners, over the plate or
+/// into it.
+const ACROSS_PLATE = [2]Vec3{ .{ 0, 0, 0 }, .{ 4, 4, 1 } };
+const ACROSS_OFFSETS = [_]f64{ 1.6e-5, 1.9e-5 };
+const ACROSS_SHIFTS = [_]f64{ -5e-6, 0, 5e-6 };
+const ACROSS_FAR = [_][2]Vec3{ .{ .{ 5, 1, 2 }, .{ 5, 3, 2 } }, .{ .{ 3, 1, 0.5 }, .{ 3, 3, 0.5 } } };
+
 const Outcome = struct {
     code: ?diagnostics.Code = null,
     counts: ?@TypeOf(@as(Body, undefined).counts()) = null,
@@ -982,5 +993,33 @@ test "ties: a shell's probe point at a face's boundary to rounding says nothing,
         defer cutter.deinit();
         try expectAlikeSwappedAndMovedBy(&pair, &cutter, &FAR_MOVES);
         try expectEveryOpAlikeMirrored(&pair, &cutter);
+    };
+}
+
+test "ties: two paves of one edge across it at one place along it come only from an operand below its minimum feature size, refused alike swapped, moved and mirrored" {
+    // The audit of the later phases (2026-11-27), audit-8-9 A2 and A3 and audit-3 item 5:
+    // an edge's paves sorted by their place along its merged ends' chord, a block's side
+    // read from its chord, a short block collapsed by `simplify` only after it was decided.
+    // Two paves of the plate's edge more than the tolerance apart, both within reach of
+    // the edge, are two features of the other operand within twice the reach of each other:
+    // an edge's crossings with it weld into one, a crossing of an edge from a vertex there
+    // is that vertex's, and any other pair is refused before the paves by the operands'
+    // minimum feature size (`pipeline.featureSize`). Here the nearest such pair, a hull's
+    // edge 2.3e-5 to 2.7e-5 long from the plate's top to its side across the edge: refused
+    // `below_feature_size` whatever the order, move or mirror
+    for (ACROSS_OFFSETS) |offset| for (ACROSS_SHIFTS) |shift| for (ACROSS_FAR) |far| {
+        errdefer std.debug.print("offset {e}, shifted {e}, far corners {any}\n", .{ offset, shift, far });
+        const corners = [_]Vec3{ .{ ACROSS_PLATE[1][0] - offset, 2, ACROSS_PLATE[1][2] }, .{ ACROSS_PLATE[1][0], 2 + shift, ACROSS_PLATE[1][2] - offset }, far[0], far[1] };
+        var hull = try degeneracy.fuzzHullPlaced(&corners, vec.Z3, 0, null, vec.ZERO3, vec.ZERO3);
+        defer hull.deinit();
+        var plate = try helpers.box(ACROSS_PLATE[0], ACROSS_PLATE[1]);
+        defer plate.deinit();
+        for (OPS) |op| {
+            const outcome = try Outcome.of(&plate, &hull, op, null);
+            defer outcome.deinit();
+            try testing.expectEqual(@as(?diagnostics.Code, .below_feature_size), outcome.code);
+        }
+        try expectAlikeSwappedAndMoved(&plate, &hull);
+        try expectEveryOpAlikeMirrored(&plate, &hull);
     };
 }

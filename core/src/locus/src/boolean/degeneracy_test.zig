@@ -701,6 +701,12 @@ const OFFSET_TURNS = [_]f64{ 1e-9, -1e-9, 1e-7, -1e-7 };
 /// How far `OFFSET_HULL_B`'s face in y = 4 is nudged out past the box's side: the find's,
 /// the tolerance, and a hair either way of it.
 const OFFSET_LIFTS = [_]f64{ 2e-5, 1.9999e-5, 2.00002e-5, 2.0001e-5 };
+/// The same face lifted within the tolerance of the side, either way, its hinge's merged
+/// vertices on the side by reach on either side of it (audit-8-9 A5: corners the paves
+/// hold on the side's plane, their heights noise of either sign, voting a side), and turned
+/// a hair one way and a hundred-thousandth the other.
+const OFFSET_NEAR_LIFTS = [_]f64{ -1e-5, -1e-6, 0, 5e-6, 1.5e-5 };
+const OFFSET_NEAR_TURNS = [_]f64{ 1e-9, -1e-5 };
 /// The solids of the tests of a hull's fin cut a hair under its tip (the ReleaseSafe fuzz
 /// on 25411cf5, cl, as the solids fuzzer drew it): (`FIN_HULL_A` ∪ `FIN_HULL_B`) less
 /// `FIN_HULL_C`, turned a half turn about y, a fin of the first hull standing over
@@ -5588,6 +5594,22 @@ test "degeneracy: a face a hair off parallel to a box's side about the tolerance
     for (OFFSET_LIFTS) |lift| for (OFFSET_TURNS) |turn| for ([_]bool{ false, true }) |joined| for (SLIVER_TURNS) |move| {
         errdefer std.debug.print("lifted {e}, turned {e}, joined {}, moved {any}\n", .{ lift, turn, joined, move });
         var hull, var box_body = try offsetSolids(lift, turn, joined, move);
+        defer hull.deinit();
+        defer box_body.deinit();
+        try expectDecidedEitherWay(&hull, &box_body);
+    };
+}
+
+test "degeneracy: a face a hair off parallel to a box's side, within the tolerance of it either way, is decided, however turned or moved" {
+    // The audit of the later phases (2026-11-27), audit-8-9 A5 and C2: `cornersSide` counts
+    // every corner of the fragment past the paves' rounding, the hinge's merged vertices
+    // too, whose heights over the side are noise up to their reach; one on the far side of
+    // the rest left the side to the turn. Every operation either way round decided, what it
+    // makes sound (540 such cases, alone and joined, all decided when the audit probed
+    // them in ReleaseSafe: a guard, no case found)
+    for (OFFSET_NEAR_LIFTS) |lift| for (OFFSET_NEAR_TURNS) |turn| for (SLIVER_TURNS) |move| {
+        errdefer std.debug.print("lifted {e}, turned {e}, moved {any}\n", .{ lift, turn, move });
+        var hull, var box_body = try offsetSolids(lift, turn, true, move);
         defer hull.deinit();
         defer box_body.deinit();
         try expectDecidedEitherWay(&hull, &box_body);
