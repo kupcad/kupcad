@@ -19,6 +19,9 @@ const primitives = @import("../construct/primitives.zig");
 const sweep = @import("../construct/sweep.zig");
 const sew = @import("../construct/sew.zig");
 const overlap = @import("overlap.zig");
+const cover = @import("../topology/cover.zig");
+const transform = @import("../construct/transform.zig");
+const mat = @import("../math/mat.zig");
 const Vec3 = vec.Vec3;
 const Diagnostics = diagnostics.Diagnostics;
 
@@ -42,6 +45,17 @@ const FOLDS_PAST = [_][2]f64{ .{ 45, 1.9e-5 }, .{ 55, 1.9e-5 }, .{ 10, 1.5e-5 } 
 const FOLD_HEIGHT: f64 = 6;
 /// The quarter turns about z the folds are tried in.
 const QUARTER_TURNS = 4;
+/// A box's far corner moved out along its diagonal, off its three edges' lines by these
+/// distances, its gap then covering them (`cover.coverBody`): within the tolerance (no
+/// gap), at it, find eh's (2.031e-5), and past it to a gap of nearly the zone.
+const CORNER_OFFSETS = [_]f64{ 1.5e-5, 2e-5, 2.031e-5, 2.5e-5, 2.9e-5 };
+/// The boxes whose far corner is moved: at the origin, and where eh's lay.
+const CORNER_BOXES = [_]BoxSpec{ .{ .lo = .{ 0, 0, 0 }, .hi = .{ 1, 1, 1 } }, .{ .lo = .{ 1.5, -0.5, 0 }, .hi = .{ 2.335335, 0.66467, 1.00001 } } };
+/// The rigid moves the moved corner is tried under besides in place: a turn and a far
+/// shift (the solids fuzzer's, out to 3e5), and the mirrors in each axis.
+const CORNER_TURN_AXIS: Vec3 = .{ 1, 2, 3 };
+const CORNER_TURN: f64 = 0.3;
+const CORNER_FAR: Vec3 = .{ 1e5, -2e5, 3e5 };
 
 /// An axis-aligned box from `lo` to `hi`, a void's (faces wound into it) when `void`.
 const BoxSpec = struct { lo: Vec3, hi: Vec3, void: bool = false };
@@ -415,5 +429,47 @@ test "overlap: a narrow side face folded back over its neighbour past the zone i
         defer sheet.deinit();
         try testing.expectError(error.Degenerate, sweep.extrude(testing.allocator, &sheet, .{ 0, 0, FOLD_HEIGHT }, .{}, &diag));
         try testing.expectEqual(diagnostics.Code.below_feature_size, diag.first().?.code);
+    };
+}
+
+test "overlap: a vertex its gap covers at its edges' lines to rounding is on its own faces by record, not at the tolerance (find eh)" {
+    // Find eh (the locus_solids session on 4e969adf): a union the boolean made, whose
+    // vertex lay 2.031e-5 from both edges it ends on its face, at a reach of 2.031e-5:
+    // `cover.coverLine` gives a vertex off its edge's line the gap that covers the
+    // distance less D27's band. The rules measured the vertex against its own face's
+    // boundary and refused it there (`at_tolerance`). A vertex of a face is on it by
+    // record (`planar_faces.VertexOf`): sound in place, moved far and mirrored, the corner
+    // within the tolerance of its edges or covered past it
+    for (CORNER_BOXES) |spec| for (CORNER_OFFSETS) |offset| {
+        errdefer std.debug.print("box to {any}, corner off its edges by {e}\n", .{ spec.hi, offset });
+        var body = try boxes(testing.allocator, &.{spec});
+        defer body.deinit();
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        for (body.vertices.items, 0..) |v, i| {
+            const p = body.point(.of(i));
+            if (v.tombstone or p[0] != spec.hi[0] or p[1] != spec.hi[1] or p[2] != spec.hi[2]) continue;
+            // Along the diagonal, off each edge's line by √(2/3) of the move
+            const by = offset * @sqrt(1.5) / @sqrt(3.0);
+            body.geometry.points.items[@backingInt(v.point)] = vec.add(spec.hi, .{ by, by, by });
+            // Its edges' ranges ending at its projection on their lines, as an edit of an
+            // edge's ends sets them (`simplify`'s `rebase`)
+            for (body.edges.items) |*e| {
+                if (e.flags.tombstone) continue;
+                const line = body.geometry.curve(e.curve).line;
+                if (e.start == types.VertexIndex.of(i)) e.t0 = line.project(body.point(e.start));
+                if (e.end == types.VertexIndex.of(i)) e.t1 = line.project(body.point(e.end));
+            }
+        }
+        try cover.coverBody(&body, &diag);
+        try expectSound(&body);
+        const far = mat.Affine.translate(CORNER_FAR).compose(&mat.Affine.rotate(vec.normalized(CORNER_TURN_AXIS).?, CORNER_TURN));
+        const moves = [_]mat.Affine{ far, mat.Affine.mirror(vec.X3), mat.Affine.mirror(vec.Y3), mat.Affine.mirror(vec.Z3) };
+        for (moves, 0..) |move, k| {
+            errdefer std.debug.print("move {d}\n", .{k});
+            var moved = try transform.transform(testing.allocator, &body, &move, .{}, &diag);
+            defer moved.deinit();
+            try expectSound(&moved);
+        }
     };
 }

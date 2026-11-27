@@ -1803,7 +1803,11 @@ grades every sheet it loads); for solids with planar faces, since 2026-11-12,
 `query/overlap.zig`: two faces meet only on both their boundaries (what they share, by
 `intersect/planar_faces.zig`, within `xsect` of an edge of each, a piece a run of
 crossings in both faces, an edge's end within `xsect` and its gap of the other's plane
-being its crossing there, as the boolean's vertex–face has it, measured at the vertex, not
+being its crossing there, as the boolean's vertex–face has it (a vertex of the face itself
+on it, plane and boundary, by record, `planar_faces.VertexOf`, never measured: a result's
+vertex whose gap covered its edges' lines to D27's band, `cover.coverLine`, lay on its own
+face's boundary at its reach to rounding by construction and was refused `at_tolerance`,
+the session on 4e969adf, eh), measured at the vertex, not
 at its curve's end (which lies off the vertex by the gap: a hull's edge ending 3.1e-5 over
 a slot's bottom, its line 2.4e-5, touched it by the gap twice, 2026-11-15), else its
 curve's crossings in its range, and an edge lying in that plane when both its ends are

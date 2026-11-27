@@ -36,8 +36,34 @@ const Diagnostics = diagnostics.Diagnostics;
 const Error = diagnostics.Error;
 
 /// A point where a face's boundary meets the other's plane, and its reach beyond the
-/// tolerance: the gap of the vertex it is, 0 for an edge's crossing.
-const Mark = struct { p: Vec3, gap: f64 };
+/// tolerance: the gap of the vertex it is, 0 for an edge's crossing; the vertex itself.
+const Mark = struct { p: Vec3, gap: f64, vertex: VertexOf = .{} };
+
+/// The vertex of a body a point is, when it is one (`body` null when it is none): on every
+/// face its loops pass through by record (`bounds`), never measured against such a face,
+/// as a pave block of a face's own edge is on that face (`boolean/pave.zig`'s `ownBlock`;
+/// OCCT's `BOPDS_FaceInfo::VerticesOn`, a face's vertices by its topology). Measured, a
+/// result's vertex whose gap covers its edges' lines to D27's band (`cover.coverLine`, the
+/// tolerance and its gap from them less the band) lies on its own face's boundary at its
+/// reach to rounding by construction: the overlap rules refused a union the boolean made
+/// (`at_tolerance`, a hull's vertex 2.031e-5 from its face's two edges at a reach of
+/// 2.031e-5; the locus_solids session on 4e969adf, eh).
+pub const VertexOf = struct {
+    body: ?*const Body = null,
+    v: types.VertexIndex = .none,
+
+    /// Whether this is a vertex of face `f` of `body`: one its loops pass through.
+    pub fn bounds(self: VertexOf, body: *const Body, f: types.FaceIndex, diag: *Diagnostics) Error!bool {
+        if (self.body != body or self.v == .none) return false;
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(diag)) |l| {
+            if (body.loop(l).vertex == self.v) return true;
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(diag)) |c| if (body.coedgeStart(c) == self.v) return true;
+        }
+        return false;
+    }
+};
 
 pub const Relation = union(enum) {
     /// The faces share no point.
@@ -69,6 +95,9 @@ pub const Piece = struct {
     b: Vec3,
     gap_a: f64 = 0,
     gap_b: f64 = 0,
+    /// The vertices the ends are, when they are vertices (`VertexOf`).
+    vertex_a: VertexOf = .{},
+    vertex_b: VertexOf = .{},
 
     /// The reach beyond the tolerance of a point between the ends: the larger end's, the
     /// segment between two vertices lying within it of whatever both lie on.
@@ -417,15 +446,15 @@ pub fn meet(allocator: std.mem.Allocator, a: *const Body, fa: types.FaceIndex, b
     const first = pieces.items.len;
     var joined = false;
     for (points, 0..) |m, i| {
-        if (!try inBoth(a, fa, b, fb, m.p, m.gap, tol, diag)) {
+        if (!try inBoth(a, fa, b, fb, m.p, m.gap, m.vertex, tol, diag)) {
             joined = false;
             continue;
         }
-        const next_joined = i + 1 < points.len and try inBoth(a, fa, b, fb, points[i + 1].p, points[i + 1].gap, tol, diag) and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), 0, tol, diag);
+        const next_joined = i + 1 < points.len and try inBoth(a, fa, b, fb, points[i + 1].p, points[i + 1].gap, points[i + 1].vertex, tol, diag) and try inBoth(a, fa, b, fb, vec.lerp(m.p, points[i + 1].p, 0.5), 0, .{}, tol, diag);
         if (next_joined) {
-            try pieces.append(allocator, .{ .a = m.p, .b = points[i + 1].p, .gap_a = m.gap, .gap_b = points[i + 1].gap });
+            try pieces.append(allocator, .{ .a = m.p, .b = points[i + 1].p, .gap_a = m.gap, .gap_b = points[i + 1].gap, .vertex_a = m.vertex, .vertex_b = points[i + 1].vertex });
         } else if (!joined) {
-            try pieces.append(allocator, .{ .a = m.p, .b = m.p, .gap_a = m.gap, .gap_b = m.gap });
+            try pieces.append(allocator, .{ .a = m.p, .b = m.p, .gap_a = m.gap, .gap_b = m.gap, .vertex_a = m.vertex, .vertex_b = m.vertex });
         }
         joined = next_joined;
     }
@@ -475,8 +504,9 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
             var on: [2]bool = undefined;
             for ([_]types.VertexIndex{ edge.start, edge.end }, &on) |v, *end_on| {
                 const p = body.point(v);
-                end_on.* = try onPlaneOf(other, g, plane, p, body.vertex(v).gap, tol, diag);
-                if (end_on.*) try marks.append(allocator, .{ .p = p, .gap = body.vertex(v).gap });
+                const vertex: VertexOf = .{ .body = body, .v = v };
+                end_on.* = try vertex.bounds(other, g, diag) or try onPlaneOf(other, g, plane, p, body.vertex(v).gap, tol, diag);
+                if (end_on.*) try marks.append(allocator, .{ .p = p, .gap = body.vertex(v).gap, .vertex = vertex });
             }
             // The edge lies in the plane when both its ends do, as a section takes a line
             // to (`boolean/section.zig`), a curved one's curve between them within its
@@ -494,7 +524,7 @@ fn crossings(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex
                 // A crossing within the zone of an end is that vertex, exactly
                 var mark: Mark = .{ .p = curve.eval(t), .gap = 0 };
                 for ([_]types.VertexIndex{ edge.start, edge.end }) |v| {
-                    if (tol.samePoint(mark.p, body.point(v))) mark = .{ .p = body.point(v), .gap = body.vertex(v).gap };
+                    if (tol.samePoint(mark.p, body.point(v))) mark = .{ .p = body.point(v), .gap = body.vertex(v).gap, .vertex = .{ .body = body, .v = v } };
                 }
                 try marks.append(allocator, mark);
             }
@@ -512,11 +542,17 @@ pub fn edgeReach(body: *const Body, edge: *const types.Edge, tol: Tolerance) f64
     return incidence.reach(tol, incidence.edgeGap(body.vertex(edge.start).gap, body.vertex(edge.end).gap));
 }
 
-/// Whether `p`, reaching `gap` beyond the tolerance, lies in both faces, their boundaries
-/// included.
-fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    if (try place(a, fa, p, gap, tol, diag) == .outside) return false;
-    return try place(b, fb, p, gap, tol, diag) != .outside;
+/// Whether `p`, reaching `gap` beyond the tolerance (the vertex `vertex`, when it is one),
+/// lies in both faces, their boundaries included.
+fn inBoth(a: *const Body, fa: types.FaceIndex, b: *const Body, fb: types.FaceIndex, p: Vec3, gap: f64, vertex: VertexOf, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    if (try placeVertex(a, fa, p, gap, vertex, tol, diag) == .outside) return false;
+    return try placeVertex(b, fb, p, gap, vertex, tol, diag) != .outside;
+}
+
+/// `place`, a vertex of the face (`vertex`, `VertexOf.bounds`) on its boundary by record.
+pub fn placeVertex(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, vertex: VertexOf, tol: Tolerance, diag: *Diagnostics) Error!in_face.Place {
+    if (try vertex.bounds(body, f, diag)) return .boundary;
+    return place(body, f, p, gap, tol, diag);
 }
 
 /// Where `p` (near face `f`'s plane), reaching `gap` beyond the tolerance (a vertex's gap,

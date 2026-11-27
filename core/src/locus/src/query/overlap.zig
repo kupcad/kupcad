@@ -580,10 +580,10 @@ fn backToBack(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, solids:
 /// edge or vertex of the face records it (a vertex loop could, once the mesher and the STEP
 /// writer take one); within one shell it would be a pinch.
 fn onBoundaries(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, apart: bool, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    if (piece.isPoint() and apart) return try onBoundary(body, f, piece.a, piece.gap_a, tol, diag) or try onBoundary(body, g, piece.a, piece.gap_a, tol, diag);
+    if (piece.isPoint() and apart) return try onBoundary(body, f, pointsOf(piece).items[0], tol, diag) or try onBoundary(body, g, pointsOf(piece).items[0], tol, diag);
     const points = pointsOf(piece);
     for (points.items[0..points.count]) |at| {
-        if (!try onBoundary(body, f, at.p, at.gap, tol, diag) or !try onBoundary(body, g, at.p, at.gap, tol, diag)) return false;
+        if (!try onBoundary(body, f, at, tol, diag) or !try onBoundary(body, g, at, tol, diag)) return false;
     }
     return true;
 }
@@ -598,21 +598,22 @@ fn pinch(diag: *Diagnostics, s: types.ShellIndex, g: types.FaceIndex) Error {
 fn touching(body: *const Body, f: types.FaceIndex, g: types.FaceIndex, piece: Piece, tol: Tolerance, diag: *Diagnostics) Error!bool {
     const points = pointsOf(piece);
     for (points.items[0..points.count]) |at| {
-        if (!try onBoundary(body, f, at.p, at.gap, tol, diag) and !try onBoundary(body, g, at.p, at.gap, tol, diag)) return false;
+        if (!try onBoundary(body, f, at, tol, diag) and !try onBoundary(body, g, at, tol, diag)) return false;
     }
     return true;
 }
 
-/// A point of a piece and its reach beyond the tolerance.
-const At = struct { p: Vec3, gap: f64 };
+/// A point of a piece, its reach beyond the tolerance, and the vertex it is when an end is
+/// one.
+const At = struct { p: Vec3, gap: f64, vertex: planar_faces.VertexOf = .{} };
 
 /// The points a piece is judged at: its ends and its middle, or its one point.
 const Points = struct { items: [3]At, count: usize };
 
 fn pointsOf(piece: Piece) Points {
-    const a: At = .{ .p = piece.a, .gap = piece.gap_a };
+    const a: At = .{ .p = piece.a, .gap = piece.gap_a, .vertex = piece.vertex_a };
     if (piece.isPoint()) return .{ .items = .{ a, a, a }, .count = 1 };
-    return .{ .items = .{ a, .{ .p = vec.lerp(piece.a, piece.b, 0.5), .gap = piece.gapBetween() }, .{ .p = piece.b, .gap = piece.gap_b } }, .count = 3 };
+    return .{ .items = .{ a, .{ .p = vec.lerp(piece.a, piece.b, 0.5), .gap = piece.gapBetween() }, .{ .p = piece.b, .gap = piece.gap_b, .vertex = piece.vertex_b } }, .count = 3 };
 }
 
 /// Whether `p`, reaching `gap` beyond the tolerance (its gap, when it is a vertex), lies
@@ -623,9 +624,10 @@ fn pointsOf(piece: Piece) Points {
 /// point's gap found again by its position, brought to the paves' find by find (the
 /// solids fuzzer, 2026-11-14: a merged vertex with a gap of 9.75e-5 on a box's front, its
 /// edge to the box's corner in the box's left face's plane by that gap, 2.05e-4 from that
-/// face's edges at a tolerance of 2e-4).
-fn onBoundary(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!bool {
-    return try planar_faces.place(body, f, p, gap, tol, diag) == .boundary;
+/// face's edges at a tolerance of 2e-4). A vertex of the face is on it by record
+/// (`planar_faces.VertexOf`; eh).
+fn onBoundary(body: *const Body, f: types.FaceIndex, at: At, tol: Tolerance, diag: *Diagnostics) Error!bool {
+    return try planar_faces.placeVertex(body, f, at.p, at.gap, at.vertex, tol, diag) == .boundary;
 }
 
 /// Whether faces `f` and `g`, one lying in the other's plane, cover a region together: the
