@@ -89,9 +89,6 @@ const QUERY_RAYS = 4;
 /// turned solid's section are checked against the solid.
 const SLICE_AT = 0.37;
 const SLICE_POINTS = 16;
-/// How many points along each edge, its ends among them, `knownTo` measures against the
-/// faces the edge bounds.
-const KNOWN_TO_SAMPLES = 8;
 /// Find ei (the locus session on 5e73cbcd), as the solids fuzzer drew it: a plate
 /// `EI_PLATE_XSECTS` intersection tolerances thick about z = 2 over `EI_PLATE` in x and y,
 /// moved `EI_PLATE_MOVE` (the fuzzer's move and its z nudge), and the hull of `EI_HULL`
@@ -1733,7 +1730,8 @@ fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: 
 
 /// The solid's plane section at a height off the grid (`SLICE_AT` of its box): a sound
 /// sheet that holds a point exactly when the solid holds the point at that height (off
-/// the boundary as far as the solid knows it, `knownTo`). A refusal of the section or a
+/// the boundary, or where the solid knows a face only so far, `oracle.knownNear`). A
+/// refusal of the section or a
 /// classification is clean; when `strict` (a boolean's result, valid and planar), the
 /// general path failing (`NotValid`, `IntersectionFailed`) is a find, as the boolean's own
 /// is (`oracle.clean`). Nothing for the empty solid.
@@ -1748,50 +1746,18 @@ fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
     defer cut.deinit();
     errdefer std.debug.print("the section at {d}\n", .{z});
     try expectSound(&cut, diag);
-    const known_to = knownTo(solid);
     for (0..SLICE_POINTS) |i| {
         const k: f64 = @floatFromInt(i);
         const p: Vec2 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
-        const place = solid_query.point_in_body.classifyWithin(testing.allocator, solid, &index, .{ p[0], p[1], z }, known_to, .{}, diag) catch |err| {
+        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
             try sliceRefused(err, strict);
             continue;
         };
         if (place == .boundary) continue;
-        errdefer std.debug.print("at ({d}, {d}) the solid says {s}\n", .{ p[0], p[1], @tagName(place) });
-        try testing.expectEqual(place == .inside, try query.contains(&cut, p, 0, diag));
+        if ((place == .inside) == try query.contains(&cut, p, 0, diag)) continue;
+        errdefer std.debug.print("at ({d}, {d}) the solid says {s}, the section the other\n", .{ p[0], p[1], @tagName(place) });
+        try testing.expect(try oracle.knownNear(solid, .{ p[0], p[1], z }, diag));
     }
-}
-
-/// The band about its faces and edges within which `solid` knows its boundary: its zone,
-/// and the farthest any vertex or edge sample (`KNOWN_TO_SAMPLES` an edge) lies from the
-/// surface of a face it bounds. A boolean puts an edge on a face within the intersection
-/// tolerance by design (a plate's corner edge on a hull's face 1.77e-5 off its plane, find
-/// ei, 2026-11-27): the section runs along the edge's line, the classification measures
-/// from the face's plane, and a point between the two is on the boundary as far as the
-/// body knows it (`classify.byRay`'s band for paved bodies). For a body whose edges lie on
-/// their faces it is the zone. Leo's decision on ei (an approved oracle change).
-fn knownTo(solid: *const Body) f64 {
-    var farthest: f64 = 0;
-    for (solid.coedges.items) |c| {
-        if (c.tombstone) continue;
-        const e = solid.edge(c.edge);
-        const f = solid.loop(c.loop).face;
-        const surface = solid.geometry.surface(solid.face(f).surface);
-        const curve = solid.geometry.curve(e.curve);
-        for (0..KNOWN_TO_SAMPLES) |k| {
-            const s = @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(KNOWN_TO_SAMPLES - 1));
-            const p = curve.eval(e.t0 + s * (e.t1 - e.t0));
-            const uv = in_face.uvOf(solid, f, p);
-            farthest = @max(farthest, vec.distance(surface.eval(uv[0], uv[1]), p));
-        }
-    }
-    for (solid.loops.items) |l| {
-        if (l.tombstone or l.first != .none or l.vertex == .none) continue;
-        const p = solid.point(l.vertex);
-        const uv = in_face.uvOf(solid, l.face, p);
-        farthest = @max(farthest, vec.distance(solid.geometry.surface(solid.face(l.face).surface).eval(uv[0], uv[1]), p));
-    }
-    return solid.tol.zone + farthest;
 }
 
 /// A section's refusal: clean (`clean`), and when `strict` a find where the general path
@@ -2473,23 +2439,25 @@ fn expectStepWith(a: *const Body, b: *const Body, diag: *Diagnostics) !void {
     try oracle.expectStep(a, b, &results, shifts, gaps, diag);
 }
 
-/// `probe` classified in `solid` as far as it knows its boundary (`knownTo`) as the
-/// section at its height holds it, unless on the boundary; a refusal as `expectSliced`'s.
+/// `probe` classified in `solid` as the section at its height holds it, unless on the
+/// boundary or where the solid knows a face only so far (`knownNear`); a refusal as
+/// `expectSliced`'s.
 fn expectProbeSliced(solid: *const Body, probe: vec.Vec3, diag: *Diagnostics) !void {
     var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
     defer index.deinit(testing.allocator);
-    const place = solid_query.point_in_body.classifyWithin(testing.allocator, solid, &index, probe, knownTo(solid), .{}, diag) catch |err| return sliceRefused(err, true);
+    const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, probe, .{}, diag) catch |err| return sliceRefused(err, true);
     if (place == .boundary) return;
     var cut = section.slice(testing.allocator, solid, probe[2], .{}, diag) catch |err| return sliceRefused(err, true);
     defer cut.deinit();
-    errdefer std.debug.print("the probe {any}: the solid says {t}\n", .{ probe, place });
-    try testing.expectEqual(place == .inside, try query.contains(&cut, .{ probe[0], probe[1] }, 0, diag));
+    if ((place == .inside) == try query.contains(&cut, .{ probe[0], probe[1] }, 0, diag)) return;
+    errdefer std.debug.print("the probe {any}: the solid says {t}, the section the other\n", .{ probe, place });
+    try testing.expect(try oracle.knownNear(solid, probe, diag));
 }
 
 /// `op` of `operands` either way round: refused alike both ways for the same finding (a
-/// refusal by design: `oracle.clean`), or made sound both ways, its band (`knownTo`) at
-/// least the zone and `off` (an offset by design, of an edge off a face it bounds), and
-/// sliced as it holds itself.
+/// refusal by design: `oracle.clean`), or made sound both ways, its features as far off a
+/// face as `off` at least (`oracle.knownTo`: an offset by design, of an edge off a face it
+/// bounds), and sliced as it holds itself.
 fn expectSlicedEitherWay(operands: *const [2]Body, op: solid_boolean.pipeline.Op, off: f64) !void {
     var refused: [2]?diagnostics.Code = .{ null, null };
     for ([2][2]*const Body{ .{ &operands[0], &operands[1] }, .{ &operands[1], &operands[0] } }, &refused) |pair, *code| {
@@ -2503,7 +2471,7 @@ fn expectSlicedEitherWay(operands: *const [2]Body, op: solid_boolean.pipeline.Op
         made.deinit();
         var result = try solid_boolean.tests.sound(pair[0], pair[1], op);
         defer result.deinit();
-        try testing.expect(knownTo(&result) - result.tol.zone >= off - EI_OFFSET_CLOSE);
+        try testing.expect(oracle.knownTo(&result) >= off - EI_OFFSET_CLOSE);
         try expectSliced(&result, true, &diag);
     }
     try testing.expectEqual(refused[0], refused[1]);

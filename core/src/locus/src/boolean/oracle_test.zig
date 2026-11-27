@@ -24,6 +24,10 @@ const overlap = @import("../query/overlap.zig");
 const distance_mod = @import("../query/distance.zig");
 const FaceIndex = @import("../query/index.zig").FaceIndex;
 const point_in_body = @import("../query/point_in_body.zig");
+const in_face = @import("../query/in_face.zig");
+const types = @import("../topology/types.zig");
+const traverse = @import("../topology/traverse.zig");
+const Vec3 = vec.Vec3;
 const pipeline = @import("pipeline.zig");
 const tests = @import("pipeline_test.zig");
 const Diagnostics = diagnostics.Diagnostics;
@@ -34,6 +38,9 @@ const Op = pipeline.Op;
 /// result's area may differ from its operands' own by the zone times their perimeters;
 /// this is the rounding on top.
 pub const IDENTITY_CLOSE = 1e-9;
+/// How many points along each edge, its ends among them, `faceKnownTo` measures against
+/// the face.
+const KNOWN_TO_SAMPLES = 8;
 /// A measure's rounding where a move takes it, in ulps of the distance times the area:
 /// mass sums terms that size (as D27 reckons, 64).
 pub const MOVE_ROUNDING_ULPS = 64;
@@ -388,4 +395,67 @@ test "Fuzz solids: membership finds a union of the right volume misplaced, which
     // A point of a the union no longer covers
     try testing.expectEqual(.inside, fault.places[0]);
     try testing.expectEqual(.outside, fault.places[2]);
+}
+
+/// Whether `p` lies within the band about a face of `solid` within which the solid knows
+/// that face only so far (`faceKnownTo`): its foot on the face's surface that near, in the
+/// face or on its boundary to the band, or an edge of the face that near. A boolean puts an
+/// edge on a face within the intersection tolerance by design (D28: a plate's corner edge
+/// on a hull's face 1.77e-5 off its plane, find ei, 2026-11-27; a face given its coplanar
+/// group's plane, its vertices left 6e-6 under it, el): the section runs along the edges'
+/// lines and through the vertices, the classification measures from the face's surface,
+/// and a point between the two is on the boundary as far as the body knows it. Per face,
+/// not one band for the body (Leo's decision on ei, an approved oracle band, shrunk to the
+/// face whose features lie off it, the audit of classification and section, 2026-11-28):
+/// a disagreement near a face whose features lie on it is a find.
+pub fn knownNear(solid: *const Body, p: Vec3, diag: *Diagnostics) !bool {
+    for (0..solid.faces.items.len) |i| {
+        const f = types.FaceIndex.of(@intCast(i));
+        if (solid.face(f).flags.tombstone) continue;
+        const band = solid.tol.zone + faceKnownTo(solid, f);
+        if (try in_face.nearEdge(solid, f, p, band, diag)) return true;
+        const uv = in_face.uvOf(solid, f, p);
+        const foot = solid.geometry.surface(solid.face(f).surface).eval(uv[0], uv[1]);
+        if (vec.distance(foot, p) <= band and try in_face.classify(solid, f, foot, uv, band, diag) != .outside) return true;
+    }
+    return false;
+}
+
+/// How far the features of face `f` of `solid` lie off its surface at most: its edges'
+/// samples (`KNOWN_TO_SAMPLES` an edge) and its loops' vertices.
+pub fn faceKnownTo(solid: *const Body, f: types.FaceIndex) f64 {
+    const surface = solid.geometry.surface(solid.face(f).surface);
+    var farthest: f64 = 0;
+    var loops = traverse.Loops.init(solid, f);
+    while (loops.next() catch null) |l| {
+        if (solid.loop(l).vertex != .none) farthest = @max(farthest, offSurface(solid, f, surface, solid.point(solid.loop(l).vertex)));
+        var it = traverse.Coedges.init(solid, l);
+        while (it.next() catch null) |c| {
+            const e = solid.edge(solid.coedge(c).edge);
+            const curve = solid.geometry.curve(e.curve);
+            for (0..KNOWN_TO_SAMPLES) |k| {
+                const at = @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(KNOWN_TO_SAMPLES - 1));
+                farthest = @max(farthest, offSurface(solid, f, surface, curve.eval(e.t0 + at * (e.t1 - e.t0))));
+            }
+            farthest = @max(farthest, offSurface(solid, f, surface, solid.point(solid.coedgeStart(c))));
+        }
+    }
+    return farthest;
+}
+
+/// How far `q` lies from its foot on face `f`'s surface.
+fn offSurface(solid: *const Body, f: types.FaceIndex, surface: anytype, q: Vec3) f64 {
+    const uv = in_face.uvOf(solid, f, q);
+    return vec.distance(surface.eval(uv[0], uv[1]), q);
+}
+
+/// How far the features of any face of `solid` lie off its surface at most
+/// (`faceKnownTo`): 0 for a body whose edges lie on their faces.
+pub fn knownTo(solid: *const Body) f64 {
+    var farthest: f64 = 0;
+    for (0..solid.faces.items.len) |i| {
+        const f = types.FaceIndex.of(@intCast(i));
+        if (!solid.face(f).flags.tombstone) farthest = @max(farthest, faceKnownTo(solid, f));
+    }
+    return farthest;
 }

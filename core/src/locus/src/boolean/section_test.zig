@@ -26,6 +26,7 @@ const hull = @import("../construct/hull.zig");
 const section = @import("section.zig");
 const helpers = @import("pipeline_test.zig");
 const degeneracy = @import("degeneracy_test.zig");
+const oracle = @import("oracle_test.zig");
 const sketch_query = @import("../sketch/query.zig");
 const point_in_body = @import("../query/point_in_body.zig");
 const FaceIndex = @import("../query/index.zig").FaceIndex;
@@ -106,11 +107,14 @@ const PARALLEL_UPPER = [2]Vec2{ .{ 1, 0.998 }, .{ 2, 2 } };
 const PARALLEL_UPPER_THICKNESS: f64 = 6e-5;
 const PARALLEL_OVERLAPS = [_]f64{ 4e-6, 5e-6 };
 const PARALLEL_DEPTHS = [_]f64{ 7e-6, 9e-6 };
-/// The probes: a point of the lower plate only, of the strip where they overlap and of
-/// neither (not of the upper only: the plane within the zone under its bottom, the section
-/// holds the solid just above, the solid itself is outside there); and how near the
-/// far-moved areas agree (the coordinates' rounding at 3e5 over the outline).
-const PARALLEL_PROBES = [_]Vec2{ .{ 3.3, 0.5 }, .{ 1.5, 0.999 }, .{ 0.5, 1.5 } };
+/// The probes: a point of the lower plate only, of the strip where they overlap, of
+/// neither and of the upper only (the plane within the zone under its bottom's vertices,
+/// the section holds the solid just above; the union gave the bottom the lower top's plane,
+/// D28, its vertices `PARALLEL_OVERLAPS` under it, and the solid measures from that plane:
+/// outside, past the zone; on the boundary as far as the solid knows that face,
+/// `oracle.knownNear`); and how near the far-moved areas agree (the coordinates' rounding
+/// at 3e5 over the outline).
+const PARALLEL_PROBES = [_]Vec2{ .{ 3.3, 0.5 }, .{ 1.5, 0.999 }, .{ 0.5, 1.5 }, .{ 1.5, 1.5 } };
 const PARALLEL_AREA_SLACK: f64 = 1e-6;
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
@@ -641,7 +645,9 @@ test "slice: a plate's top a hair over the plane, under another plate's walls on
 
 test "slice: the family about ee, a plate on another a hair into it, sliced within the zone under it, agrees with the solid turned, mirrored and moved far" {
     // Each section holds the probes the solid holds (a probe on its boundary, within the
-    // zone, skipped), and its area is the same in every placement
+    // zone, skipped; one they disagree on within the band the solid knows a face to, the
+    // upper's bottom given the lower top's plane, D28), and its area is the same in every
+    // placement
     var lower = try helpers.box(PARALLEL_LOWER[0], PARALLEL_LOWER[1]);
     defer lower.deinit();
     for (PARALLEL_OVERLAPS) |overlap| for (PARALLEL_DEPTHS) |depth| {
@@ -668,8 +674,9 @@ test "slice: the family about ee, a plate on another a hair into it, sliced with
                 const p = place.point(.{ probe[0], probe[1], z });
                 const place_of = try point_in_body.classify(testing.allocator, &moved, &index, p, .{}, &diag);
                 if (place_of == .boundary) continue;
-                errdefer std.debug.print("the probe {any}: the solid says {t}\n", .{ probe, place_of });
-                try testing.expectEqual(place_of == .inside, try sketch_query.contains(&sheet, .{ p[0], p[1] }, 0, &diag));
+                if ((place_of == .inside) == try sketch_query.contains(&sheet, .{ p[0], p[1] }, 0, &diag)) continue;
+                errdefer std.debug.print("the probe {any}: the solid says {t}, the section the other\n", .{ probe, place_of });
+                try testing.expect(try oracle.knownNear(&moved, p, &diag));
             }
             const got = try areaOf(&sheet);
             if (area) |want| try testing.expectApproxEqAbs(want, got, PARALLEL_AREA_SLACK) else area = got;
