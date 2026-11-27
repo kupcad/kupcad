@@ -21,6 +21,10 @@ const ER_LINE_FROM: Vec3 = .{ 1, 2, 1 };
 const ER_LINE_TO: Vec3 = .{ 4, 3, 1 };
 /// The planes through the origin find er's line is mirrored in (the oracle's is x = 0).
 const ER_MIRROR_NORMALS = [_]Vec3{ vec.X3, vec.Y3, vec.Z3 };
+/// An extrusion's direction whose length, normalized, rounds to 1 − 1 ulp: measured again
+/// under a map, the direction and its v rounded otherwise (the audit of order and frame,
+/// 2026-11-27; er's rule for lines).
+const SKEW_EXTRUSION: Vec3 = .{ 1, 0, 1 };
 
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
@@ -242,4 +246,30 @@ test "curve: a line under a mirror is the exact mirror image, its parameter kept
             try testing.expectEqual(m.point(line.eval(t)), image.curve.eval(t * image.t_scale));
         }
     }
+}
+
+test "surface: an extrusion under a mirror is the exact mirror image, its v kept (er's rule for lines)" {
+    // Under a similarity the direction maps by the factor, as a line's does (find er): its
+    // length measured again (0.9999999999999999 for this one) renormalized it and scaled v
+    // by it, so a mirror's extrusion and its points rounded off the mirror image
+    const d = vec.normalized(SKEW_EXTRUSION).?;
+    try testing.expect(vec.length(d) != 1.0);
+    var arc = try nurbs.circleArc(testing.allocator, vec.ZERO3, vec.X3, vec.Y3, 2, 0, PI);
+    defer arc.deinit(testing.allocator);
+    const kinds = [_]surfaces.Surface{
+        .{ .extrusion = .{ .curve = .{ .circle = curves.Circle.inPlane(.{ 1, 2, 3 }, vec.Z3, 2) }, .d = d } },
+        .{ .extrusion = .{ .curve = .{ .nurbs = arc.view() }, .d = d } },
+    };
+    const box = Box2{ .min = .{ 0.2, -0.5 }, .max = .{ 2.0, 1.1 } };
+    for (kinds) |s| for (ER_MIRROR_NORMALS) |n| {
+        errdefer std.debug.print("mirrored in {any}\n", .{n});
+        const m = Affine.mirror(n);
+        var image = try transform.surface(testing.allocator, s, box, &m, transform.classify(&m));
+        defer image.deinit(testing.allocator);
+        try testing.expectEqual(@as(f64, 1), image.v_scale);
+        try testing.expectEqual(m.vector(d), image.surface.extrusion.d);
+        for ([_]f64{ 0.2, 1.1, 2.0 }) |u| for ([_]f64{ -0.5, 0, 1.1 }) |v| {
+            try testing.expectEqual(m.point(s.eval(u, v)), image.surface.eval(u, v));
+        };
+    };
 }

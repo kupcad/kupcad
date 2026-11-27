@@ -301,7 +301,12 @@ polar factor by Newton–Schulz steps), a matrix typed to a few digits; past tha
 stretch or shear it is. The limits were once the zone as a share of the scale and the angular
 tolerance as a cosine: a stretch of 8e-6 passed as it was, and a cylinder 100 long went
 with it, its frame off square, the checker's fault to report (`NotValid`; the audit of
-2026-11-22; OCCT's `gp_GTrsf::SetForm` holds 1e-12). A
+2026-11-22; OCCT's `gp_GTrsf::SetForm` holds 1e-12). A similarity maps every record by
+its factor, never measuring a direction again: a line's direction and an extrusion's (their
+parameters scaled by the factor), as frames and circles map, so a mirror through the
+origin maps a body exactly (a line renormalized under a mirror put its end 1 ulp off the
+mirror image's, and a distance at D27's band was refused in place and made mirrored: find
+er, 2026-11-27; an extrusion's direction alike, the audit of order and frame). A
 similarity scales the body's length tolerances with it (`Tolerance.scaled`: `zone`,
 `xsect`, `approx`; `angle` and the relative `param` kept), as OCCT's
 `BRepTools_TrsfModification` scales a shape's tolerances, so every relation the body held

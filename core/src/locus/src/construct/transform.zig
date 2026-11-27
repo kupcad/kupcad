@@ -126,13 +126,16 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, input: *const 
         const k = similarityOr(shape, diag, .surface, i) catch |e| return e;
         r.frame = geo_transform.frame(r.frame, affine, k);
     }
-    for (g.extrusions.items, 0..) |*e, i| {
+    // Each extrusion's v factor, for the pcurves and boxes on it
+    const extrusion_scale = try allocator.alloc(f64, g.extrusions.items.len);
+    defer allocator.free(extrusion_scale);
+    for (g.extrusions.items, extrusion_scale, 0..) |*e, *es, i| {
         // The generator was mapped with the curves; an arc generator under a stretch is
-        // refused there
-        const d = affine.vector(e.d);
-        const len = vec.length(d);
-        if (!(len > 0.0)) return notRepresentable(diag, .surface, i);
-        e.d = vec.scale(d, 1.0 / len);
+        // refused there. The direction by the map's factor under a similarity, as a line's
+        // (`geo_transform.extrusionAlong`)
+        const along = geo_transform.extrusionAlong(affine.vector(e.d), shape) orelse return notRepresentable(diag, .surface, i);
+        e.d = along.d;
+        es.* = along.v_scale;
     }
 
     // Edge ranges on lines scale with the line's parameter
@@ -152,7 +155,7 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, input: *const 
         const face = out.face(out.loop(c.loop).face);
         const v_scale: f64 = switch (face.surface.kind) {
             .cylinder, .cone => factor,
-            .extrusion => vec.length(affine.vector(body.geometry.extrusions.items[face.surface.index].d)),
+            .extrusion => extrusion_scale[face.surface.index],
             else => 1.0,
         };
         const edge_scale: f64 = if (out.edge(c.edge).curve.kind == .line) line_scale[out.edge(c.edge).curve.index] else 1.0;
@@ -178,7 +181,7 @@ pub fn transform(allocator: std.mem.Allocator, body: *const Body, input: *const 
                 f.uv_box.max[1] *= factor;
             },
             .extrusion => {
-                const k = vec.length(affine.vector(body.geometry.extrusions.items[f.surface.index].d));
+                const k = extrusion_scale[f.surface.index];
                 f.uv_box.min[1] *= k;
                 f.uv_box.max[1] *= k;
             },

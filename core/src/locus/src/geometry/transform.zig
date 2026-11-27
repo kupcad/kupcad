@@ -106,6 +106,18 @@ pub fn frame(f: Frame, a: *const Affine, scale: f64) Frame {
     };
 }
 
+/// An extrusion's direction `d` mapped (`a.vector` of it), and the factor its v scales by.
+/// Under a similarity by the map's factor, as a line's direction (find er): measured again,
+/// a direction whose length rounds to 1 − 1 ulp was renormalized and its v rescaled under a
+/// mirror, the extrusion and its points off the mirror image (the audit of order and frame,
+/// 2026-11-27). Under another map by its length, as the line's. Null when it collapses.
+pub fn extrusionAlong(d: Vec3, shape: Shape) ?struct { d: Vec3, v_scale: f64 } {
+    if (shape == .similarity) return .{ .d = vec.scale(d, 1.0 / shape.similarity.scale), .v_scale = shape.similarity.scale };
+    const len = vec.length(d);
+    if (!(len > 0.0)) return null;
+    return .{ .d = vec.scale(d, 1.0 / len), .v_scale = len };
+}
+
 /// A homogeneous control point under `a`: the point mapped, the weight kept.
 fn controlPoint(q: Vec4, a: *const Affine) Vec4 {
     const p = a.point(vec.project4(q));
@@ -229,9 +241,8 @@ pub fn surface(allocator: std.mem.Allocator, s: surfaces.Surface, box: types.Box
             // parameterization: only a generator that keeps its parameters survives
             if (gen.t_scale != 1.0 or (gen.owned != null and e.curve != .nurbs)) return error.NotRepresentable;
             const d = a.vector(e.d);
-            const len = vec.length(d);
-            if (!(len > 0.0)) return error.NotRepresentable;
-            return .{ .surface = .{ .extrusion = .{ .curve = gen.curve, .d = vec.scale(d, 1.0 / len) } }, .owned_curve = gen.owned, .v_scale = len };
+            const along = extrusionAlong(d, shape) orelse return error.NotRepresentable;
+            return .{ .surface = .{ .extrusion = .{ .curve = gen.curve, .d = along.d } }, .owned_curve = gen.owned, .v_scale = along.v_scale };
         },
         .revolution => |r| {
             const k = similarity orelse return error.NotRepresentable;

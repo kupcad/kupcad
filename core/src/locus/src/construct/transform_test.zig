@@ -16,6 +16,9 @@ const Affine = mat.Affine;
 const Vec3 = vec.Vec3;
 
 const tol = Tolerance.fromZone(1e-5);
+/// A disc's sweep askew to it, its direction's length normalized rounding to 1 − 1 ulp
+/// (the extrusion surface's record measured again under a map rounded otherwise).
+const SKEW_SWEEP: Vec3 = .{ 1, 0, 3 };
 /// How high over a box's top a second box rests in the tests of a union scaled: within the
 /// intersection tolerance (the union holds its bottom's outline in the first box's top, up
 /// to that far off its plane, with no gap), and the factors it is scaled by.
@@ -366,6 +369,37 @@ test "transform: a matrix off a similarity past the zone over the body is a stre
             for (c.vertices.items, near.vertices.items) |from, to| {
                 try testing.expect(vec.distance(map.point(c.geometry.point(from.point)), near.geometry.point(to.point)) <= tol.zone);
             }
+        }
+    }
+}
+
+test "transform: a solid swept askew, mirrored, has the exact mirror image of its extrusion, its pcurves and boxes kept" {
+    // er's rule for extrusions (the audit of order and frame, 2026-11-27): under a
+    // similarity an extrusion's direction maps by the factor and its v by it, not by the
+    // direction's length measured again, which for this one rounds to 1 − 1 ulp and
+    // rescaled every pcurve and box on the side faces
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var disc = try primitives.circle(testing.allocator, tol, 2, &diag);
+    defer disc.deinit();
+    var skew = try @import("sweep.zig").extrude(testing.allocator, &disc, SKEW_SWEEP, .{}, &diag);
+    defer skew.deinit();
+    try testing.expect(skew.geometry.extrusions.items.len > 0);
+    try testing.expect(vec.length(skew.geometry.extrusions.items[0].d) != 1.0);
+    for ([_]Vec3{ vec.X3, vec.Y3, vec.Z3 }) |n| {
+        errdefer std.debug.print("mirrored in {any}\n", .{n});
+        const m = Affine.mirror(n);
+        var image = try transform.transform(testing.allocator, &skew, &m, .{}, &diag);
+        defer image.deinit();
+        for (skew.geometry.extrusions.items, image.geometry.extrusions.items) |e, mapped| try testing.expectEqual(m.vector(e.d), mapped.d);
+        for (skew.geometry.lines2.items, image.geometry.lines2.items) |l, mapped| {
+            try testing.expectEqual(l.o, mapped.o);
+            try testing.expectEqual(l.d, mapped.d);
+        }
+        for (skew.faces.items, image.faces.items) |f, mapped| {
+            if (f.surface.kind != .extrusion) continue;
+            try testing.expectEqual(f.uv_box.min, mapped.uv_box.min);
+            try testing.expectEqual(f.uv_box.max, mapped.uv_box.max);
         }
     }
 }
