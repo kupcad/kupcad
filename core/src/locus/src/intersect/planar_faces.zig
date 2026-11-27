@@ -577,7 +577,9 @@ pub fn place(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tole
 /// solids: a fragment's samples are the centroids of its triangulation, which a mirror
 /// changes, and one of them 3.8e-14 past the tolerance from a partner face's boundary
 /// refused a union in place that was made mirrored, where no sample lay there
-/// (`boolean/classify.zig`'s `sameDomain`; the nightly's locus_solids on 61054773, ec).
+/// (`boolean/classify.zig`'s `sameDomain`; the nightly's locus_solids on 61054773, ec); and
+/// the fragment rule's sample over a face of its own operand (`boolean/pipeline.zig`'s
+/// `lyingOn`, eo).
 pub fn placed(body: *const Body, f: types.FaceIndex, p: Vec3, gap: f64, tol: Tolerance, diag: *Diagnostics) Error!in_face.Placed {
     const decide: incidence.Decider = .{ .tol = tol, .scale = canonical.magnitude(&.{p}) };
     return in_face.placeWithin(decide, body, f, p, gap, null, diag);

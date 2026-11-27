@@ -842,6 +842,24 @@ const EK_HULL_SCALE: Vec3 = .{ 1, 0.5, 1 };
 const EK_HULL_NUDGES = [_]Vec3{ .{ 5e-6, 5e-6, 2e-3 }, .{ 0, 5e-6, 2e-3 }, .{ 5e-6, 1e-5, 2e-3 }, .{ 1e-5, 5e-6, 2e-3 }, .{ 5e-6, 0, 2e-3 } };
 const EK_REFUSED: usize = 3;
 const EK_FAR: Vec3 = .{ 3e5, -3e5, 3e5 };
+/// The solids of the tests of a strip's probe at a face's boundary to rounding (the local
+/// session's find eo on 621b9ee0, as the fuzzer drew it): the box over `EO_BOX` nudged
+/// `EO_BOX_NUDGE`, the plate `EO_XSECTS` intersection tolerances thick about z = 4 over
+/// `EO_PLATE`, nudged `EO_PLATE_NUDGE` (in z the tolerance and one band of D27's at the
+/// plate's size) and, in z, `EO_LIFT_BANDS` of that band (`EO_BAND`, 64 ulps of 4) more: the
+/// find's, the tolerance to the band, bands about it and halves; the hull of `EO_HULL` scaled `EO_HULL_SCALE` and nudged
+/// `EO_HULL_NUDGE`. Moved 3e5 out by `EO_FAR`.
+const EO_BOX = [2]Vec3{ .{ 1, 3, 0 }, .{ 2, 4, 4 } };
+const EO_BOX_NUDGE: Vec3 = .{ -2e-5, 1e-5, -1e-5 };
+const EO_PLATE = [2]Vec3{ .{ 2, 3, 4 }, .{ 4, 4, 4 } };
+const EO_XSECTS: f64 = 2.5;
+const EO_PLATE_NUDGE: Vec3 = .{ -1e-5, -5e-6, 2.0000000056843776e-5 };
+const EO_BAND: f64 = 64 * std.math.floatEps(f64) * 4;
+const EO_LIFT_BANDS = [_]f64{ 0, -1, 1, -2, 2, -3, 3, -0.5, 0.5 };
+const EO_HULL = [_]Vec3{ .{ 2, 1, 4 }, .{ 4, 3, 1 }, .{ 2, 4, 2 }, .{ 2, 2, 4 }, .{ 1, 3, 4 }, .{ 4, 1, 0 } };
+const EO_HULL_SCALE: Vec3 = .{ 0.5, 1, 0.5 };
+const EO_HULL_NUDGE: Vec3 = .{ -5e-6, -2e-5, 1e-5 };
+const EO_FAR: Vec3 = .{ 3e5, -3e5, 3e5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -6386,5 +6404,66 @@ test "degeneracy: a crossing paved on a hull's edge by its corner, off the face'
                 if (n < EK_REFUSED) try testing.expectEqual(Outcome{ .refused = .below_feature_size }, outcome) else try testing.expect(outcome == .made);
             }
         };
+    }
+}
+
+test "degeneracy: a strip's probe the tolerance from a face's boundary to rounding says nothing in the fragment rule, the next decides, turned, mirrored, far and either way round" {
+    // The local session's find eo on 621b9ee0, as the fuzzer drew it: a box and a plate
+    // 2.5 tolerances thick joined over the box's top, the plate's side within the zone of
+    // the box's, then less a hull. The union keeps a strip of the plate's side 5.5e-5 tall
+    // in the plane of the box's side and facing apart from it; the fragment rule
+    // (`pipeline.lyingOn`) asks whether the strip lies on the box's side by the strip's
+    // sample farthest from its edges. Two samples tie there, and the triangulation, which
+    // a mirror or the operands' order changes, put first the one 2e-5 and 3.9e-14 from the
+    // side's top edge, the tolerance to rounding: refused `at_tolerance` mirrored, made in
+    // place, where the first lay clearly outside. A probe there says nothing and the next
+    // decides, as `classify.sameDomain`'s do (ec). The plate lifted by bands about the
+    // find's, each move, either order of the union, all three operations either way round:
+    // made, sound, and alike to the in-place counts
+    const half = EO_XSECTS * tol.xsect / 2;
+    const moves = [_]mat.Affine{
+        mat.Affine.translate(vec.ZERO3),
+        mat.Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        mat.Affine.rotate(vec.Z3, std.math.pi),
+        mat.Affine.mirror(vec.X3),
+        mat.Affine.translate(EO_FAR),
+        mat.Affine.translate(EO_FAR).compose(&mat.Affine.mirror(vec.X3)),
+    };
+    const transform = @import("../construct/transform.zig").transform;
+    var hull_drawn = try fuzzHullPlaced(&EO_HULL, vec.Z3, 0, EO_HULL_SCALE, vec.ZERO3, EO_HULL_NUDGE);
+    defer hull_drawn.deinit();
+    var box_drawn = try fuzzBoxPlaced(tol, EO_BOX[0], EO_BOX[1], vec.Z3, 0, null, EO_BOX_NUDGE);
+    defer box_drawn.deinit();
+    for (EO_LIFT_BANDS) |bands| {
+        var plate_drawn = try fuzzBoxPlaced(tol, .{ EO_PLATE[0][0], EO_PLATE[0][1], EO_PLATE[0][2] - half }, .{ EO_PLATE[1][0], EO_PLATE[1][1], EO_PLATE[1][2] + half }, vec.Z3, 0, null, .{ EO_PLATE_NUDGE[0], EO_PLATE_NUDGE[1], EO_PLATE_NUDGE[2] + bands * EO_BAND });
+        defer plate_drawn.deinit();
+        for ([_]bool{ false, true }) |plate_first| {
+            // The counts in place, of the three operations of the union with the hull
+            var in_place: [3]Body.Counts = undefined;
+            for (moves, 0..) |move, m| {
+                var diag = Diagnostics.init(testing.allocator);
+                defer diag.deinit();
+                var a = try transform(testing.allocator, &box_drawn, &move, .{}, &diag);
+                defer a.deinit();
+                var b = try transform(testing.allocator, &plate_drawn, &move, .{}, &diag);
+                defer b.deinit();
+                var h = try transform(testing.allocator, &hull_drawn, &move, .{}, &diag);
+                defer h.deinit();
+                var joined = if (plate_first) try sound(&b, &a, .@"union") else try sound(&a, &b, .@"union");
+                defer joined.deinit();
+                for ([_]pipeline.Op{ .@"union", .intersection, .difference }, &in_place) |op, *counts| {
+                    errdefer std.debug.print("the plate lifted {d} bands, move {d}, the plate first {}, {t}\n", .{ bands, m, plate_first, op });
+                    var result = try sound(&joined, &h, op);
+                    defer result.deinit();
+                    if (m == 0) counts.* = result.counts();
+                    try testing.expectEqual(counts.*, result.counts());
+                    if (op == .difference) {
+                        try testing.expect(try outcomeOf(&h, &joined, op) == .made);
+                    } else {
+                        try expectAlikeEitherWay(&joined, &h, op);
+                    }
+                }
+            }
+        }
     }
 }

@@ -913,7 +913,12 @@ fn lessPair(_: void, x: [2]u32, y: [2]u32) bool {
 /// at, which the operands' order changes: a hull's side piece, one corner the tolerance
 /// to rounding over the hull's bottom and another eight tolerances over it, was refused
 /// in a hull's intersection with a plate and made in the plate's with the hull (the
-/// sessions on ab354a0a, bh).
+/// sessions on ab354a0a, bh). The sample is a probe, no feature of the solids: one at `j`'s
+/// boundary to rounding says nothing and the next decides (`planar_faces.placed`, as
+/// `classify.sameDomain`'s samples, ec). The samples are the centroids of `i`'s
+/// triangulation, which a mirror changes: a strip's two samples farthest from its edges
+/// tied, and mirrored the first was the one the tolerance from `j`'s boundary to rounding,
+/// refusing the difference made in place, where the first lay clearly outside (eo).
 fn lyingOn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *const imprint.Fragments, i: u32, j: u32, samples: *std.ArrayList(Vec3), diag: *Diagnostics) Error!bool {
     const fj = fragments.items.items[j];
     const body = paves.operands[fj.operand];
@@ -932,10 +937,12 @@ fn lyingOn(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *c
     }
     samples.clearRetainingCapacity();
     try classify.sample(allocator, paves, fragments, i, samples);
-    if (samples.items.len == 0) return false;
-    const p = samples.items[0];
-    if (try planar_faces.place(body, g, p, 0, paves.tol, diag) != .inside) return false;
-    return aroundPoint(paves, fragments, j, frame, planar_faces.flat(frame, p), std.math.maxInt(u32));
+    for (samples.items) |p| switch (try planar_faces.placed(body, g, p, 0, paves.tol, diag)) {
+        .inside => return aroundPoint(paves, fragments, j, frame, planar_faces.flat(frame, p), std.math.maxInt(u32)),
+        .outside, .boundary => return false,
+        .at_tolerance => continue,
+    };
+    return false;
 }
 
 /// Whether fragment `i` holds the point `at` (merged vertex `m`) strictly inside, by the

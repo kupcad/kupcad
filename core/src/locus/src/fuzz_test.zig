@@ -2915,6 +2915,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // cut there by the imprint's overlay (pave.sectionsApart: a face's own blocks ending
         // at a pave measured in its plane, below_feature_size)
         "solids 3 0 3 4 1 4 0 3 4 0 2 3 0 3 6 10 14 8 9 3 3 3 0 3 2 2 3 4 2 4 0 2 4 1 8 5 13 12 0 1 1 8 3 0 2 3 4 0 1 1 3 4 4 3 4 4 3 4 2 0 2 3 4 4 1 3 1 0 1 0 1 3 3 13 9 0",
+        // The locus_solids session on 621b9ee0 (eo): (box ∪ plate) - hull mirrored, a
+        // strip's first sample 3.9e-14 past the tolerance from the box side's edge, refused
+        // `at_tolerance`, made in place, where the triangulation's tied samples came in the
+        // other order (pipeline.lyingOn: such a sample says nothing, planar_faces.placed)
+        "solids 0 1 2 3 4 0 4 3 3 8 5 6 4 3 1 3 0 4 0 2 4 2 3 4 4 0 1 1 6 4 11 9 0 3 1 6 2 1 4 4 3 1 2 4 2 2 2 4 1 3 4 4 1 0 2 0 0 1 0 4 8 5 9 1 1 1 8 4 4 1 3 2 1 4 4 4 4 2 1 1 1 4 2 4 4 0 0 2 0 0 3 2 0 2 1 0 6 7 -2 6 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
