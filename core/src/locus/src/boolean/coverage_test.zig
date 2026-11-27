@@ -471,7 +471,7 @@ fn edgeUsedThrice(cov: *Coverage) !void {
     var specs = [_]sew.EdgeSpec{ try b.straight(p, q), try b.straight(q, p), try b.straight(p, q) };
     const uses = [_]pipeline.Use{ .{ .spec = 0, .face = 0 }, .{ .spec = 1, .face = 1 }, .{ .spec = 2, .face = 2 } };
     const normals = [_]Vec3{ vec.X3, vec.Y3, vec.neg(vec.X3) };
-    try testing.expectError(error.NotValid, pipeline.pairTouching(testing.allocator, &b.body, &specs, &uses, &normals, &diag));
+    try testing.expectError(error.NotValid, pipeline.pairTouching(testing.allocator, &b.body, &specs, &uses, &normals, null, &diag));
     try testing.expectEqual(Code.edge_coedge_count, diag.first().?.code);
     cov.findings(&diag);
 }

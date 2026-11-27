@@ -587,8 +587,11 @@ fn faceSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *c
 
 /// The side of face `g` of `body` (outward normal `n_g`) every corner of fragment `i` off
 /// `g`'s plane lies on: outside in front of it, inside behind it; null when its corners
-/// lie on both sides, or none off it past the paves' rounding.
-fn cornersSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3) ?Class {
+/// lie on both sides, or none off it past the paves' rounding. The one reading of which
+/// side of a face parallel to it a fragment lies on, the turn's only where it is null:
+/// the classification's (`faceSide`) and the order of the result's faces about an edge
+/// where solids touch (`pipeline.pairByWedges`).
+pub fn cornersSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3) ?Class {
     const origin = planar_faces.frameOf(body, g).?.origin;
     var front = false;
     var behind = false;

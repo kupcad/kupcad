@@ -559,6 +559,29 @@ pub const Use = struct {
     face: u32,
 };
 
+/// Where the result's faces came from, for the side one lies on of another parallel to it
+/// within the angular tolerance (`pairByWedges`): each face's fragment (`face_fragment`)
+/// and whether it was kept flipped (`keeps`).
+pub const Sides = struct {
+    paves: *const pave.Paves,
+    fragments: *const imprint.Fragments,
+    keeps: []const select.Keep,
+    face_fragment: []const u32,
+
+    /// Whether the result's face `y` lies in front of its face `x` (on the side of `x`'s
+    /// normal in the result), by `y`'s corners as the classification reads a fragment
+    /// against a face parallel to it (`classify.cornersSide`); null where they tell no
+    /// side.
+    fn inFront(self: Sides, x: u32, y: u32) ?bool {
+        const i = self.face_fragment[x];
+        const fragment = self.fragments.items.items[i];
+        const body = self.paves.operands[fragment.operand];
+        const g = types.FaceIndex.of(fragment.face);
+        const side = classify.cornersSide(self.paves, self.fragments, self.face_fragment[y], body, g, in_face.outwardNormal(body, g, .{ 0, 0 })) orelse return null;
+        return (side == .outside) != (self.keeps[i] == .flip);
+    }
+};
+
 /// The assembled body and where its faces came from, for the face map.
 const Made = struct {
     body: Body,
@@ -670,7 +693,7 @@ fn assemble(allocator: std.mem.Allocator, paves: *const pave.Paves, fragments: *
     for (vertex_of, paves.reach.items) |v, reach| {
         if (v != .none) made.reach = @max(made.reach, reach);
     }
-    try pairTouching(allocator, &b.body, edge_specs.items, uses.items, normals.items, diag);
+    try pairTouching(allocator, &b.body, edge_specs.items, uses.items, normals.items, .{ .paves = paves, .fragments = fragments, .keeps = keeps, .face_fragment = face_fragment.items }, diag);
 
     // The loops, now that the edges no longer move; each face's box in its plane record's frame
     const loop_specs = try allocator.alloc(sew.LoopSpec, loop_ranges.items.len);
@@ -1625,7 +1648,7 @@ fn magnitudeOf(body: *const Body, diag: *Diagnostics) Error!f64 {
 /// edge 5e-5 long, held by reach: the plate's corner and a wedge of two hulls touching
 /// along it; the ReleaseSafe session on a1444371, bz; both did not pair before,
 /// 2026-11-21). A plane with more than two uses across leaves them unpaired.
-pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, diag: *Diagnostics) Error!void {
+pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, sides: ?Sides, diag: *Diagnostics) Error!void {
     const Key = struct { lo: u32, hi: u32 };
     var groups: std.AutoArrayHashMapUnmanaged(Key, std.ArrayList(u32)) = .empty;
     defer {
@@ -1687,14 +1710,27 @@ pub fn pairTouching(allocator: std.mem.Allocator, body: *const Body, specs: []se
             specs[uses[across.swapRemove(k)].spec].copy = copy;
             copy += 1;
         }
-        try pairByWedges(allocator, specs, uses, normals, key.lo, axis, in_plane.items, angle_of, &copy, list.items.len, diag);
+        try pairByWedges(allocator, body.tol, specs, uses, normals, sides, key.lo, axis, in_plane.items, angle_of, &copy, list.items.len, diag);
     }
 }
 
 /// The uses `list` of one edge from vertex `lo` along `axis`, each face holding it in its
 /// plane, paired by the wedges of material about it: sorted by the angle of their faces
 /// about the axis, each with its neighbour on its material side, from copy `copy` on.
-fn pairByWedges(allocator: std.mem.Allocator, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, lo: u32, axis: Vec3, list: []u32, angle_of: []f64, copy: *u32, total: usize, diag: *Diagnostics) Error!void {
+///
+/// Two neighbours about the axis whose faces are parallel within the angular tolerance and
+/// leave the edge on one side of it are in the order the classification read them in
+/// (`sides`, null for the coverage test's bare uses): the one on the side of the other its
+/// corners lie on (`classify.cornersSide`), as `classify.faceSide` reads a fragment
+/// against a face parallel to it, the turn between them only where neither one's corners
+/// tell a side. Their turn alone is noise: a box's bottom 2e-5 over a hull's top, tilted
+/// 1e-6 rad along the edge they touch along (the box's bottom edge, a chord of the top),
+/// turned about it by 1.8e-17, both read outside the other by their corners and ordered
+/// by that turn with the bottom under the top, so the box's wedge took in the hull's
+/// face: four coedges, the union NotValid (the locus_solids session on 4e969adf, ef). OCCT
+/// orders the faces about an edge by a point of each face off the edge
+/// (`BOPTools_AlgoTools::GetFaceOff`, its `FindPointInFace`), not by their tangents alone.
+fn pairByWedges(allocator: std.mem.Allocator, tol: Tolerance, specs: []sew.EdgeSpec, uses: []const Use, normals: []const Vec3, sides: ?Sides, lo: u32, axis: Vec3, list: []u32, angle_of: []f64, copy: *u32, total: usize, diag: *Diagnostics) Error!void {
     const r0 = vec.perpendicular(axis);
     const r1 = vec.cross(axis, r0);
     // Each use's face, as the direction into it from the edge, by its angle about the axis
@@ -1711,6 +1747,12 @@ fn pairByWedges(allocator: std.mem.Allocator, specs: []sew.EdgeSpec, uses: []con
         angle_of[u] = trig.atan2(vec.dot(into, r1), vec.dot(into, r0));
     }
     std.mem.sort(u32, list, Sorted{ .angles = angle_of }, Sorted.lessThan);
+    // Neighbours parallel on one side, the last and the first neighbours too (the order
+    // is a cycle about the axis): in the order their corners tell
+    if (sides) |s| for (0..list.len) |k| {
+        const next = (k + 1) % list.len;
+        if (!(parallelAfter(tol, s, specs, uses, normals, lo, axis, list[next], list[k]) orelse true)) std.mem.swap(u32, &list[k], &list[next]);
+    };
     // Pair each use with its neighbour on its material side, turning about the axis
     const n = list.len;
     var paired = try allocator.alloc(bool, n);
@@ -1732,6 +1774,26 @@ fn pairByWedges(allocator: std.mem.Allocator, specs: []sew.EdgeSpec, uses: []con
         copy.* += 1;
     }
     for (paired) |p| if (!p) return diag.fail(error.NotValid, .{ .code = .edge_coedge_count, .label = "an edge of a boolean's result (its faces do not pair)", .measured = @floatFromInt(total) });
+}
+
+/// Whether use `y` comes after use `x`, turning about `axis` (`pairByWedges`), where
+/// their faces are parallel within the angular tolerance and leave the edge on one side of
+/// it: by the side of `x` that `y`'s corners lie on, or of `y` that `x`'s do (the two
+/// agreeing where both tell one); null for faces not so, or whose corners tell no order.
+fn parallelAfter(tol: Tolerance, sides: Sides, specs: []const sew.EdgeSpec, uses: []const Use, normals: []const Vec3, lo: u32, axis: Vec3, y: u32, x: u32) ?bool {
+    const fx = uses[x].face;
+    const fy = uses[y].face;
+    if (!tol.parallel(normals[fx], normals[fy])) return null;
+    const into_x = vec.cross(normals[fx], if (@backingInt(specs[uses[x].spec].start) == lo) axis else vec.neg(axis));
+    const into_y = vec.cross(normals[fy], if (@backingInt(specs[uses[y].spec].start) == lo) axis else vec.neg(axis));
+    if (vec.dot(into_x, into_y) <= 0) return null;
+    // Turning on about the axis from a face turns toward its front
+    const x_turns_front = vec.dot(vec.cross(axis, into_x), normals[fx]) > 0;
+    const y_turns_front = vec.dot(vec.cross(axis, into_y), normals[fy]) > 0;
+    const by_y: ?bool = if (sides.inFront(fx, fy)) |front| front == x_turns_front else null;
+    const by_x: ?bool = if (sides.inFront(fy, fx)) |front| front != y_turns_front else null;
+    if (by_y != null and by_x != null and by_y.? != by_x.?) return null;
+    return by_y orelse by_x;
 }
 
 fn corrupt(diag: *Diagnostics) Error {

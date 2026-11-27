@@ -1201,6 +1201,13 @@ importing only those before it, which the layering test holds):**
   the turn says which way it leaves the piece (a face 1e-9 rad off a box's side, 2e-5
   outside it, turned toward the box but met its plane 2e4 away: read by the turn inside,
   every corner outside, `unclassified`; the ReleaseSafe session on a1444371, ci). The
+  result's faces about an edge where solids touch are ordered by the same reading
+  (`pipeline.pairByWedges`): two neighbours about it parallel within the angular
+  tolerance and on one side of it, each on the side of the other its corners lie on, the
+  turn only where neither's corners tell (ordered by the turn alone, a box's bottom 2e-5
+  over a hull's top, turned 1.8e-17 about their edge, came under it, and a hull's face at
+  the angular tolerance to a box's top, turned 3.7e-3 against its corners, the other way:
+  four coedges; the sessions on 4e969adf, ef, eg). The
   report counts fragments by seam (`by_seam`); rays fell,
   and a union of two 1000-sided prisms took 18% less time.
 - `select.zig`: Mäntylä's table, a coincident face kept once: from `a` where the two faces

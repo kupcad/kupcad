@@ -186,6 +186,31 @@ const DV_BOX_NUDGE: Vec3 = .{ -5e-6, -5e-6, 0 };
 /// across the line, or farther) and in y (its corner past them along the line, or short),
 /// by half a zone and a zone.
 const DV_BOX_SHIFTS = [_]f64{ -1e-5, -5e-6, 0, 5e-6, 1e-5 };
+/// The solids of find ef (the locus_solids session on 4e969adf), as the fuzzer drew them
+/// (`helpers.fuzzPlaced`, `degeneracy.fuzzHullPlaced`): a hull whose top lies at z = 3,
+/// and a box over it turned 1e-6 about y, its bottom 1.9e-5 to 2.1e-5 over the top, its
+/// bottom edge along y = 4 a chord of the top between two merged vertices.
+const EF_HULL = [_]Vec3{ .{ 0, 3, 3 }, .{ 3, 3, 1 }, .{ 4, 4, 3 }, .{ 3, 4, 3 } };
+const EF_HULL_MOVE: Vec3 = .{ 0.5, 0.5, 0 };
+const EF_BOX = struct { size: Vec3 = .{ 2, 1, 1 }, lo: Vec3 = .{ 1, 3, 3 }, turn: f64 = 1e-6, nudge: Vec3 = .{ -1.999999994315657e-5, 5e-6, 2e-5 } }{};
+/// The family about ef: the box turned about its bottom edge's middle on the top
+/// (`EF_PIVOT`, before the nudge) by `EF_TURNS` (radians about x, across the edge: none, a
+/// hair and a ten-thousandth either way; about y, along it: the slope that takes the
+/// bottom past the tolerance of the top at one end of the overlap) and lifted
+/// `EF_LIFTS` over it, the edge within the tolerance of the top where it crosses it.
+const EF_PIVOT: Vec3 = .{ 2, 4, 3 };
+const EF_ALONG: f64 = 1e-5;
+const EF_ACROSS = [_]f64{ 0, 1e-6, -1e-6, 1e-4, -1e-4 };
+const EF_LIFTS = [_]f64{ 1.2e-5, 1.9e-5 };
+/// The chain of find eg (the locus session on 4e969adf): a hull turned at the angular
+/// tolerance about (1, 2, 3) united with a box 2e-3 under the grid, then less a second
+/// box, as the fuzzer drew them (`degeneracy.fuzzHullPlaced`, `helpers.fuzzPlaced`).
+const EG_HULL = [_]Vec3{ .{ 2, 3, 2 }, .{ 1, 0, 0 }, .{ 3, 3, 0 }, .{ 2, 0, 1 }, .{ 4, 1, 2 }, .{ 2, 1, 0 }, .{ 1, 1, 4 }, .{ 2, 3, 3 } };
+const EG_HULL_TURN: f64 = 0.014142253478516982;
+const EG_HULL_MOVE: Vec3 = .{ 0, 1, 0 };
+const EG_HULL_NUDGE: Vec3 = .{ -1e-5, 0, 2.0000000057109944e-5 };
+const EG_BOX = struct { size: Vec3 = .{ 1, 3, 1 }, lo: Vec3 = .{ 1, 0, 1 }, nudge: Vec3 = .{ -1.9999999957367437e-5, 5e-6, -2e-3 } }{};
+const EG_CUT = struct { size: Vec3 = .{ 2, 2, 4 }, lo: Vec3 = .{ 0, 2, 0 }, move: Vec3 = .{ 0, -1, 0 }, nudge: Vec3 = .{ -1e-5, 0, -1e-5 } }{};
 
 const Outcome = struct {
     code: ?diagnostics.Code = null,
@@ -767,4 +792,99 @@ test "ties: the family about dv, the box's corner moved across and along the fac
         try expectAlikeMirrored(&joined, &box);
         try expectAlikeSwappedAndMovedBy(&joined, &box, &FAR_MOVES);
     };
+}
+
+test "ties: a box's bottom over a hull's top within the tolerance at their edge, turned along it a hair, is ordered about the edge as its corners lie, the bottom over the top (find ef)" {
+    // Find ef: the box's bottom edge is a chord of the hull's top between two merged
+    // vertices, the bottom 1.9e-5 to 2.1e-5 over the top (an intersection tolerance of
+    // 2e-5), turned 1e-6 along the edge and not about it. Both read outside the other by
+    // their corners, and the union kept the hull's top either side of the edge, the box's
+    // bottom and its side: the four faces about the edge ordered by the bottom's turn from
+    // the top, 1.8e-17, which put it under the top, the box's wedge taking in the hull's
+    // face: four coedges, the union NotValid. Ordered as the corners lie
+    // (`pipeline.pairByWedges`), the union is two solids touching along the edge
+    const t = Tolerance.fromZone(1e-5);
+    var box = try helpers.fuzzPlaced(t, EF_BOX.size, EF_BOX.lo, vec.Y3, EF_BOX.turn, vec.ZERO3, EF_BOX.nudge);
+    defer box.deinit();
+    var hull = try degeneracy.fuzzHullPlaced(&EF_HULL, vec.Z3, 0, null, EF_HULL_MOVE, vec.ZERO3);
+    defer hull.deinit();
+    for ([2]bool{ false, true }) |swapped| {
+        errdefer std.debug.print("swapped {}\n", .{swapped});
+        const got = if (swapped) try Outcome.of(&box, &hull, .@"union", null) else try Outcome.of(&hull, &box, .@"union", null);
+        defer got.deinit();
+        try testing.expectEqual(@as(?diagnostics.Code, null), got.code);
+        try testing.expectEqual([2]usize{ 2, 0 }, got.kinds);
+    }
+    try expectAlikeSwappedAndMovedBy(&hull, &box, &MOVES);
+    try expectAlikeMirrored(&hull, &box);
+}
+
+/// The box of the family about ef: turned `across` about x and `EF_ALONG` about y through
+/// `EF_PIVOT`, then lifted `lift` and moved by the find's nudge across.
+fn efBox(across: f64, lift: f64) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var unit = try helpers.boxAt(Tolerance.fromZone(1e-5), EF_BOX.lo, vec.add(EF_BOX.lo, EF_BOX.size));
+    defer unit.deinit();
+    const turn: Vec3 = .{ across, EF_ALONG, 0 };
+    var place = mat.Affine.rotateAbout(EF_PIVOT, vec.normalized(turn).?, vec.length(turn));
+    place = mat.Affine.translate(.{ EF_BOX.nudge[0], EF_BOX.nudge[1], lift }).compose(&place);
+    return transform.transform(testing.allocator, &unit, &place, .{}, &diag);
+}
+
+test "ties: the family about ef, the box's bottom turned along and across its edge on the hull's top and lifted, made sound alike swapped, mirrored and moved far" {
+    // Along the edge the bottom leaves the tolerance of the top at one end of the
+    // overlap; across it the bottom turns by none, a hair either way (each read against
+    // its corners, over the top), or a ten-thousandth (its far corners under the top
+    // where it dips, the faces crossing, read by the turn). Before the fix the turns
+    // against the corners were four coedges in the union
+    var hull = try degeneracy.fuzzHullPlaced(&EF_HULL, vec.Z3, 0, null, EF_HULL_MOVE, vec.ZERO3);
+    defer hull.deinit();
+    for (EF_ACROSS) |across| for (EF_LIFTS) |lift| {
+        errdefer std.debug.print("turned {e} across the edge, lifted {e}\n", .{ across, lift });
+        var box = try efBox(across, lift);
+        defer box.deinit();
+        for (OPS) |op| {
+            errdefer std.debug.print("{t}\n", .{op});
+            const got = try Outcome.of(&hull, &box, op, null);
+            defer got.deinit();
+            if (got.code) |code| try testing.expect(code != .edge_coedge_count);
+        }
+        try expectAlikeSwappedAndMovedBy(&hull, &box, &FAR_MOVES);
+        try expectAlikeMirrored(&hull, &box);
+    };
+}
+
+/// The hull of find eg united with its first box.
+fn egJoined() !Body {
+    const t = Tolerance.fromZone(1e-5);
+    var hull = try degeneracy.fuzzHullPlaced(&EG_HULL, .{ 1, 2, 3 }, EG_HULL_TURN, null, EG_HULL_MOVE, EG_HULL_NUDGE);
+    defer hull.deinit();
+    var box = try helpers.fuzzPlaced(t, EG_BOX.size, EG_BOX.lo, vec.Z3, 0, vec.ZERO3, EG_BOX.nudge);
+    defer box.deinit();
+    return helpers.sound(&hull, &box, .@"union");
+}
+
+test "ties: a hull's face at the angular tolerance to a box's top, turned from it about their edge against where its corners lie, is ordered about the edge as they lie (find eg)" {
+    // Find eg: in the union of the hull and the first box, cut by the second, a face of
+    // the hull and the box's top share an edge, parallel within the angular tolerance,
+    // each face's corners all on one side of the other's plane, and their turn about the
+    // edge, 3.7e-3, the other way. The classification read them by their corners, the
+    // order about the edge by the turn: four coedges, NotValid. Ordered as the corners
+    // lie (`pipeline.pairByWedges`), made
+    var joined = try egJoined();
+    defer joined.deinit();
+    var cut = try helpers.fuzzPlaced(Tolerance.fromZone(1e-5), EG_CUT.size, EG_CUT.lo, vec.Z3, 0, EG_CUT.move, EG_CUT.nudge);
+    defer cut.deinit();
+    for (OPS) |op| {
+        errdefer std.debug.print("{t}\n", .{op});
+        const got = try Outcome.of(&joined, &cut, op, null);
+        defer got.deinit();
+        try testing.expectEqual(@as(?diagnostics.Code, null), got.code);
+    }
+    // Out to 2e3: the hull's faces at the angular tolerance to the boxes' cross them where
+    // the coordinates' rounding over that slope moves the crossings past `SAME_POINT`
+    // farther out (2e-9 at 3e5)
+    try expectAlikeSwappedAndMovedBy(&joined, &cut, &MOVES);
+    try expectAlikeMirrored(&joined, &cut);
 }

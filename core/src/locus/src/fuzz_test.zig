@@ -2653,6 +2653,15 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // parallel to the plane, took no part by its normal's tilt, and the upper's walls
         // cut the lower plate out (section.edgeInPlane: by its vertices' sides)
         "solids 3 0 5 4 2 3 4 2 3 1 0 3 2 7 13 7 1 2 9 1 2 3 0 4 1 0 4 4 3 4 1 1 2 3 0 9 12 3 0",
+        // The locus_solids session on 4e969adf (ef): a box's bottom 2e-5 over a hull's top,
+        // turned 1e-6 along the edge they touch along, ordered about it by a turn of 1.8e-17,
+        // the bottom under the top, four coedges in the union (pipeline.pairByWedges: as the
+        // corners lie, classify.cornersSide)
+        "solids 1 4 0 3 3 3 3 1 4 4 3 3 4 3 1 2 1 1 0 2 1 2 0 1 3 3 4 3 4 0 1 7 1 10 3 7 8 2",
+        // The locus session on 4e969adf (eg): a hull's face at the angular tolerance to a
+        // box's top, turned about their edge against where the corners lie, four coedges
+        // (the same)
+        "solids 1 8 2 3 2 1 0 0 3 3 0 2 0 1 4 1 2 2 1 0 1 1 4 2 3 3 0 3 6 1 6 2 11 6 2 3 0 1 2 0 3 1 2 2 2 10 3 14 16 0 1 0 0 2 2 4 0 4 2 2 6 -2 6 15 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
