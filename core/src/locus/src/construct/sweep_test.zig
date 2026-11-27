@@ -38,6 +38,11 @@ const ASKEW_L = [_]vec.Vec2{ .{ 0, 0 }, .{ 2, 0 }, .{ 2, 1 }, .{ 1, 1 }, .{ 1, 2
 /// The directions those profiles are extruded along: each leaves the sheet's plane askew,
 /// one of them downward-leaning, and one rising less than its length.
 const ASKEW_DIRECTIONS = [_]Vec3{ .{ 0, 3, 3 }, .{ 1, 0, 4 }, .{ -2, 1, 0.5 } };
+/// The discs (radii) of the tests of a disc swept askew, the directions they are swept
+/// along (leaning every way, steep and shallow, down too), and where they are put first.
+const SKEW_DISC_RADII = [_]f64{ 0.5, 2, 10 };
+const SKEW_DISC_DIRECTIONS = [_]Vec3{ .{ 1, 0, 1 }, .{ -1, 0, 1 }, .{ 0, 1, 1 }, .{ 0, -1, 1 }, .{ 1, 1, 1 }, .{ 2, 0, 1 }, .{ 1, 0, 0.5 }, .{ 1, 0, -1 }, .{ 1, 0, 3 }, .{ -3, 2, 0.4 } };
+const SKEW_DISC_PLACES = [_]Vec3{ .{ 0, 0, 0 }, .{ 3e5, -2e5, 1e5 } };
 /// How far the first vertex of a quarter disc's arc lies off the arc's circle, along the
 /// radius, outward positive: within the zone (an outline's ends may be), both ways, at and
 /// past the approximation tolerance a pcurve is held to (find cr).
@@ -995,4 +1000,27 @@ test "revolve: a turn short of a full one by an opening within the zone at the p
     try testing.expectEqual(@import("../diagnostics.zig").Code.below_feature_size, diag.findings.items[diag.findings.items.len - 1].code);
     // No angle at all is the argument's fault
     try testing.expectError(error.InvalidInput, sweep.revolve(testing.allocator, &profile, vec.ZERO3, vec.Z3, 0, .{}, &diag));
+}
+
+test "extrude: a disc swept askew along any direction is a valid solid of its volume, in place, far out and mirrored (the sweep's own check found a side 3.02 off its edge along (1, 0, 1))" {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (SKEW_DISC_RADII) |r| {
+        var disc = try primitives.circle(testing.allocator, tol, r, &diag);
+        defer disc.deinit();
+        for (SKEW_DISC_PLACES) |place| for ([_]bool{ false, true }) |mirrored| {
+            const mat = @import("../math/mat.zig");
+            const map = if (mirrored) mat.Affine.translate(place).compose(&mat.Affine.mirror(vec.X3)) else mat.Affine.translate(place);
+            var sheet = try @import("transform.zig").transform(testing.allocator, &disc, &map, .{}, &diag);
+            defer sheet.deinit();
+            for (SKEW_DISC_DIRECTIONS) |direction| {
+                errdefer std.debug.print("radius {d} at {any} mirrored {} along {any}: {any}\n", .{ r, place, mirrored, direction, diag.first() });
+                var solid = try sweep.extrude(testing.allocator, &sheet, direction, .{}, &diag);
+                defer solid.deinit();
+                try expectValid(&solid);
+                const volume = std.math.pi * r * r * @abs(direction[2]);
+                try testing.expectApproxEqRel(volume, (try mass.mass(&solid, .{}, &diag)).volume, 1e-6);
+            }
+        };
+    }
 }

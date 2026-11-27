@@ -14,6 +14,9 @@ const Box2 = types.Box2;
 const H: f64 = 1e-6;
 const H2: f64 = 1e-4;
 const PI = std.math.pi;
+/// Directions a planar curve in z = const is swept along askew, leaning every way, steep
+/// and shallow.
+const SKEW_DIRECTIONS = [_]Vec3{ .{ 1, 0, 1 }, .{ -1, 0, 1 }, .{ 0, 1, 1 }, .{ 0, -1, 1 }, .{ 1, 1, 1 }, .{ 2, 0, 1 }, .{ 1, 0, 0.5 }, .{ 1, 0, -1 }, .{ 1, 0, 3 }, .{ -3, 2, 0.4 } };
 
 fn expectVec(expected: Vec3, actual: Vec3, tol: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], tol);
@@ -162,6 +165,24 @@ test "Extrusion: a circle along a direction is a cylinder" {
     const b = s.bounds(.{ .min = .{ 0, 0 }, .max = .{ types.TWO_PI, 5 } });
     try expectVec(.{ -1, 0, 3 }, b.min, 1e-12);
     try expectVec(.{ 3, 4, 8 }, b.max, 1e-12);
+}
+
+test "Extrusion: a circle or an ellipse swept askew projects every point of its surface to its own parameters, however the direction leans (the seed moved into the generator's plane)" {
+    // A disc of radius 2 swept along (1, 0, 1) had the checker find its side 3.02 off its
+    // own bottom edge: the seed moved a point square to the direction, not into the
+    // circle's plane, and the refinement settled on the far side of the circle
+    const circle = curves.Circle.inPlane(.{ 1, 2, 3 }, vec.Z3, 2);
+    const ellipse = curves.Ellipse{ .c = .{ -1, 0, 2 }, .x = vec.X3, .y = vec.Y3, .a = 3, .b = 1 };
+    for ([_]curves.Curve{ .{ .circle = circle }, .{ .ellipse = ellipse } }) |curve| {
+        for (SKEW_DIRECTIONS) |direction| {
+            errdefer std.debug.print("{s} along {any}\n", .{ @tagName(curve), direction });
+            const s = Surface{ .extrusion = .{ .curve = curve, .d = vec.normalized(direction).? } };
+            var u: f64 = 0.05;
+            while (u < types.TWO_PI) : (u += 0.3) {
+                for ([_]f64{ -1, 0, 2.5 }) |v| try expectProjection(s, u, v, vec.scale(s.normal(u, v), 0.1));
+            }
+        }
+    }
 }
 
 test "Revolution: a line about the axis is a cone, a semicircle a sphere, with the generator off the axis plane" {

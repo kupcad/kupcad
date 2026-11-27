@@ -360,11 +360,23 @@ pub const Extrusion = struct {
         return vec.normalized(vec.cross(self.curve.d1(u), self.d)) orelse vec.ZERO3;
     }
 
-    /// Seed and refine: `u` from the curve's nearest point to `p` moved into the
-    /// generator's plane along `d`, `v` the height there.
+    /// Seed and refine: `u` from the curve's nearest point to `p` moved along `d` into the
+    /// generator's plane (a circle's or an ellipse's, which a point of the surface reaches
+    /// at its own generator point exactly; else the plane through the curve's first point
+    /// square to `d`), `v` the height there. Moved square to `d` alone, a point of a disc
+    /// swept along (1, 0, 1) landed off the circle's plane and the refinement settled on
+    /// the circle's far side: the sweep's own check found its side 3.02 off its bottom edge
+    /// (the audit of the later phases, 2026-11-27; OCCT's `Extrema_ExtPExtS` projects the
+    /// curve with the point, along the direction, which for a planar curve is this).
     pub fn project(self: Extrusion, p: Vec3, eps: f64, max_steps: u32) Vec2 {
         const base = self.curve.anyPoint();
-        const height0 = vec.dot(vec.sub(p, base), self.d);
+        const plane_normal: ?Vec3 = switch (self.curve) {
+            .circle => |c| c.normal(),
+            .ellipse => |e| e.normal(),
+            .line, .nurbs => null,
+        };
+        const rise = if (plane_normal) |n| vec.dot(self.d, n) else 0;
+        const height0 = if (rise != 0) vec.dot(vec.sub(p, base), plane_normal.?) / rise else vec.dot(vec.sub(p, base), self.d);
         const along = self.curve.project(vec.addScaled(p, self.d, -height0), eps, max_steps);
         const height = vec.dot(vec.sub(p, self.curve.eval(along)), self.d);
         return nurbs.refineSurfaceProjection(self, p, .{ along, height }, eps, max_steps);
