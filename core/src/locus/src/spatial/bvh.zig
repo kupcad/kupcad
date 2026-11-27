@@ -121,9 +121,10 @@ pub const Bvh = struct {
         }
     }
 
-    /// Calls `visit(ctx, item)` for every item whose box the segment `origin + t·dir`,
-    /// `t` in `[lo, hi]`, meets (the slab test, RTCD §5.3.3); `visit` returns false to stop.
-    pub fn querySegment(self: *const Bvh, origin: Vec3, dir: Vec3, lo: f64, hi: f64, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32) bool) void {
+    /// Calls `visit(ctx, item)` for every item whose box, grown by `grow`, the segment
+    /// `origin + t·dir`, `t` in `[lo, hi]`, meets (the slab test, RTCD §5.3.3); `visit`
+    /// returns false to stop.
+    pub fn querySegment(self: *const Bvh, origin: Vec3, dir: Vec3, lo: f64, hi: f64, grow: f64, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32) bool) void {
         if (self.nodes.len == 0) return;
         var stack: [MAX_DEPTH + 2]u32 = undefined;
         var top: usize = 1;
@@ -132,12 +133,12 @@ pub const Bvh = struct {
             top -= 1;
             const index = stack[top];
             const node = self.nodes[index];
-            if (!segmentMeetsBox(node.box, origin, dir, lo, hi)) continue;
+            if (!segmentMeetsBox(node.box.inflated(grow), origin, dir, lo, hi)) continue;
             if (node.isLeaf()) {
                 var i = node.right;
                 while (i < node.right + node.count) : (i += 1) {
                     const item = self.items[i];
-                    if (segmentMeetsBox(self.boxes[item], origin, dir, lo, hi) and !visit(ctx, item)) return;
+                    if (segmentMeetsBox(self.boxes[item].inflated(grow), origin, dir, lo, hi) and !visit(ctx, item)) return;
                 }
             } else {
                 stack[top] = node.right;

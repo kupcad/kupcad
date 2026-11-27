@@ -57,13 +57,24 @@ pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within
     return if (inside) .inside else .outside;
 }
 
-/// Where a ray's meeting `p` with face `f`'s surface (at `uv`) lies against the face, as
-/// the ray queries take it: on its boundary within the zone of an edge (`classify`) or in
-/// an edge's sliver (`inSliver`), in the face's loops or not; else inside or outside by
-/// the loops.
-pub fn meeting(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, diag: *Diagnostics) Error!Place {
-    const place = try classify(body, f, p, uv, body.tol.zone, diag);
-    if (place == .boundary) return .boundary;
+/// Where a ray's meeting `p` with face `f`'s surface lies against the face, as the ray
+/// queries take it: on its boundary within the reach of it, as the paves and the overlap
+/// rules put a point there (`placeWithin`; at that reach to rounding too, which says
+/// nothing for a ray either), or in an edge's sliver (`inSliver`), in the face's loops or
+/// not; else inside or outside by the loops. A face's boundary is known only to the reach:
+/// a vertex may lie the intersection tolerance off its edge's line (D28, the checker's
+/// `vertex_off_curve`), and the loops wind about the vertices' points while the edges are
+/// their lines. Taken within the zone, a box's corner 1.9e-4 off a plate's front edge
+/// ended the union's bottom, by its loops, short of the plate's front line, which its top
+/// ends on; a ray up 1.2e-4 inside that line, past the zone, met the top alone (the solids
+/// session's find eq on 621b9ee0: a point under the plate classified inside the union).
+pub fn meeting(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!Place {
+    const decide: incidence.Decider = .{ .tol = body.tol, .scale = canonical.magnitude(&.{p}) };
+    const place: Place = switch (try placeWithin(decide, body, f, p, 0, null, diag)) {
+        .boundary, .at_tolerance => return .boundary,
+        .inside => .inside,
+        .outside => .outside,
+    };
     return if (try inSliver(body, f, p, diag)) .boundary else place;
 }
 

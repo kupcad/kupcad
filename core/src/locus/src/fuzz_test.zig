@@ -141,6 +141,28 @@ const EP_PLATE_MOVE: vec.Vec3 = .{ 1, 0, 0 };
 const EP_PLATE_NUDGE: vec.Vec3 = .{ 0, 0, -2e-5 };
 const EP_LIFTS = [_]f64{ 0, 1e-6, -1e-6, 5e-6, -5e-6 };
 const EP_PROBE: vec.Vec3 = .{ 1.5999799999957902, 0.8030311810994064, 3.9999881399996298 };
+/// Find eq (the locus_solids session on 621b9ee0), as the solids fuzzer drew it: the box
+/// over `EQ_BOX` moved `EQ_BOX_MOVE` and nudged `EQ_BOX_NUDGE` (zone 1e-5), the plate over
+/// `EQ_PLATE` at zone `EQ_PLATE_ZONE`, moved `EQ_PLATE_MOVE` and nudged `EQ_PLATE_NUDGE`, its
+/// y nudge each of `EQ_PLATE_Y_NUDGES` (the find's first: its front 1.9e-4 before the box's,
+/// within the tolerance; then nearer, and past it); the hull of `EQ_HULL` moved
+/// `EQ_HULL_MOVE` and nudged `EQ_HULL_NUDGE`. The probes: under the plate and beside the
+/// box, `EQ_PROBE_X` and `EQ_PROBE_Z`, at y `EQ_PROBE_YS` about the two fronts (the find's
+/// first), outside the union by 0.83 and more.
+const EQ_BOX = [2]vec.Vec3{ .{ 2, 2, 1 }, .{ 3, 3, 4 } };
+const EQ_BOX_MOVE: vec.Vec3 = .{ 0.5, 0, 0 };
+const EQ_BOX_NUDGE: vec.Vec3 = .{ 0, -1e-5, -2.000000005684342e-5 };
+const EQ_PLATE = [2]vec.Vec3{ .{ 2, 2, 3 }, .{ 52, 102, 4 } };
+const EQ_PLATE_ZONE: f64 = 1e-4;
+const EQ_PLATE_MOVE: vec.Vec3 = .{ 0, 0, 1 };
+const EQ_PLATE_NUDGE: vec.Vec3 = .{ 2e-2, 0, 0 };
+const EQ_PLATE_Y_NUDGES = [_]f64{ -2.000000014495072e-4, -1.9e-4, -1.5e-4, -1e-4, -2.2e-4 };
+const EQ_HULL = [_]vec.Vec3{ .{ 4, 0, 3 }, .{ 3, 0, 1 }, .{ 3, 1, 3 }, .{ 4, 2, 1 } };
+const EQ_HULL_MOVE: vec.Vec3 = .{ 1, 0, 0 };
+const EQ_HULL_NUDGE: vec.Vec3 = .{ 0, 2e-2, 5e-5 };
+const EQ_PROBE_X: f64 = 4.334000000000001;
+const EQ_PROBE_Z: f64 = 2.9164499999999993;
+const EQ_PROBE_YS = [_]f64{ 1.9999211999985527, 1.99975, 1.99979, 1.99983, 1.99987, 1.99991, 1.99995, 1.99999, 2.00003 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2087,6 +2109,88 @@ test "Fuzz solids: a point past a wedge's thin edge, between its faces' planes, 
     };
 }
 
+test "Fuzz solids: a point under a plate, beside a box whose corner its bottom's edge ends at off that edge's line, is outside their union, turned, mirrored, far and either way round" {
+    // The locus_solids session's find eq on 621b9ee0, as the fuzzer drew it: a box (zone
+    // 1e-5) and a plate over it (zone 1e-4), the plate's front 1.9e-4 before the box's,
+    // within the tolerance, united, then less a hull. The union's bottom face runs along
+    // the plate's front edge to the box's corner, 1.9e-4 off that edge's line (D28, within
+    // the tolerance), so its loops, through the vertices' points, end up to 1.9e-4 short of
+    // the line the plate's top ends on. A ray up from under the plate, between the two, met
+    // the top alone, 1.2e-4 from the bottom's line, past the zone, and the point, 0.83 from
+    // the box and 1.08 under the plate, was inside the union (membership: a inside). A
+    // meeting within the reach of a face's boundary is on it, as the paves put a point there
+    // (`in_face.meeting` by `placeWithin`). The plate's front nudged by each of
+    // `EQ_PLATE_Y_NUDGES`, moved by each of the moves, the union either way round: the
+    // probes outside, and the step with the hull through the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var box_shape = try boxFrom(EQ_BOX[0], EQ_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    var plate_shape = try boxFrom(EQ_PLATE[0], EQ_PLATE[1], tolerance.Tolerance.fromZone(EQ_PLATE_ZONE), &diag);
+    defer plate_shape.deinit();
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &EQ_HULL, &diag);
+    defer hull_shape.deinit();
+    for (EQ_PLATE_Y_NUDGES) |y_nudge| for (moves, 0..) |move, m| {
+        const places = [3]Affine{
+            Affine.translate(EQ_BOX_NUDGE).compose(&Affine.translate(EQ_BOX_MOVE)),
+            Affine.translate(.{ EQ_PLATE_NUDGE[0], y_nudge, EQ_PLATE_NUDGE[2] }).compose(&Affine.translate(EQ_PLATE_MOVE)),
+            Affine.translate(EQ_HULL_NUDGE).compose(&Affine.translate(EQ_HULL_MOVE)),
+        };
+        var operands: [3]Body = undefined;
+        var built: usize = 0;
+        defer for (operands[0..built]) |*body| body.deinit();
+        for ([_]*const Body{ &box_shape, &plate_shape, &hull_shape }, places) |shape, place| {
+            var placed = try transform.transform(testing.allocator, shape, &place, .{}, &diag);
+            defer placed.deinit();
+            operands[built] = try transform.transform(testing.allocator, &placed, &move, .{}, &diag);
+            built += 1;
+        }
+        for ([_]bool{ false, true }) |plate_first| {
+            errdefer std.debug.print("the plate nudged {e} in y, move {d}, the plate first {}\n", .{ y_nudge, m, plate_first });
+            var joined = if (plate_first) try solid_boolean.tests.sound(&operands[1], &operands[0], .@"union") else try solid_boolean.tests.sound(&operands[0], &operands[1], .@"union");
+            defer joined.deinit();
+            var index = try solid_query.FaceIndex.build(testing.allocator, &joined, &diag);
+            defer index.deinit(testing.allocator);
+            for (EQ_PROBE_YS) |y| {
+                const probe = move.point(.{ EQ_PROBE_X, y, EQ_PROBE_Z });
+                errdefer std.debug.print("the probe {any}\n", .{probe});
+                try testing.expectEqual(solid_query.point_in_body.Place.outside, try solid_query.point_in_body.classify(testing.allocator, &joined, &index, probe, .{}, &diag));
+            }
+            try expectStepWith(&joined, &operands[2], &diag);
+        }
+    };
+}
+
+/// The step of `a` and `b` as the solids chains take it: the three operations made, each
+/// sound and its report fitting it, then the identities, membership and the operands the
+/// other way round (`oracle.expectStep`); or one refused by design (`oracle.clean`).
+fn expectStepWith(a: *const Body, b: *const Body, diag: *Diagnostics) !void {
+    var results: [3]Body = undefined;
+    var shifts: [3]f64 = undefined;
+    var gaps: [3]f64 = undefined;
+    var made: usize = 0;
+    defer for (results[0..made]) |*r| r.deinit();
+    for (oracle.OPS) |op| {
+        var report = solid_boolean.pipeline.Report.init(testing.allocator);
+        defer report.deinit();
+        results[made] = solid_boolean.pipeline.boolean(testing.allocator, a, b, op, .{}, diag, &report) catch |err| return oracle.clean(err);
+        made += 1;
+        shifts[made - 1] = report.shift;
+        gaps[made - 1] = report.max_gap;
+        try expectSolid(&results[made - 1], diag);
+        try solid_boolean.tests.expectReportFits(&report, a, b, &results[made - 1], op);
+    }
+    try oracle.expectStep(a, b, &results, shifts, gaps, diag);
+}
+
 /// `probe` classified in `solid` as far as it knows its boundary (`knownTo`) as the
 /// section at its height holds it, unless on the boundary; a refusal as `expectSliced`'s.
 fn expectProbeSliced(solid: *const Body, probe: vec.Vec3, diag: *Diagnostics) !void {
@@ -3002,6 +3106,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // ray through the crack at that edge, the section holding it outside
         // (point_in_body.passesEdge: a ray within the zone of an edge has met it)
         "solids 0 1 3 1 4 3 4 0 0 7 1 12 -1 0 15 1 2 2 1 4 2 4 2 3 0 2 3 0 0 0 2 2 0 8 7 2",
+        // The locus_solids session on 621b9ee0 (eq): (box ∪ plate) - hull at mixed zones,
+        // the union's bottom ending 1.9e-4 short of the plate's front line at the box's
+        // corner, a ray up between them meeting the top alone: a point under the plate
+        // inside the union, MembershipDisagrees (in_face.meeting: within the reach)
+        "solids 0 2 3 2 3 1 4 3 3 1 6 12 3 3 1 2 2 3 2 4 3 4 1 3 13 12 2 4 0 3 1 4 4 0 3 3 0 1 3 1 3 4 2 1 1 3 2 13 3 14 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
