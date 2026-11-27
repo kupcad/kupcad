@@ -390,6 +390,15 @@ pub const Paves = struct {
         return self.decide.onPlane(plane.height(self.point(v)), self.gaps.items[v]);
     }
 
+    /// Whether the paves put merged vertex `v` on face `face` of `operand`, inside it or on
+    /// its boundary (`incidences`, complete before the faces meet: every merged vertex near
+    /// a face is placed against it, `featureSize`): the record later phases read for where
+    /// a vertex lies against a face, never its distance again (`Filler.lies`,
+    /// `classify.cornersSide`).
+    pub fn onFace(self: *const Paves, operand: u1, face: u32, v: u32) bool {
+        return Incidence.in(self.incidences.items, .{ .face = .{ .operand = operand, .face = face }, .vertex = v });
+    }
+
     /// The merged vertices on face `face` of `operand`, in increasing order.
     pub fn verticesOn(self: *const Paves, operand: u1, face: u32, out: *std.ArrayList(u32)) Error!void {
         out.clearRetainingCapacity();
@@ -1716,7 +1725,7 @@ const Filler = struct {
     /// its boundary (`Paves.incidences`, complete before the faces meet: every merged
     /// vertex near a face is placed against it, `featureSize`).
     fn onFace(self: *const Filler, k: usize, f: types.FaceIndex, v: u32) bool {
-        return Incidence.in(self.p.incidences.items, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
+        return self.p.onFace(@intCast(k), @backingInt(f), v);
     }
 
     /// How a piece between two merged vertices lies against a face (`lies`).

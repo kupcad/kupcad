@@ -219,6 +219,24 @@ const ET_BOX = [2]vec.Vec3{ .{ 2.25001, 0.5, -0.002 }, .{ 4.00004, 2.5, 3.998 } 
 const ET_CROSSING: f64 = 2.99998;
 const ET_CUT = [2]vec.Vec3{ .{ 1.25002, -0.002, -0.002 }, .{ ET_CROSSING, 2.998, 3.998 } };
 const ET_OFF_FACE = [_]f64{ 2.0333333333e-5, 2.2e-5, 2.5e-5, 3e-5, 1.5e-5 };
+/// Find eu (the nightly's locus target on 5b10f355, run 2065), as the fuzzer drew it: a
+/// wall `EU_WALL_XSECTS[0]` tolerances thick about x = 2 joined with a box turned at the
+/// angular tolerance and scaled, then a wall `EU_WALL_XSECTS[1]` thick, less the hull of
+/// `EU_HULL` nudged `EU_HULL_NUDGE` and each of `EU_HULL_LIFTS` more in z: its apex at the
+/// first wall's top back corner, 1e-5 over the top in the find, then 5e-6 lower and higher
+/// and 5e-6 under it.
+const EU_WALL_XSECTS = [2]f64{ 3, 2.1 };
+const EU_WALL_NUDGE: vec.Vec3 = .{ 0, 2.000000005684342e-5, -1.9999999943156583e-5 };
+const EU_BOX = [2]vec.Vec3{ .{ 3, 0, 0 }, .{ 4, 4, 3 } };
+const EU_BOX_TURN: f64 = 0.014142253476507214;
+const EU_BOX_SCALE: vec.Vec3 = .{ 0.5, 1, 0.5 };
+const EU_BOX_MOVE: vec.Vec3 = .{ 0, 0, 0.5 };
+const EU_BOX_NUDGE: vec.Vec3 = .{ -2.0000000057242512e-5, -1.999999994275749e-5, 0 };
+const EU_SECOND_WALL_MOVE: vec.Vec3 = .{ 0.5, 0, -1 };
+const EU_SECOND_WALL_NUDGE: vec.Vec3 = .{ 0, 2e-5, 0 };
+const EU_HULL = [_]vec.Vec3{ .{ 2, 4, 4 }, .{ 3, 0, 0 }, .{ 3, 0, 3 }, .{ 4, 2, 3 }, .{ 0, 4, 1 }, .{ 0, 0, 2 }, .{ 1, 2, 3 } };
+const EU_HULL_NUDGE: vec.Vec3 = .{ -1e-5, 5e-6, -1e-5 };
+const EU_HULL_LIFTS = [_]f64{ 0, -5e-6, 5e-6, -1.5e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2269,6 +2287,84 @@ test "Fuzz solids: a face across a union's corner edge just past the tolerance f
     }
 }
 
+test "Fuzz solids: a hull's apex at a thin wall's top corner, a sliver of its face within the tolerance of the top and the side, is decided by the corners the paves put off them, turned, mirrored, far and either way round" {
+    // The nightly's find eu on 5b10f355 (locus, run 2065), as the fuzzer drew it: two
+    // walls and a box joined, less a hull whose apex lies at the first wall's top back
+    // corner, 1e-5 over its top. The hull's face there leaves a triangle between the apex,
+    // a point on the top's side edge and one on the wall's side 3e-5 under the top, within
+    // the tolerance of the top and the side all over. Its seam on the side read it inside;
+    // its seam on the top, from the side edge to the apex (both put on the top by the
+    // paves), runs along the planes' own line no farther than its ends reach across it, so
+    // its turn is noise, and read it outside: `unclassified`, IntersectionFailed. Where a
+    // seam's turn is not clear the corners decide, as for a face parallel to the fragment,
+    // and a corner the paves put on the face is on it, not on a side of it by its height
+    // (`classify.cornersSide`, the paves' record, as `pave.lies` reads it since et): the
+    // third corner, under the top, puts the triangle inside. The apex at `EU_HULL_LIFTS`,
+    // moved by each of the moves, every operation either way round through the solids
+    // oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var first_shape = try euWall(.{ 2, 1, 0 }, .{ 3, 2, 0 }, .{ 4, 4, 4 }, EU_WALL_XSECTS[0], &diag);
+    defer first_shape.deinit();
+    var first = try euPlaced(&first_shape, 0, null, vec.ZERO3, EU_WALL_NUDGE, &diag);
+    defer first.deinit();
+    var box_shape = try boxFrom(EU_BOX[0], EU_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    var box_body = try euPlaced(&box_shape, EU_BOX_TURN, EU_BOX_SCALE, EU_BOX_MOVE, EU_BOX_NUDGE, &diag);
+    defer box_body.deinit();
+    var second_shape = try euWall(.{ 1, 0, 0 }, .{ 3, 2, 3 }, .{ 4, 4, 4 }, EU_WALL_XSECTS[1], &diag);
+    defer second_shape.deinit();
+    var second = try euPlaced(&second_shape, 0, null, EU_SECOND_WALL_MOVE, EU_SECOND_WALL_NUDGE, &diag);
+    defer second.deinit();
+    var joined = try solid_boolean.tests.sound(&first, &box_body, .@"union");
+    defer joined.deinit();
+    var running = try solid_boolean.tests.sound(&joined, &second, .@"union");
+    defer running.deinit();
+    for (EU_HULL_LIFTS) |lift| {
+        var drawn = try solid_hull.hull(testing.allocator, tol, &EU_HULL, &diag);
+        defer drawn.deinit();
+        var hull_shape = try euPlaced(&drawn, 0, null, vec.ZERO3, vec.add(EU_HULL_NUDGE, .{ 0, 0, lift }), &diag);
+        defer hull_shape.deinit();
+        for (moves, 0..) |move, m| {
+            errdefer std.debug.print("the hull lifted {e} more, move {d}\n", .{ lift, m });
+            var a = try transform.transform(testing.allocator, &running, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &hull_shape, &move, .{}, &diag);
+            defer b.deinit();
+            try expectStepWith(&a, &b, &diag);
+            try expectStepWith(&b, &a, &diag);
+        }
+    }
+}
+
+/// `shape` placed as the solids fuzzer places a solid (`generatedBody`): turned `turn` about
+/// z through the grid's middle, scaled by `scale`, moved by `move`, then nudged by `nudge`,
+/// one map composed in that order.
+fn euPlaced(shape: *const Body, turn: f64, scale: ?vec.Vec3, move: vec.Vec3, nudge: vec.Vec3, diag: *Diagnostics) !Body {
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var place = Affine.translate(vec.ZERO3);
+    if (turn != 0) place = Affine.rotateAbout(middle, vec.Z3, turn).compose(&place);
+    if (scale) |by| place = Affine.scaleBy(by).compose(&place);
+    place = Affine.translate(move).compose(&place);
+    place = Affine.translate(nudge).compose(&place);
+    return transform.transform(testing.allocator, shape, &place, .{}, diag);
+}
+
+/// The solids fuzzer's wall (`GapShape.wall`) of find eu at the tests' tolerance.
+fn euWall(at: vec.Vec3, lo: vec.Vec3, hi: vec.Vec3, xsects: f64, diag: *Diagnostics) !Body {
+    const index = std.mem.indexOfScalar(f64, &GAP_XSECTS, xsects).?;
+    const shape: GapShape = .{ .kind = .wall, .at = at, .lo = lo, .hi = hi, .xsects = index };
+    return shape.build(tol, diag);
+}
+
 test "Fuzz solids: a box's edge crossing a union's face at the band's edge past its corner is decided alike mirrored, turned, far and either way round" {
     // The locus session's find er on 621b9ee0, as the fuzzer drew it: (plate ∪ hull) ∩
     // box, the box nudged the intersection tolerance and one band of D27's, its edge
@@ -3361,6 +3457,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // edge, to an end the paves put off the top, read the crevice's piece inside where
         // its other seams read it outside, IntersectionFailed (pave.lies: an end off the face)
         "solids 1 7 0 1 2 2 3 0 2 2 4 4 3 4 2 0 2 2 3 3 2 2 0 1 1 8 13 0 1 1 4 3 1 3 1 5 4 3 4 3 1 3 1 0 4 1 5 -1 14 2 0 1 3 1 3 3 1 4 1 0 3 2 0 4 0 2 8 7 14 14 2 1",
+        // The nightly on 5b10f355 (eu, locus, run 2065): (wall ∪ box ∪ wall) - hull, the
+        // hull's apex at the first wall's top back corner; a sliver of its face there, within
+        // the tolerance of the top and the side, read inside by its seam on the side and
+        // outside by its seam on the top, whose turn was noise, IntersectionFailed
+        // (classify.cornersSide: the corners the paves put off the face decide)
+        "solids 3 1 5 2 3 4 1 2 4 0 0 4 2 0 11 10 11 3 3 0 3 4 0 4 0 3 0 2 5 0 0 1 0 12 10 1 10 0 3 3 1 3 1 3 4 0 2 4 0 3 4 2 1 7 -2 7 0 3 1 7 2 4 4 3 0 0 3 0 3 4 2 3 0 4 1 0 0 2 1 2 3 2 3 6 3 6 9 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

@@ -522,7 +522,7 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, f
             const edges = try seams.edgesOf(allocator, paves, other, g, diag);
             const clear = leave.clear and try in_face.placeWithin(paves.decide, body, g, middle, gap, edges, diag) == .inside and
                 try in_face.placeWithin(paves.decide, body, g, departure(body, g, n_g, middle, leave.into, across, paves.tol.xsect + gap), gap, edges, diag) == .inside;
-            return .{ .class = faceSide(paves, fragments, i, body, g, n_g, normal, across), .clear = clear };
+            return .{ .class = faceSide(paves, fragments, i, body, g, n_g, normal, across, leave.clear), .clear = clear };
         },
     }
 }
@@ -576,26 +576,40 @@ fn sectionInto(paves: *const Paves, x: u32, y: u32, normal: Vec3, n_g: Vec3, int
 
 /// The side of face `g` of `body` (outward normal `n_g`) fragment `i` (of a face of normal
 /// `normal`) lies on beyond a piece it leaves `across` = `into`·`n_g` toward: behind it,
-/// inside, by the turn, but a face parallel to the fragment's within the angular tolerance
-/// shows the side its corners lie on where they lie on one side (`cornersSide`), as a
-/// section's (`pieceSide`) and an edge's faces (`wedgeSide`) alike.
-fn faceSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3, normal: Vec3, across: f64) Class {
+/// inside, by the turn, but a face parallel to the fragment's within the angular tolerance,
+/// or a piece whose turn is not clear (`turn_clear`: a section no longer along the planes'
+/// line than its ends reach across it, `sectionInto`, whose turn is the noise of its ends'
+/// places), shows the side its corners lie on where they lie on one side (`cornersSide`),
+/// as a section's (`pieceSide`) and an edge's faces (`wedgeSide`) alike. A hull's apex
+/// 1e-5 over a thin wall's top, at its back corner: a triangle of the hull's face between
+/// the apex, a point of the top's side edge and one on the wall's side 3e-5 under the top,
+/// its section with the top from the side edge to the apex running across the planes'
+/// line, read outside by the turn, inside by its section with the side; the corner under
+/// the top puts it inside (`unclassified`; the nightly on 5b10f355, eu, 2026-11-28).
+fn faceSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3, normal: Vec3, across: f64, turn_clear: bool) Class {
     const turned: Class = if (across < 0) .inside else .outside;
-    if (!paves.tol.parallel(normal, n_g)) return turned;
+    if (turn_clear and !paves.tol.parallel(normal, n_g)) return turned;
     return cornersSide(paves, fragments, i, body, g, n_g) orelse turned;
 }
 
 /// The side of face `g` of `body` (outward normal `n_g`) every corner of fragment `i` off
 /// `g`'s plane lies on: outside in front of it, inside behind it; null when its corners
-/// lie on both sides, or none off it past the paves' rounding. The one reading of which
-/// side of a face parallel to it a fragment lies on, the turn's only where it is null:
-/// the classification's (`faceSide`) and the order of the result's faces about an edge
-/// where solids touch (`pipeline.pairByWedges`).
+/// lie on both sides, or none off it past the paves' rounding. A corner the paves put on
+/// `g` (`Paves.onFace`, their record, as `pave.lies` reads it) is on it, whatever its
+/// height, which is noise up to its reach (the audit of the later phases, audit-8-9 A5
+/// and C2: a hinge's merged vertex on the far side of the rest left the side to the turn;
+/// find eu: the apex the paves put on a wall's top, 1e-5 over it, read in front of it
+/// against the corner 3e-5 under it). The one reading of which side of a face a fragment
+/// lies on where the turn does not show it, the turn's only where it is null: the
+/// classification's (`faceSide`) and the order of the result's faces about an edge where
+/// solids touch (`pipeline.pairByWedges`).
 pub fn cornersSide(paves: *const Paves, fragments: *const Fragments, i: usize, body: *const Body, g: types.FaceIndex, n_g: Vec3) ?Class {
     const origin = planar_faces.frameOf(body, g).?.origin;
     var front = false;
     var behind = false;
+    const other: u1 = 1 - fragments.items.items[i].operand;
     for (fragments.loopsOf(i)) |loop| for (fragments.loopVertices(loop)) |m| {
+        if (paves.onFace(other, @backingInt(g), m)) continue;
         const height = vec.dot(vec.sub(paves.point(m), origin), n_g);
         if (@abs(height) <= paves.rounding) continue;
         if (height > 0) front = true else behind = true;
@@ -664,15 +678,15 @@ fn wedgeSide(paves: *const Paves, fragments: *const Fragments, i: usize, other: 
         const other_n = if (in_plane[0]) n2 else n1;
         const onto = vec.cross(face_n, if (in_plane[0]) along else vec.scale(along, -1));
         if (vec.dot(into, onto) > 0) return null;
-        return faceSide(paves, fragments, i, body, other_f, other_n, normal, vec.dot(into, other_n));
+        return faceSide(paves, fragments, i, body, other_f, other_n, normal, vec.dot(into, other_n), true);
     }
     // Along a face to rounding, no side (as a section's, `pieceSide`)
     const across = [2]f64{ vec.dot(into, n1), vec.dot(into, n2) };
     if (@abs(across[0]) <= SIDE_ROUNDING or @abs(across[1]) <= SIDE_ROUNDING) return null;
     // Convex when the second face turns behind the first along the first's loop
     const convex = vec.dot(vec.cross(n1, n2), along) > 0;
-    const behind_first = faceSide(paves, fragments, i, body, f1, n1, normal, across[0]) == .inside;
-    const behind_second = faceSide(paves, fragments, i, body, f2, n2, normal, across[1]) == .inside;
+    const behind_first = faceSide(paves, fragments, i, body, f1, n1, normal, across[0], true) == .inside;
+    const behind_second = faceSide(paves, fragments, i, body, f2, n2, normal, across[1], true) == .inside;
     const inside = if (convex) behind_first and behind_second else behind_first or behind_second;
     return if (inside) .inside else .outside;
 }
