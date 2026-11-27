@@ -427,18 +427,19 @@ test "ties: two overlapping boxes, their tops a hair apart, take the same top mi
     // flips the senses, so each top's outward normal pointed down and the outer plane was
     // taken, the edge along the group the other operand's line, and the intersection was
     // made mirrored and refused in place (`sliver_face`). The outward normal is the
-    // surface's (`in_face.outwardNormal`), turned by the sense. The intersection and the
-    // difference: the union joins the front and back top edges, each a run of both
-    // boxes' lines, and simplify keeps the least record of the lines holding the run
-    // (`simplify.hold`), which the mirror's reversed loops number the other way (open)
+    // surface's (`in_face.outwardNormal`), turned by the sense. The union joins the front
+    // and back top edges, each a run of both boxes' lines, on the line nearest the faces
+    // (`simplify.hold`, 67d08801; the least record, which the mirror's reversed loops
+    // numbered the other way, kept the union out of this test until the audit of order and
+    // frame, 2026-11-27)
     for (SIDE_TOP_LIFTS) |lift| {
         errdefer std.debug.print("the second top {e} over the first\n", .{lift});
         var a = try helpers.box(OVER_A[0], OVER_A[1]);
         defer a.deinit();
         var b = try helpers.box(OVER_B[0], vec.add(OVER_B[1], .{ 0, 0, lift }));
         defer b.deinit();
-        try expectAlikeMirrored(&a, &b);
-        try expectAlikeMirrored(&b, &a);
+        try expectEveryOpAlikeMirrored(&a, &b);
+        try expectEveryOpAlikeMirrored(&b, &a);
     }
 }
 
