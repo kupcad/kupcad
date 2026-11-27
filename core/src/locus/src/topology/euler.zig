@@ -295,41 +295,71 @@ fn isInFan(c: CoedgeIndex, fan: []const CoedgeIndex) bool {
 
 /// Kill edge, vertex, join-vertex form: the inverse of `mevSplitVertex`. `out` is the
 /// edge's coedge leaving the surviving vertex; the vertex at its end merges into it, every
-/// coedge there moved over, and the edge goes.
+/// coedge there moved over, and the edge goes. `kevMergeCopies` of the edge alone.
 pub fn kevMerge(body: *Body, out: CoedgeIndex) Error!void {
-    const o = body.coedge(out);
-    const back = o.partner;
-    if (back == .none) return error.Invalid;
-    const keep = body.coedgeStart(out);
-    const gone = body.coedgeEnd(out);
+    return kevMergeCopies(body, &.{out});
+}
+
+/// `kevMerge` of an edge and its copies at once: `outs` holds, for each edge between the
+/// two vertices, its coedge leaving the surviving one (the edge's copies are the
+/// assembly's, one a solid where solids touch along the line). The vertex gone merges into
+/// the one kept and every edge goes. Each edge's coedge leaving the vertex gone starts a
+/// fan about it that closes (`Umbrella`, every coedge with a partner, as `mevSplitVertex`
+/// makes one), no two edges share a fan, and the fans hold every edge at the vertex gone:
+/// an edge outside them would be left at a vertex gone (a second solid touching there
+/// without a copy, a sheet's boundary). Merged one copy at a time, the other solids' edges
+/// pointed at the vertex gone and the copy became an edge from a vertex to itself (the
+/// solids session on 5e73cbcd, em). Anything else is `Invalid`, nothing changed.
+pub fn kevMergeCopies(body: *Body, outs: []const CoedgeIndex) Error!void {
+    if (outs.len == 0) return error.Invalid;
+    const keep = body.coedgeStart(outs[0]);
+    const gone = body.coedgeEnd(outs[0]);
     if (keep == gone) return error.Invalid;
-    // Move every coedge leaving `gone` (but the edge's own) to `keep`
-    var it = traverse.Umbrella.init(body, gone);
-    var moved: usize = 0;
-    while (try it.next()) |c| {
-        const e = body.edge(body.coedge(c).edge);
-        if (body.coedge(c).edge == o.edge) continue;
-        if (body.coedge(c).same_sense) e.start = keep else e.end = keep;
-        moved += 1;
+    var in_fans: usize = 0;
+    for (outs, 0..) |out, i| {
+        const back = body.coedge(out).partner;
+        if (back == .none or body.coedgeStart(out) != keep or body.coedgeEnd(out) != gone) return error.Invalid;
+        // A spur in one loop: kevSpur's
+        if (body.coedge(out).next == back) return error.Invalid;
+        var c = back;
+        while (true) {
+            for (outs, 0..) |other, j| if (j != i and c == body.coedge(other).partner) return error.Invalid;
+            in_fans += 1;
+            if (in_fans > body.coedges.items.len) return error.Corrupt;
+            const around = body.coedge(body.coedge(c).prev).partner;
+            if (around == .none) return error.Invalid;
+            c = around;
+            if (c == back) break;
+        }
     }
-    // Unlink the two coedges from their loops
-    const o_prev = o.prev;
-    const o_next = o.next;
-    const b_prev = body.coedge(back).prev;
-    const b_next = body.coedge(back).next;
-    if (o_next == back) {
-        // A spur in one loop: handled as kevSpur would
-        return error.Invalid;
+    if (in_fans != edgesAt(body, gone)) return error.Invalid;
+    // Move every coedge leaving `gone` (but the edges' own) to `keep`
+    for (outs) |out| {
+        var it = traverse.Umbrella.initFrom(body, body.coedge(out).partner);
+        while (try it.next()) |c| {
+            if (c == body.coedge(out).partner) continue;
+            const e = body.edge(body.coedge(c).edge);
+            if (body.coedge(c).same_sense) e.start = keep else e.end = keep;
+        }
     }
-    link(body, o_prev, o_next);
-    link(body, b_prev, b_next);
-    fixLoopFirst(body, o.loop, out, o_next);
-    fixLoopFirst(body, body.coedge(back).loop, back, b_next);
-    if (body.vertex(keep).coedge == out) body.vertex(keep).coedge = o_next;
+    // Unlink each edge's two coedges from their loops
+    for (outs) |out| {
+        const o = body.coedge(out);
+        const back = o.partner;
+        const o_next = o.next;
+        const b_next = body.coedge(back).next;
+        link(body, o.prev, o_next);
+        link(body, body.coedge(back).prev, b_next);
+        fixLoopFirst(body, o.loop, out, o_next);
+        fixLoopFirst(body, body.coedge(back).loop, back, b_next);
+        if (body.vertex(keep).coedge == out) body.vertex(keep).coedge = o_next;
+        body.edge(o.edge).flags.tombstone = true;
+        o.tombstone = true;
+        body.coedge(back).tombstone = true;
+    }
+    const held = body.vertex(keep).coedge;
+    if (held == .none or body.coedge(held).tombstone) body.vertex(keep).coedge = otherLeaving(body, keep, .none);
     body.vertex(gone).tombstone = true;
-    body.edge(o.edge).flags.tombstone = true;
-    o.tombstone = true;
-    body.coedge(back).tombstone = true;
     debugCheck(body);
 }
 
@@ -647,6 +677,15 @@ fn otherLeaving(body: *const Body, v: VertexIndex, except: EdgeIndex) CoedgeInde
         if (body.coedgeStart(CoedgeIndex.of(i)) == v) return CoedgeIndex.of(i);
     }
     return .none;
+}
+
+/// How many live edges start or end at `v`.
+fn edgesAt(body: *const Body, v: VertexIndex) usize {
+    var n: usize = 0;
+    for (body.edges.items) |e| {
+        if (!e.flags.tombstone and (e.start == v or e.end == v)) n += 1;
+    }
+    return n;
 }
 
 fn link(body: *Body, a: CoedgeIndex, b: CoedgeIndex) void {

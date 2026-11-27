@@ -24,9 +24,11 @@
 //!   keeps one of them.
 //! - An edge no longer than the minimum feature size (`check.shortest`, measured as the
 //!   checker measures it, `check.edgeLength`, D27's band beyond) collapses into its start
-//!   (`kevMerge`), the edges at its end moved
+//!   (`kevMergeCopies`), the edges at its end moved
 //!   there, their ranges taken to it and its gap grown to hold their lines (`coverLine`), when neither of its faces is left with fewer than
-//!   three edges; a sliver that would be is left for the checker to refuse. (The paves keep
+//!   three edges; a sliver that would be is left for the checker to refuse. Where solids
+//!   touch along it, its copies collapse with it, each solid's edges moved (OCCT's small
+//!   edge removal replaces the vertex in every edge that shares it). (The paves keep
 //!   merged vertices further apart than the intersection tolerance, so this is for what a
 //!   vertex merge moved: two vertices of one operand each moved toward the other.)
 //!
@@ -52,6 +54,10 @@ const Error = diagnostics.Error;
 /// Passes at most: each pass that changes something removes an edge, so the edges bound
 /// them; this bounds a body whose operators refuse every change after the first.
 const MAX_PASSES: usize = 64;
+
+/// The most edges between two vertices a short edge's collapse takes at once (the edge and
+/// its copies, one a solid touching along it); more, and the edge is left.
+const MAX_COPIES: usize = 8;
 
 /// What simplification did to the faces, for a caller following them (the boolean's
 /// face map): each merge, and the renumbering.
@@ -657,14 +663,19 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
         if (e.flags.tombstone or e.flags.seam or e.flags.degenerate or e.coedge == .none) continue;
         const scale = canonical.magnitude(&.{ body.point(e.start), body.point(e.end) });
         if (!(check.edgeLength(body, e) <= shortest + canonical.Comparison.distance(0, shortest, scale).band)) continue;
-        const c = e.coedge;
-        const p = body.coedge(c).partner;
-        if (p == .none or body.coedge(c).loop == body.coedge(p).loop) continue;
-        if ((traverse.loopLength(body, body.coedge(c).loop) catch return corrupt(diag)) <= 3) continue;
-        if ((traverse.loopLength(body, body.coedge(p).loop) catch return corrupt(diag)) <= 3) continue;
-        const out = try cheaperEnd(body, c, scale);
+        // The edge and its copies, where solids touch along it, go together: the vertex
+        // gone is each solid's (`euler.kevMergeCopies`)
+        var copies: [MAX_COPIES]types.EdgeIndex = undefined;
+        const n = copiesOf(body, types.EdgeIndex.of(i), &copies) orelse continue;
+        if (!(try collapsible(body, copies[0..n], diag))) continue;
+        const out = try cheaperEnd(body, e.coedge, scale);
         const keep = body.coedgeStart(out);
-        euler.kevMerge(body, out) catch |err| switch (err) {
+        var outs: [MAX_COPIES]types.CoedgeIndex = undefined;
+        for (copies[0..n], outs[0..n]) |copy, *o| {
+            const first = body.edge(copy).coedge;
+            o.* = if (body.coedgeStart(first) == keep) first else body.coedge(first).partner;
+        }
+        euler.kevMergeCopies(body, outs[0..n]) catch |err| switch (err) {
             error.Invalid => continue,
             else => return eulerError(diag, err),
         };
@@ -690,6 +701,35 @@ fn collapseShortEdges(body: *Body, diag: *Diagnostics) Error!bool {
     return changed;
 }
 
+/// The live edges between edge `e`'s two vertices, `e` first, in `out`; null when more than
+/// `MAX_COPIES`.
+fn copiesOf(body: *const Body, e: types.EdgeIndex, out: *[MAX_COPIES]types.EdgeIndex) ?usize {
+    const pair = Copies.pairOf(body.edge(e).*);
+    out[0] = e;
+    var n: usize = 1;
+    for (body.edges.items, 0..) |other, j| {
+        if (j == @backingInt(e) or other.flags.tombstone or !std.meta.eql(Copies.pairOf(other), pair)) continue;
+        if (n == MAX_COPIES) return null;
+        out[n] = types.EdgeIndex.of(j);
+        n += 1;
+    }
+    return n;
+}
+
+/// Whether short edges `copies` (an edge and its copies) may collapse: each between two
+/// faces, two loops, and neither loop left with fewer than three edges.
+fn collapsible(body: *const Body, copies: []const types.EdgeIndex, diag: *Diagnostics) Error!bool {
+    for (copies) |copy| {
+        const c = body.edge(copy).coedge;
+        if (c == .none) return false;
+        const p = body.coedge(c).partner;
+        if (p == .none or body.coedge(c).loop == body.coedge(p).loop) return false;
+        if ((traverse.loopLength(body, body.coedge(c).loop) catch return corrupt(diag)) <= 3) return false;
+        if ((traverse.loopLength(body, body.coedge(p).loop) catch return corrupt(diag)) <= 3) return false;
+    }
+    return true;
+}
+
 /// Of short edge `c`'s two ends, the coedge leaving the one to keep (`kevMerge` keeps the
 /// start of the coedge it is given): the end nearer the lines that move to it, the largest
 /// distance from it to a line of the other end's edges, so the gap it takes to hold them
@@ -703,21 +743,20 @@ fn cheaperEnd(body: *const Body, c: types.CoedgeIndex, scale: f64) Error!types.C
     const partner = body.coedge(c).partner;
     const start = body.coedgeStart(c);
     const end = body.coedgeEnd(c);
-    const short = body.coedge(c).edge;
-    const reach_start = farthestLine(body, start, end, short);
-    const reach_end = farthestLine(body, end, start, short);
+    const reach_start = farthestLine(body, start, end);
+    const reach_end = farthestLine(body, end, start);
     if (canonical.sameToRounding(reach_start, reach_end, scale)) return c;
     return if (reach_end < reach_start) partner else c;
 }
 
 /// The largest distance from vertex `keep` to the line of an edge at vertex `gone`, other
-/// than `short`, the edge between them: what holding the edges `gone` would move to `keep`
-/// takes.
-fn farthestLine(body: *const Body, keep: types.VertexIndex, gone: types.VertexIndex, short: types.EdgeIndex) f64 {
+/// than the edges between them (the short edge and its copies, which go): what holding the
+/// edges `gone` would move to `keep` takes.
+fn farthestLine(body: *const Body, keep: types.VertexIndex, gone: types.VertexIndex) f64 {
     const p = body.point(keep);
     var farthest: f64 = 0;
-    for (body.edges.items, 0..) |e, i| {
-        if (e.flags.tombstone or i == @backingInt(short) or (e.start != gone and e.end != gone)) continue;
+    for (body.edges.items) |e| {
+        if (e.flags.tombstone or (e.start != gone and e.end != gone) or e.start == keep or e.end == keep) continue;
         const line = switch (body.geometry.curve(e.curve)) {
             .line => |l| l,
             else => continue,

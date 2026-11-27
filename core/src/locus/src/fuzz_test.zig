@@ -2666,6 +2666,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // its edges' lines to D27's band, read against its own face's boundary by the overlap
         // rules, at_tolerance (planar_faces.VertexOf: a face's vertex on it by record)
         "solids 1 8 1 1 2 1 4 3 3 4 3 2 4 4 2 0 0 2 4 4 4 3 0 0 0 0 3 0 1 0 1 13 14 3 13 3 3 3 1 4 3 2 3 0 1 4 4 0 3 0 0 1 12 12 5 8 0 2 0 3 4 0 2 0 4 2 1 9 12 11 15 0 2 1 6 2 0 1 4 4 4 0 4 2 0 2 4 1 1 1 3 4 1 2 1 2 8 11 5 0",
+        // The locus_solids session on 5e73cbcd (em): a plate and a hull whose union kept a
+        // short edge two of its solids share, collapsed in one, the other's edges left at the
+        // vertex gone: a structural panic (euler.kevMergeCopies: the edge and its copies)
+        "solids 3 0 3 0 0 4 0 0 4 3 0 2 1 3 3 9 8 3 0 0 0 0 11 0 3 1 7 1 1 2 3 0 4 3 0 0 1 3 0 4 4 0 3 4 2 3 3 2 1 0 2 0 1 3 2 9 11 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

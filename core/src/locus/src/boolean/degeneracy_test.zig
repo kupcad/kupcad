@@ -805,6 +805,24 @@ const OWN_LAST_NUDGES = [_]Vec3{
     .{ 5e-6, 0, -2e-5 },
     .{ -5e-6, 0, -2e-5 },
 };
+/// The solids of the tests of a short edge where two solids touch along it (the solids
+/// session's find em on 5e73cbcd, as the fuzzer drew it): a plate `EM_XSECTS` intersection
+/// tolerances thick about z = 3 over `EM_PLATE` in x and y, nudged `EM_PLATE_NUDGE`, and
+/// the hull of `EM_HULL` scaled `EM_HULL_SCALE`, moved `EM_HULL_MOVE` and nudged
+/// `EM_HULL_NUDGE`; their union keeps an edge 1.89e-5 long, under the minimum feature size,
+/// that two of its solids share. The plate's z nudges: the find's, the plate 1e-6 lower
+/// and higher (the shared edge as short), and 2e-6 (refused below the feature size, and
+/// made with no short edge).
+const EM_PLATE = [2]Vec3{ .{ 0, 0, 3 }, .{ 4, 4, 3 } };
+const EM_XSECTS: f64 = 2.1;
+const EM_PLATE_NUDGE: Vec3 = .{ 5e-6, 5e-6, 1.9999999943156583e-5 };
+const EM_HULL = [_]Vec3{ .{ 1, 1, 2 }, .{ 3, 0, 4 }, .{ 3, 0, 0 }, .{ 1, 3, 0 }, .{ 4, 4, 0 }, .{ 3, 4, 2 }, .{ 3, 3, 2 } };
+const EM_HULL_SCALE: Vec3 = .{ 2, 0.5, 1 };
+const EM_HULL_MOVE: Vec3 = .{ 0, 1, 0 };
+const EM_HULL_NUDGE: Vec3 = .{ 5e-6, 0, 1.9999999886313164e-5 };
+const EM_PLATE_LIFTS = [_]f64{ 0, -1e-6, 1e-6, -2e-6, 2e-6 };
+/// Where the family is moved whole after its quarter turns and mirror: in place and 3e5 out.
+const EM_SHIFTS = [_]Vec3{ vec.ZERO3, .{ 3e5, -3e5, 3e5 } };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -6243,4 +6261,63 @@ test "degeneracy: a hull's base edge near a face it may lie in, nearer and farth
         defer for (&solids) |*body| body.deinit();
         try expectDecidedEitherWay(&solids[0], &solids[1]);
     };
+}
+
+/// The plate and the hull of the tests of find em, the plate lifted `lift` more, both
+/// turned `quarter` quarter turns about z through the origin, mirrored in x or not
+/// (`tieMove`, exact) and shifted `shift`; built from their placed corners and points.
+fn shortCopySolids(lift: f64, quarter: usize, mirrored: bool, shift: Vec3) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = EM_XSECTS * tol.xsect / 2;
+    const drawn = [2]Vec3{ .{ EM_PLATE[0][0], EM_PLATE[0][1], EM_PLATE[0][2] - half }, .{ EM_PLATE[1][0], EM_PLATE[1][1], EM_PLATE[1][2] + half } };
+    const nudge = vec.add(EM_PLATE_NUDGE, .{ 0, 0, lift });
+    const corners = [2]Vec3{ vec.add(tieMove(vec.add(drawn[0], nudge), quarter, mirrored), shift), vec.add(tieMove(vec.add(drawn[1], nudge), quarter, mirrored), shift) };
+    var lo: Vec3 = undefined;
+    var hi: Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(corners[0][k], corners[1][k]);
+        hi[k] = @max(corners[0][k], corners[1][k]);
+    }
+    var plate = try helpers.boxAt(tol, lo, hi);
+    errdefer plate.deinit();
+    var points: [EM_HULL.len]Vec3 = undefined;
+    for (EM_HULL, &points) |q, *moved| {
+        const placed = vec.add(vec.add(.{ q[0] * EM_HULL_SCALE[0], q[1] * EM_HULL_SCALE[1], q[2] * EM_HULL_SCALE[2] }, EM_HULL_MOVE), EM_HULL_NUDGE);
+        moved.* = vec.add(tieMove(placed, quarter, mirrored), shift);
+    }
+    const hull = try @import("../construct/hull.zig").hull(testing.allocator, tol, &points, &diag);
+    return .{ plate, hull };
+}
+
+test "degeneracy: a short edge two solids of a union share collapses in both or neither, decided alike turned, mirrored, far and either way round" {
+    // The solids session's find em on 5e73cbcd, as the fuzzer drew it: the union of a plate
+    // and a hull keeps an edge 1.89e-5 long, under the minimum feature size, that two of
+    // its solids share (an edge and its copy, a fan about each end per solid). Simplify
+    // collapsed it in one solid (`kevMerge`), moving the fan of that solid at the vertex
+    // gone; the other solid's edges still named the vertex gone, and its copy of the edge
+    // ran from a vertex to itself: the structural check stopped the process. The edge
+    // collapses with its copies, every fan at the vertex gone moved
+    // (`euler.kevMergeCopies`), and the result is whatever the collapse leaves (here the
+    // lines moved to the vertex kept need a gap past the zone: refused, `gap_too_large`,
+    // as a short edge of one solid is), never a body with a vertex gone
+    const half = EM_XSECTS * tol.xsect / 2;
+    var plate = try fuzzBoxPlaced(tol, .{ EM_PLATE[0][0], EM_PLATE[0][1], EM_PLATE[0][2] - half }, .{ EM_PLATE[1][0], EM_PLATE[1][1], EM_PLATE[1][2] + half }, vec.Z3, 0, null, EM_PLATE_NUDGE);
+    defer plate.deinit();
+    var hull = try fuzzHullPlaced(&EM_HULL, vec.Z3, 0, EM_HULL_SCALE, EM_HULL_MOVE, EM_HULL_NUDGE);
+    defer hull.deinit();
+    try expectAlikeEitherWay(&plate, &hull, .@"union");
+    try testing.expectEqual(Outcome{ .refused = .gap_too_large }, try outcomeOf(&plate, &hull, .@"union"));
+    for (EM_PLATE_LIFTS) |lift| {
+        var outcome: ?Outcome = null;
+        for (EM_SHIFTS) |shift| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+            errdefer std.debug.print("lift {e}, shift {any}, quarter turns {d}, mirrored {}\n", .{ lift, shift, quarter, mirrored });
+            var solids = try shortCopySolids(lift, quarter, mirrored, shift);
+            defer for (&solids) |*body| body.deinit();
+            try expectAlikeEitherWay(&solids[0], &solids[1], .@"union");
+            const this = try outcomeOf(&solids[0], &solids[1], .@"union");
+            if (this == .refused) try testing.expect(this.refused != .edge_too_short);
+            if (outcome) |first| try testing.expectEqual(first, this) else outcome = this;
+        };
+    }
 }

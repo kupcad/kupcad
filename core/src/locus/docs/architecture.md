@@ -1273,7 +1273,10 @@ importing only those before it, which the layering test holds):**
   edges put on its line with their ranges by projection, its own line's edge too, the
   join needing them to meet exactly; vertex by vertex the
   joins hung on the numbering, the operands' order, 2026-11-16); `kevMerge` of an edge no
-  longer than `2·zone`, the checker's minimum, when neither face is left a sliver),
+  longer than `2·zone`, the checker's minimum, when neither face is left a sliver, with
+  its copies where solids touch along it, every solid's fan at the vertex gone moved
+  (`kevMergeCopies`; one copy alone left the other solid's edges at a vertex gone, find
+  em, 2026-11-27)),
   `compact`, the checker, whose findings are faults (`NotValid`) but for a face narrower
   than the zone, which alone is refused by design (`Degenerate`, `sliver_face`, as the
   builder refuses one; 2026-11-14, the 10K fuzz session): the paves keep features past
