@@ -1519,14 +1519,14 @@ point to its foot on one of the six nearest faces (along that face's normal, met
 then along a table of twelve skewed directions, the nearest meeting deciding when it is
 clean and alone in its place (`raycast.onePlace`, as `cast` groups them), a ray meeting
 nothing being outside, and a refusal with a finding when every ray met
-an edge or a tangency first. A ray's meeting with a face is on its boundary within the
-reach of it, as the paves and the overlap rules put a point there (`in_face.meeting` by
-`placeWithin`; it was the zone, find eq, 2026-11-27: a face's loops run through its
-vertices' points, which D28 lets lie the intersection tolerance off their edges' lines, so
-a plate's bottom ended 1.9e-4 short of the line its top ended on at a box's corner, and a
-ray up between the two met the top alone); the ray queries read a face that far past its
-indexed box (`raycast.readBeyond`). A ray that comes within that reach of an edge before
-its meeting has met that edge (`passesEdge`): a boolean's edge kept off its faces'
+an edge or a tangency first. A ray's meeting with a planar face is on its boundary
+between an edge's line and the chord of its vertices too (`in_face.betweenLineAndChord`,
+find eq, 2026-11-27): the loops wind about the vertices' points, which D28 lets lie the
+intersection tolerance off their edges' lines, so a union's bottom ended up to 1.9e-4
+short of a plate's front line, on which its top ended, at a box's corner, and a ray up
+between the two met the top alone; the ray queries read a face that far past its indexed
+box (`raycast.readBeyond`). A ray that comes within the classification's zone of an edge
+before its meeting has met that edge (`passesEdge`): a boolean's edge kept off its faces'
 surfaces (D28) leaves a crack between them as wide as its gap, which a ray meeting neither
 surface slips through (a wedge 2e-5 thick at its far side, a point past its thin edge
 between the planes classified inside, find ep, 2026-11-27). `distance.zig`: branch and bound over the two meshes'

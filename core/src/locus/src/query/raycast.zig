@@ -12,8 +12,8 @@
 //! `S(u, v) = O + t·d` from a grid of seeds over the face's UV box for a swept or NURBS
 //! surface (every root found is verified, a grazing pair between two seeds may be
 //! missed: the free-form kinds are sampled, the analytic ones are not); each meeting kept
-//! when it lies in the face or on its boundary (`in_face.meeting`: within the reach of an
-//! edge, or in an edge's sliver, where the face's surface runs between the edge and its
+//! when it lies in the face or on its boundary (`in_face.meeting`: within the zone of an
+//! edge, between its line and its vertices' chord, or in an edge's sliver, where the face's surface runs between the edge and its
 //! line with the surface of the face across it, in the face's loops or not).
 //!
 //! The crossings: candidates within the zone of one another are one place, and so is one
@@ -113,7 +113,7 @@ pub fn onePlace(body: *const Body, origin: Vec3, dir: Vec3, first: Candidate, ot
     const uv = in_face.uvOf(body, first.face, p);
     const foot = body.geometry.surface(body.face(first.face).surface).eval(uv[0], uv[1]);
     if (vec.distance(foot, p) > reach) return false;
-    return try in_face.meeting(body, first.face, foot, diag) != .outside;
+    return try in_face.meeting(body, first.face, foot, uv, diag) != .outside;
 }
 
 /// The crossings of the segment from `origin` to `end` with `body`'s boundary, nearest
@@ -278,7 +278,7 @@ pub fn candidates(allocator: std.mem.Allocator, body: *const Body, index: *const
         for (ts.items) |t| {
             const p = vec.addScaled(origin, dir, t);
             const uv = in_face.uvOf(body, f, p);
-            const place = try in_face.meeting(body, f, p, diag);
+            const place = try in_face.meeting(body, f, p, uv, diag);
             if (place == .outside) continue;
             const normal = in_face.outwardNormal(body, f, uv);
             try out.append(allocator, .{ .t = t, .face = f, .place = place, .normal = normal, .cosine = vec.dot(normal, dir) });
@@ -286,11 +286,11 @@ pub fn candidates(allocator: std.mem.Allocator, body: *const Body, index: *const
     }
 }
 
-/// How far beyond a face's indexed box (its edges' curves, grown by the zone) a ray
-/// query reads the face: a meeting within the reach of its boundary is on it
-/// (`in_face.meeting`), and its loops run through its vertices' points, each up to the
+/// How far beyond a face's indexed box (its edges' lines and curves, grown by the zone) a
+/// ray query reads the face: its loops run through its vertices' points, each up to the
 /// intersection tolerance and two gaps off its edges' curves (the checker's
-/// `vertex_off_curve`): the reach of a gap, the zone, beyond the box's own zone.
+/// `vertex_off_curve`), and a meeting between the two is on its boundary
+/// (`in_face.betweenLineAndChord`): the reach of a gap, the zone, beyond the box's own.
 pub fn readBeyond(body: *const Body) f64 {
     return incidence.reach(body.tol, body.tol.zone);
 }

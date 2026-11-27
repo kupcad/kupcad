@@ -57,25 +57,56 @@ pub fn classify(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, within
     return if (inside) .inside else .outside;
 }
 
-/// Where a ray's meeting `p` with face `f`'s surface lies against the face, as the ray
-/// queries take it: on its boundary within the reach of it, as the paves and the overlap
-/// rules put a point there (`placeWithin`; at that reach to rounding too, which says
-/// nothing for a ray either), or in an edge's sliver (`inSliver`), in the face's loops or
-/// not; else inside or outside by the loops. A face's boundary is known only to the reach:
-/// a vertex may lie the intersection tolerance off its edge's line (D28, the checker's
-/// `vertex_off_curve`), and the loops wind about the vertices' points while the edges are
-/// their lines. Taken within the zone, a box's corner 1.9e-4 off a plate's front edge
-/// ended the union's bottom, by its loops, short of the plate's front line, which its top
-/// ends on; a ray up 1.2e-4 inside that line, past the zone, met the top alone (the solids
-/// session's find eq on 621b9ee0: a point under the plate classified inside the union).
-pub fn meeting(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!Place {
-    const decide: incidence.Decider = .{ .tol = body.tol, .scale = canonical.magnitude(&.{p}) };
-    const place: Place = switch (try placeWithin(decide, body, f, p, 0, null, diag)) {
-        .boundary, .at_tolerance => return .boundary,
-        .inside => .inside,
-        .outside => .outside,
-    };
+/// Where a ray's meeting `p` with face `f`'s surface (at `uv`) lies against the face, as
+/// the ray queries take it: on its boundary within the zone of an edge (`classify`), in an
+/// edge's sliver (`inSliver`) or between an edge's line and the chord of its vertices
+/// (`betweenLineAndChord`), in the face's loops or not; else inside or outside by the
+/// loops.
+pub fn meeting(body: *const Body, f: types.FaceIndex, p: Vec3, uv: Vec2, diag: *Diagnostics) Error!Place {
+    const place = try classify(body, f, p, uv, body.tol.zone, diag);
+    if (place == .boundary) return .boundary;
+    if (try betweenLineAndChord(body, f, p, diag)) return .boundary;
     return if (try inSliver(body, f, p, diag)) .boundary else place;
+}
+
+/// Whether `p`, a point of planar face `f`'s plane, lies between the line of one of its
+/// straight edges and the chord between that edge's vertices, abreast of the edge. The
+/// face's loops wind about its vertices' points (`windsPlanar`) while its edges are their
+/// lines, and a vertex may lie the intersection tolerance and its gaps off its edge's line
+/// (D28: a merged vertex is its own point, the edge its source's line; the checker's
+/// `vertex_off_curve`): between the two the face is read both ways, and a meeting there is
+/// at the edge. Taken by the loops alone, a box's corner 1.9e-4 off a plate's front edge
+/// ended the union's bottom short of the plate's front line, which its top ends on, and a
+/// ray up between the two, 1.2e-4 from the line and past the zone, met the top alone (the
+/// solids session's find eq on 621b9ee0: a point under the plate inside the union).
+pub fn betweenLineAndChord(body: *const Body, f: types.FaceIndex, p: Vec3, diag: *Diagnostics) Error!bool {
+    const face = body.face(f);
+    if (face.surface.kind != .plane) return false;
+    const normal = body.geometry.planes.items[face.surface.index].frame.z;
+    var loops = traverse.Loops.init(body, f);
+    while (loops.next() catch return corrupt(diag)) |l| {
+        var it = traverse.Coedges.init(body, l);
+        while (it.next() catch return corrupt(diag)) |c| {
+            const edge = body.edge(body.coedge(c).edge);
+            if (edge.flags.degenerate) continue;
+            const curve = body.geometry.curve(edge.curve);
+            if (curve != .line) continue;
+            const line_a = curve.eval(edge.t0);
+            const line_b = curve.eval(edge.t1);
+            const chord_a = body.point(edge.start);
+            const chord_b = body.point(edge.end);
+            const along = vec.sub(line_b, line_a);
+            const length2 = vec.dot(along, along);
+            if (length2 == 0) continue;
+            const s = vec.dot(vec.sub(p, line_a), along) / length2;
+            if (s < 0 or s > 1) continue;
+            const across = vec.cross(normal, along);
+            const on_line = vec.dot(vec.sub(p, vec.addScaled(line_a, along, s)), across);
+            const on_chord = vec.dot(vec.sub(p, vec.add(chord_a, vec.scale(vec.sub(chord_b, chord_a), s))), across);
+            if ((on_line <= 0 and on_chord >= 0) or (on_line >= 0 and on_chord <= 0)) return true;
+        }
+    }
+    return false;
 }
 
 /// Whether `p`, a point of face `f`'s surface (in the face's loops or not), lies in the

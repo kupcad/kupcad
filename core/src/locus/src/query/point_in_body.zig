@@ -9,7 +9,7 @@
 //! meeting at its place: `raycast.onePlace`): the ray leaves the solid there (the face's
 //! normal along the ray) exactly when the point is inside. A ray that meets nothing leaves
 //! from outside. A ray whose nearest meeting is an edge, an edge's sliver, a vertex or a
-//! tangency is retried, and so is one that comes within the reach of an edge before it
+//! tangency is retried, and so is one that comes within the zone of an edge before it
 //! (`passesEdge`); when every one is, the classification is refused with a finding, never
 //! guessed.
 
@@ -23,7 +23,6 @@ const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
 const raycast = @import("raycast.zig");
 const distance = @import("distance.zig");
-const incidence = @import("../geometry/incidence.zig");
 const traverse = @import("../topology/traverse.zig");
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -86,14 +85,14 @@ pub fn classifyWithin(allocator: std.mem.Allocator, body: *const Body, index: *c
         const uv = in_face.uvOf(body, f, p);
         const foot = body.geometry.surface(body.face(f).surface).eval(uv[0], uv[1]);
         if (vec.distance(foot, p) <= zone) continue;
-        if (try in_face.meeting(body, f, foot, diag) != .inside) continue;
+        if (try in_face.meeting(body, f, foot, uv, diag) != .inside) continue;
         const dir = vec.normalized(vec.sub(foot, p)) orelse continue;
-        if (try decide(allocator, body, index, p, dir, reach, &found, diag)) |place| return place;
+        if (try decide(allocator, body, index, p, dir, reach, zone, &found, diag)) |place| return place;
     }
     // Along the table's directions
     for (TABLE) |raw| {
         const dir = vec.normalized(raw).?;
-        if (try decide(allocator, body, index, p, dir, reach, &found, diag)) |place| return place;
+        if (try decide(allocator, body, index, p, dir, reach, zone, &found, diag)) |place| return place;
     }
     return diag.fail(error.LimitExceeded, .{ .code = .limit_exceeded, .label = "the rays of a point's classification (each met an edge, a vertex or a tangent face first)", .measured = @floatFromInt(FOOT_RAYS + TABLE.len), .threshold = @floatFromInt(FOOT_RAYS + TABLE.len) });
 }
@@ -105,11 +104,11 @@ pub fn contains(allocator: std.mem.Allocator, body: *const Body, index: *const F
 
 /// The ray from `p` along `dir`: outside when it meets nothing, inside or outside by its
 /// nearest meeting when that is clean, null (retry) when it is not, or when the ray comes
-/// within the reach of an edge before it (`passesEdge`).
-fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, dir: Vec3, reach: f64, found: *std.ArrayList(raycast.Candidate), diag: *Diagnostics) Error!?Place {
+/// within `zone` of an edge before it (`passesEdge`).
+fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, dir: Vec3, reach: f64, zone: f64, found: *std.ArrayList(raycast.Candidate), diag: *Diagnostics) Error!?Place {
     found.clearRetainingCapacity();
     try raycast.candidates(allocator, body, index, p, dir, 0, reach, found, diag);
-    if (found.items.len == 0) return if (try passesEdge(allocator, body, index, p, dir, reach, diag)) null else .outside;
+    if (found.items.len == 0) return if (try passesEdge(allocator, body, index, p, dir, reach, zone, diag)) null else .outside;
     var nearest: usize = 0;
     for (found.items, 0..) |c, i| {
         if (c.t < found.items[nearest].t) nearest = i;
@@ -121,13 +120,17 @@ fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceInd
         if (i != nearest and try raycast.onePlace(body, p, dir, first, c, diag)) return null;
     }
     if (first.place != .inside or @abs(first.cosine) <= raycast.CLEAN_COSINE) return null;
-    if (try passesEdge(allocator, body, index, p, dir, first.t, diag)) return null;
+    if (try passesEdge(allocator, body, index, p, dir, first.t, zone, diag)) return null;
     return if (first.cosine > 0) .inside else .outside;
 }
 
-/// Whether the ray from `p` along `dir` comes within the reach of an edge (or a loop's
-/// vertex) before `t`, the intersection tolerance: it meets the boundary there, as a
-/// meeting that near a face's edge is on it (`in_face.meeting`), and says nothing. An edge a boolean
+/// Whether the ray from `p` along `dir` comes within `zone` of an edge (or a loop's
+/// vertex) before `t`: it meets the boundary there, as a point within the zone of an edge
+/// is on it (`classifyWithin`, `in_face.nearEdge`), and says nothing. The classification's
+/// band: `p` lies farther than it from every edge, else on the boundary, so no ray fails
+/// at its start (within the intersection tolerance, every ray from a point between the
+/// zone and the tolerance of an edge did: a notch's apex under a plate's edge in the edge
+/// matrix, `limit_exceeded`). An edge a boolean
 /// kept off its faces' surfaces (D28, its gap) leaves a crack between them as wide as its
 /// gap, which a ray meeting neither surface passes through: a wedge between a box's top
 /// and a plate's bottom 2e-5 apart, their faces meeting at the plate's side edge by the
@@ -135,8 +138,7 @@ fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceInd
 /// them through the edge to the wedge's far side, which it met from inside (the local
 /// session's find ep on 621b9ee0). The edges of the faces the ray reads
 /// (`raycast.readBeyond`): a crack lies within its edge's gap, at most the zone, of it.
-fn passesEdge(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, dir: Vec3, t: f64, diag: *Diagnostics) Error!bool {
-    const within = incidence.reach(body.tol, 0);
+fn passesEdge(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, dir: Vec3, t: f64, zone: f64, diag: *Diagnostics) Error!bool {
     var items: std.ArrayList(u32) = .empty;
     defer items.deinit(allocator);
     const Collect = struct {
@@ -160,10 +162,10 @@ fn passesEdge(allocator: std.mem.Allocator, body: *const Body, index: *const Fac
         const f = index.faces[item];
         var loops = traverse.Loops.init(body, f);
         while (loops.next() catch return corrupt(diag)) |l| {
-            if (body.loop(l).vertex != .none and distance.segmentSegment(p, end, body.point(body.loop(l).vertex), body.point(body.loop(l).vertex)).distance <= within) return true;
+            if (body.loop(l).vertex != .none and distance.segmentSegment(p, end, body.point(body.loop(l).vertex), body.point(body.loop(l).vertex)).distance <= zone) return true;
             var it = traverse.Coedges.init(body, l);
             while (it.next() catch return corrupt(diag)) |c| {
-                if (edgeDistance(body, body.coedge(c).edge, p, end) <= within) return true;
+                if (edgeDistance(body, body.coedge(c).edge, p, end) <= zone) return true;
             }
         }
     }

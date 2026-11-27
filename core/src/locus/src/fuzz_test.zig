@@ -2118,8 +2118,8 @@ test "Fuzz solids: a point under a plate, beside a box whose corner its bottom's
     // the line the plate's top ends on. A ray up from under the plate, between the two, met
     // the top alone, 1.2e-4 from the bottom's line, past the zone, and the point, 0.83 from
     // the box and 1.08 under the plate, was inside the union (membership: a inside). A
-    // meeting within the reach of a face's boundary is on it, as the paves put a point there
-    // (`in_face.meeting` by `placeWithin`). The plate's front nudged by each of
+    // meeting between an edge's line and the chord of its vertices is on the face's
+    // boundary (`in_face.betweenLineAndChord`). The plate's front nudged by each of
     // `EQ_PLATE_Y_NUDGES`, moved by each of the moves, the union either way round: the
     // probes outside, and the step with the hull through the solids oracles
     const moves = [_]Affine{
@@ -3109,7 +3109,7 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // The locus_solids session on 621b9ee0 (eq): (box ∪ plate) - hull at mixed zones,
         // the union's bottom ending 1.9e-4 short of the plate's front line at the box's
         // corner, a ray up between them meeting the top alone: a point under the plate
-        // inside the union, MembershipDisagrees (in_face.meeting: within the reach)
+        // inside the union, MembershipDisagrees (in_face.betweenLineAndChord)
         "solids 0 2 3 2 3 1 4 3 3 1 6 12 3 3 1 2 2 3 2 4 3 4 1 3 13 12 2 4 0 3 1 4 4 0 3 3 0 1 3 1 3 4 2 1 1 3 2 13 3 14 1",
     };
     for (finds) |line| {
