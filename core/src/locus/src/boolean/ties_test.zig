@@ -1004,7 +1004,10 @@ test "ties: two paves of one edge across it at one place along it come only from
     // the edge, are two features of the other operand within twice the reach of each other:
     // an edge's crossings with it weld into one, a crossing of an edge from a vertex there
     // is that vertex's, and any other pair is refused before the paves by the operands'
-    // minimum feature size (`pipeline.featureSize`). Here the nearest such pair, a hull's
+    // minimum feature size (`pipeline.featureSize`), whose limit grows with the features'
+    // gaps as their reach does; only the edge's own gap, a chained operand's, reaches
+    // farther than the other operand's precondition counts (the edge matrix's gapped
+    // solid, clean moved, mirrored and swapped). Here the nearest such pair, a hull's
     // edge 2.3e-5 to 2.7e-5 long from the plate's top to its side across the edge: refused
     // `below_feature_size` whatever the order, move or mirror
     for (ACROSS_OFFSETS) |offset| for (ACROSS_SHIFTS) |shift| for (ACROSS_FAR) |far| {
