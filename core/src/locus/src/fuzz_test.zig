@@ -2910,6 +2910,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the zone from an edge's line, moved whole to (2e6, -3e6): the overlap rule at the
         // tolerance to rounding, at_tolerance by design (expectMovedSheet, D27)
         "chain 1 3 5 5 3 6 2 6 2 3 4 3 1 1 10 3 8 0 3 7 6 1 4 5 0 3 5 5 1 1 3 4 1 0 4 3 4 2 2 4 3 7 4 6 4 5 3 3 4 6 3 0 2 3 3 5 1 3 1 2 4 4 4 3 4 8 3 2 3 5 5 3 6 6 3 6 4 1 0 1 2 2 1 3 0 1 3 1 3 3 2 1 0 1 4 2 0 3 2 2 3",
+        // The locus session on 5e73cbcd (ek): a crossing paved on a hull's edge by a corner,
+        // 1.88e-5 off the face's plane and within the zone of the corner's other edge in it,
+        // cut there by the imprint's overlay (pave.sectionsApart: a face's own blocks ending
+        // at a pave measured in its plane, below_feature_size)
+        "solids 3 0 3 4 1 4 0 3 4 0 2 3 0 3 6 10 14 8 9 3 3 3 0 3 2 2 3 4 2 4 0 2 4 1 8 5 13 12 0 1 1 8 3 0 2 3 4 0 1 1 3 4 4 3 4 4 3 4 2 0 2 3 4 4 1 3 1 0 1 0 1 3 3 13 9 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

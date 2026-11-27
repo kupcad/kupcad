@@ -527,7 +527,11 @@ off that line. A hull's edge laid in a box's bottom along the bottom's edge at 1
 its first corner 1.965e-5 from that edge, on it, its second 2.06e-5 from the edge's line,
 off it, lay 7.3e-6 from the edge's piece between the first corner and the box's, and the
 overlay welded it on (`imprint_unmatched`, every operation either way round; the
-sessions on ab354a0a, bf). So too a face within the tolerance of two faces of the other
+sessions on ab354a0a, bf). The face's own pieces are held apart so too where one ends at a
+pave the boolean made, not at the operand's own vertex: a crossing paved on a hull's edge
+3.3e-5 from a corner of 24.6°, 1.88e-5 off the face's plane, was off the corner's other
+edge in space and 8.9e-6 from it in the plane, where the overlay cut that edge (find ek,
+2026-11-27). So too a face within the tolerance of two faces of the other
 operand at one point, the three parallel within the angular tolerance and the two facing
 apart (`pave.sandwiched`, over the faces' triangles in its plane): a flat tetrahedron's
 face 3.8e-5 rad off a plate 2.5e-5 thick (the operands' order chose the result). Two

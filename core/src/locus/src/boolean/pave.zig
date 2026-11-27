@@ -2389,59 +2389,80 @@ const Filler = struct {
     /// round; the sessions on ab354a0a, bf). Two sharing one vertex, where the paves joined
     /// them, are measured by their other ends (`hingedGap`), and a segment along a block,
     /// sharing both, is that block. Refused (`below_feature_size`), naming the face.
+    ///
+    /// Two of the face's own blocks are its operand's, held apart by its rules, while both
+    /// end at its own vertices; a block ending at a pave the boolean made (`paved`: a merged
+    /// vertex none of the operand's vertices is) is measured as a segment is, its pave
+    /// placed in space within the reach of the edge and off the face's plane by as much. A
+    /// crossing paved on a hull's edge 3.3e-5 from a corner of 24.6°, 1.88e-5 off the face's
+    /// plane, was 2.08e-5 in space from the corner's other edge, off it, and 8.9e-6 from it
+    /// in the plane, where the overlay cut that edge at it (`imprint_unmatched`, every
+    /// operation either way round; the locus session on 5e73cbcd, ek).
     fn sectionsApart(self: *Filler) Error!void {
         const p = self.p;
-        // A section segment, or one of the face's own pave blocks (`own`)
-        const Flat = struct { ends: [2]u32, at: [2]Vec2, lo: f64, hi: f64, own: bool };
+        // A section segment, or one of the face's own pave blocks (`own`), and whether a
+        // block ends at a pave the boolean made (`paved`)
+        const Flat = struct { ends: [2]u32, at: [2]Vec2, lo: f64, hi: f64, own: bool, paved: bool = false };
         var flat: std.ArrayList(Flat) = .empty;
         defer flat.deinit(self.allocator);
-        for (0..2) |k| for (self.faces[k]) |f| {
-            const list = p.sections[k][@backingInt(f)].items;
-            if (list.len == 0) continue;
-            const operand = self.body(k);
-            const frame = planar_faces.frameOf(operand, f).?;
-            flat.clearRetainingCapacity();
-            for (list) |segment| {
-                const a = planar_faces.flat(frame, p.point(segment[0]));
-                const b = planar_faces.flat(frame, p.point(segment[1]));
-                try flat.append(self.allocator, .{ .ends = segment, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = false });
-            }
-            var loops = traverse.Loops.init(operand, f);
-            while (loops.next() catch return corrupt(self.diag)) |l| {
-                var it = traverse.Coedges.init(operand, l);
-                while (it.next() catch return corrupt(self.diag)) |c| {
-                    const blocks = p.edge_paves[k][@backingInt(operand.coedge(c).edge)].items;
-                    for (blocks[0 .. blocks.len - 1], blocks[1..]) |x, y| {
-                        const block: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
-                        const a = planar_faces.flat(frame, p.point(block[0]));
-                        const b = planar_faces.flat(frame, p.point(block[1]));
-                        try flat.append(self.allocator, .{ .ends = block, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = true });
+        // The merged vertices that are an operand's own
+        const corner = try self.allocator.alloc(bool, p.points.items.len);
+        defer self.allocator.free(corner);
+        for (0..2) |k| {
+            @memset(corner, false);
+            for (p.vertex_of[k]) |m| if (m != NONE) {
+                corner[m] = true;
+            };
+            for (self.faces[k]) |f| {
+                const list = p.sections[k][@backingInt(f)].items;
+                const operand = self.body(k);
+                const frame = planar_faces.frameOf(operand, f).?;
+                flat.clearRetainingCapacity();
+                for (list) |segment| {
+                    const a = planar_faces.flat(frame, p.point(segment[0]));
+                    const b = planar_faces.flat(frame, p.point(segment[1]));
+                    try flat.append(self.allocator, .{ .ends = segment, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = false });
+                }
+                var loops = traverse.Loops.init(operand, f);
+                while (loops.next() catch return corrupt(self.diag)) |l| {
+                    var it = traverse.Coedges.init(operand, l);
+                    while (it.next() catch return corrupt(self.diag)) |c| {
+                        const blocks = p.edge_paves[k][@backingInt(operand.coedge(c).edge)].items;
+                        for (blocks[0 .. blocks.len - 1], blocks[1..]) |x, y| {
+                            const block: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
+                            const a = planar_faces.flat(frame, p.point(block[0]));
+                            const b = planar_faces.flat(frame, p.point(block[1]));
+                            try flat.append(self.allocator, .{ .ends = block, .at = .{ a, b }, .lo = @min(a[0], b[0]), .hi = @max(a[0], b[0]), .own = true, .paved = !corner[block[0]] or !corner[block[1]] });
+                        }
                     }
                 }
+                var any_paved = false;
+                for (flat.items) |x| any_paved = any_paved or x.paved;
+                if (list.len == 0 and !any_paved) continue;
+                const Order = struct {
+                    fn lessThan(_: void, x: Flat, y: Flat) bool {
+                        if (x.lo != y.lo) return x.lo < y.lo;
+                        if (x.own != y.own) return y.own;
+                        return lessPair({}, x.ends, y.ends);
+                    }
+                };
+                std.mem.sort(Flat, flat.items, {}, Order.lessThan);
+                for (flat.items, 0..) |x, i| for (flat.items[i + 1 ..]) |y| {
+                    // Sorted by their least x: none further on comes within reach
+                    if (y.lo > x.hi + p.tol.xsect) break;
+                    if (x.own and y.own and !x.paved and !y.paved) continue;
+                    const x_shared: [2]bool = .{ x.ends[0] == y.ends[0] or x.ends[0] == y.ends[1], x.ends[1] == y.ends[0] or x.ends[1] == y.ends[1] };
+                    const hinged = x_shared[0] or x_shared[1];
+                    const with_own = x.own or y.own;
+                    // Two segments sharing a vertex are `featureSize`'s; a segment along a block
+                    // is that block
+                    if (hinged and (!with_own or (x_shared[0] and x_shared[1]))) continue;
+                    const gap = if (hinged) hingedGap(x.at, @intFromBool(x_shared[0]), y.at, @intFromBool(y.ends[0] == x.ends[0] or y.ends[0] == x.ends[1])) else segmentGap(x.at[0], x.at[1], y.at[0], y.at[1]);
+                    if (!try self.within(gap, p.tol.xsect, .of(.face, @backingInt(f)))) continue;
+                    return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = apartLabel(k, with_own, x.own and y.own), .measured = gap, .threshold = p.tol.xsect });
+                };
             }
-            const Order = struct {
-                fn lessThan(_: void, x: Flat, y: Flat) bool {
-                    if (x.lo != y.lo) return x.lo < y.lo;
-                    if (x.own != y.own) return y.own;
-                    return lessPair({}, x.ends, y.ends);
-                }
-            };
-            std.mem.sort(Flat, flat.items, {}, Order.lessThan);
-            for (flat.items, 0..) |x, i| for (flat.items[i + 1 ..]) |y| {
-                // Sorted by their least x: none further on comes within reach
-                if (y.lo > x.hi + p.tol.xsect) break;
-                if (x.own and y.own) continue;
-                const x_shared: [2]bool = .{ x.ends[0] == y.ends[0] or x.ends[0] == y.ends[1], x.ends[1] == y.ends[0] or x.ends[1] == y.ends[1] };
-                const hinged = x_shared[0] or x_shared[1];
-                const with_own = x.own or y.own;
-                // Two segments sharing a vertex are `featureSize`'s; a segment along a block
-                // is that block
-                if (hinged and (!with_own or (x_shared[0] and x_shared[1]))) continue;
-                const gap = if (hinged) hingedGap(x.at, @intFromBool(x_shared[0]), y.at, @intFromBool(y.ends[0] == x.ends[0] or y.ends[0] == x.ends[1])) else segmentGap(x.at[0], x.at[1], y.at[0], y.at[1]);
-                if (!try self.within(gap, p.tol.xsect, .of(.face, @backingInt(f)))) continue;
-                return self.diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, @backingInt(f)), .label = apartLabel(k, with_own), .measured = gap, .threshold = p.tol.xsect });
-            };
-        };
+        }
     }
 
     /// Each face of one operand within the intersection tolerance of two faces of the
@@ -2712,9 +2733,11 @@ fn closestOnSegment(a: Vec3, b: Vec3, q: Vec3) Vec3 {
 }
 
 /// What `Filler.sectionsApart` says of two pieces on a face of operand `k` too near each
-/// other: two the other operand leaves on it, or one and a piece of the face's own
-/// boundary (`with_own`).
-fn apartLabel(k: usize, with_own: bool) []const u8 {
+/// other: two the other operand leaves on it, one and a piece of the face's own boundary
+/// (`with_own`), or two of the face's own pieces, one ending at a vertex the other operand
+/// left there (`both_own`).
+fn apartLabel(k: usize, with_own: bool, both_own: bool) []const u8 {
+    if (both_own) return if (k == 0) "a vertex the second operand leaves on the boundary of a face of the first, nearer another piece of that boundary in its plane than the reach where the paves did not join them," else "a vertex the first operand leaves on the boundary of a face of the second, nearer another piece of that boundary in its plane than the reach where the paves did not join them,";
     if (with_own) return if (k == 0) "a piece the second operand leaves on a face of the first, nearer the face's own boundary in its plane than the reach where the paves did not join them," else "a piece the first operand leaves on a face of the second, nearer the face's own boundary in its plane than the reach where the paves did not join them,";
     return if (k == 0) "two of the pieces the second operand leaves on a face of the first, nearer each other in its plane than the reach where they do not meet," else "two of the pieces the first operand leaves on a face of the second, nearer each other in its plane than the reach where they do not meet,";
 }

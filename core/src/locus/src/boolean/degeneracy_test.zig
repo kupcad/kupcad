@@ -823,6 +823,25 @@ const EM_HULL_NUDGE: Vec3 = .{ 5e-6, 0, 1.9999999886313164e-5 };
 const EM_PLATE_LIFTS = [_]f64{ 0, -1e-6, 1e-6, -2e-6, 2e-6 };
 /// Where the family is moved whole after its quarter turns and mirror: in place and 3e5 out.
 const EM_SHIFTS = [_]Vec3{ vec.ZERO3, .{ 3e5, -3e5, 3e5 } };
+/// The solids of the tests of a crossing paved by a hull's corner (the locus session's find
+/// ek on 5e73cbcd, as the fuzzer drew it): a plate `EK_XSECTS` intersection tolerances thick
+/// about z = 0 over `EK_FIRST`, turned `EK_FIRST_TURN` about `EK_FIRST_AXIS` and nudged
+/// `EK_FIRST_NUDGE`, joined with one over `EK_SECOND` nudged `EK_SECOND_NUDGE`; then the hull
+/// of `EK_HULL` scaled `EK_HULL_SCALE`, nudged by each of `EK_HULL_NUDGES`: the find's, and
+/// 5e-6 less in x or more in y (refused before the find's rule), then 5e-6 more in x or
+/// less in y (made); the first `EK_REFUSED` refused. Moved 3e5 out by `EK_FAR`.
+const EK_FIRST = [2]Vec3{ .{ 1, 3, 0 }, .{ 4, 4, 0 } };
+const EK_XSECTS: f64 = 2.1;
+const EK_FIRST_AXIS: Vec3 = .{ 1, 2, 3 };
+const EK_FIRST_TURN: f64 = 0.014142253478516982;
+const EK_FIRST_NUDGE: Vec3 = .{ -1.999999994272974e-5, -2e-3, -2e-5 };
+const EK_SECOND = [2]Vec3{ .{ 2, 2, 0 }, .{ 3, 4, 0 } };
+const EK_SECOND_NUDGE: Vec3 = .{ -2e-5, 1e-5, 2e-3 };
+const EK_HULL = [_]Vec3{ .{ 3, 0, 2 }, .{ 3, 4, 0 }, .{ 1, 1, 3 }, .{ 4, 4, 3 }, .{ 4, 4, 3 }, .{ 4, 2, 0 }, .{ 2, 3, 4 }, .{ 4, 1, 3 } };
+const EK_HULL_SCALE: Vec3 = .{ 1, 0.5, 1 };
+const EK_HULL_NUDGES = [_]Vec3{ .{ 5e-6, 5e-6, 2e-3 }, .{ 0, 5e-6, 2e-3 }, .{ 5e-6, 1e-5, 2e-3 }, .{ 1e-5, 5e-6, 2e-3 }, .{ 5e-6, 0, 2e-3 } };
+const EK_REFUSED: usize = 3;
+const EK_FAR: Vec3 = .{ 3e5, -3e5, 3e5 };
 
 fn polyhedron(points: []const Vec3, triangles: []const [3]u32) !Body {
     var diag = Diagnostics.init(testing.allocator);
@@ -6318,6 +6337,54 @@ test "degeneracy: a short edge two solids of a union share collapses in both or 
             const this = try outcomeOf(&solids[0], &solids[1], .@"union");
             if (this == .refused) try testing.expect(this.refused != .edge_too_short);
             if (outcome) |first| try testing.expectEqual(first, this) else outcome = this;
+        };
+    }
+}
+
+test "degeneracy: a crossing paved on a hull's edge by its corner, off the face's plane and within the zone of the corner's other edge in it, is refused below the feature size, turned, mirrored, far and either way round" {
+    // The locus session's find ek on 5e73cbcd, as the fuzzer drew it: two plates joined,
+    // then a hull whose face's corner (24.6°) the plates' faces cross by. A merged vertex
+    // paved on one edge of that corner, 3.3e-5 from it, lies 1.88e-5 off the face's plane
+    // (within the intersection tolerance) and 2.08e-5 in space from the corner's other
+    // edge, off it to the paves; in the face's plane it is 8.9e-6 from that edge, within
+    // the zone, and the imprint's overlay cut the edge there itself (`imprint_unmatched`,
+    // `IntersectionFailed`, every operation either way round). `sectionsApart` measures a
+    // face's own pave blocks against each other in its plane where one ends at a pave the
+    // boolean made, as it measures a section against them: refused `below_feature_size`,
+    // as the hull nudged 5e-6 less in x or more in y already was
+    const half = EK_XSECTS * tol.xsect / 2;
+    var first = try fuzzBoxPlaced(tol, .{ EK_FIRST[0][0], EK_FIRST[0][1], EK_FIRST[0][2] - half }, .{ EK_FIRST[1][0], EK_FIRST[1][1], EK_FIRST[1][2] + half }, EK_FIRST_AXIS, EK_FIRST_TURN, null, EK_FIRST_NUDGE);
+    defer first.deinit();
+    var second = try fuzzBoxPlaced(tol, .{ EK_SECOND[0][0], EK_SECOND[0][1], EK_SECOND[0][2] - half }, .{ EK_SECOND[1][0], EK_SECOND[1][1], EK_SECOND[1][2] + half }, vec.Z3, 0, null, EK_SECOND_NUDGE);
+    defer second.deinit();
+    var running = try sound(&first, &second, .@"union");
+    defer running.deinit();
+    const moves = [_]mat.Affine{
+        mat.Affine.translate(vec.ZERO3),
+        mat.Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        mat.Affine.rotate(vec.Z3, std.math.pi),
+        mat.Affine.mirror(vec.X3),
+        mat.Affine.translate(EK_FAR),
+        mat.Affine.translate(EK_FAR).compose(&mat.Affine.mirror(vec.X3)),
+    };
+    for (EK_HULL_NUDGES, 0..) |nudge, n| {
+        var drawn = try fuzzHullPlaced(&EK_HULL, vec.Z3, 0, EK_HULL_SCALE, vec.ZERO3, nudge);
+        defer drawn.deinit();
+        for (moves, 0..) |move, m| for ([_]pipeline.Op{ .@"union", .intersection, .difference }) |op| {
+            errdefer std.debug.print("the hull nudged {any}, move {d}, {t}\n", .{ nudge, m, op });
+            var diag = Diagnostics.init(testing.allocator);
+            defer diag.deinit();
+            const transform = @import("../construct/transform.zig").transform;
+            var a = try transform(testing.allocator, &running, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform(testing.allocator, &drawn, &move, .{}, &diag);
+            defer b.deinit();
+            if (op != .difference) try expectAlikeEitherWay(&a, &b, op);
+            // The find and its neighbours: refused below the feature size, or made, either
+            // way round
+            for ([_]Outcome{ try outcomeOf(&a, &b, op), try outcomeOf(&b, &a, op) }) |outcome| {
+                if (n < EK_REFUSED) try testing.expectEqual(Outcome{ .refused = .below_feature_size }, outcome) else try testing.expect(outcome == .made);
+            }
         };
     }
 }
