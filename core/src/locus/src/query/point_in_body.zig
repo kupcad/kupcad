@@ -17,13 +17,10 @@ const std = @import("std");
 const vec = @import("../math/vec.zig");
 const geometry = @import("../geometry/types.zig");
 const diagnostics = @import("../diagnostics.zig");
-const types = @import("../topology/types.zig");
 const body_mod = @import("../topology/body.zig");
 const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
 const raycast = @import("raycast.zig");
-const distance = @import("distance.zig");
-const traverse = @import("../topology/traverse.zig");
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
 const Box3 = geometry.Box3;
@@ -35,8 +32,6 @@ pub const Place = in_face.Place;
 
 /// The nearby faces whose feet give the first rays.
 const FOOT_RAYS: usize = 6;
-/// Alternating projections between a ray and a curved edge, at most (`edgeDistance`).
-const EDGE_ROUNDS: usize = 16;
 /// The retry directions: skewed off the axes and off each other, so no two meet one edge
 /// alike (unit length once normalized).
 const TABLE = [_]Vec3{
@@ -125,72 +120,23 @@ fn decide(allocator: std.mem.Allocator, body: *const Body, index: *const FaceInd
 }
 
 /// Whether the ray from `p` along `dir` comes within `zone` of an edge (or a loop's
-/// vertex) before `t`: it meets the boundary there, as a point within the zone of an edge
-/// is on it (`classifyWithin`, `in_face.nearEdge`), and says nothing. The classification's
-/// band: `p` lies farther than it from every edge, else on the boundary, so no ray fails
-/// at its start (within the intersection tolerance, every ray from a point between the
-/// zone and the tolerance of an edge did: a notch's apex under a plate's edge in the edge
-/// matrix, `limit_exceeded`). An edge a boolean
-/// kept off its faces' surfaces (D28, its gap) leaves a crack between them as wide as its
-/// gap, which a ray meeting neither surface passes through: a wedge between a box's top
-/// and a plate's bottom 2e-5 apart, their faces meeting at the plate's side edge by the
-/// tolerance, and a ray from a point outside the wedge between the two planes ran along
-/// them through the edge to the wedge's far side, which it met from inside (the local
-/// session's find ep on 621b9ee0). The edges of the faces the ray reads
-/// (`raycast.readBeyond`): a crack lies within its edge's gap, at most the zone, of it.
+/// vertex) before `t` (`raycast.edgePasses`, the one decision of a ray passing an edge):
+/// it meets the boundary there, as a point within the zone of an edge is on it
+/// (`classifyWithin`, `in_face.nearEdge`), and says nothing. The classification's band:
+/// `p` lies farther than it from every edge, else on the boundary, so no ray fails at its
+/// start (within the intersection tolerance, every ray from a point between the zone and
+/// the tolerance of an edge did: a notch's apex under a plate's edge in the edge matrix,
+/// `limit_exceeded`). An edge a boolean kept off its faces' surfaces (D28, its gap) leaves
+/// a crack between them as wide as its gap, which a ray meeting neither surface passes
+/// through: a wedge between a box's top and a plate's bottom 2e-5 apart, their faces
+/// meeting at the plate's side edge by the tolerance, and a ray from a point outside the
+/// wedge between the two planes ran along them through the edge to the wedge's far side,
+/// which it met from inside (the local session's find ep on 621b9ee0).
 fn passesEdge(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, p: Vec3, dir: Vec3, t: f64, zone: f64, diag: *Diagnostics) Error!bool {
-    var items: std.ArrayList(u32) = .empty;
-    defer items.deinit(allocator);
-    const Collect = struct {
-        allocator: std.mem.Allocator,
-        items: *std.ArrayList(u32),
-        failed: bool = false,
-        fn visit(self: *@This(), item: u32) bool {
-            self.items.append(self.allocator, item) catch {
-                self.failed = true;
-                return false;
-            };
-            return true;
-        }
-    };
-    var collect: Collect = .{ .allocator = allocator, .items = &items };
-    index.bvh.querySegment(p, dir, 0, t, raycast.readBeyond(body), &collect, Collect.visit);
-    if (collect.failed) return error.OutOfMemory;
-    std.mem.sort(u32, items.items, {}, std.sort.asc(u32));
-    const end = vec.addScaled(p, dir, t);
-    for (items.items) |item| {
-        const f = index.faces[item];
-        var loops = traverse.Loops.init(body, f);
-        while (loops.next() catch return corrupt(diag)) |l| {
-            if (body.loop(l).vertex != .none and distance.segmentSegment(p, end, body.point(body.loop(l).vertex), body.point(body.loop(l).vertex)).distance <= zone) return true;
-            var it = traverse.Coedges.init(body, l);
-            while (it.next() catch return corrupt(diag)) |c| {
-                if (edgeDistance(body, body.coedge(c).edge, p, end) <= zone) return true;
-            }
-        }
-    }
-    return false;
-}
-
-/// The distance between the segment `a b` and edge `e`: exact for a line (`distance.segmentSegment`);
-/// for a curve by alternating projection from the segment's point nearest the edge's
-/// chord (`EDGE_ROUNDS`), as `distance.zig` polishes a pair.
-fn edgeDistance(body: *const Body, e: types.EdgeIndex, a: Vec3, b: Vec3) f64 {
-    const edge = body.edge(e);
-    const curve = body.geometry.curve(edge.curve);
-    const s = curve.eval(edge.t0);
-    const near = distance.segmentSegment(a, b, s, curve.eval(edge.t1));
-    if (curve == .line or edge.flags.degenerate) return near.distance;
-    var q = near.p;
-    var d = std.math.inf(f64);
-    for (0..EDGE_ROUNDS) |_| {
-        const on_edge = in_face.nearestOnEdge(body, e, q);
-        const back = distance.segmentSegment(a, b, on_edge, on_edge);
-        if (back.distance >= d) break;
-        d = back.distance;
-        q = back.p;
-    }
-    return d;
+    var passes: std.ArrayList(raycast.Candidate) = .empty;
+    defer passes.deinit(allocator);
+    try raycast.edgePasses(allocator, body, index, p, dir, 0, t, zone, &passes, diag);
+    return passes.items.len > 0;
 }
 
 /// The items whose (grown) boxes overlap `box`. Appended to `out`.
@@ -245,8 +191,4 @@ fn boxDistance(box: Box3, p: Vec3) f64 {
         sum += d * d;
     }
     return @sqrt(sum);
-}
-
-fn corrupt(diag: *Diagnostics) Error {
-    return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the body" });
 }

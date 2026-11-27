@@ -16,6 +16,10 @@
 //! edge, between its line and its vertices' chord, or in an edge's sliver, where the face's surface runs between the edge and its
 //! line with the surface of the face across it, in the face's loops or not).
 //!
+//! A segment passing an edge within the zone meets the boundary there too, whether or not
+//! it meets a surface (`edgePasses`): a boolean's edge kept off its faces' surfaces leaves
+//! a crack between them as wide as its gap.
+//!
 //! The crossings: candidates within the zone of one another are one place, and so is one
 //! on the face of the one before within the two faces' reach (`onePlace`), and so are
 //! places the segment stays on the boundary between (halfway between them within the zone
@@ -44,6 +48,10 @@ const bvh_mod = @import("../spatial/bvh.zig");
 const index_mod = @import("index.zig");
 const in_face = @import("in_face.zig");
 const point_in_body = @import("point_in_body.zig");
+const distance = @import("distance.zig");
+const traverse = @import("../topology/traverse.zig");
+const canonical = @import("../geometry/canonical.zig");
+const curves = @import("../geometry/curves.zig");
 const Vec2 = vec.Vec2;
 const Vec3 = vec.Vec3;
 const Body = body_mod.Body;
@@ -64,6 +72,13 @@ const CELL_BULGE: f64 = 0.5;
 const SIDE_STEP_ZONES: f64 = 16;
 /// Newton steps polishing a free-form root to the last bits after Levenberg–Marquardt.
 const POLISH_STEPS: usize = 4;
+/// Alternating projections between a segment and a free-form edge, at most (`edgePass`).
+const EDGE_ROUNDS: usize = 16;
+/// Halvings of a curved edge's parameter range, at most, bounding its distance from a
+/// segment (`edgePass`): past them the piece's chord decides.
+const MAX_BOW_DEPTH: u8 = 52;
+/// Pieces of a curved edge a bound asks at most (`edgePass`): its stack's size.
+const MAX_BOW_PIECES: usize = MAX_BOW_DEPTH + 2;
 
 pub const Hit = struct {
     /// Along the segment from its origin, in its units.
@@ -117,7 +132,11 @@ pub fn onePlace(body: *const Body, origin: Vec3, dir: Vec3, first: Candidate, ot
 }
 
 /// The crossings of the segment from `origin` to `end` with `body`'s boundary, nearest
-/// first. Owned by `allocator`.
+/// first. Owned by `allocator`. Its places are its meetings with faces and where it passes
+/// an edge within the zone (`edgePasses`, as the point's classification takes a ray there):
+/// a boolean's edge kept off its faces' surfaces (D28) leaves a crack between them, and a
+/// segment through it met the far face alone, a lone exit from outside (the wedge of find
+/// ep, a segment from past its thin edge between its faces' planes).
 pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, origin: Vec3, end: Vec3, options: diagnostics.Options, diag: *Diagnostics) Error![]Hit {
     try options.checkCancel();
     const length = vec.distance(origin, end);
@@ -126,6 +145,9 @@ pub fn cast(allocator: std.mem.Allocator, body: *const Body, index: *const FaceI
     var found: std.ArrayList(Candidate) = .empty;
     defer found.deinit(allocator);
     try candidates(allocator, body, index, origin, dir, -zone, length + zone, &found, diag);
+    // Where it passes an edge within the zone it meets the boundary, met surface or not:
+    // a place its sides decide
+    try edgePasses(allocator, body, index, origin, dir, -zone, length + zone, zone, &found, diag);
     std.mem.sort(Candidate, found.items, {}, Candidate.lessThan);
 
     // The runs: candidates each one place with the one before (`onePlace`), as
@@ -284,6 +306,140 @@ pub fn candidates(allocator: std.mem.Allocator, body: *const Body, index: *const
             try out.append(allocator, .{ .t = t, .face = f, .place = place, .normal = normal, .cosine = vec.dot(normal, dir) });
         }
     }
+}
+
+/// Appends to `out` a candidate for each face's edge (or loop's vertex) that the line
+/// `origin + t·dir` (`dir` unit), `t` in `[lo, hi]`, comes within `zone` of, for each face
+/// of the edge the query reads (`readBeyond`), at the line's nearest approach to the edge:
+/// a meeting with the face's boundary, `.boundary`, whether or not the line meets a
+/// surface there (`edgePass`). A boolean's edge kept off its faces' surfaces (D28) leaves a
+/// crack between them as wide as its gap, which a line meeting neither surface passes
+/// through; it has met the boundary there all the same, as a point within the zone of an
+/// edge is on it (`point_in_body.classifyWithin`). The one decision of a ray passing an
+/// edge for the point's classification (`point_in_body.passesEdge`: such a ray says
+/// nothing) and the crossings (`cast`: such a place is decided by its sides); the crack
+/// lies within its edge's gap, at most the zone, of it.
+pub fn edgePasses(allocator: std.mem.Allocator, body: *const Body, index: *const FaceIndex, origin: Vec3, dir: Vec3, lo: f64, hi: f64, zone: f64, out: *std.ArrayList(Candidate), diag: *Diagnostics) Error!void {
+    var items: std.ArrayList(u32) = .empty;
+    defer items.deinit(allocator);
+    const Collect = struct {
+        allocator: std.mem.Allocator,
+        items: *std.ArrayList(u32),
+        failed: bool = false,
+        fn visit(self: *@This(), item: u32) bool {
+            self.items.append(self.allocator, item) catch {
+                self.failed = true;
+                return false;
+            };
+            return true;
+        }
+    };
+    var collect: Collect = .{ .allocator = allocator, .items = &items };
+    index.bvh.querySegment(origin, dir, lo, hi, readBeyond(body), &collect, Collect.visit);
+    if (collect.failed) return error.OutOfMemory;
+    std.mem.sort(u32, items.items, {}, std.sort.asc(u32));
+    const a = vec.addScaled(origin, dir, lo);
+    const b = vec.addScaled(origin, dir, hi);
+    for (items.items) |item| {
+        const f = index.faces[item];
+        var loops = traverse.Loops.init(body, f);
+        while (loops.next() catch return corrupt(diag)) |l| {
+            const lone = body.loop(l).vertex;
+            if (lone != .none) {
+                const near = distance.segmentSegment(a, b, body.point(lone), body.point(lone));
+                if (near.distance <= zone) try appendPass(allocator, body, f, a, b, lo, hi, dir, near.p, out);
+            }
+            var it = traverse.Coedges.init(body, l);
+            while (it.next() catch return corrupt(diag)) |c| {
+                const at = edgePass(body, body.coedge(c).edge, a, b, zone) orelse continue;
+                try appendPass(allocator, body, f, a, b, lo, hi, dir, at, out);
+            }
+        }
+    }
+}
+
+/// A candidate of face `f` at `at`, the point of the segment from `a` (`lo`) to `b`
+/// (`hi`) along `dir` where it passes the face's boundary (`edgePasses`).
+fn appendPass(allocator: std.mem.Allocator, body: *const Body, f: types.FaceIndex, a: Vec3, b: Vec3, lo: f64, hi: f64, dir: Vec3, at: Vec3, out: *std.ArrayList(Candidate)) Error!void {
+    const length = vec.distance(a, b);
+    const t = if (length > 0) lo + (hi - lo) * vec.distance(a, at) / length else lo;
+    const normal = in_face.outwardNormal(body, f, in_face.uvOf(body, f, at));
+    try out.append(allocator, .{ .t = t, .face = f, .place = .boundary, .normal = normal, .cosine = vec.dot(normal, dir) });
+}
+
+/// The point of the segment from `a` to `b` nearest edge `e` when it comes within `zone`
+/// of the edge, else null. Exact for a line (`distance.segmentSegment`). For a circle or an
+/// ellipse, bounded: a piece of the edge over a parameter range `Δt` lies within `bow =
+/// Δt²/8 · M` of its chord, `M` the largest |C''| (the radius; the larger semi-axis), so
+/// the segment's distance from the piece is its distance from the chord to within `bow`
+/// (the interpolation error bound). The nearest piece is found by halving, a piece
+/// dropped when even its nearest could not be nearer than the zone or the nearest found,
+/// down to a bow of D27's band at the coordinates' size, where the chord decides. Not by
+/// alternating projection from one seed, which stops at a local nearest (a segment
+/// passing an arc near both its ends) and so can say a segment keeps clear that does not.
+/// A free-form edge (M5) is still by alternating projection from the segment's point
+/// nearest the edge's chord, a distance of two points of both and so never below the
+/// true one: it can miss a pass, never invent one.
+pub fn edgePass(body: *const Body, e: types.EdgeIndex, a: Vec3, b: Vec3, zone: f64) ?Vec3 {
+    const edge = body.edge(e);
+    const curve = body.geometry.curve(edge.curve);
+    const start = curve.eval(edge.t0);
+    const chord = distance.segmentSegment(a, b, start, curve.eval(edge.t1));
+    if (curve == .line or edge.flags.degenerate) return if (chord.distance <= zone) chord.p else null;
+    const bend: f64 = switch (curve) {
+        .circle => |c| c.r,
+        .ellipse => |c| @max(c.a, c.b),
+        .line => unreachable,
+        .nurbs => return freeFormPass(body, e, a, b, zone, chord.p),
+    };
+    return bowedPass(curve, bend, edge.t0, edge.t1, a, b, zone, canonical.AT_TOLERANCE_ULPS * std.math.floatEps(f64) * canonical.magnitude(&.{ a, b, start }));
+}
+
+/// `edgePass` of a circle's or an ellipse's piece from `t0` to `t1`, `bend` the largest
+/// |C''|, by halving down to a bow of `band`.
+fn bowedPass(curve: curves.Curve, bend: f64, t0: f64, t1: f64, a: Vec3, b: Vec3, zone: f64, band: f64) ?Vec3 {
+    const Piece = struct { u: f64, w: f64, depth: u8 };
+    var stack: [MAX_BOW_PIECES]Piece = undefined;
+    var n: usize = 1;
+    stack[0] = .{ .u = t0, .w = t1, .depth = 0 };
+    var best: ?distance.Near = null;
+    while (n > 0) {
+        n -= 1;
+        const piece = stack[n];
+        const near = distance.segmentSegment(a, b, curve.eval(piece.u), curve.eval(piece.w));
+        const span = piece.w - piece.u;
+        const bow = span * span / 8 * bend;
+        const reach = if (best) |found| @min(zone, found.distance) else zone;
+        if (near.distance - bow > reach) continue;
+        if (bow <= band or piece.depth == MAX_BOW_DEPTH) {
+            if (near.distance <= zone and (best == null or near.distance < best.?.distance)) best = near;
+            continue;
+        }
+        const mid = piece.u + span / 2;
+        stack[n] = .{ .u = mid, .w = piece.w, .depth = piece.depth + 1 };
+        stack[n + 1] = .{ .u = piece.u, .w = mid, .depth = piece.depth + 1 };
+        n += 2;
+    }
+    return if (best) |found| found.p else null;
+}
+
+/// `edgePass` of a free-form edge: alternating projection from `seed`, the segment's point
+/// nearest the edge's chord (`EDGE_ROUNDS`), as `distance.zig` polishes a pair.
+fn freeFormPass(body: *const Body, e: types.EdgeIndex, a: Vec3, b: Vec3, zone: f64, seed: Vec3) ?Vec3 {
+    var q = seed;
+    var d = std.math.inf(f64);
+    for (0..EDGE_ROUNDS) |_| {
+        const on_edge = in_face.nearestOnEdge(body, e, q);
+        const back = distance.segmentSegment(a, b, on_edge, on_edge);
+        if (back.distance >= d) break;
+        d = back.distance;
+        q = back.p;
+    }
+    return if (d <= zone) q else null;
+}
+
+fn corrupt(diag: *Diagnostics) Error {
+    return diag.fail(error.NotValid, .{ .code = .loop_not_closed, .label = "the body" });
 }
 
 /// How far beyond a face's indexed box (its edges' lines and curves, grown by the zone) a

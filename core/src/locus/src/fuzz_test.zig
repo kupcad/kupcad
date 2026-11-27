@@ -2166,8 +2166,47 @@ test "Fuzz solids: a point past a wedge's thin edge, between its faces' planes, 
             };
             defer result.deinit();
             try expectProbeSliced(&result, move.point(EP_PROBE), &diag);
+            try expectSegmentsThroughFeet(&result, move.point(EP_PROBE), &diag);
         }
     };
+}
+
+/// Segments from `probe`, outside `solid`, through its foot on each face's surface to as
+/// far beyond again: each segment's crossings keep the running count of entries less exits
+/// at 0 or 1 and end at the end's containment, where that is off the boundary
+/// (`raycast.cast`; KupCAD's `ray_cast`). A refusal is clean.
+fn expectSegmentsThroughFeet(solid: *const Body, probe: vec.Vec3, diag: *Diagnostics) !void {
+    var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
+    defer index.deinit(testing.allocator);
+    for (0..solid.faces.items.len) |i| {
+        const f = types.FaceIndex.of(@intCast(i));
+        if (solid.face(f).flags.tombstone) continue;
+        const uv = in_face.uvOf(solid, f, probe);
+        const foot = solid.geometry.surface(solid.face(f).surface).eval(uv[0], uv[1]);
+        const end = vec.add(foot, vec.sub(foot, probe));
+        if (vec.distance(probe, end) == 0) continue;
+        const hits = solid_query.raycast.cast(testing.allocator, solid, &index, probe, end, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        defer testing.allocator.free(hits);
+        errdefer {
+            std.debug.print("segment {any} → {any} (face {d}):", .{ probe, end, i });
+            for (hits) |h| std.debug.print(" ({d}, {d})", .{ h.t, h.crossing });
+            std.debug.print("\n", .{});
+        }
+        var count: i32 = 0;
+        for (hits) |h| {
+            count += h.crossing;
+            try testing.expect(count == 0 or count == 1);
+        }
+        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, end, .{}, diag) catch |err| {
+            _ = try clean(err);
+            continue;
+        };
+        if (place == .boundary) continue;
+        try testing.expectEqual(@as(i32, @intFromBool(place == .inside)), count);
+    }
 }
 
 test "Fuzz solids: a point under a plate, beside a box whose corner its bottom's edge ends at off that edge's line, is outside their union, turned, mirrored, far and either way round" {

@@ -272,6 +272,37 @@ test "ray cast and containment: a cylinder across, along its axis, tangent; a co
     try expectHits(over, &.{ 10, 10 }, &.{ 1, -1 });
 }
 
+test "edge pass: a segment within the zone of a cylinder's rim, parallel to the rim's chord, passes it; one beyond the zone does not" {
+    // The one decision of a ray passing an edge (`raycast.edgePass`): bounded by halving
+    // the arc, each piece within Δt²·r/8 of its chord. Alternating projection from the
+    // segment's point nearest the chord creeps along the rim about 1.4% a round, still some
+    // 0.03 off it after its 16 rounds: the segment, 5.7e-6 from the rim, kept clear by its
+    // measure. Turned about z, so the chord lies every way to the segment
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var cyl = try Indexed.of(try primitives.cylinder(testing.allocator, tol, 3, 5, false, &diag));
+    defer cyl.deinit();
+    const body = &cyl.body;
+    for ([_]f64{ 0, 0.3, PI / 2.0, 2.0, PI, 4.5 }) |angle| {
+        errdefer std.debug.print("turned {d}\n", .{angle});
+        const c = @cos(angle);
+        const s = @sin(angle);
+        for ([_]struct { off: f64, passes: bool }{ .{ .off = 4e-6, .passes = true }, .{ .off = 7.5e-6, .passes = false } }) |case| {
+            const r = 3 + case.off;
+            const a: Vec3 = .{ r * c + 0.5 * s, r * s - 0.5 * c, 5 + case.off };
+            const b: Vec3 = .{ r * c - 0.5 * s, r * s + 0.5 * c, 5 + case.off };
+            var found: ?Vec3 = null;
+            for (body.edges.items, 0..) |edge, e| {
+                if (edge.flags.tombstone or body.geometry.curve(edge.curve) != .circle) continue;
+                if (body.point(edge.start)[2] < 5 - CLOSE) continue;
+                found = found orelse raycast.edgePass(body, types.EdgeIndex.of(@intCast(e)), a, b, tol.zone);
+            }
+            try testing.expectEqual(case.passes, found != null);
+            if (found) |p| try testing.expectApproxEqAbs(@as(f64, 0), vec.distance(p, .{ r * c, r * s, 5 + case.off }), 1e-6);
+        }
+    }
+}
+
 test "ray cast: a curved face touched inside it, another place beside, is a touch: its sides are halfway to the neighbours and the segment's ends" {
     // The locus fuzzer's find (the nightly of 2026-11-16, run 43816774581): a horizontal
     // ray exactly tangent to an extruded arc's side inside the face, and an edge 0.55 on.
