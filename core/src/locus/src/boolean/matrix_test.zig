@@ -18,6 +18,12 @@
 //! touching them, a box across a corner of them and the hull of their own vertices, under
 //! the same oracles (`NEXT_STEPS`), counted beside the family's own cases.
 //!
+//! Every case (not its next steps) runs mirrored too and, where its oracles did not take
+//! them so, with the operands the other way round (audit A, 2026-11-27: the matrix run so
+//! once found 20 cases made one way and refused the other, all one decision, which no
+//! family showed while a refused case was never swapped and no case mirrored): each
+//! operation the case ran made or refused alike (`expectMirroredAndSwapped`).
+//!
 //! The fast tier (a ladder's values on either side of each boundary, and the next step of
 //! every `NEXT_EVERY_FAST`-th case made) runs with the suite; `-Dedge-matrix=true` runs
 //! every value and every case's next step, as the nightly does.
@@ -355,7 +361,9 @@ fn run(tally: *Tally, name: []const u8, a: anyerror!Body, b: anyerror!Body, thin
 fn step(a: *const Body, b: *const Body, thin: bool, reach: f64, results: *[3]Body, made: *usize) !Outcome {
     var diag = Diagnostics.init(testing.allocator);
     defer diag.deinit();
-    if (try operate(a, b, thin, results, made, &diag)) |code| return .{ .refused = code };
+    const refused = try operate(a, b, thin, results, made, &diag);
+    if (!thin) try expectMirroredAndSwapped(a, b, results[0..made.*], refused, reach, &diag);
+    if (refused) |code| return .{ .refused = code };
     for (moves()) |m| {
         const move = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
         for (oracle.OPS, results) |op, *result| {
@@ -394,6 +402,24 @@ fn operate(a: *const Body, b: *const Body, thin: bool, results: *[3]Body, made: 
     }
     try oracle.expectStep(a, b, results, shifts, gaps, diag);
     return null;
+}
+
+/// The case `a`, `b` mirrored, and the other way round where `operate` stopped before its
+/// oracles took it so: each operation `operate` ran (in `oracle.OPS`' order: `made` the
+/// results of those made, then the one `refused`, its code, if any) made and sound mirrored
+/// with the measures of the one made (`oracle.expectMirrored`) or refused mirrored too
+/// (`oracle.expectMirroredRefused`): a mirror rounds nothing; and with a refusal, the union
+/// and the intersection made or refused alike the other way round
+/// (`oracle.expectSwappedUntilRefused`).
+fn expectMirroredAndSwapped(a: *const Body, b: *const Body, made: []const Body, refused: ?diagnostics.Code, reach: f64, diag: *Diagnostics) !void {
+    for (made, oracle.OPS[0..made.len]) |*result, op| {
+        const steps = [_]oracle.Step{.{ .other = b.*, .op = op }};
+        try oracle.expectMirrored(a, &steps, result, reach, diag);
+    }
+    if (refused == null) return;
+    const op = oracle.OPS[made.len];
+    try oracle.expectMirroredRefused(a, &.{}, b, op, diag);
+    try oracle.expectSwappedUntilRefused(a, b, made, op, diag);
 }
 
 /// A made case's next step (`NEXT_STEPS`): each result named there, when it holds any

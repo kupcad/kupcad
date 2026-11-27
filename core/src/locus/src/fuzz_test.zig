@@ -3391,9 +3391,13 @@ fn runSolids(source: anytype, tally: ?*RefusalTally) !Outcome {
             defer report.deinit();
             results[made] = solid_boolean.pipeline.boolean(testing.allocator, &current, &other, each, .{}, &diag, &report) catch |err| {
                 const outcome = try thinRefused(err, &report, thin, &expected);
-                // Refused mirrored too (a refusal before any boolean ran, an argument,
-                // is no step's)
-                if (report.failed_in != null) try oracle.expectMirroredRefused(&first, steps.items, &other, each, &diag);
+                // Refused mirrored too, and the union and the intersection up to it alike
+                // the other way round, which `expectStep` takes only for a step made whole
+                // (a refusal before any boolean ran, an argument, is no step's)
+                if (report.failed_in != null) {
+                    try oracle.expectMirroredRefused(&first, steps.items, &other, each, &diag);
+                    try oracle.expectSwappedUntilRefused(&current, &other, results[0..made], each, &diag);
+                }
                 return outcome;
             };
             // A solid below the minimum feature size is no operand of a boolean with a

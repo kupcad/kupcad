@@ -2,7 +2,9 @@
 //! chains (`fuzz_test.zig`) and the edge-case matrix (`matrix_test.zig`). A step is the
 //! three operations of two operands, each result sound (`expectSolid`) and its report
 //! fitting it; then the volume identities, membership where it is clear and the operands
-//! the other way round (`expectStep`); a chain under one rigid move (`expectMovedWhole`).
+//! the other way round (`expectStep`, or `expectSwappedUntilRefused` for a step that
+//! stopped at a refusal); a chain under one rigid move (`expectMovedWhole`) and mirrored
+//! (`expectMirrored`, `expectMirroredRefused`).
 //! A refusal by design is clean (`clean`); the general path failing on valid operands is a
 //! find, whichever driver drew them.
 
@@ -290,6 +292,40 @@ pub fn expectMirroredRefused(first: *const Body, steps: []const Step, other: *co
     made.deinit();
     std.debug.print("mirrored: the {s} the chain refused was made\n", .{@tagName(op)});
     return error.MirrorMade;
+}
+
+/// The operands of a step the other way round where `expectStep` did not take them (a later
+/// operation of the step refused): B op A made, with the counts and shells of A op B
+/// (`forward`), or refused alike when `forward` is null. The union or the intersection only.
+/// Made one way round and refused the other is a find, as in `expectSwapped`: the paves
+/// decide pairs, not orders; the code a refusal names may differ.
+pub fn expectSwappedAlike(a: *const Body, b: *const Body, op: Op, forward: ?*const Body, diag: *Diagnostics) !void {
+    std.debug.assert(op != .difference);
+    var swapped = pipeline.boolean(testing.allocator, b, a, op, .{}, diag, null) catch |err| {
+        try clean(err);
+        if (forward == null) return;
+        std.debug.print("{s} the other way round refused ({any}), made forward\n", .{ @tagName(op), diag.first() });
+        return error.SwapRefused;
+    };
+    defer swapped.deinit();
+    const made = forward orelse {
+        std.debug.print("{s} the other way round made, refused forward\n", .{@tagName(op)});
+        return error.SwapMade;
+    };
+    errdefer std.debug.print("{s} the other way round: {any}, shells {any}; forward {any}, shells {any}\n", .{ @tagName(op), swapped.counts(), tests.shellKinds(&swapped), made.counts(), tests.shellKinds(made) });
+    try testing.expectEqual(made.counts(), swapped.counts());
+    try testing.expectEqual(tests.shellKinds(made), tests.shellKinds(&swapped));
+}
+
+/// A step stopped at a refusal (`refused`, after `made`, the results of the operations
+/// before it in `OPS`' order), before `expectStep` took the operands the other way round:
+/// the union and the intersection among them made, or refused, alike either way round
+/// (`expectSwappedAlike`).
+pub fn expectSwappedUntilRefused(a: *const Body, b: *const Body, made: []const Body, refused: Op, diag: *Diagnostics) !void {
+    for (made, OPS[0..made.len]) |*result, op| {
+        if (op != .difference) try expectSwappedAlike(a, b, op, result, diag);
+    }
+    if (refused != .difference) try expectSwappedAlike(a, b, refused, null, diag);
 }
 
 /// `first` mirrored through `steps`, each step made and sound; null when the mirror of an
