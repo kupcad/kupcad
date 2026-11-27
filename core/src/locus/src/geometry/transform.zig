@@ -133,6 +133,13 @@ pub fn curve(allocator: std.mem.Allocator, c: curves.Curve, t0: f64, t1: f64, a:
     switch (c) {
         .line => |l| {
             const d = a.vector(l.d);
+            // Under a similarity the direction by the map's factor and the parameter by it,
+            // as frames and circles take theirs: measured again, the direction's length
+            // rounded, a mirror's line was renormalized and its edges' ranges rescaled by
+            // it, its end 1 ulp off the mirror image of the line's, and a distance at the
+            // edge of D27's band was refused in place and made mirrored (the locus
+            // session's find er on 621b9ee0)
+            if (shape == .similarity) return .{ .curve = .{ .line = .{ .o = a.point(l.o), .d = vec.scale(d, 1.0 / shape.similarity.scale) } }, .t_scale = shape.similarity.scale };
             const len = vec.length(d);
             if (!(len > 0.0)) return error.NotRepresentable;
             return .{ .curve = .{ .line = .{ .o = a.point(l.o), .d = vec.scale(d, 1.0 / len) } }, .t_scale = len };

@@ -163,6 +163,25 @@ const EQ_HULL_NUDGE: vec.Vec3 = .{ 0, 2e-2, 5e-5 };
 const EQ_PROBE_X: f64 = 4.334000000000001;
 const EQ_PROBE_Z: f64 = 2.9164499999999993;
 const EQ_PROBE_YS = [_]f64{ 1.9999211999985527, 1.99975, 1.99979, 1.99983, 1.99987, 1.99991, 1.99995, 1.99999, 2.00003 };
+/// Find er (the locus session on 621b9ee0), as the solids fuzzer drew it: the plate
+/// `ER_PLATE_XSECTS` intersection tolerances thick about z = 3 over `ER_PLATE` in x and y,
+/// moved `ER_PLATE_MOVE`, united with the hull of `ER_HULL`; then the box over `ER_BOX`
+/// moved `ER_BOX_MOVE` and nudged in y the intersection tolerance and `ER_BANDS` of D27's
+/// band at its size (`ER_BAND`, 64 ulps of 5; the find's one band first), its edge's crossing
+/// that far past the hull's corner. Moved by `ER_MOVES` before the mirror in x.
+const ER_PLATE = [2]vec.Vec3{ .{ 1, 2, 3 }, .{ 4, 3, 3 } };
+const ER_PLATE_XSECTS: f64 = 3;
+const ER_PLATE_MOVE: vec.Vec3 = .{ 1, 0.5, 0 };
+const ER_HULL = [_]vec.Vec3{ .{ 4, 3, 1 }, .{ 1, 2, 1 }, .{ 4, 4, 4 }, .{ 4, 0, 1 }, .{ 4, 4, 3 }, .{ 1, 1, 3 } };
+const ER_BOX = [2]vec.Vec3{ .{ 3, 3, 0 }, .{ 4, 4, 4 } };
+const ER_BOX_MOVE: vec.Vec3 = .{ 1, 0, -0.5 };
+const ER_BAND: f64 = 64 * std.math.floatEps(f64) * 5;
+const ER_BANDS = [_]f64{ 1, 0, 2, 0.5, 1.5, -1, 3 };
+const ER_MOVES = [_]struct { axis: vec.Vec3, angle: f64, shift: vec.Vec3 }{
+    .{ .axis = vec.Z3, .angle = 0, .shift = vec.ZERO3 },
+    .{ .axis = vec.Z3, .angle = std.math.pi / 2.0, .shift = vec.ZERO3 },
+    .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 3e5, -3e5, 3e5 } },
+};
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2169,6 +2188,71 @@ test "Fuzz solids: a point under a plate, beside a box whose corner its bottom's
     };
 }
 
+test "Fuzz solids: a box's edge crossing a union's face at the band's edge past its corner is decided alike mirrored, turned, far and either way round" {
+    // The locus session's find er on 621b9ee0, as the fuzzer drew it: (plate ∪ hull) ∩
+    // box, the box nudged the intersection tolerance and one band of D27's, its edge
+    // crossing the hull's bottom that far past the hull's corner. In place the union was
+    // refused `at_tolerance` (2e-5 and 7.074e-14 against a band of 7.105e-14) and mirrored
+    // it was made (7.119e-14): the distance ran to the end of the hull's edge evaluated on
+    // its line, and the mirror's line, renormalized by `transform`, had its end 1 ulp
+    // nearer the mirror image of the corner. Under a similarity a line maps by the factor
+    // (`geometry/transform.zig`). The box nudged by `ER_BANDS` about the find's, moved by
+    // each of `ER_MOVES`, mirrored in x or not, all three operations either way round: the
+    // mirror's outcome the original's
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = ER_PLATE_XSECTS * tol.xsect / 2;
+    var plate_shape = try boxFrom(.{ ER_PLATE[0][0], ER_PLATE[0][1], ER_PLATE[0][2] - half }, .{ ER_PLATE[1][0], ER_PLATE[1][1], ER_PLATE[1][2] + half }, tol, &diag);
+    defer plate_shape.deinit();
+    var plate = try transform.transform(testing.allocator, &plate_shape, &Affine.translate(ER_PLATE_MOVE), .{}, &diag);
+    defer plate.deinit();
+    var er_hull = try solid_hull.hull(testing.allocator, tol, &ER_HULL, &diag);
+    defer er_hull.deinit();
+    var box_shape = try boxFrom(ER_BOX[0], ER_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    for (ER_BANDS) |bands| {
+        const nudge: vec.Vec3 = .{ 0, tol.xsect + bands * ER_BAND, 0 };
+        var box = try transform.transform(testing.allocator, &box_shape, &Affine.translate(nudge).compose(&Affine.translate(ER_BOX_MOVE)), .{}, &diag);
+        defer box.deinit();
+        for (ER_MOVES, 0..) |m, mi| {
+            const move = Affine.translate(m.shift).compose(&Affine.rotate(vec.normalized(m.axis).?, m.angle));
+            var outcomes: [2][3][2]BooleanOutcome = undefined;
+            for ([_]bool{ false, true }, 0..) |mirrored, side| {
+                const place = if (mirrored) Affine.mirror(vec.X3).compose(&move) else move;
+                var operands: [3]Body = undefined;
+                var built: usize = 0;
+                defer for (operands[0..built]) |*body| body.deinit();
+                for ([_]*const Body{ &plate, &er_hull, &box }) |body| {
+                    // In place, the bodies as drawn (a move, even the identity, maps them)
+                    operands[built] = if (mi == 0 and !mirrored) try body.clone(testing.allocator) else try transform.transform(testing.allocator, body, &place, .{}, &diag);
+                    built += 1;
+                }
+                var joined = try solid_boolean.pipeline.boolean(testing.allocator, &operands[0], &operands[1], .@"union", .{}, &diag, null);
+                defer joined.deinit();
+                for (oracle.OPS, 0..) |op, o| {
+                    outcomes[side][o] = .{ try booleanOutcome(&joined, &operands[2], op), try booleanOutcome(&operands[2], &joined, op) };
+                }
+            }
+            errdefer std.debug.print("the box nudged {d} bands past the tolerance, move {d}: {any} mirrored {any}\n", .{ bands, mi, outcomes[0], outcomes[1] });
+            for (outcomes[0], outcomes[1]) |plain, mirror| for (plain, mirror) |x, y| try testing.expect(std.meta.eql(x, y));
+        }
+    }
+}
+
+/// A boolean's outcome: the counts made, or the code refused.
+const BooleanOutcome = union(enum) { made: Body.Counts, refused: diagnostics.Code };
+
+fn booleanOutcome(a: *const Body, b: *const Body, op: solid_boolean.pipeline.Op) !BooleanOutcome {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var result = solid_boolean.pipeline.boolean(testing.allocator, a, b, op, .{}, &diag, null) catch |err| {
+        try oracle.clean(err);
+        return .{ .refused = diag.first().?.code };
+    };
+    defer result.deinit();
+    return .{ .made = result.counts() };
+}
+
 /// The step of `a` and `b` as the solids chains take it: the three operations made, each
 /// sound and its report fitting it, then the identities, membership and the operands the
 /// other way round (`oracle.expectStep`); or one refused by design (`oracle.clean`).
@@ -3111,6 +3195,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // corner, a ray up between them meeting the top alone: a point under the plate
         // inside the union, MembershipDisagrees (in_face.betweenLineAndChord)
         "solids 0 2 3 2 3 1 4 3 3 1 6 12 3 3 1 2 2 3 2 4 3 4 1 3 13 12 2 4 0 3 1 4 4 0 3 3 0 1 3 1 3 4 2 1 1 3 2 13 3 14 1",
+        // The locus session on 621b9ee0 (er): (plate ∪ hull) ∩ box nudged the tolerance and
+        // a band, refused at_tolerance in place and made mirrored: the mirror's lines were
+        // renormalized by transform, a hull edge's end 1 ulp off the mirror image
+        // (geometry/transform.zig: a line under a similarity maps by the factor)
+        "solids 3 0 5 2 1 4 0 2 3 3 0 3 1 2 1 0 14 2 2 1 6 4 3 1 1 2 1 4 4 4 4 0 1 4 4 3 1 1 3 1 1 0 0 0 4 0 1 0 3 4 3 4 0 4 3 3 2 11 -1 16 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

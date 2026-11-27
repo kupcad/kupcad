@@ -15,6 +15,12 @@ const Box2 = types.Box2;
 
 const tol = Tolerance.fromZone(1e-9);
 const PI = std.math.pi;
+/// The line of find er's hull edge, from (1, 2, 1) to (4, 3, 1): its end evaluated rounds
+/// off (4, 3, 1), and mirroring must round it the same, not again.
+const ER_LINE_FROM: Vec3 = .{ 1, 2, 1 };
+const ER_LINE_TO: Vec3 = .{ 4, 3, 1 };
+/// The planes through the origin find er's line is mirrored in (the oracle's is x = 0).
+const ER_MIRROR_NORMALS = [_]Vec3{ vec.X3, vec.Y3, vec.Z3 };
 
 fn expectVec(expected: Vec3, actual: Vec3, t: f64) !void {
     for (0..3) |k| try testing.expectApproxEqAbs(expected[k], actual[k], t);
@@ -215,4 +221,25 @@ test "classify: a similarity is one to rounding, whatever the tolerance; a matri
     for (&typed.linear) |*v| v.* = @round(v.* * 1e6) / 1e6;
     const near = transform.nearSimilarity(&typed, zone, 1).?;
     try testing.expect(transform.classify(&near).similarity.mirror);
+}
+
+test "curve: a line under a mirror is the exact mirror image, its parameter kept, its points the mirror's of the line's (find er)" {
+    // The locus session's find er on 621b9ee0: a mirror's line was renormalized and its
+    // edges' ranges rescaled by the direction's length measured again, so its end evaluated
+    // 1 ulp off the mirror image of the line's end, and a distance at the edge of D27's
+    // band was refused in place and made mirrored. Under a similarity a line maps by the
+    // factor, as frames and circles do: mirrored in each axis plane through the origin,
+    // the line's points (its ends, by its range) are the mirror's of the original's, exactly
+    const line = curves.Line.through(ER_LINE_FROM, ER_LINE_TO).?;
+    const t1 = vec.distance(ER_LINE_FROM, ER_LINE_TO);
+    for (ER_MIRROR_NORMALS) |n| {
+        errdefer std.debug.print("mirrored in {any}\n", .{n});
+        const m = Affine.mirror(n);
+        var image = try transform.curve(testing.allocator, .{ .line = line }, 0, t1, &m, transform.classify(&m));
+        defer image.deinit(testing.allocator);
+        try testing.expectEqual(@as(f64, 1), image.t_scale);
+        for ([_]f64{ 0, t1, 0.5 * t1 }) |t| {
+            try testing.expectEqual(m.point(line.eval(t)), image.curve.eval(t * image.t_scale));
+        }
+    }
 }
