@@ -4835,7 +4835,7 @@ pub fn tieSolids(zones: [2]f64, drop: f64, quarter: usize, mirrored: bool) ![2]B
 
 /// Point `p` turned `quarter` quarter turns about z through the origin, then mirrored in
 /// x = 0 when `mirrored`.
-fn tieMove(p: Vec3, quarter: usize, mirrored: bool) Vec3 {
+pub fn tieMove(p: Vec3, quarter: usize, mirrored: bool) Vec3 {
     var q = p;
     for (0..quarter) |_| {
         const turned_once: Vec3 = .{ -q[1], q[0], q[2] };

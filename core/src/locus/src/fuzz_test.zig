@@ -60,6 +60,7 @@ const solid_query = struct {
     const raycast = @import("query/raycast.zig");
     const point_in_body = @import("query/point_in_body.zig");
 };
+const in_face = @import("query/in_face.zig");
 const edges = @import("mesh/edges.zig");
 const canonical = @import("geometry/canonical.zig");
 const geometry = @import("geometry/types.zig");
@@ -88,6 +89,39 @@ const QUERY_RAYS = 4;
 /// turned solid's section are checked against the solid.
 const SLICE_AT = 0.37;
 const SLICE_POINTS = 16;
+/// How many points along each edge, its ends among them, `knownTo` measures against the
+/// faces the edge bounds.
+const KNOWN_TO_SAMPLES = 8;
+/// Find ei (the locus session on 5e73cbcd), as the solids fuzzer drew it: a plate
+/// `EI_PLATE_XSECTS` intersection tolerances thick about z = 2 over `EI_PLATE` in x and y,
+/// moved `EI_PLATE_MOVE` (the fuzzer's move and its z nudge), and the hull of `EI_HULL`
+/// nudged `EI_HULL_NUDGE`. The plate's y at which its corner edge lies in the hull's face
+/// (`EI_PLATE_Y_AT_FACE`; the find's y nudge, -2e-5, sets it 1.77e-5 off), the offsets the
+/// tests set it at (`EI_CORNER_OFFSETS`, within the intersection tolerance), the rounding
+/// the result's band may fall short of each by, and where the tests move it far.
+const EI_PLATE = [2]vec.Vec3{ .{ 1, 3, 2 }, .{ 4, 4, 2 } };
+const EI_PLATE_XSECTS: f64 = 3;
+const EI_PLATE_MOVE: vec.Vec3 = .{ 1, 0, 1.9999999928945728e-5 };
+const EI_HULL = [_]vec.Vec3{ .{ 4, 2, 4 }, .{ 2, 0, 1 }, .{ 1, 4, 3 }, .{ 3, 3, 3 }, .{ 4, 2, 1 }, .{ 2, 2, 4 }, .{ 3, 0, 0 }, .{ 1, 3, 2 } };
+const EI_HULL_NUDGE: vec.Vec3 = .{ 1e-5, -5e-6, -2.000000005684342e-5 };
+const EI_PLATE_Y_AT_FACE: f64 = 5e-6;
+const EI_CORNER_OFFSETS = [_]f64{ 1.2e-5, 1.5e-5, 1.7677669529663688e-5, 1.95e-5 };
+const EI_OFFSET_CLOSE: f64 = 1e-9;
+const EI_FAR: vec.Vec3 = .{ 3e5, -3e5, 3e5 };
+/// Find el (the locus_solids session on 5e73cbcd), as the solids fuzzer drew it: a plate
+/// `EL_FIRST_XSECTS` intersection tolerances thick about z = 3 over `EL_FIRST`, nudged
+/// `EL_FIRST_NUDGE` (its top at 3 + 1e-6), and one `EL_SECOND_XSECTS` thick over
+/// `EL_SECOND`, nudged `EL_SECOND_NUDGE` in x and y, its bottom `EL_UNDER_TOP` under the
+/// first's top (the find's 6e-6; its z nudge `EL_SECOND_Z_AT_TOP` less that), the two 1e-5
+/// apart along y = 3: they touch along a line.
+const EL_FIRST = [2]vec.Vec3{ .{ 1, 3, 3 }, .{ 4, 4, 3 } };
+const EL_FIRST_XSECTS: f64 = 2.1;
+const EL_FIRST_NUDGE: vec.Vec3 = .{ 1e-5, -1e-5, -2e-5 };
+const EL_SECOND = [2]vec.Vec3{ .{ 2, 2, 3 }, .{ 4, 3, 3 } };
+const EL_SECOND_XSECTS: f64 = 2.5;
+const EL_SECOND_NUDGE: vec.Vec3 = .{ 1.9999999943156583e-5, -2.000000005684342e-5, 0 };
+const EL_SECOND_Z_AT_TOP: f64 = 2.6e-5;
+const EL_UNDER_TOP = [_]f64{ 2e-6, 6e-6, 1e-5, 1.5e-5 };
 /// Offsets in steps of OFFSET_STEP up to ±OFFSET_STEPS steps, or, one chain in
 /// EXTREME_ONE_IN, a value a script would never write (a parameter sweep inside the
 /// chains, beside sketch/parameters_test.zig's table on fixed sheets).
@@ -1569,10 +1603,10 @@ fn expectSlices(solid: *const Body, sheet_body: *const Body, height: f64, diag: 
 
 /// The solid's plane section at a height off the grid (`SLICE_AT` of its box): a sound
 /// sheet that holds a point exactly when the solid holds the point at that height (off
-/// the boundary). A refusal of the section or a classification is clean; when `strict`
-/// (a boolean's result, valid and planar), the general path failing (`NotValid`,
-/// `IntersectionFailed`) is a find, as the boolean's own is (`oracle.clean`). Nothing for
-/// the empty solid.
+/// the boundary as far as the solid knows it, `knownTo`). A refusal of the section or a
+/// classification is clean; when `strict` (a boolean's result, valid and planar), the
+/// general path failing (`NotValid`, `IntersectionFailed`) is a find, as the boolean's own
+/// is (`oracle.clean`). Nothing for the empty solid.
 fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
     if (solid.isEmpty()) return;
     var index = try solid_query.FaceIndex.build(testing.allocator, solid, diag);
@@ -1584,10 +1618,11 @@ fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
     defer cut.deinit();
     errdefer std.debug.print("the section at {d}\n", .{z});
     try expectSound(&cut, diag);
+    const known_to = knownTo(solid);
     for (0..SLICE_POINTS) |i| {
         const k: f64 = @floatFromInt(i);
         const p: Vec2 = .{ box.min[0] + @mod(k * 0.618 + 0.21, 1) * span[0], box.min[1] + @mod(k * 0.382 + 0.13, 1) * span[1] };
-        const place = solid_query.point_in_body.classify(testing.allocator, solid, &index, .{ p[0], p[1], z }, .{}, diag) catch |err| {
+        const place = solid_query.point_in_body.classifyWithin(testing.allocator, solid, &index, .{ p[0], p[1], z }, known_to, .{}, diag) catch |err| {
             try sliceRefused(err, strict);
             continue;
         };
@@ -1595,6 +1630,38 @@ fn expectSliced(solid: *const Body, strict: bool, diag: *Diagnostics) !void {
         errdefer std.debug.print("at ({d}, {d}) the solid says {s}\n", .{ p[0], p[1], @tagName(place) });
         try testing.expectEqual(place == .inside, try query.contains(&cut, p, 0, diag));
     }
+}
+
+/// The band about its faces and edges within which `solid` knows its boundary: its zone,
+/// and the farthest any vertex or edge sample (`KNOWN_TO_SAMPLES` an edge) lies from the
+/// surface of a face it bounds. A boolean puts an edge on a face within the intersection
+/// tolerance by design (a plate's corner edge on a hull's face 1.77e-5 off its plane, find
+/// ei, 2026-11-27): the section runs along the edge's line, the classification measures
+/// from the face's plane, and a point between the two is on the boundary as far as the
+/// body knows it (`classify.byRay`'s band for paved bodies). For a body whose edges lie on
+/// their faces it is the zone. Leo's decision on ei (an approved oracle change).
+fn knownTo(solid: *const Body) f64 {
+    var farthest: f64 = 0;
+    for (solid.coedges.items) |c| {
+        if (c.tombstone) continue;
+        const e = solid.edge(c.edge);
+        const f = solid.loop(c.loop).face;
+        const surface = solid.geometry.surface(solid.face(f).surface);
+        const curve = solid.geometry.curve(e.curve);
+        for (0..KNOWN_TO_SAMPLES) |k| {
+            const s = @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(KNOWN_TO_SAMPLES - 1));
+            const p = curve.eval(e.t0 + s * (e.t1 - e.t0));
+            const uv = in_face.uvOf(solid, f, p);
+            farthest = @max(farthest, vec.distance(surface.eval(uv[0], uv[1]), p));
+        }
+    }
+    for (solid.loops.items) |l| {
+        if (l.tombstone or l.first != .none or l.vertex == .none) continue;
+        const p = solid.point(l.vertex);
+        const uv = in_face.uvOf(solid, l.face, p);
+        farthest = @max(farthest, vec.distance(solid.geometry.surface(solid.face(l.face).surface).eval(uv[0], uv[1]), p));
+    }
+    return solid.tol.zone + farthest;
 }
 
 /// A section's refusal: clean (`clean`), and when `strict` a find where the general path
@@ -1889,6 +1956,98 @@ fn resultMoved(result: *const Body, move: *const Affine, diag: *Diagnostics) !?B
         try oracle.clean(err);
         return null;
     };
+}
+
+test "Fuzz solids: a plate's corner edge put on a hull's face within the tolerance off its plane is sliced as the solid holds it, as far as the solid knows its boundary" {
+    // The locus session's find ei on 5e73cbcd, as the fuzzer drew it: a plate's corner
+    // edge on a hull's face 1.77e-5 off that face's plane, within the intersection
+    // tolerance, by design. The section runs along the edge's line, the classification
+    // measures from the face's plane, and a probe between the two, 1.1e-5 from the plane,
+    // was inside to the solid and outside the section. Neither is wrong: the body knows its
+    // boundary there only to the zone and that offset (`knownTo`; Leo's decision, the
+    // oracle's band per body). The corner set `EI_CORNER_OFFSETS` off the face, turned a
+    // quarter at a time about z, mirrored in x, moved 3e5 out, either way round
+    for (EI_CORNER_OFFSETS) |off_face| for ([_]vec.Vec3{ vec.ZERO3, EI_FAR }) |shift| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the corner {e} off the face, shifted {any}, quarter turns {d}, mirrored {}\n", .{ off_face, shift, quarter, mirrored });
+        var operands = try cornerOnFaceOperands(off_face, quarter, mirrored, shift);
+        defer for (&operands) |*body| body.deinit();
+        try expectSlicedEitherWay(&operands, .intersection, off_face);
+    };
+}
+
+test "Fuzz solids: a plate's face put on the plane of its coplanar group off its edges is sliced as the solid holds it, as far as the solid knows its boundary" {
+    // The locus_solids session's find el on 5e73cbcd, ei's the other way, as the fuzzer drew
+    // it: two plates touching along a line, the second's bottom 6e-6 under the first's top,
+    // one plane to the paves (D28: the group's plane, the first's top), its edges where
+    // they were. The section takes the second's bottom edges on the slicing plane, within
+    // the zone of it, and holds its footprint; the classification measures from the
+    // group's plane, 1.02e-5 over the slicing plane, and found the probe outside. The
+    // second plate's bottom set `EL_UNDER_TOP` under the first's top, turned a quarter at
+    // a time about z, mirrored in x, moved 3e5 out, either way round
+    for (EL_UNDER_TOP) |under| for ([_]vec.Vec3{ vec.ZERO3, EI_FAR }) |shift| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| {
+        errdefer std.debug.print("the bottom {e} under the top, shifted {any}, quarter turns {d}, mirrored {}\n", .{ under, shift, quarter, mirrored });
+        var operands = [2]Body{
+            try exactPlate(EL_FIRST, EL_FIRST_XSECTS, EL_FIRST_NUDGE, quarter, mirrored, shift),
+            try exactPlate(EL_SECOND, EL_SECOND_XSECTS, .{ EL_SECOND_NUDGE[0], EL_SECOND_NUDGE[1], EL_SECOND_Z_AT_TOP - under }, quarter, mirrored, shift),
+        };
+        defer for (&operands) |*body| body.deinit();
+        try expectSlicedEitherWay(&operands, .@"union", under);
+    };
+}
+
+/// `op` of `operands` either way round: refused alike both ways for the same finding (a
+/// refusal by design: `oracle.clean`), or made sound both ways, its band (`knownTo`) at
+/// least the zone and `off` (an offset by design, of an edge off a face it bounds), and
+/// sliced as it holds itself.
+fn expectSlicedEitherWay(operands: *const [2]Body, op: solid_boolean.pipeline.Op, off: f64) !void {
+    var refused: [2]?diagnostics.Code = .{ null, null };
+    for ([2][2]*const Body{ .{ &operands[0], &operands[1] }, .{ &operands[1], &operands[0] } }, &refused) |pair, *code| {
+        var diag = Diagnostics.init(testing.allocator);
+        defer diag.deinit();
+        var made = solid_boolean.pipeline.boolean(testing.allocator, pair[0], pair[1], op, .{}, &diag, null) catch |err| {
+            try oracle.clean(err);
+            code.* = diag.first().?.code;
+            continue;
+        };
+        made.deinit();
+        var result = try solid_boolean.tests.sound(pair[0], pair[1], op);
+        defer result.deinit();
+        try testing.expect(knownTo(&result) - result.tol.zone >= off - EI_OFFSET_CLOSE);
+        try expectSliced(&result, true, &diag);
+    }
+    try testing.expectEqual(refused[0], refused[1]);
+}
+
+/// A plate `xsects` intersection tolerances thick about the height of `across` (its corners
+/// in x and y), nudged `nudge`, turned `quarter` quarter turns about z through the origin,
+/// mirrored in x or not and shifted `shift` (exact: `degeneracy.tieMove`).
+fn exactPlate(across: [2]vec.Vec3, xsects: f64, nudge: vec.Vec3, quarter: usize, mirrored: bool, shift: vec.Vec3) !Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const half = xsects * tol.xsect / 2;
+    const drawn = [2]vec.Vec3{ vec.add(.{ across[0][0], across[0][1], across[0][2] - half }, nudge), vec.add(.{ across[1][0], across[1][1], across[1][2] + half }, nudge) };
+    const corners = [2]vec.Vec3{ vec.add(degeneracy.tieMove(drawn[0], quarter, mirrored), shift), vec.add(degeneracy.tieMove(drawn[1], quarter, mirrored), shift) };
+    var lo: vec.Vec3 = undefined;
+    var hi: vec.Vec3 = undefined;
+    for (0..3) |k| {
+        lo[k] = @min(corners[0][k], corners[1][k]);
+        hi[k] = @max(corners[0][k], corners[1][k]);
+    }
+    return boxFrom(lo, hi, tol, &diag);
+}
+
+/// The plate and the hull of find ei, the plate's corner `off_face` off the hull's face (the
+/// plate moved along y: the face is at 45° to it there), both turned `quarter` quarter
+/// turns about z through the origin, mirrored in x or not, and shifted `shift`, built from
+/// their placed corners and points.
+fn cornerOnFaceOperands(off_face: f64, quarter: usize, mirrored: bool, shift: vec.Vec3) ![2]Body {
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var plate = try exactPlate(EI_PLATE, EI_PLATE_XSECTS, .{ EI_PLATE_MOVE[0], EI_PLATE_Y_AT_FACE - off_face * std.math.sqrt2, EI_PLATE_MOVE[2] }, quarter, mirrored, shift);
+    errdefer plate.deinit();
+    var points: [EI_HULL.len]vec.Vec3 = undefined;
+    for (EI_HULL, &points) |q, *moved| moved.* = vec.add(degeneracy.tieMove(vec.add(q, EI_HULL_NUDGE), quarter, mirrored), shift);
+    return .{ plate, try solid_hull.hull(testing.allocator, tol, &points, &diag) };
 }
 
 test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and the nightly's" {
@@ -2670,6 +2829,17 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // short edge two of its solids share, collapsed in one, the other's edges left at the
         // vertex gone: a structural panic (euler.kevMergeCopies: the edge and its copies)
         "solids 3 0 3 0 0 4 0 0 4 3 0 2 1 3 3 9 8 3 0 0 0 0 11 0 3 1 7 1 1 2 3 0 4 3 0 0 1 3 0 4 4 0 3 4 2 3 3 2 1 0 2 0 1 3 2 9 11 0",
+        // The locus session on 5e73cbcd (ei): a plate's corner edge put on a hull's face 1.77e-5
+        // off its plane by design, the section along the edge, the classification from the
+        // plane: the probe between them inside to one, outside the other (the oracle's band
+        // per body, knownTo: Leo's decision)
+        "solids 3 0 5 0 1 4 3 3 4 2 1 3 3 2 12 9 2 1 1 1 8 4 2 4 2 0 1 1 4 3 3 3 3 4 2 1 2 2 4 3 0 0 1 3 2 2 3 5 4 12 3 2",
+        // The locus_solids session on 5e73cbcd (el): ei the other way, two plates touching
+        // along a line, the second's bottom on the group's plane 6e-6 off its edges (the same)
+        "solids 3 0 3 1 1 4 3 3 4 3 2 3 1 5 6 8 5 1 1 3 0 4 4 2 4 1 2 3 3 2 4 1 9 12 7 6 0",
+        // The locus_solids session on 5e73cbcd (en): ei at 50 to 100, a plate turned 1e-6 whose
+        // side's edges lie up to 2e-5 off the side's plane (the same)
+        "solids 2 3 4 2 3 2 4 0 3 7 1 8 10 13 8 1 2 2 3 4 3 4 3 4 3 2 13 0 11 7 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
