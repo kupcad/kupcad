@@ -211,6 +211,19 @@ const ES_MOVES = [_]struct { axis: vec.Vec3, angle: f64, shift: vec.Vec3 }{
     .{ .axis = vec.Z3, .angle = std.math.pi / 2.0, .shift = vec.ZERO3 },
     .{ .axis = .{ 1, 2, 3 }, .angle = 0.3, .shift = .{ 3e5, -3e5, 3e5 } },
 };
+/// Find et (the locus_solids session on 621b9ee0), its solids as boxes: the hull of
+/// `ET_HULL` nudged `ET_HULL_NUDGE`, united with the box over `ET_BOX` (the find's thin
+/// wall's outer box), whose top's back edge runs at a sine of 1/3 to one of the hull's
+/// faces and crosses it at x = `ET_CROSSING`; then the box over `ET_CUT` whose top is in
+/// the first box's top's plane and whose side x = `ET_CROSSING` + 3 · each of `ET_OFF_FACE`
+/// crosses the edge where it lies that far off the hull's face (the find's 2.03e-5 first,
+/// past the intersection tolerance; then on both sides of it).
+const ET_HULL = [_]vec.Vec3{ .{ 0, 1, 2 }, .{ 2, 3, 0 }, .{ 2, 2, 4 }, .{ 4, 3, 4 }, .{ 2, 0, 2 }, .{ 2, 3, 3 }, .{ 2, 2, 0 } };
+const ET_HULL_NUDGE: vec.Vec3 = .{ -2e-5, 2e-3, 0 };
+const ET_BOX = [2]vec.Vec3{ .{ 2.25001, 0.5, -0.002 }, .{ 4.00004, 2.5, 3.998 } };
+const ET_CROSSING: f64 = 2.99998;
+const ET_CUT = [2]vec.Vec3{ .{ 1.25002, -0.002, -0.002 }, .{ ET_CROSSING, 2.998, 3.998 } };
+const ET_OFF_FACE = [_]f64{ 2.0333333333e-5, 2.2e-5, 2.5e-5, 3e-5, 1.5e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2217,6 +2230,56 @@ test "Fuzz solids: a point under a plate, beside a box whose corner its bottom's
     };
 }
 
+test "Fuzz solids: a face across a union's corner edge just past the tolerance from a face over it, the corner's top in one plane with the cutter's, is classified, turned, mirrored, far and either way round" {
+    // The locus_solids session's find et on 621b9ee0, as boxes: a hull united with a box
+    // whose top's back edge crosses a hull's face at a sine of 1/3, then a box beside it
+    // whose top is in the box's top's plane and whose side crosses the edge where it lies
+    // 2.03e-5 off the hull's face, just past the intersection tolerance. The side's piece
+    // in the crevice between the box's back and the hull's face, a triangle 3e-5 a side,
+    // lies within the tolerance of the union's boundary all over; its seams on the back and
+    // the hull's face read it outside, and one along the top's plane past the top's edge
+    // read it inside: the paves had imprinted the cutter's top edge on the union's top from
+    // the top's edge to its crossing with the hull's face, an end they had put on no part
+    // of the top (`unclassified`, IntersectionFailed). A block from a face's boundary to an
+    // end the paves put off the face is in it only where the face's loops hold its middle
+    // (`pave.lies`). The side at `ET_OFF_FACE`, moved by each of the moves, every operation
+    // either way round through the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var points: [ET_HULL.len]vec.Vec3 = undefined;
+    for (ET_HULL, &points) |q, *moved| moved.* = vec.add(q, ET_HULL_NUDGE);
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &points, &diag);
+    defer hull_shape.deinit();
+    var box_shape = try boxFrom(ET_BOX[0], ET_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    for (ET_OFF_FACE) |off_face| {
+        var cut_shape = try boxFrom(ET_CUT[0], .{ ET_CROSSING + 3 * off_face, ET_CUT[1][1], ET_CUT[1][2] }, tol, &diag);
+        defer cut_shape.deinit();
+        for (moves, 0..) |move, m| {
+            var operands: [3]Body = undefined;
+            var built: usize = 0;
+            defer for (operands[0..built]) |*body| body.deinit();
+            for ([_]*const Body{ &hull_shape, &box_shape, &cut_shape }) |shape| {
+                operands[built] = try transform.transform(testing.allocator, shape, &move, .{}, &diag);
+                built += 1;
+            }
+            errdefer std.debug.print("the side {e} off the hull's face, move {d}\n", .{ off_face, m });
+            var joined = try solid_boolean.tests.sound(&operands[0], &operands[1], .@"union");
+            defer joined.deinit();
+            try expectStepWith(&joined, &operands[2], &diag);
+            try expectStepWith(&operands[2], &joined, &diag);
+        }
+    }
+}
+
 test "Fuzz solids: a box's edge crossing a union's face at the band's edge past its corner is decided alike mirrored, turned, far and either way round" {
     // The locus session's find er on 621b9ee0, as the fuzzer drew it: (plate ∪ hull) ∩
     // box, the box nudged the intersection tolerance and one band of D27's, its edge
@@ -3301,6 +3364,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // against that face at its reach to rounding, refused at_tolerance by the overlap
         // rules (planar_faces.VertexOf.endsAnEdgeOf: on the face's boundary by record)
         "solids 0 2 4 2 3 1 4 2 3 13 5 3 11 3 3 2 2 4 1 3 1 4 1 1 2 13 5 3 1 2 3 0 4 3 3 4 2 3 4 3 1 2 2 6 11 6 2 0 1 0 1 3 0 1 0 1 0 0 7 3 3 0 1 10 0 3 7 0",
+        // The locus_solids session on 621b9ee0 (et): (hull ∪ wall) - wall, the second wall's
+        // side across the union's corner edge 2.03e-5 off a hull's face, its top in the
+        // corner's top's plane: its top edge imprinted on the union's top past the top's
+        // edge, to an end the paves put off the top, read the crevice's piece inside where
+        // its other seams read it outside, IntersectionFailed (pave.lies: an end off the face)
+        "solids 1 7 0 1 2 2 3 0 2 2 4 4 3 4 2 0 2 2 3 3 2 2 0 1 1 8 13 0 1 1 4 3 1 3 1 5 4 3 4 3 1 3 1 0 4 1 5 -1 14 2 0 1 3 1 3 3 1 4 1 0 3 2 0 4 0 2 8 7 14 14 2 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

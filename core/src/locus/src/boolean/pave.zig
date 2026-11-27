@@ -1712,6 +1712,13 @@ const Filler = struct {
         return Incidence.in(self.p.boundary.items, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
     }
 
+    /// Whether the paves put merged vertex `v` on face `f` of operand `k`, inside it or on
+    /// its boundary (`Paves.incidences`, complete before the faces meet: every merged
+    /// vertex near a face is placed against it, `featureSize`).
+    fn onFace(self: *const Filler, k: usize, f: types.FaceIndex, v: u32) bool {
+        return Incidence.in(self.p.incidences.items, .{ .face = .{ .operand = @intCast(k), .face = @backingInt(f) }, .vertex = v });
+    }
+
     /// How a piece between two merged vertices lies against a face (`lies`).
     const Lie = enum {
         /// In the face: a section of it, imprinted on it.
@@ -1726,16 +1733,25 @@ const Filler = struct {
     /// How the piece from `u` to `w`, its middle `mid` at `place` against face `f` of
     /// operand `k`, lies against the face (`other` the face the piece is a section with).
     /// Inside by its middle, it is in the face. On the boundary by its middle, it is in
-    /// the face too when an end is off the boundary (a piece from the boundary to an end
-    /// the paves put off it: one intersection tolerance long, from an edge's tolerance
-    /// out, its middle is within the zone of the edge), and along the boundary when it is
-    /// a run of the face's own blocks (`alongBoundary`). What is left is a chord between
-    /// two places of the boundary, within reach of it at its middle: across a sliver or a
-    /// corner of the face, in the face, or across a notch of it, beside the face. The
-    /// distance cannot tell these apart, so the face's loops do, by the chord's middle
-    /// (`in_face.byLoops`, what places a point beyond reach of the boundary; OCCT's
-    /// `IsValidBlockForFaces` classifies a section block's middle against each face, its
-    /// band the edges' own tolerance).
+    /// the face too when an end is in the face off its boundary (a piece from the boundary
+    /// to an end the paves put inside the face: one intersection tolerance long, from an
+    /// edge's tolerance out, its middle is within the zone of the edge), and along the
+    /// boundary when it is a run of the face's own blocks (`alongBoundary`). What is left
+    /// is a chord between two places of the boundary, or a piece with an end the paves put
+    /// on no part of the face, within reach of the boundary at its middle: across a sliver
+    /// or a corner of the face, in the face, or across a notch of it or out of the face,
+    /// beside it. The distance cannot tell these apart, so the face's loops do, by the
+    /// piece's middle (`in_face.byLoops`, what places a point beyond reach of the boundary;
+    /// OCCT's `IsValidBlockForFaces` classifies a section block's middle against each face,
+    /// its band the edges' own tolerance).
+    ///
+    /// A piece with an end off the face was taken for one in it: a box's top edge, in one
+    /// plane with a union's top, ran from the top's edge to where it crossed a hull's face
+    /// 3.05e-5 past that edge, an end the paves put on the hull's face and not on the top,
+    /// and was imprinted on the top. The box's side between the top's edge, the union's back
+    /// and the hull's face, a crevice 3e-5 a side within the tolerance of all three, read
+    /// inside by that seam and outside by the other two (`unclassified`; the locus_solids
+    /// session on 621b9ee0, et, 2026-11-28).
     ///
     /// Every such chord was taken for one in the face: a hull's face 1.6 tolerances from a
     /// corner of a pocket's mouth, where the pocket's ceiling and side (a reflex edge
@@ -1751,8 +1767,9 @@ const Filler = struct {
             .inside => return .in,
             .outside => return .beside,
             .boundary => {
-                if (!self.onBoundary(k, f, u) or !self.onBoundary(k, f, w)) return .in;
-                if (try self.alongBoundary(k, f, u, w, other)) return .along;
+                const on_boundary = [2]bool{ self.onBoundary(k, f, u), self.onBoundary(k, f, w) };
+                if ((!on_boundary[0] and self.onFace(k, f, u)) or (!on_boundary[1] and self.onFace(k, f, w))) return .in;
+                if (on_boundary[0] and on_boundary[1] and try self.alongBoundary(k, f, u, w, other)) return .along;
                 return if (try in_face.byLoops(self.body(k), f, mid, try self.edgesOf(k, f), self.diag) == .outside) .beside else .in;
             },
         }
