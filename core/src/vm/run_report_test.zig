@@ -255,23 +255,30 @@ test "run report: a test runs until it ends, passed or failed once, and clear fr
     var report: RunReport = .{};
     defer report.deinit(testing.allocator);
     // An end with no test running is nothing
-    try report.endTest(testing.allocator, "stray");
+    try report.endTest(testing.allocator, "stray", null);
     try testing.expectEqual(@as(usize, 0), report.tests.items.len);
 
     try report.beginTest(testing.allocator, "a");
     try testing.expectEqual(.running, report.tests.items[0].status);
-    try report.endTest(testing.allocator, null);
+    try report.endTest(testing.allocator, null, null);
     try testing.expectEqual(.passed, report.tests.items[0].status);
     // Ended already: a second end changes nothing
-    try report.endTest(testing.allocator, "late");
+    try report.endTest(testing.allocator, "late", null);
     try testing.expectEqual(.passed, report.tests.items[0].status);
     try testing.expectEqual(@as(?[]u8, null), report.tests.items[0].failure);
 
     try report.beginTest(testing.allocator, "b");
-    try report.endTest(testing.allocator, "E: m");
+    try report.endTest(testing.allocator, "E: m", .{ .line = 4, .column = 3 });
     try testing.expectEqual(@as(usize, 2), report.tests.items.len);
     try testing.expectEqual(.failed, report.tests.items[1].status);
     try testing.expectEqualStrings("E: m", report.tests.items[1].failure.?);
+    try testing.expectEqual(@as(u32, 4), report.tests.items[1].position.?.line);
+
+    // A filtered-out test is noted as skipped, with no end to come
+    try report.skipTest(testing.allocator, "c");
+    try testing.expectEqual(.skipped, report.tests.items[2].status);
+    try report.endTest(testing.allocator, "stray", null);
+    try testing.expectEqual(.skipped, report.tests.items[2].status);
 
     report.clear(testing.allocator);
     try testing.expectEqual(@as(usize, 0), report.tests.items.len);

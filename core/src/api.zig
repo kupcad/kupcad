@@ -28,10 +28,16 @@ const preview_build = @import("preview/build.zig");
 const Stopwatch = @import("core/stopwatch.zig").Stopwatch;
 
 pub const UiSchema = extractor.UiSchema;
+pub const FunctionDoc = extractor.FunctionDoc;
+/// The documented `def`s of a file's top level (their `# @doc` blocks), for a hover.
+pub const functionDocs = extractor.functionDocs;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 pub const Document = @import("frontend/document.zig").Document;
 /// Whether a file's top level holds a test block, for `kupcad test` to find the files to run.
 pub const hasTestBlocks = @import("compiler/macros.zig").hasTestBlocks;
+/// The test blocks of a file's top level, for an editor's run buttons.
+pub const testBlocks = @import("compiler/macros.zig").testBlocks;
+pub const TestBlock = @import("compiler/macros.zig").TestBlock;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 const suppressions = @import("tools/lint/suppressions.zig");

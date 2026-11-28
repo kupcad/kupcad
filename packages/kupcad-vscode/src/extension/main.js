@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, UPDATE_CLI_COMMAND } from './binary/manager.js';
 import { registerExportCommands } from './commands.js';
+import { registerTestCommands } from './tests.js';
 import { LanguageServer } from './server.js';
 import { NOT_RUNNING } from './scripts.js';
 import { PAGE_DIR, ViewerPanel } from './viewer-panel.js';
@@ -135,6 +136,7 @@ export async function activate(context) {
       shown: () => (viewer?.closed ? null : (viewer?.shown?.uri ?? null)),
       log,
     }),
+    ...registerTestCommands({ kupcad: () => server?.serverPath ?? null, log }),
   );
 
   if (!(await startServer())) return;

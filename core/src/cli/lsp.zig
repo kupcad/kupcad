@@ -692,6 +692,8 @@ pub const Handler = struct {
             },
             .documentSymbolProvider = .{ .bool = true },
             .codeActionProvider = .{ .bool = true },
+            // The lenses are complete when sent: nothing to resolve later.
+            .codeLensProvider = .{ .resolveProvider = false },
             .executeCommandProvider = .{ .commands = &COMMANDS },
         };
     }
@@ -942,10 +944,13 @@ pub const Handler = struct {
             const sym = doc.symbols[@backingInt(found_node_idx)];
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
             out.writer.print("**Scope:** `{s}`\n\n", .{@tagName(sym)}) catch return null;
-        } else if (target_node.tag == .method_call) {
-            const mc = doc.tree.methodCall(target_node);
-            const m_name = doc.tree.getString(mc.method_name);
-            out.writer.print("```kupcad\n(method) {s}(...)\n```\n", .{m_name}) catch return null;
+        } else if (target_node.tag == .method_call or target_node.tag == .def_stmt) {
+            const m_name = if (target_node.tag == .def_stmt) doc.tree.getString(doc.tree.defStmt(target_node).name) else doc.tree.getString(doc.tree.methodCall(target_node).method_name);
+            if (functionDocNamed(arena, &doc, m_name)) |function| {
+                writeFunctionDoc(&out.writer, function) catch return null;
+            } else {
+                out.writer.print("```kupcad\n(method) {s}(...)\n```\n", .{m_name}) catch return null;
+            }
         } else if (target_node.tag == .number) {
             const num_val = doc.tree.number(target_node);
             out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
@@ -1215,6 +1220,28 @@ pub const Handler = struct {
             } };
         }
         return results;
+    }
+
+    /// The code lenses of the document at `uri`: a run button on each test block, and one for
+    /// all of them on the first, each a `kupcad.runTest` command the editor's extension runs.
+    pub fn @"textDocument/codeLens"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.code_lens.Params,
+    ) !lsp.ResultType("textDocument/codeLens") {
+        const buf = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = buf.doc orelse return null;
+        const blocks = try api.testBlocks(arena, &doc.tree);
+        if (blocks.len == 0) return &.{};
+        const encoding: lsp_actions.Encoding = if (self.useUtf8()) .utf8 else .utf16;
+        var lenses = try std.ArrayList(lsp.types.code_lens.Response).initCapacity(arena, blocks.len + 1);
+        for (blocks, 0..) |block, i| {
+            const at = lsp_actions.position(&doc.line_index, doc.tokens.starts[block.token], encoding);
+            const range: lsp.types.Range = .{ .start = .{ .line = at.line, .character = at.character }, .end = .{ .line = at.line, .character = at.character } };
+            lenses.appendAssumeCapacity(.{ .range = range, .command = try runTestCommand(arena, "Run test", params.textDocument.uri, block.name) });
+            if (i == 0) lenses.appendAssumeCapacity(.{ .range = range, .command = try runTestCommand(arena, "Run all tests", params.textDocument.uri, null) });
+        }
+        return lenses.items;
     }
 
     /// The settings for the document at `uri`, from the `.kupcad.json` nearest its folder, so
@@ -1567,4 +1594,39 @@ test "LSP: every declared capability has its handler" {
     inline for (.{ .@"utf-8", .@"utf-16", .@"utf-32" }) |encoding| {
         lsp.basic_server.validateServerCapabilities(Handler, Handler.serverCapabilities(encoding));
     }
+}
+
+/// The documented `def` named `name` of the document (its `# @doc` block), if one.
+fn functionDocNamed(arena: std.mem.Allocator, doc: *const api.Document, name: []const u8) ?api.FunctionDoc {
+    const functions = api.functionDocs(arena, doc) catch return null;
+    for (functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
+    return null;
+}
+
+/// A hover's markdown of a documented `def`: its signature, what it does, its parameters,
+/// what it returns and its example.
+fn writeFunctionDoc(w: *std.Io.Writer, function: api.FunctionDoc) !void {
+    try w.print("```kupcad\n(method) {s}\n```\n", .{function.signature});
+    if (function.doc) |text| try w.print("{s}\n\n", .{text});
+    if (function.params.len > 0) {
+        try w.writeAll("**Parameters**\n");
+        for (function.params) |param| try w.print("- `{s}`: {s}\n", .{ param.name, param.description });
+        try w.writeAll("\n");
+    }
+    if (function.returns) |text| try w.print("**Returns:** {s}\n\n", .{text});
+    if (function.example) |text| try w.print("**Example**\n```kupcad\n{s}\n```\n", .{text});
+}
+
+/// The command (`workspace/executeCommand` isn't its route: the editor's extension runs it)
+/// a test's code lens carries: `[{"uri": ..., "name": ...}]`, the name null for every test
+/// of the file.
+pub const RUN_TEST_COMMAND = "kupcad.runTest";
+
+fn runTestCommand(arena: std.mem.Allocator, title: []const u8, uri: []const u8, name: ?[]const u8) !lsp.types.Command {
+    var argument: std.json.ObjectMap = .empty;
+    try argument.put(arena, "uri", .{ .string = uri });
+    if (name) |n| try argument.put(arena, "name", .{ .string = n });
+    const arguments = try arena.alloc(std.json.Value, 1);
+    arguments[0] = .{ .object = argument };
+    return .{ .title = title, .command = RUN_TEST_COMMAND, .arguments = arguments };
 }

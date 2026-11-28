@@ -188,7 +188,7 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\w.])(and|as|begin|break|case|class|def|do|else|elsif|end|ensure|export|false|for|from|if|import|module|next|nil|not|or|private|public|rescue|return|self|super|then|true|unless|until|when|while|with|yield)(?![\\w?!])",
+      "match": "(?<![\\w.])(and|as|begin|break|case|class|def|do|else|elsif|end|ensure|export|false|for|from|if|import|module|next|nil|not|or|private|public|rescue|return|self|super|test|then|true|unless|until|when|while|with|yield)(?![\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "builtins": {

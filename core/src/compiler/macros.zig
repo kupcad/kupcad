@@ -42,12 +42,33 @@ pub fn testBody(tree: *const ast.Tree, node: *const ast.Node) ast.NodeIndex {
 /// Whether the file's top level holds a test block (or an attempt at one, which fails to
 /// compile: `kupcad test` runs the file to say so).
 pub fn hasTestBlocks(tree: *const ast.Tree) bool {
-    const root = tree.getNode(tree.root) orelse return false;
-    if (root.tag != .block) return false;
-    for (tree.getNodes(tree.block(root).stmts)) |stmt_idx| {
+    for (topLevel(tree)) |stmt_idx| {
         if (tree.getNode(stmt_idx)) |stmt| if (isTestForm(tree, stmt)) return true;
     }
     return false;
+}
+
+/// A well-formed test block of a file's top level: its name, and the token its `test` is.
+pub const TestBlock = struct { name: []const u8, token: u32 };
+
+/// The well-formed test blocks of the file's top level, in order (an editor's run buttons).
+pub fn testBlocks(allocator: std.mem.Allocator, tree: *const ast.Tree) ![]TestBlock {
+    var found: std.ArrayList(TestBlock) = .empty;
+    errdefer found.deinit(allocator);
+    for (topLevel(tree)) |stmt_idx| {
+        const stmt = tree.getNode(stmt_idx) orelse continue;
+        if (!isTestForm(tree, stmt)) continue;
+        const name = testName(tree, stmt) orelse continue;
+        try found.append(allocator, .{ .name = name, .token = stmt.main_token });
+    }
+    return found.toOwnedSlice(allocator);
+}
+
+/// The statements of the file's top level.
+fn topLevel(tree: *const ast.Tree) []const ast.NodeIndex {
+    const root = tree.getNode(tree.root) orelse return &.{};
+    if (root.tag != .block) return &.{};
+    return tree.getNodes(tree.block(root).stmts);
 }
 
 /// What an accessor does with its instance variable.

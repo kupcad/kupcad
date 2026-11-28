@@ -97,10 +97,14 @@ fn startComparison(vm: *VM, message: ?value.Value, comptime method: []const u8) 
 // --- Test blocks (`test("name") do ... end`, compiled by compiler/compiler.zig) ---
 
 /// Starts the test `name`: whether it runs, which it doesn't when `VM.test_filter` names
-/// text its name lacks (`kupcad test --filter`); one that runs is in the report from here.
+/// text its name lacks (`kupcad test --filter`), reported as skipped; one that runs is in
+/// the report from here.
 pub fn nativeTestBegin(vm: *VM, name: *value.ObjString) anyerror!value.Value {
     if (vm.test_filter) |filter| {
-        if (std.mem.find(u8, name.chars, filter) == null) return value.Value.initBool(false);
+        if (std.mem.find(u8, name.chars, filter) == null) {
+            try vm.report.skipTest(vm.allocator, name.chars);
+            return value.Value.initBool(false);
+        }
     }
     try vm.report.beginTest(vm.allocator, name.chars);
     return value.Value.initBool(true);
@@ -108,7 +112,7 @@ pub fn nativeTestBegin(vm: *VM, name: *value.ObjString) anyerror!value.Value {
 
 /// Ends the running test: its body ran through.
 pub fn nativeTestPass(vm: *VM) anyerror!value.Value {
-    try vm.report.endTest(vm.allocator, null);
+    try vm.report.endTest(vm.allocator, null, null);
     return value.Value.initNil();
 }
 
@@ -131,7 +135,7 @@ pub fn nativeTestFail(vm: *VM, err: value.Value) anyerror!value.Value {
     } else {
         try out.inspect(err);
     }
-    try vm.report.endTest(vm.allocator, out.written());
+    try vm.report.endTest(vm.allocator, out.written(), vm.last_throw_place);
     return value.Value.initNil();
 }
 

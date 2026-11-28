@@ -33,13 +33,17 @@ pub const Source = struct {
     module: ?[]u8 = null,
 };
 
-/// How a `test("name") do ... end` block went: running while its body runs.
+/// How a `test("name") do ... end` block went: running while its body runs; skipped when
+/// `kupcad test --filter` left it out.
 pub const TestResult = struct {
     name: []u8,
-    status: enum { running, passed, failed } = .running,
+    status: enum { running, passed, failed, skipped } = .running,
     /// What failed it, as an uncaught error is told (`AssertionError: expected 3, got 4`,
     /// then the backtrace's lines); owned, null unless failed.
     failure: ?[]u8 = null,
+    /// Where the error that failed it was raised; null unless failed, or where the script
+    /// wasn't running.
+    position: ?LinePosition = null,
 };
 
 pub const RunReport = struct {
@@ -90,20 +94,30 @@ pub const RunReport = struct {
 
     /// Starts the test `name` (copied): running until endTest.
     pub fn beginTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8) !void {
-        const owned = try allocator.dupe(u8, name);
-        errdefer allocator.free(owned);
-        try self.tests.append(allocator, .{ .name = owned });
+        try self.addTest(allocator, name, .running);
     }
 
-    /// Ends the running test: passed, or failed by `failure` (copied). Nothing without one
-    /// running (its body can't end twice, so none is lost).
-    pub fn endTest(self: *RunReport, allocator: std.mem.Allocator, failure: ?[]const u8) !void {
+    /// Notes the test `name` (copied) as skipped: the filter left it out.
+    pub fn skipTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8) !void {
+        try self.addTest(allocator, name, .skipped);
+    }
+
+    fn addTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8, status: @FieldType(TestResult, "status")) !void {
+        const owned = try allocator.dupe(u8, name);
+        errdefer allocator.free(owned);
+        try self.tests.append(allocator, .{ .name = owned, .status = status });
+    }
+
+    /// Ends the running test: passed, or failed by `failure` (copied), raised at `position`.
+    /// Nothing without one running (its body can't end twice, so none is lost).
+    pub fn endTest(self: *RunReport, allocator: std.mem.Allocator, failure: ?[]const u8, position: ?LinePosition) !void {
         const last = self.tests.getLastOrNull() orelse return;
         if (last.status != .running) return;
         const current = &self.tests.items[self.tests.items.len - 1];
         if (failure) |f| {
             current.failure = try allocator.dupe(u8, f);
             current.status = .failed;
+            current.position = position;
         } else {
             current.status = .passed;
         }

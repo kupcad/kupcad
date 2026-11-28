@@ -262,3 +262,75 @@ test "Extractor: lists, tuples and Maps, as their rules and their defaults say" 
     try testing.expectEqualStrings("depth", cut[1].name);
     try testing.expectEqual(.number, cut[1].rule.kind);
 }
+
+test "Extractor: a def's @doc block above it, its params, return and example, and its signature" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\# @title Bolts
+        \\
+        \\# A plain comment documents nothing
+        \\def helper
+        \\  1
+        \\end
+        \\
+        \\# @doc A bolt along -z, its head on z = 0.
+        \\#   Threads are cosmetic unless asked for.
+        \\# @param len The length under the head
+        \\# @param thread Whether to cut a thread
+        \\# @return A Solid
+        \\# @example
+        \\#   bolt(10)
+        \\#   bolt(10, thread: true)
+        \\def bolt(len, thread: false, *rest, **opts, &blk)
+        \\  cylinder(r: 3, h: len)
+        \\end
+        \\
+        \\# @doc Not this one: a blank line parts it from the def
+        \\
+        \\def apart
+        \\end
+        \\
+        \\class Nut
+        \\  # @doc A method's isn't read: the top level's defs alone
+        \\  def solid
+        \\  end
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
+
+    try testing.expectEqual(@as(usize, 1), schema.functions.len);
+    const bolt = schema.functions[0];
+    try testing.expectEqualStrings("bolt", bolt.name);
+    try testing.expectEqual(@as(u32, 16), bolt.line);
+    try testing.expectEqualStrings("bolt(len, thread: …, *rest, **opts, &blk)", bolt.signature);
+    try testing.expectEqualStrings("A bolt along -z, its head on z = 0.\nThreads are cosmetic unless asked for.", bolt.doc.?);
+    try testing.expectEqual(@as(usize, 2), bolt.params.len);
+    try testing.expectEqualStrings("len", bolt.params[0].name);
+    try testing.expectEqualStrings("The length under the head", bolt.params[0].description);
+    try testing.expectEqualStrings("thread", bolt.params[1].name);
+    try testing.expectEqualStrings("A Solid", bolt.returns.?);
+    try testing.expectEqualStrings("bolt(10)\nbolt(10, thread: true)", bolt.example.?);
+
+    // The JSON `kupcad doc` prints carries them
+    const json = try std.fmt.allocPrint(arena.allocator(), "{f}", .{std.json.fmt(schema, .{})});
+    try testing.expect(std.mem.find(u8, json, "\"functions\":[{\"name\":\"bolt\",\"line\":16,") != null);
+}
+
+test "Extractor: a def with one tag alone is documented, a file without any has no functions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var doc = try Document.parse(testing.allocator, "# @return The count\ndef count\n  1\nend\ndef plain\nend\n");
+    defer doc.deinit();
+    const functions = try extractor.functionDocs(arena.allocator(), &doc);
+    try testing.expectEqual(@as(usize, 1), functions.len);
+    try testing.expectEqualStrings("count()", functions[0].signature);
+    try testing.expectEqual(@as(?[]const u8, null), functions[0].doc);
+    try testing.expectEqualStrings("The count", functions[0].returns.?);
+
+    var bare = try Document.parse(testing.allocator, "def plain\nend\nplain\n");
+    defer bare.deinit();
+    try testing.expectEqual(@as(usize, 0), (try extractor.functionDocs(arena.allocator(), &bare)).len);
+}

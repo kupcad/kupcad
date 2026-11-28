@@ -7,8 +7,11 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
 
 * Syntax highlighting and language configuration for `.kup`.
 * Diagnostics as you type (the lint findings, and what a run warned of, on the line of its call),
-  hovers, go to definition, inlay hints, symbols, formatting and quick fixes, from the language
-  server.
+  hovers (a `def`'s `# @doc` block, its parameters and example, on the `def` and its calls), go
+  to definition, inlay hints, symbols, formatting and quick fixes, from the language server.
+* **Tests:** a `Run test` button above each `test("name") do ... end` block, and `Run all tests`
+  above the first, run `kupcad test` on the script (the named test alone, by `--filter`) in the
+  `KupCAD tests` terminal, saving the script first, so the report reads as on the command line.
 * **The viewer** (`KupCAD: Open Viewer`, or the button in a `.kup` editor's title bar): the model
   of the script the editor shows, beside it, following the editor from script to script. It
   comes straight from the language server's local socket, a new one each time the script, or a
