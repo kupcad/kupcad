@@ -1247,7 +1247,11 @@ importing only those before it, which the layering test holds):**
   turn is the side only where the fragment reaches it: a fragment whose every corner off
   the face's plane (past the paves' rounding) lies on one side of it is on that side,
   whatever the turn (`cornersSide`, for a section's face and an edge's faces alike,
-  `faceSide`); with corners either side it crosses the plane, and
+  `faceSide`, a corner the paves put on the face counting as on it, `Paves.onFace`, eu;
+  for every face, not only parallel ones and unclear turns: a box's bottom 0.97° off a
+  wall's, a triangle of it closed at its tip by a section 70° off the planes' line, read
+  by the turn below the wall's bottom with every corner above it, `unclassified`, the
+  session on 73d5d8ee, ew, 2026-11-28); with corners either side it crosses the plane, and
   the turn says which way it leaves the piece (a face 1e-9 rad off a box's side, 2e-5
   outside it, turned toward the box but met its plane 2e4 away: read by the turn inside,
   every corner outside, `unclassified`; the ReleaseSafe session on a1444371, ci). The

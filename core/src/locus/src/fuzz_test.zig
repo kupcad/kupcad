@@ -267,6 +267,28 @@ const EV_WALL_XSECTS: f64 = 2.1;
 const EV_WALL_NUDGE: vec.Vec3 = .{ 5e-5, 0, 1e-4 };
 const EV_WALL_FRONTS = [_]f64{ -5e-5, -2.5e-5, -7.5e-5, -1e-4, 2.5e-5 };
 const EV_WALL_SIDES = [_]f64{ 0, 1e-4, 2e-4, 4e-4 };
+/// Find ew (the locus_solids session on 73d5d8ee, run 156222), as the fuzzer drew it, all
+/// at the tests' zone: the box over `EW_BOX` turned `EW_BOX_TURN` about `EW_BOX_AXIS`
+/// through the grid's middle, scaled `EW_BOX_SCALE` and nudged `EW_BOX_NUDGE`, joined with
+/// the box over `EW_SECOND` turned a quarter about x and nudged `EW_SECOND_NUDGE`; then the
+/// wall about `EW_WALL_AT` across `EW_WALL_LO` to `EW_WALL_HI`, 3 tolerances thick, moved
+/// `EW_WALL_MOVE` and nudged `EW_WALL_NUDGE` and each of `EW_WALL_LIFTS` more in z: the
+/// second box's corner on the first box's bottom 1.5e-5 over the wall's bottom in the
+/// find, then 1e-5 and 5e-6 over it, and 2.5e-5, past the tolerance.
+const EW_BOX = [2]vec.Vec3{ .{ 0, 1, 0 }, .{ 4, 3, 3 } };
+const EW_BOX_AXIS: vec.Vec3 = .{ 1, 2, 3 };
+const EW_BOX_TURN: f64 = 0.014142253476507214;
+const EW_BOX_SCALE: vec.Vec3 = .{ 1, 1, 2 };
+const EW_BOX_NUDGE: vec.Vec3 = .{ -1.9999999914198783e-5, -2e-3, 1.9999999914198783e-5 };
+const EW_SECOND = [2]vec.Vec3{ .{ 0, 0, 0 }, .{ 3, 4, 3 } };
+const EW_SECOND_NUDGE: vec.Vec3 = .{ 1e-5, 2e-5, 1.9999999943156583e-5 };
+const EW_WALL_AT: vec.Vec3 = .{ 2, 1, 2 };
+const EW_WALL_LO: vec.Vec3 = .{ 0, 0, 0 };
+const EW_WALL_HI: vec.Vec3 = .{ 4, 4, 4 };
+const EW_WALL_XSECTS: f64 = 3;
+const EW_WALL_MOVE: vec.Vec3 = .{ 0, -1, 0 };
+const EW_WALL_NUDGE: vec.Vec3 = .{ 2.000000005684342e-5, 0, 5e-6 };
+const EW_WALL_LIFTS = [_]f64{ 0, 5e-6, 1e-5, -1e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2447,6 +2469,70 @@ test "Fuzz solids: a common block whose faces' planes tie with the other operand
     };
 }
 
+test "Fuzz solids: a fragment whose corners lie on one side of a face it crosses at a shallow angle is on that side, whatever the turn at its section, turned, mirrored, far and either way round" {
+    // The locus_solids session's find ew on 73d5d8ee (run 156222), as the fuzzer drew it:
+    // (box ∪ box) - wall. The first box's bottom, 0.97° off the wall's bottom, crossed it;
+    // in front of the second box's front a triangle of that bottom narrowed to a tip where
+    // the bottom lay 1.5e-5 over the wall's, closed there by a section from the second
+    // box's corner (put on the wall's bottom by the paves, 1e-3 from the planes' own line,
+    // the reach over the sine of their angle) to the bottom's front edge. The section ran
+    // 70° off the planes' line, along it far past its ends' reach, so its turn counted as
+    // clear, and read the triangle outside the wall, below its bottom; every corner of the
+    // triangle off that bottom lay above it, and its section with the wall's side read it
+    // inside: `unclassified`, IntersectionFailed for every operation. The side of a face a
+    // fragment lies on is its corners' where they lie on one side of the face's plane
+    // (`classify.faceSide`, `cornersSide` with the paves' record of the corners on the
+    // face), the turn only where they cross it. The wall lifted by each of
+    // `EW_WALL_LIFTS`, the chain moved by each of the moves, every operation either way
+    // round decided alike and through the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var box_shape = try boxFrom(EW_BOX[0], EW_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    const box_place = Affine.translate(EW_BOX_NUDGE).compose(&Affine.scaleBy(EW_BOX_SCALE).compose(&Affine.rotateAbout(middle, vec.normalized(EW_BOX_AXIS).?, EW_BOX_TURN)));
+    var box_body = try transform.transform(testing.allocator, &box_shape, &box_place, .{}, &diag);
+    defer box_body.deinit();
+    var second_shape = try boxFrom(EW_SECOND[0], EW_SECOND[1], tol, &diag);
+    defer second_shape.deinit();
+    const second_place = Affine.translate(EW_SECOND_NUDGE).compose(&Affine.rotateAbout(middle, vec.X3, std.math.pi / 2.0));
+    var second = try transform.transform(testing.allocator, &second_shape, &second_place, .{}, &diag);
+    defer second.deinit();
+    var joined = try solid_boolean.tests.sound(&box_body, &second, .@"union");
+    defer joined.deinit();
+    const wall: GapShape = .{ .kind = .wall, .at = EW_WALL_AT, .lo = EW_WALL_LO, .hi = EW_WALL_HI, .xsects = std.mem.indexOfScalar(f64, &GAP_XSECTS, EW_WALL_XSECTS).? };
+    var wall_shape = try wall.build(tol, &diag);
+    defer wall_shape.deinit();
+    for (EW_WALL_LIFTS) |lift| {
+        var wall_body = try euPlaced(&wall_shape, 0, null, EW_WALL_MOVE, vec.add(EW_WALL_NUDGE, .{ 0, 0, lift }), &diag);
+        defer wall_body.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &wall_body, &move, .{}, &diag);
+            defer b.deinit();
+            for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection }) |op| {
+                const forward = try booleanOutcome(&a, &b, op);
+                const swapped = try booleanOutcome(&b, &a, op);
+                errdefer std.debug.print("the wall lifted {e} more, move {d}, the {t}: {any}, the other way round {any}\n", .{ lift, m, op, forward, swapped });
+                try testing.expectEqual(std.meta.activeTag(forward), std.meta.activeTag(swapped));
+                if (forward == .made) try testing.expectEqual(forward.made, swapped.made);
+            }
+            errdefer std.debug.print("the wall lifted {e} more, move {d}\n", .{ lift, m });
+            try expectStepWith(&a, &b, &diag);
+            try expectStepWith(&b, &a, &diag);
+        }
+    }
+}
+
 /// `shape` placed as the solids fuzzer places a solid (`generatedBody`): turned `turn` about
 /// z through the grid's middle, scaled by `scale`, moved by `move`, then nudged by `nudge`,
 /// one map composed in that order.
@@ -3571,6 +3657,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // across a sliver on the box's only: refused one way round, made the other
         // (Provenance.representative: a plane tied by the operands' order is either's)
         "solids 2 1 4 2 4 0 4 0 2 5 2 1 4 2 8 3 1 0 1 4 0 2 3 4 1 0 2 0 1 14 2 11 13 0 2 1 7 2 3 1 3 0 4 3 3 4 1 2 1 2 2 4 3 0 1 1 1 3 3 2 4 -2 5 3 2 3 3 1 3 2 0 4 3 1 4 0 1 4 1 3 4 5 14 1",
+        // The locus_solids session on 73d5d8ee (ew, run 156222): (box ∪ box) - wall, a box's
+        // bottom 0.97° off the wall's and crossing it; a triangle of it closed at its tip by
+        // a section 70° off the planes' line, whose turn read it below the wall's bottom where
+        // every corner of it lay above, IntersectionFailed (classify.faceSide: corners first)
+        "solids 0 0 4 1 3 0 3 0 3 5 0 1 1 2 10 14 9 7 3 1 0 0 3 0 4 0 3 0 0 0 2 5 7 9 10 0 3 3 1 5 2 0 4 1 0 4 2 0 4 1 11 -2 3 13 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
