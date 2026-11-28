@@ -182,6 +182,17 @@ const Incidence = struct {
     }
 };
 
+/// The merged vertices the paves put on one face (`Paves.onFaceOf`).
+pub const OnFace = struct {
+    items: []const Incidence,
+
+    /// Whether the paves put merged vertex `v` on the face (`Paves.onFace`).
+    pub fn has(self: OnFace, v: u32) bool {
+        if (self.items.len == 0) return false;
+        return Incidence.in(self.items, .{ .face = self.items[0].face, .vertex = v });
+    }
+};
+
 /// The scratch of `Filler.sandwiched`: a face's triangles and two others', in its plane.
 const Sandwich = struct {
     f: std.ArrayList([3]Vec2) = .empty,
@@ -399,9 +410,20 @@ pub const Paves = struct {
         return Incidence.in(self.incidences.items, .{ .face = .{ .operand = operand, .face = face }, .vertex = v });
     }
 
+    /// The record `onFace` reads for face `face` of `operand`, found once: for asking it of
+    /// many vertices (`classify.cornersSide`, a fragment's every corner against a face).
+    pub fn onFaceOf(self: *const Paves, operand: u1, face: u32) OnFace {
+        return .{ .items = self.incidencesOn(operand, face) };
+    }
+
     /// The merged vertices on face `face` of `operand`, in increasing order.
     pub fn verticesOn(self: *const Paves, operand: u1, face: u32, out: *std.ArrayList(u32)) Error!void {
         out.clearRetainingCapacity();
+        for (self.incidencesOn(operand, face)) |record| try out.append(self.allocator, record.vertex);
+    }
+
+    /// The incidences of face `face` of `operand`, in increasing vertex order.
+    fn incidencesOn(self: *const Paves, operand: u1, face: u32) []const Incidence {
         const key: FaceRef = .{ .operand = operand, .face = face };
         const items = self.incidences.items;
         var lo: usize = 0;
@@ -410,9 +432,9 @@ pub const Paves = struct {
             const mid = (lo + hi) / 2;
             if (items[mid].face.lessThan(key)) lo = mid + 1 else hi = mid;
         }
-        while (lo < items.len and items[lo].face.operand == operand and items[lo].face.face == face) : (lo += 1) {
-            try out.append(self.allocator, items[lo].vertex);
-        }
+        var end = lo;
+        while (end < items.len and items[end].face.operand == operand and items[end].face.face == face) : (end += 1) {}
+        return items[lo..end];
     }
 
     /// Whether the operands met nowhere: no vertex of one merged with or lying on the
