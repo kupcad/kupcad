@@ -65,8 +65,20 @@ test "chords: the bow budget is a circle segment's sagitta, coarser of the angle
     const r: tolerance.Resolution = .{};
     // A long chord: the angle rule, 12° of turning
     try testing.expectApproxEqAbs(0.5 * 10 * @tan(12.0 * PI / 180.0 / 4.0), r.chordBow(10), 1e-15);
-    // A short chord: the coarsest circle's 72°
-    try testing.expectApproxEqAbs(0.5 * 1 * @tan(72.0 * PI / 180.0 / 4.0), r.chordBow(1), 1e-15);
+    // A short chord: a circle cut by the angle rule still turns 12° a segment, coarser
+    // than the chord rule's 0.02 here
+    try testing.expectApproxEqAbs(0.5 * 1 * @tan(12.0 * PI / 180.0 / 4.0), r.chordBow(1), 1e-15);
+    // Shorter: the chord rule's sagitta, 0.02
+    try testing.expectApproxEqAbs(r.chord, r.chordBow(0.5), 1e-15);
+    // Shorter still: the coarsest circle's 72°, finer than either
+    try testing.expectApproxEqAbs(0.5 * 0.1 * @tan(72.0 * PI / 180.0 / 4.0), r.chordBow(0.1), 1e-15);
+    // Every circle the default resolution cuts bows within the budget of its segment's
+    // chord: query/distance.zig reads it as a mesh's departure bound
+    for ([_]f64{ 0.005, 0.05, 0.3, 1, 1.7, 3, 3.6, 5, 9, 20, 100, 1000 }) |radius| {
+        const n: f64 = @floatFromInt(r.segmentsFor(radius));
+        const sagitta = radius * (1 - @cos(PI / n));
+        try testing.expect(sagitta <= r.chordBow(2 * radius * @sin(PI / n)) * (1 + 1e-12));
+    }
     // A fixed count: its own turning
     const fixed: tolerance.Resolution = .{ .segments = 36 };
     try testing.expectApproxEqAbs(0.5 * 1 * @tan(10.0 * PI / 180.0 / 4.0), fixed.chordBow(1), 1e-15);
@@ -79,9 +91,11 @@ test "chords: a rational arc is cut about as a circle of its radius, every span 
     const t1 = arc.knots[arc.knots.len - 1];
     const samples = try expectCertified(curve, 0, t1, .{});
     defer testing.allocator.free(samples);
-    // A circle of radius 2 gets 7 segments a turn at the default resolution, so its
-    // quarter one or two interior points; the enclosure is a little fatter than the arc
-    try testing.expect(samples.len >= 1 and samples.len <= 4);
+    // A circle of radius 2 gets 24 segments a turn at the default resolution (the chord
+    // rule's 0.02), so its quarter 5 interior points; the enclosure is a little fatter
+    // than the arc
+    try testing.expectEqual(@as(u32, 24), tolerance.Resolution.segmentsFor(.{}, 2));
+    try testing.expect(samples.len >= 5 and samples.len <= 10);
     for (samples) |t| try testing.expectApproxEqAbs(@as(f64, 2), vec.length(curve.eval(t)), 1e-12);
     // At 64 a turn, the quarter gets about 16 pieces
     const fine = try expectCertified(curve, 0, t1, .{ .segments = 64 });
@@ -102,7 +116,10 @@ test "chords: an ellipse's spans are certified by intervals, in any frame" {
     const curve: curves.Curve = .{ .ellipse = e };
     const samples = try expectCertified(curve, 0, 2 * PI, .{});
     defer testing.allocator.free(samples);
-    try testing.expect(samples.len >= 12 and samples.len <= 64);
+    // Its ends curve as a circle of radius b²/a = 0.8, which the chord rule cuts in 16 a
+    // turn, its flanks as one of a²/b = 12.5, cut in 32 by the angle rule; halving spans
+    // to certify them takes up to twice that
+    try testing.expect(samples.len >= 16 and samples.len <= 128);
     // A short arc of it
     const short = try expectCertified(curve, 0.3, 0.9, .{ .segments = 90 });
     defer testing.allocator.free(short);

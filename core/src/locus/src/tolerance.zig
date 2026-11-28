@@ -158,7 +158,12 @@ pub const Resolution = struct {
     /// for a chord within `min_length`, the turning of the coarsest circle,
     /// `2π/MIN_AUTO_SEGMENTS`, since a small circle is cut by length and keeps that many
     /// segments at least), so a free-form span passes by the rule that cuts a circle,
-    /// the coarser of the two (`mesh/chords.zig`).
+    /// the coarser of the two (`mesh/chords.zig`). Without a fixed count, every circle
+    /// `segmentsFor` cuts strays at most `self.chord` from its arc, except where the angle
+    /// rule caps its count, and then its segments turn at most `min_angle`. So the bow is
+    /// at most the larger of the two, as for any circle with a segment of this chord. It
+    /// stays an upper bound on a mesh's departure (`query/distance.zig`) for large circles
+    /// as well as small.
     pub fn chordBow(self: Resolution, chord: f64) f64 {
         const turning: f64 = if (self.segments > 0)
             2.0 * std.math.pi / @as(f64, @floatFromInt(self.segments))
@@ -167,7 +172,8 @@ pub const Resolution = struct {
         else
             self.min_angle * std.math.pi / 180.0;
         const bow = 0.5 * chord * @tan(turning / 4.0);
-        // A small circle is cut by the chord rule, so a span passes by it too
-        return if (self.segments > 0) bow else @min(bow, self.chord);
+        if (self.segments > 0) return bow;
+        const by_angle = 0.5 * chord * @tan(self.min_angle * std.math.pi / 180.0 / 4.0);
+        return @min(bow, @max(self.chord, by_angle));
     }
 };
