@@ -3763,6 +3763,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // 7.1e-5 apart, crossing at a grazing angle, unordered there, 1.5 of area lost
         // (overlay.tangentOrder: equal bends told apart by their tangents)
         "chain 3 8 3 2 5 2 6 5 6 3 3 3 4 0 5 4 0 0 2 1 3 0 4 3 3 3 3 3 3 4 0 4 5 0 1 4 3 1 1 0 3 3 3 1 2 1 0 1 1 0 1 0 1 1 0 1 4 0 3 6 5 6 4 3 0 1 5 2 3 0 1 3 3 1 3 0 3 2 2 1 1 1 7 2 5 0 5 1 1 2 5 5 4 3 1 1 1 3 3 3 1 1 1 3 2 3 5 5 5 5 6 6 2 4 1 1 5 1 2 1 4 1 0 1 2 3 2 0 1 3 6 2 4 2 4 5 4 3 4 1 3 3 1 13 3 0 2 2 3",
+        // The locus session on 73d5d8ee (ez, run 269674): (plate - plate) - box, the box's top
+        // turned within the angular tolerance from its edge on the plate's side, sliced 7.8e-6
+        // under that edge: the top, a bottom rising from it, gave no bound against the side's,
+        // and the section closed the notch out of the plate (section.edgeInPlane: a parallel
+        // face leans as it faces)
+        "solids 3 0 5 0 1 4 4 2 4 1 0 4 0 2 0 2 2 2 16 2 1 3 0 3 0 2 3 1 0 2 4 3 4 2 0 2 12 3 1 2 0 1 2 3 4 1 2 0 1 5 2 2 9 0 7 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

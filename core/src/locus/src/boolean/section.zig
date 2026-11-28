@@ -435,20 +435,26 @@ const Section = struct {
     }
 
     /// Edge `e` of face `f` (by coedge `c`), lying in the plane: a bound of the section
-    /// when the face rises from it, running with the material of the face's side on its
-    /// left. A planar face parallel to the plane within the angular tolerance has no slope
-    /// to rise by (its normal's tilt is noise) and bounds the section by its vertices'
-    /// sides of the plane, decided once (`sideOf`): its in-plane edges are on the plane, the
-    /// rest of it over the plane or under it (both, `steepEnough` refused it), and just above
-    /// the plane its side of the edge holds material when it rises facing up (a top over
-    /// the plane, the solid under it) or falls facing down (a bottom under it); then the
-    /// edge bounds the section with the face's side on its left, which with a steep face
-    /// rising from the other side cancels, as a groove's floor does. Two plates united, the
-    /// upper's bottom 5e-6 under the lower's top, so the two one plane where they overlap,
-    /// sliced 6.2e-6 under that bottom: the lower's top, rising from the upper's walls'
-    /// edges on the plane to 1.1e-5 over it, took no part by the sign of its normal's tilt,
-    /// and the upper's walls bounded the section across the lower plate's material, which
-    /// was lost (the solids oracle's slice on 4aaaef51, ee).
+    /// when the face rises from it, running along `n_plane × n_face`: the material on its
+    /// left is on the side the face's outward normal leans away from (a wall's inner side,
+    /// a top's own side, a bottom's other side). The two faces rising from one edge then give two
+    /// bounds that cancel (a groove's floor, a ridge's underside: the solid just above the
+    /// plane is a sliver there), and a face falling from it gives none. A planar face
+    /// parallel to the plane within the angular tolerance has no slope to rise by (its
+    /// normal's tilt is noise): it rises or falls by its vertices' sides of the plane,
+    /// decided once (`sideOf`; its in-plane edges on the plane, the rest over it or under
+    /// it, both refused by `steepEnough`), and leans as a face rising from the edge does
+    /// facing the way it faces: a top away from its side, a bottom towards it. One rule for
+    /// both, so the bounds of a steep face and a parallel one along an edge cancel as two
+    /// steep faces' do. Two plates united, the upper's bottom 5e-6 under the lower's top,
+    /// sliced 6.2e-6 under that bottom: the lower's top, rising from the upper's walls' edges
+    /// on the plane, took no part by the sign of its normal's tilt, and the upper's walls
+    /// bounded the section across the lower plate's material, which was lost (the solids
+    /// oracle's slice on 4aaaef51, ee). A box's top turned within the angular tolerance,
+    /// its edge on the plate's side 7.8e-6 over the plane, a bottom rising from it, gave
+    /// nothing against the plate's side rising from it too, and the section closed the box's
+    /// notch out of the plate across that edge; a bottom falling from such an edge gave a
+    /// second bound where its wall gave one (the solids oracle's slice on 73d5d8ee, ez).
     fn edgeInPlane(self: *Section, f: types.FaceIndex, c: types.CoedgeIndex) Error!void {
         const body = self.body;
         const coedge = body.coedge(c);
@@ -463,24 +469,21 @@ const Section = struct {
         // A curved face tangent to the plane along the edge (a lying cylinder split at its
         // side) leaves a sliver of no area above it
         if (body.face(f).surface.kind != .plane and self.tol.parallel(n, self.plane.n)) return;
-        if (body.face(f).surface.kind == .plane) switch (planar_faces.parallelPlanes(n, self.plane.n, self.tol)) {
-            .apart => {},
-            .at_tolerance => |cmp| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a face on the slicing plane along an edge, parallel to it or not, the angle between them the angular tolerance to rounding", .measured = cmp.measured, .threshold = cmp.limit }),
-            .same => {
-                if (try self.rises(f) != (vec.dot(n, self.plane.n) > 0)) return;
-                // Into the face across the edge, flat: the face's side on the bound's left
-                const inward = vec.cross(n, along);
-                const start: Mark = .{ .t = edge.t0, .p = body.point(edge.start) };
-                const end: Mark = .{ .t = edge.t1, .p = body.point(edge.end) };
-                return switch (curve) {
-                    .line, .circle => self.add(curve, start, end, vec.cross(inward, self.plane.n)),
-                    else => self.diag.fail(error.NotImplemented, .{ .code = .not_implemented, .entity = .of(.edge, @backingInt(coedge.edge)), .label = "a section along an edge that is neither a line nor an arc", .threshold = NO_MILESTONE }),
-                };
-            },
-        };
         // Into the face, across the edge: the face lies left of its coedge seen from outside
-        if (vec.dot(vec.cross(n, along), self.plane.n) <= 0) return;
-        const dir = vec.cross(self.plane.n, n);
+        const inward = vec.cross(n, along);
+        const parallel: canonical.Verdict = if (body.face(f).surface.kind == .plane) planar_faces.parallelPlanes(n, self.plane.n, self.tol) else .apart;
+        const lean = switch (parallel) {
+            .apart => lean: {
+                if (vec.dot(inward, self.plane.n) <= 0) return;
+                break :lean n;
+            },
+            .same => lean: {
+                if (!try self.rises(f)) return;
+                break :lean if (vec.dot(n, self.plane.n) > 0) vec.neg(inward) else inward;
+            },
+            .at_tolerance => |cmp| return self.diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, @backingInt(f)), .label = "a face on the slicing plane along an edge, parallel to it or not, the angle between them the angular tolerance to rounding", .measured = cmp.measured, .threshold = cmp.limit }),
+        };
+        const dir = vec.cross(self.plane.n, lean);
         const start: Mark = .{ .t = edge.t0, .p = body.point(edge.start) };
         const end: Mark = .{ .t = edge.t1, .p = body.point(edge.end) };
         switch (curve) {

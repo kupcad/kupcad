@@ -116,6 +116,42 @@ const PARALLEL_DEPTHS = [_]f64{ 7e-6, 9e-6 };
 /// at 3e5 over the outline).
 const PARALLEL_PROBES = [_]Vec2{ .{ 3.3, 0.5 }, .{ 1.5, 0.999 }, .{ 0.5, 1.5 }, .{ 1.5, 1.5 } };
 const PARALLEL_AREA_SLACK: f64 = 1e-6;
+/// Find ez (the solids oracle's slice on 73d5d8ee, locus.2), as the fuzzer drew it: a plate
+/// 3 intersection tolerances thick, drawn 3 by 2 about z = 1, turned a quarter about z
+/// through the grid's middle and moved to 2 by 3 about z = 2, less a box turned about y
+/// through the grid's middle by the angular tolerance less D27's band, within it, its top's
+/// edge on the plate's side x = 3 at z = 2, the top rising into the plate: a notch under
+/// that edge and a wedge over it. Sliced at 1.9999922, 7.8e-6 under the edge (on the plane,
+/// within the zone), and a point of the notch.
+const EZ_PLATE = [2]Vec3{ .{ 1, 2, 1 - 3e-5 }, .{ 4, 4, 1 + 3e-5 } };
+const EZ_PLATE_MOVE: Vec3 = .{ 1, 1, 1 };
+const EZ_BOX = [2]Vec3{ .{ 1, 3, 1 }, .{ 2, 4, 2 } };
+const EZ_TURN: f64 = 0.014142253476507214;
+const EZ_BOX_MOVES = [2]Vec3{ .{ 1, 0, 0 }, .{ 0, 1.9999999943156583e-5, 0 } };
+const EZ_GRID_MIDDLE: Vec3 = .{ 2, 2, 2 };
+const EZ_HEIGHT: f64 = 1.9999921999999999;
+const EZ_POINT: Vec2 = .{ 2.6560000000000006, 3.5359999999999996 };
+/// The plate's section less the notch, 1.0001 by 1 (the box's far side 1e-4 short of x = 2
+/// by its turn).
+const EZ_AREA: f64 = 4.99989988;
+/// The family about ez, a step: an extruded block, 2 by 2 in x and z and 1 deep, its lower
+/// right quarter cut away up to a face leaving the step's edge at x = z = 0 at `STEP_SLOPES`
+/// (over the plane, a bottom rising from the edge; under it, falling; within the angular
+/// tolerance, and steep), sliced `STEP_HEIGHTS` about the edge (on the plane, within the
+/// zone), each section the block's left half (1) or all of it (2), as with a steep face.
+const STEP_SLOPES = [_]f64{ 5e-3, 1e-3, -5e-3, -1e-3, 0.05, -0.05 };
+const STEP_HEIGHTS = [_]f64{ -7.8e-6, -3e-6, 3e-6 };
+const STEP_DEPTH: f64 = 1;
+/// The family about ez, the find's notch: its box turned by `NOTCH_TURNS` (the find's, within
+/// the angular tolerance, and one past it) and nudged along y by `NOTCH_NUDGES` (the find's
+/// among them), sliced `STEP_HEIGHTS` about its top's edge on the plate's side at z = 2,
+/// moved as the ridge family is; the plate's section area, and a probe in the notch (moved
+/// with the box).
+const NOTCH_TURNS = [_]f64{ EZ_TURN, 5e-3, 1e-3, 0.05 };
+const NOTCH_NUDGES = [_]f64{ EZ_BOX_MOVES[1][1], 0, -2e-5, 0.5 };
+const NOTCH_EDGE_HEIGHT: f64 = 2;
+const NOTCH_PLATE_AREA: f64 = 6;
+const NOTCH_PROBE: Vec2 = .{ 2.5, 3.5 };
 
 /// The section of `body` at `height`, checked as a sheet: valid, on `z = 0`.
 fn sliced(body: *const Body, height: f64) !Body {
@@ -682,4 +718,140 @@ test "slice: the family about ee, a plate on another a hair into it, sliced with
             if (area) |want| try testing.expectApproxEqAbs(want, got, PARALLEL_AREA_SLACK) else area = got;
         };
     };
+}
+
+test "slice: a plate less a box whose top is turned within the angular tolerance from the plate's side keeps the notch (find ez)" {
+    // Find ez: the box's top edge lies on the plate's side 7.8e-6 over the plane, the
+    // top rising from it into the plate within the angular tolerance, a bottom over the
+    // plane, and the plate's side rising from the same edge. Each face rising from an edge
+    // on the plane bounds the section, the two bounds cancelling (the wedge over the notch
+    // is a sliver just above the plane); the parallel top, rising facing down, took no part,
+    // and the side's bound closed the notch out of the plate across the edge. A face
+    // parallel to the plane leans as a face rising from the edge facing its way does
+    // (`Section.edgeInPlane`)
+    const t = tolerance.Tolerance.fromZone(1e-5);
+    var drawn_plate = try helpers.boxAt(t, EZ_PLATE[0], EZ_PLATE[1]);
+    defer drawn_plate.deinit();
+    var turned_plate = try helpers.turned(&drawn_plate, EZ_GRID_MIDDLE, vec.Z3, PI / 2.0);
+    defer turned_plate.deinit();
+    var plate = try helpers.moved(&turned_plate, EZ_PLATE_MOVE);
+    defer plate.deinit();
+    var drawn_box = try helpers.boxAt(t, EZ_BOX[0], EZ_BOX[1]);
+    defer drawn_box.deinit();
+    var turned_box = try helpers.turned(&drawn_box, EZ_GRID_MIDDLE, vec.Y3, EZ_TURN);
+    defer turned_box.deinit();
+    var moved_box = try helpers.moved(&turned_box, EZ_BOX_MOVES[0]);
+    defer moved_box.deinit();
+    var box = try helpers.moved(&moved_box, EZ_BOX_MOVES[1]);
+    defer box.deinit();
+    var notched = try helpers.sound(&plate, &box, .difference);
+    defer notched.deinit();
+    var sheet = try sliced(&notched, EZ_HEIGHT);
+    defer sheet.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expect(!try sketch_query.contains(&sheet, EZ_POINT, 0, &diag));
+    try testing.expectEqual(@as(usize, 1), sheet.counts().faces);
+    try testing.expectApproxEqAbs(EZ_AREA, try areaOf(&sheet), PARALLEL_AREA_SLACK);
+}
+
+/// The placements of the families about ed, ee and ez: `quarter` quarter turns about z,
+/// mirrored in x when `mirrored`, then shifted by `shift`.
+fn placement(quarter: usize, mirrored: bool, shift: Vec3) Affine {
+    var place = Affine.translate(shift).compose(&Affine.rotate(vec.Z3, @as(f64, @floatFromInt(quarter)) * PI / 2.0));
+    if (mirrored) place = place.compose(&Affine.mirror(vec.X3));
+    return place;
+}
+
+/// `solid` placed by `place`, sliced at `height` (moved with it): the section holds what
+/// the solid holds (`oracle.expectSliceHolds`); its area.
+fn placedArea(solid: *const Body, place: Affine, height: f64) !f64 {
+    var moved = try turned(solid, place);
+    defer moved.deinit();
+    const z = place.point(.{ 0, 0, height })[2];
+    var sheet = try sliced(&moved, z);
+    defer sheet.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var index = try FaceIndex.build(testing.allocator, &moved, &diag);
+    defer index.deinit(testing.allocator);
+    try oracle.expectSliceHolds(&moved, &index, &sheet, z, true, &diag);
+    return areaOf(&sheet);
+}
+
+test "slice: the family about ez, a step whose bottom leaves its edge on the plane within the angular tolerance, turned, mirrored and moved far" {
+    // A bottom rising from the edge over the plane bounds the section with its other side
+    // on the bound's left, cancelling the wall's bound there (the block's left half); one
+    // falling from it under the plane bounds nothing, the wall's bound alone (all of it). As
+    // a steep bottom does. Before: the rising bottom gave nothing, the wall's bound alone
+    // and nothing else bounding the left half, an empty section; the falling one gave a
+    // second bound, and the overlay kept the left half only
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    for (STEP_SLOPES) |slope| {
+        var profile = try primitives.polygon(testing.allocator, tol, &.{ .{ -1, -1 }, .{ 0, -1 }, .{ 0, 0 }, .{ 1, slope }, .{ 1, 1 }, .{ -1, 1 } }, &diag);
+        defer profile.deinit();
+        var prism = try sweep.extrude(testing.allocator, &profile, .{ 0, 0, STEP_DEPTH }, .{}, &diag);
+        defer prism.deinit();
+        // The profile's y up
+        var step = try turned(&prism, Affine.rotate(vec.X3, PI / 2.0));
+        defer step.deinit();
+        const want: f64 = if (slope > 0) 1 else 2;
+        for (STEP_HEIGHTS) |height| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for (RIDGE_SHIFTS) |shift| {
+            errdefer std.debug.print("slope {d}, sliced {e} about the edge, quarter turns {d}, mirrored {}, shifted {any}\n", .{ slope, height, quarter, mirrored, shift });
+            try testing.expectApproxEqAbs(want, try placedArea(&step, placement(quarter, mirrored, shift), height), PARALLEL_AREA_SLACK);
+        };
+    }
+}
+
+test "slice: the family about ez, a plate less a box whose top rises from the plate's side within the angular tolerance, either way round, turned, mirrored and moved far" {
+    // The difference's section is the plate's less the notch, the intersection's the
+    // notch, either way round: their areas add up to the plate's, the probe in the notch
+    // in the intersection's only, and each section holds what its solid holds. Before, the
+    // side's bound alone along the edge, unbalanced: the notch held or not by placement
+    const t = tolerance.Tolerance.fromZone(1e-5);
+    var drawn_plate = try helpers.boxAt(t, EZ_PLATE[0], EZ_PLATE[1]);
+    defer drawn_plate.deinit();
+    var turned_plate = try helpers.turned(&drawn_plate, EZ_GRID_MIDDLE, vec.Z3, PI / 2.0);
+    defer turned_plate.deinit();
+    var plate = try helpers.moved(&turned_plate, EZ_PLATE_MOVE);
+    defer plate.deinit();
+    var drawn_box = try helpers.boxAt(t, EZ_BOX[0], EZ_BOX[1]);
+    defer drawn_box.deinit();
+    for (NOTCH_TURNS) |turn| for (NOTCH_NUDGES) |nudge| {
+        var turned_box = try helpers.turned(&drawn_box, EZ_GRID_MIDDLE, vec.Y3, turn);
+        defer turned_box.deinit();
+        var box = try helpers.moved(&turned_box, vec.add(EZ_BOX_MOVES[0], .{ 0, nudge, 0 }));
+        defer box.deinit();
+        var notched = try helpers.sound(&plate, &box, .difference);
+        defer notched.deinit();
+        var notch = try helpers.sound(&plate, &box, .intersection);
+        defer notch.deinit();
+        var swapped = try helpers.sound(&box, &plate, .intersection);
+        defer swapped.deinit();
+        const probe: Vec2 = .{ NOTCH_PROBE[0], NOTCH_PROBE[1] + nudge };
+        for (STEP_HEIGHTS) |above| for (0..4) |quarter| for ([_]bool{ false, true }) |mirrored| for (RIDGE_SHIFTS) |shift| {
+            errdefer std.debug.print("turned {d}, nudged {e}, sliced {e} about the edge, quarter turns {d}, mirrored {}, shifted {any}\n", .{ turn, nudge, above, quarter, mirrored, shift });
+            const place = placement(quarter, mirrored, shift);
+            const height = NOTCH_EDGE_HEIGHT + above;
+            const left = try placedArea(&notched, place, height);
+            const taken = try placedArea(&notch, place, height);
+            try testing.expectApproxEqAbs(taken, try placedArea(&swapped, place, height), PARALLEL_AREA_SLACK);
+            try testing.expectApproxEqAbs(NOTCH_PLATE_AREA, left + taken, PARALLEL_AREA_SLACK);
+            try expectProbe(&notched, place, probe, height, false);
+            try expectProbe(&notch, place, probe, height, true);
+        };
+    };
+}
+
+/// Whether `solid`'s section at `height`, both placed by `place`, holds `probe`, as `want`.
+fn expectProbe(solid: *const Body, place: Affine, probe: Vec2, height: f64, want: bool) !void {
+    var moved = try turned(solid, place);
+    defer moved.deinit();
+    const p = place.point(.{ probe[0], probe[1], height });
+    var sheet = try sliced(&moved, p[2]);
+    defer sheet.deinit();
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    try testing.expectEqual(want, try sketch_query.contains(&sheet, .{ p[0], p[1] }, 0, &diag));
 }

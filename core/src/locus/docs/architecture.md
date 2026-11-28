@@ -897,12 +897,19 @@ plane the section is the solid just above it, as Manifold slices (a triangle cou
 lowest corner is at or below the height and its highest above): a face lying in the plane
 gives nothing and an edge lying in it is taken from each face that rises from it, so two
 faces rising from one edge (a groove's floor) cancel; a face only touching the plane gives
-nothing. A planar face parallel to the plane within the angular tolerance rises or falls
-from its edges on the plane by its vertices' sides (`sideOf`), not by its normal's tilt,
-which is noise: a top rising from them, or a bottom falling, holds material on its side
-(a lower plate's top 5e-6 over an upper plate's bottom where they overlap, sliced 6.2e-6
+nothing. A face rising from such an edge bounds the section along `n_plane × n_face`, the
+material on the side its outward normal leans away from (a wall's side, a top's own, a
+bottom's other), so two faces rising from one edge cancel and a falling one gives nothing.
+A planar face parallel to the plane within the angular tolerance rises or falls from its
+edges on the plane by its vertices' sides (`sideOf`), not by its normal's tilt, which is
+noise, and leans as a face rising from the edge facing its way does: one rule with the
+steep faces, so a parallel face's bound and a steep one's cancel as two steep ones' do (a
+lower plate's top 5e-6 over an upper plate's bottom where they overlap, sliced 6.2e-6
 under it, took no part by its tilt and the upper's walls cut the lower plate out of the
-section, find ee, 2026-11-27). A trace that is an ellipse has no sketch edge and is refused naming the face.
+section, find ee, 2026-11-27; a box's top turned within the angular tolerance from its
+edge on a plate's side, a bottom rising from it, gave nothing against the side's bound,
+which closed the notch out of the plate, and a bottom falling from such an edge gave a
+second bound beside its wall's, find ez, 2026-11-28). A trace that is an ellipse has no sketch edge and is refused naming the face.
 
 ### 7.4 Booleans
 
