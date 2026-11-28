@@ -311,6 +311,26 @@ const EX_PLATE_SCALE: vec.Vec3 = .{ 0.5, 0.5, 0.5 };
 const EX_PLATE_MOVE: vec.Vec3 = .{ 0, 1, 0 };
 const EX_PLATE_NUDGE: vec.Vec3 = .{ 2.0000000696331883e-5, 0, -2.0000000696331883e-5 };
 const EX_PLATE_LIFTS = [_]f64{ 0, 2.5e-6, -2.5e-6, 5e-6, -5e-6, 1e-5, -1e-5 };
+/// Find fe (the locus_solids session on 419c261b, run 302081), as the fuzzer drew it, at
+/// the zone the plates' size gives (`FE_ZONE`): the plate over `FE_FIRST` moved
+/// `FE_FIRST_MOVE` and nudged `FE_FIRST_NUDGE`; the plate over `FE_SECOND` turned `FE_TURN`
+/// about `FE_AXIS` through the grid's middle, moved `FE_SECOND_MOVE` and nudged
+/// `FE_SECOND_NUDGE` and each of `FE_LIFTS` more in z: its bottom over the first's top by
+/// the intersection tolerance and 1.4e-12, the turn leaving it within the tolerance at
+/// three corners of where the two overlap and 1.3e-8 past it at the fourth; then nearer
+/// and farther, across the corners or past them all.
+const FE_ZONE: f64 = 1e-4;
+const FE_FIRST = [2]vec.Vec3{ .{ 2, -98, 2 }, .{ 52, 102, 3 } };
+const FE_FIRST_MOVE: vec.Vec3 = .{ -0.5, 0, -1 };
+const FE_FIRST_NUDGE: vec.Vec3 = .{ 0, 5e-5, 0 };
+const FE_SECOND = [2]vec.Vec3{ .{ -98, 2, 2 }, .{ 102, 52, 3 } };
+const FE_AXIS: vec.Vec3 = .{ 1, 2, 3 };
+const FE_TURN: f64 = 1e-9;
+const FE_SECOND_MOVE: vec.Vec3 = .{ -1, 0, 0 };
+const FE_SECOND_NUDGE: vec.Vec3 = .{ 0, -2e-4, 2.0000000143529634e-4 };
+const FE_LIFTS = [_]f64{ 0, -1e-8, 5e-9, -2e-8, 1e-8, -1e-7, 1e-7 };
+/// The first of the test's moves out to 3e5, where D27's band is wider.
+const FE_FAR_MOVES = 4;
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2624,6 +2644,79 @@ test "Fuzz solids: a section beside a face by its loops, the face's boundary wit
     }
 }
 
+test "Fuzz solids: plates in one plane at three corners of their overlap and past the tolerance at the fourth are refused alike, turned, mirrored, far and either way round" {
+    // The locus_solids session's find fe on 419c261b (run 302081), as the fuzzer drew it:
+    // plate ∩ plate at a zone of 1e-4, the second's bottom over the first's top by the
+    // intersection tolerance and 1.4e-12, turned 1e-9 rad. Three corners of where the two
+    // overlap, edges crossing within the tolerance, were merged and put the faces in one
+    // plane (off one line); at the fourth the edges passed 1.3e-8 past the tolerance,
+    // unmerged. Each face's edge ran from a corner on the other's boundary across the
+    // other, out past it there, its middle outside: imprinted on neither face, and the
+    // imprints disagreed (`imprint_unmatched`, IntersectionFailed). A block from a face's
+    // boundary out of it goes to `apartInPlane`, which refuses it where it passes the
+    // face's boundary in the plane (`below_feature_size`), as a block leaving an
+    // imprint's end does (dd). The second plate lifted by each of `FE_LIFTS` (made where
+    // all four corners merge or none, and refused where the gaps run past what the paves
+    // hold), the plates moved by each of the moves, every operation either way round
+    // decided alike and through the solids oracles, turned and mirrored as in place
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    const zone = tolerance.Tolerance.fromZone(FE_ZONE);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var first_shape = try boxFrom(FE_FIRST[0], FE_FIRST[1], zone, &diag);
+    defer first_shape.deinit();
+    var first = try euPlaced(&first_shape, 0, null, FE_FIRST_MOVE, FE_FIRST_NUDGE, &diag);
+    defer first.deinit();
+    var second_shape = try boxFrom(FE_SECOND[0], FE_SECOND[1], zone, &diag);
+    defer second_shape.deinit();
+    for (FE_LIFTS) |lift| {
+        const place = Affine.translate(vec.add(FE_SECOND_NUDGE, .{ 0, 0, lift })).compose(&Affine.translate(FE_SECOND_MOVE).compose(&Affine.rotateAbout(middle, vec.normalized(FE_AXIS).?, FE_TURN)));
+        var second = try transform.transform(testing.allocator, &second_shape, &place, .{}, &diag);
+        defer second.deinit();
+        var outcomes: [moves.len][oracle.OPS.len]BooleanOutcome = undefined;
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &first, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &second, &move, .{}, &diag);
+            defer b.deinit();
+            errdefer std.debug.print("the second plate lifted {e} more, move {d}\n", .{ lift, m });
+            outcomes[m] = try expectStepEitherWay(&a, &b, &diag);
+        }
+        // Turned and mirrored in place as in place; far out, mirrored as not
+        for (outcomes[1..], 1..) |outcome, m| {
+            errdefer std.debug.print("the second plate lifted {e} more, move {d}: {any}, unmoved or near {any}\n", .{ lift, m, outcome, outcomes[if (m < FE_FAR_MOVES) 0 else FE_FAR_MOVES] });
+            try testing.expectEqualDeep(outcomes[if (m < FE_FAR_MOVES) 0 else FE_FAR_MOVES], outcome);
+        }
+    }
+}
+
+/// The step of `a` and `b` either way round (`expectStepWith`), the union and the
+/// intersection decided alike both ways: refused for the same finding or made with the
+/// same counts. The outcomes of `a` with `b`, by `oracle.OPS`.
+fn expectStepEitherWay(a: *const Body, b: *const Body, diag: *Diagnostics) ![oracle.OPS.len]BooleanOutcome {
+    var outcomes: [oracle.OPS.len]BooleanOutcome = undefined;
+    for (oracle.OPS, &outcomes) |op, *outcome| {
+        const forward = try booleanOutcome(a, b, op);
+        outcome.* = forward;
+        if (op == .difference) continue;
+        const swapped = try booleanOutcome(b, a, op);
+        errdefer std.debug.print("the {t}: {any}, the other way round {any}\n", .{ op, forward, swapped });
+        try testing.expectEqual(std.meta.activeTag(forward), std.meta.activeTag(swapped));
+        if (forward == .made) try testing.expectEqual(forward.made, swapped.made);
+    }
+    try expectStepWith(a, b, diag);
+    try expectStepWith(b, a, diag);
+    return outcomes;
+}
+
 /// `shape` placed as the solids fuzzer places a solid (`generatedBody`): turned `turn` about
 /// z through the grid's middle, scaled by `scale`, moved by `move`, then nudged by `nudge`,
 /// one map composed in that order.
@@ -3769,6 +3862,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // and the section closed the notch out of the plate (section.edgeInPlane: a parallel
         // face leans as it faces)
         "solids 3 0 5 0 1 4 4 2 4 1 0 4 0 2 0 2 2 2 16 2 1 3 0 3 0 2 3 1 0 2 4 3 4 2 0 2 12 3 1 2 0 1 2 3 4 1 2 0 1 5 2 2 9 0 7 1",
+        // The locus_solids session on 419c261b (fe, run 302081): plate ∩ plate turned 1e-9, in
+        // one plane by three merged corners of their overlap, the fourth past the tolerance:
+        // each face's edge across the other and out there, imprinted on neither,
+        // imprint_unmatched (pave.passesOut: a block from the boundary out, apartInPlane)
+        "solids 2 2 3 0 4 2 3 1 1 -1 3 -2 15 1 3 2 0 4 2 3 2 3 0 3 8 3 -2 8 11 8 2",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
