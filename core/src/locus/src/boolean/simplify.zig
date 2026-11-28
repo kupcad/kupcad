@@ -492,7 +492,7 @@ fn hold(body: *const Body, chain: *const Chain, absorbed: *const Absorbed, lo: u
         const curve = body.edge(candidate).curve;
         if (best) |b| if (curve.eql(b.curve)) continue;
         const line = body.geometry.curve(curve).line;
-        switch (try lineHolds(body, line, chain, absorbed, lo, hi)) {
+        switch (try lineHolds(body, line, curve, chain, absorbed, lo, hi)) {
             .same => {
                 const off = offFaces(body, line, chain, lo, hi);
                 if (best) |b| {
@@ -535,11 +535,21 @@ fn offFaces(body: *const Body, line: @import("../geometry/curves.zig").Line, cha
     return off;
 }
 
-/// `hold`'s measures of `line` against the edges and vertices `lo` to `hi`.
-fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, chain: *const Chain, absorbed: *const Absorbed, lo: usize, hi: usize) Error!canonical.Verdict {
+/// `hold`'s measures of `line` (the record `curve`) against the edges and vertices `lo`
+/// to `hi`. A vertex ending an edge of the run on `curve` is on the line by the body's
+/// record, its gap what holds it there, and is not measured again: a box's corner the
+/// paves put on a hull's edge 2.12e-5 off its line, its gap the distance less the
+/// tolerance, measured against that line at its reach was at the tolerance to rounding,
+/// and the union of the two, its edge along the line the hull's on one side of the
+/// corner and the box's on the other, was refused `at_tolerance` one way round and made
+/// the other, where the edges on both sides were the hull's (find fb, the locus_solids
+/// session on 419c261b).
+fn lineHolds(body: *const Body, line: @import("../geometry/curves.zig").Line, curve: CurveRef, chain: *const Chain, absorbed: *const Absorbed, lo: usize, hi: usize) Error!canonical.Verdict {
     const tol = body.tol;
     var tally: canonical.Tally = .{};
-    for (chain.vertices.items[lo .. hi + 1]) |v| {
+    for (chain.vertices.items[lo .. hi + 1], lo..) |v, k| {
+        if (k > lo and body.edge(chain.edges.items[k - 1]).curve.eql(curve)) continue;
+        if (k < hi and body.edge(chain.edges.items[k]).curve.eql(curve)) continue;
         const p = body.point(v);
         tally.add(canonical.Comparison.distance(canonical.lineOffset(line, p), incidence.reach(tol, body.vertex(v).gap), canonical.magnitude(&.{ p, line.o })));
     }

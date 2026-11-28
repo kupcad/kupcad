@@ -1354,7 +1354,11 @@ importing only those before it, which the layering test holds):**
   apart as far, joined in place and not 3e5 out, finds cd and cm, 2026-11-22; a joined
   edge keeps the vertices it took the place of, `simplify.Absorbed`, and a later pass's
   line must hold them too, so the passes decide a chain once: a second pass joined on a
-  line the vertex the first took away lay 2.6e-5 off, find dj, 2026-11-22; each run's
+  line the vertex the first took away lay 2.6e-5 off, find dj, 2026-11-22; a vertex
+  ending an edge of the run on the candidate line is on it by the body's record, not
+  measured again: a box's corner the paves put on a hull's edge 2.12e-5 off, its gap the
+  rest, measured at its reach was at the tolerance to rounding by construction, refused
+  one way round and joined by record the other, fb, 2026-11-28; each run's
   edges put on its line with their ranges by projection, its own line's edge too, the
   join needing them to meet exactly; vertex by vertex the
   joins hung on the numbering, the operands' order, 2026-11-16); `kevMerge` of an edge no

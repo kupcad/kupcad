@@ -382,6 +382,26 @@ const FD_WALL_HI: vec.Vec3 = .{ 4, 3, 3 };
 const FD_WALL_XSECTS: f64 = 2.5;
 const FD_WALL_NUDGE: vec.Vec3 = .{ 1e-4, -1e-4, 1e-4 };
 const FD_WALL_SHIFTS = [_]f64{ 0, 2e-5, -2e-5, 5e-5, -5e-5 };
+/// Find fb (the locus_solids session on 419c261b, run 230456), as the fuzzer drew it, all
+/// at the tests' zone: the hull of `FB_HULL` scaled `FB_HULL_SCALE` and nudged
+/// `FB_HULL_NUDGE`, joined with the wall with a gap of `FB_WALL_XSECTS` tolerances about
+/// `FB_WALL_AT` across `FB_WALL_LO` to `FB_WALL_HI`, turned π about `FB_WALL_AXIS` through
+/// the grid's middle and nudged `FB_WALL_NUDGE`; then the box over `FB_BOX` nudged
+/// `FB_BOX_NUDGE` and each of `FB_BOX_SHIFTS` more: its corner 2.12e-5 off the hull's edge
+/// along y in the find (1.5e-5 across in x and z), then farther, and nearer than the
+/// tolerance.
+const FB_HULL = [_]vec.Vec3{ .{ 1, 3, 0 }, .{ 2, 3, 1 }, .{ 3, 4, 2 }, .{ 0, 0, 0 }, .{ 0, 1, 3 }, .{ 0, 4, 0 }, .{ 4, 3, 0 }, .{ 0, 0, 1 } };
+const FB_HULL_SCALE: vec.Vec3 = .{ 0.5, 2, 1 };
+const FB_HULL_NUDGE: vec.Vec3 = .{ -1.9999999886313164e-5, -5e-6, 5e-6 };
+const FB_WALL_AT: vec.Vec3 = .{ 4, 4, 0 };
+const FB_WALL_LO: vec.Vec3 = .{ 1, 0, 0 };
+const FB_WALL_HI: vec.Vec3 = .{ 2, 3, 4 };
+const FB_WALL_XSECTS: f64 = 2.5;
+const FB_WALL_AXIS: vec.Vec3 = .{ 1, 2, 3 };
+const FB_WALL_NUDGE: vec.Vec3 = .{ -5e-6, -1.9999999926915505e-5, -2e-5 };
+const FB_BOX = [2]vec.Vec3{ .{ 0, 1, 0 }, .{ 4, 4, 4 } };
+const FB_BOX_NUDGE: vec.Vec3 = .{ -5e-6, -5e-6, -1e-5 };
+const FB_BOX_SHIFTS = [_]vec.Vec3{ vec.ZERO3, .{ -1e-6, 0, -1e-6 }, .{ -3e-6, 0, 0 }, .{ 0, 0, -3e-6 }, .{ 1e-6, 0, 1e-6 } };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2868,6 +2888,58 @@ test "Fuzz solids: a strip of a wall's face beside its section with a plate's en
     }
 }
 
+test "Fuzz solids: a box's corner put on a hull's edge past the tolerance, its gap the rest, is held on the edge's line by record when the edge is joined, turned, mirrored, far and either way round" {
+    // The locus_solids session's find fb on 419c261b (run 230456), as the fuzzer drew it:
+    // (hull ∪ wall) ∪ box. The box's corner lay 2.12e-5 off the hull's edge along y, past
+    // the tolerance (2e-5): the paves put it on the edge with a gap of the rest, and the
+    // box's edge along the hull's was a common block. Its line was the first operand's (its
+    // faces in one plane with the hull's, either plane theirs), so B ∪ A's edge along the
+    // hull's ran on the hull's line to the corner and on the box's past it, and the joining
+    // of collinear edges measured the corner against the hull's line at its reach: at the
+    // tolerance to rounding, by construction of its gap, refused `at_tolerance` (a raw
+    // `error.Degenerate` in the oracle's swapped union) where A ∪ B, the hull's line on
+    // both sides, joined them by record. A vertex ending an edge on the line is on it by the
+    // body's record (`simplify.lineHolds`). The box shifted by each of `FB_BOX_SHIFTS`, the
+    // chain moved by each of the moves, the union and the intersection decided alike either
+    // way round, every operation through the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &FB_HULL, &diag);
+    defer hull_shape.deinit();
+    var hull_body = try euPlaced(&hull_shape, 0, FB_HULL_SCALE, vec.ZERO3, FB_HULL_NUDGE, &diag);
+    defer hull_body.deinit();
+    const wall: GapShape = .{ .kind = .wall, .at = FB_WALL_AT, .lo = FB_WALL_LO, .hi = FB_WALL_HI, .xsects = std.mem.indexOfScalar(f64, &GAP_XSECTS, FB_WALL_XSECTS).? };
+    var wall_shape = try wall.build(tol, &diag);
+    defer wall_shape.deinit();
+    var wall_body = try transform.transform(testing.allocator, &wall_shape, &Affine.translate(FB_WALL_NUDGE).compose(&Affine.rotateAbout(middle, vec.normalized(FB_WALL_AXIS).?, std.math.pi)), .{}, &diag);
+    defer wall_body.deinit();
+    var joined = try solid_boolean.tests.sound(&hull_body, &wall_body, .@"union");
+    defer joined.deinit();
+    var box_shape = try boxFrom(FB_BOX[0], FB_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    for (FB_BOX_SHIFTS) |shift| {
+        var box = try transform.transform(testing.allocator, &box_shape, &Affine.translate(vec.add(FB_BOX_NUDGE, shift)), .{}, &diag);
+        defer box.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &box, &move, .{}, &diag);
+            defer b.deinit();
+            errdefer std.debug.print("the box shifted {any} more, move {d}\n", .{ shift, m });
+            _ = try expectStepEitherWay(&a, &b, &diag);
+        }
+    }
+}
+
 /// The step of `a` and `b` either way round (`expectStepWith`), the union and the
 /// intersection decided alike both ways: refused for the same finding or made with the
 /// same counts. The outcomes of `a` with `b`, by `oracle.OPS`.
@@ -4042,6 +4114,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // of the cutter's top beside their hinge read inside by the turn, the rest outside,
         // unclassified (classify.departure: the point in the fragment)
         "solids 2 0 4 1 3 0 2 1 0 0 0 0 -2 7 1 15 3 1 0 2 4 1 3 0 4 0 1 7 3 11 3 7 7 0 2 1 8 1 4 0 1 3 3 1 0 3 0 1 0 3 1 1 3 2 3 3 3 1 0 4 1 0 2 3 1 4 7 6 15 0 2 2 1 4 2 3 0 3 0 3 5 0 1 0 1 5 6 4 11 2",
+        // The locus_solids session on 419c261b (fb, run 230456): (hull ∪ wall) ∪ box, the box's
+        // corner on the hull's edge 2.12e-5 off its line, its gap the rest, measured again when
+        // the edge was joined: at_tolerance one way round, made the other (simplify.lineHolds:
+        // an edge's end on its line by record)
+        "solids 1 8 1 3 0 2 3 1 3 4 2 0 0 0 0 1 3 0 4 0 4 3 0 0 0 1 1 0 0 2 1 10 4 3 2 3 1 3 1 4 4 1 2 4 0 3 0 0 4 0 3 1 4 10 8 7 0 3 0 0 4 1 4 0 4 2 1 4 4 6 10 0",
         // The locus_solids session on 419c261b (fd, run 404245): ((hull - box) ∪ plate) ∪ wall,
         // a strip of the wall's face within the tolerance of the plate's end read outside by
         // the turn, the rest inside, unclassified (classify.departure: the point in the
