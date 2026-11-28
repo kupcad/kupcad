@@ -2737,9 +2737,9 @@ const Filler = struct {
                             // vertex where it crosses `g`'s boundary: decided below, once the
                             // blocks imprinted on `g` are known
                             .from_inside => try crossing.append(self.allocator, .{ .edge = e, .block = .{ x.vertex, y.vertex } }),
-                            // From `g`'s boundary to outside it: where in that plane it
-                            // passes `g`'s boundary, the two faces' imprints part
-                            .from_boundary => try self.apartInPlane(k, e, .{ x.vertex, y.vertex }, other, g, frame, f),
+                            // From `g`'s boundary to outside it across `g`: where in that
+                            // plane it passes `g`'s boundary, the two faces' imprints part
+                            .from_boundary => if (try self.crossesInPlane(k, e, .{ x.vertex, y.vertex }, other, g, frame, f)) try self.apartInPlane(k, e, .{ x.vertex, y.vertex }, other, g, frame, f),
                         }
                         continue;
                     }
@@ -2779,17 +2779,20 @@ const Filler = struct {
     /// imprint, neither face's imprint ends there, and the two agree (a box's corner 1.1
     /// tolerances over a slab's edge 0.9 under its top's plane, beside it: made, sound).
     /// A block from `g`'s boundary (a merged vertex on it) to strictly outside it that
-    /// passes through `g` leaves it where the paves found no vertex too, and goes to
-    /// `apartInPlane` whatever was imprinted: the face's region over `g` is bounded by it
-    /// from that vertex, so `g`'s imprint of the face needs it as a section from there, and
-    /// it has none, its middle outside `g`. Two plates' faces in one plane by three merged
+    /// passes through `g`, crossing a piece of `g`'s boundary clearly (`crossesInPlane`),
+    /// leaves it where the paves found no vertex too, and goes to `apartInPlane` whatever
+    /// was imprinted: the face's region over `g` is bounded by it from that vertex, so
+    /// `g`'s imprint of the face needs it as a section from there, and it has none, its
+    /// middle outside `g`. Two plates' faces in one plane by three merged
     /// corners of where they overlap, the fourth 1.3e-8 past the tolerance and unmerged
     /// (the second turned 1e-9 rad), each face's edge running from a corner on the other's
     /// boundary across it and out at that fourth corner: each face's imprint of the other
     /// went past the overlap (`imprint_unmatched`; the locus_solids session on 419c261b,
-    /// fe). Out of `g` from its boundary without passing through it, `apartInPlane` finds
-    /// nothing of `g` near the block in the plane but the pieces at that vertex, measured
-    /// by their other ends, and the block is made.
+    /// fe). Out of `g` from its boundary without passing through it past the tolerance,
+    /// the block bounds nothing of `g` and is made, within the tolerance of `g`'s boundary
+    /// in the plane or not: sent to `apartInPlane` whatever its way, such blocks refused 22
+    /// sound cases of the edge matrix (find ba's family, a plate's edge along a notch's
+    /// wall 1.5e-5 off it in the plane, past its inner corner).
     fn passesOut(self: *Filler, other: usize, g: types.FaceIndex, u: u32, w: u32) Error!Passes {
         const at_u = try self.placeIn(other, g, self.p.point(u), u);
         const at_w = try self.placeIn(other, g, self.p.point(w), w);
@@ -2799,6 +2802,51 @@ const Filler = struct {
             .inside => .from_inside,
             .boundary => .from_boundary,
         };
+    }
+
+    /// Whether the pave block `block` of edge `e` of operand `k` crosses one of the pave
+    /// blocks of face `g` of operand `other` (`frame` `g`'s) in that plane, one sharing no
+    /// vertex with it, clearly: each block's ends on either side of the other's line,
+    /// each past the tolerance and both edges' gaps from it (`edgesMeet`), so the block
+    /// runs through `g` from one side of that piece to the other; at the tolerance to
+    /// rounding, refused (`at_tolerance`, naming face `f`). A block from `g`'s boundary
+    /// out of it that passes within the tolerance of `g`'s boundary, or crosses it within
+    /// that, runs through nothing of `g` past the tolerance: a plate's back face in one
+    /// plane with a notch's wall 1e-5 off, its bottom edge from the notch's outer corner
+    /// along the wall's top edge and out past its inner corner, 1.5e-5 over it in the
+    /// plane, the two faces' imprints agreeing, made (the edge matrix's family of find ba).
+    fn crossesInPlane(self: *Filler, k: usize, e: types.EdgeIndex, block: [2]u32, other: usize, g: types.FaceIndex, frame: Frame, f: types.FaceIndex) Error!bool {
+        const p = self.p;
+        const a = planar_faces.flat(frame, p.point(block[0]));
+        const b = planar_faces.flat(frame, p.point(block[1]));
+        const body_g = self.body(other);
+        var loops = traverse.Loops.init(body_g, g);
+        while (loops.next() catch return corrupt(self.diag)) |l| {
+            var it = traverse.Coedges.init(body_g, l);
+            while (it.next() catch return corrupt(self.diag)) |c| {
+                const eg = body_g.coedge(c).edge;
+                const list = p.edge_paves[other][@backingInt(eg)].items;
+                for (list[0 .. list.len - 1], list[1..]) |x, y| {
+                    if (x.vertex == block[0] or x.vertex == block[1] or y.vertex == block[0] or y.vertex == block[1]) continue;
+                    const u = planar_faces.flat(frame, p.point(x.vertex));
+                    const w = planar_faces.flat(frame, p.point(y.vertex));
+                    const o = [4]f64{ predicates.orient2d(a, b, u), predicates.orient2d(a, b, w), predicates.orient2d(u, w, a), predicates.orient2d(u, w, b) };
+                    if (!((o[0] > 0) != (o[1] > 0) and o[0] != 0 and o[1] != 0 and (o[2] > 0) != (o[3] > 0) and o[2] != 0 and o[3] != 0)) continue;
+                    const block_length = vec.distance2(a, b);
+                    const piece_length = vec.distance2(u, w);
+                    var verdict: Verdict = .apart;
+                    for ([4]f64{ @abs(o[0]) / block_length, @abs(o[1]) / block_length, @abs(o[2]) / piece_length, @abs(o[3]) / piece_length }) |d| {
+                        verdict = canonical.either(verdict, p.decide.edgesMeet(d, self.edgeGapOf(k, e), self.edgeGapOf(other, eg)));
+                    }
+                    switch (verdict) {
+                        .apart => return true,
+                        .same => {},
+                        .at_tolerance => |cmp| return self.atTolerance(cmp.measured, cmp.limit, .of(.face, @backingInt(f))),
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /// The pave block `block` of edge `e` of operand `k`, a section of face `g` of operand

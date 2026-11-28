@@ -107,6 +107,10 @@ const OUTER = [_]f64{ 0.5, 0.9, 0.97, 1.03 };
 const FAST_OUTER = [_]f64{0.9};
 const OFFSETS = [_]f64{ -0.5, 0.15, 0.3, 0.5, 0.97 };
 const FAST_OFFSETS = [_]f64{ 0.15, 0.3 };
+/// The family of find ba's cases (inner and outer heights, edge offset, in tolerances)
+/// whose plate edge runs from the notch's outer corner along its wall's top edge and out
+/// past the inner corner within the tolerance of it in the plane.
+const BA_ALONG = [_][3]f64{ .{ 0.9, 0.5, 0.5 }, .{ 0.97, 0.5, 0.3 }, .{ 0.97, 0.5, 0.5 }, .{ 0.97, 0.9, 0.3 }, .{ 1.03, 0.5, -0.5 }, .{ 1.03, 0.5, 0.15 }, .{ 1.03, 0.5, 0.3 }, .{ 1.03, 0.5, 0.5 }, .{ 1.03, 0.9, 0.15 }, .{ 1.03, 0.9, 0.3 }, .{ 1.03, 0.97, 0.15 } };
 /// Turns of a face about the line two solids touch along (find bb): along one solid's
 /// face, into each solid's wedge, across the gaps between them.
 const TURNS = [_]f64{ 0, 0.3, std.math.pi / 4.0, std.math.pi / 2.0 - 0.3, std.math.pi / 2.0, 2.0, 3 * std.math.pi / 4.0 };
@@ -750,6 +754,29 @@ test "edge matrix: faces in one plane, an edge within reach of a corner in the p
         try run(&tally, try std.fmt.bufPrint(&name, "zone ×{d}, {d} tolerances over the inner corner, {d} over the outer, edge {d} tolerances in", .{ ratio, h, o, e }), lSlab(ZONE), tiltedBox(ZONE * ratio, .{ -1, -3, h * x }, .{ 7, 2 - e * x, 1 }, .{ 3, 2, h * x }, vec.Y3, angle), false);
     };
     try tally.finish();
+}
+
+test "edge matrix: faces in one plane, an edge from a corner along the other's edge and out past its end within the tolerance in the plane, made" {
+    // The family above's cases where the plate's back face is in one plane with the
+    // notch's wall and its bottom edge runs from the notch's outer corner, merged onto it,
+    // along the wall's top edge and out past the inner corner, within the tolerance of it
+    // in the plane and past it in 3D: the edge runs through nothing of the wall past the
+    // tolerance, and the union, the intersection and the difference are made, sound (an
+    // edge from a face's boundary out of it is refused only where it crosses the face's
+    // boundary clearly, `pave.crossesInPlane`; refused `below_feature_size` by fe's first
+    // rule, 22 cases). Each (inner, outer, offset) of `BA_ALONG`, at each zone
+    for (zones()) |ratio| for (BA_ALONG) |c| {
+        const x = xsectOf(ratio);
+        var a = try lSlab(ZONE);
+        defer a.deinit();
+        var b = try tiltedBox(ZONE * ratio, .{ -1, -3, c[0] * x }, .{ 7, 2 - c[2] * x, 1 }, .{ 3, 2, c[0] * x }, vec.Y3, (c[0] - c[1]) * x / 3);
+        defer b.deinit();
+        var results: [3]Body = undefined;
+        var made: usize = 0;
+        defer for (results[0..made]) |*r| r.deinit();
+        errdefer std.debug.print("zone ×{d}, {d} tolerances over the inner corner, {d} over the outer, edge {d} tolerances in\n", .{ ratio, c[0], c[1], c[2] });
+        try testing.expectEqual(Outcome.made, try step(&a, &b, false, REACH, &results, &made));
+    };
 }
 
 /// The L-shaped slab of find ba: its top at z = 0, (0, 0)–(6, 4) less the notch (3, 2)–(6, 4).

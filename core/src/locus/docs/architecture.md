@@ -1138,9 +1138,12 @@ importing only those before it, which the layering test holds):**
   inside the face where the other face's imprint has no end (a wall's face 1.8e-5 to
   2.0e-5 off a hull's, turned 1e-6, its edge out past the hull's edge 2.0e-5 from it, dd,
   2026-11-22, `pave.passesOut`; such a block from no imprint leaves both imprints agreeing,
-  made; and so is a block from the face's boundary out of it through it, whatever was
-  imprinted: the face's imprint of the other needs it as a section from that vertex and
-  its middle is outside: two plates' faces in one plane by three merged corners of their
+  made; and so is a block from the face's boundary out of it through it, crossing a piece
+  of its boundary clearly (each block's ends past the tolerance on either side of the
+  other's line, `pave.crossesInPlane`), whatever was imprinted: the face's imprint of the
+  other needs it as a section from that vertex and its middle is outside (one out of it
+  within the tolerance of its boundary bounds nothing of it and is made: a plate's edge
+  along a notch's wall 1.5e-5 off it in the plane, the edge matrix's ba family): two plates' faces in one plane by three merged corners of their
   overlap, the fourth 1.3e-8 past the tolerance, each face's edge across the other out at
   that corner, fe, 2026-11-28); two parallel a hair apart (within
   100 `xsect`, not in one plane) are warned of (`nearly_coplanar`, OCCT's BadPositioning:
