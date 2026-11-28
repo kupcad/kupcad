@@ -1762,6 +1762,23 @@ const Filler = struct {
     /// inside by that seam and outside by the other two (`unclassified`; the locus_solids
     /// session on 621b9ee0, et, 2026-11-28).
     ///
+    /// Beside the face by its loops while the face's boundary from end to end keeps within
+    /// reach of the piece, through a vertex the paves kept off the other face
+    /// (`alongBoundary`: no run of the face's own), the piece is refused
+    /// (`below_feature_size`): it is in the other face and within reach of this one's
+    /// boundary all along, so the faces meet there by the tolerance, yet neither the piece
+    /// (beside this face) nor the run (off the other face) is where they meet, and the
+    /// other face's section is left open; the vertex lies within the tolerance of their
+    /// section and past it from the other face, features closer than twice the tolerance
+    /// away from where they meet, as `weld` refuses a merged vertex beyond a feature's
+    /// reach. A hull's face 19° to a plate's bottom, two corners 1.5e-5 over the bottom
+    /// (on it) and the corner between them 2.5e-5 over it (off it), 6.7e-6 inside their
+    /// chord in the face's plane: the chord was a section of neither face, the bottom's
+    /// section with the hull a slit, the bottom kept across the hull's footprint and a
+    /// hull's face rising from the slit, an edge with three faces (NotValid; the locus
+    /// session on 73d5d8ee, ex, 2026-11-28). In the face by its loops such a piece is a
+    /// section of both, as before.
+    ///
     /// Every such chord was taken for one in the face: a hull's face 1.6 tolerances from a
     /// corner of a pocket's mouth, where the pocket's ceiling and side (a reflex edge
     /// between them) meet the face the pocket opens through, cut the corner's three edges,
@@ -1778,16 +1795,27 @@ const Filler = struct {
             .boundary => {
                 const on_boundary = [2]bool{ self.onBoundary(k, f, u), self.onBoundary(k, f, w) };
                 if ((!on_boundary[0] and self.onFace(k, f, u)) or (!on_boundary[1] and self.onFace(k, f, w))) return .in;
-                if (on_boundary[0] and on_boundary[1] and try self.alongBoundary(k, f, u, w, other)) return .along;
-                return if (try in_face.byLoops(self.body(k), f, mid, try self.edgesOf(k, f), self.diag) == .outside) .beside else .in;
+                const joined: Run = if (on_boundary[0] and on_boundary[1]) try self.alongBoundary(k, f, u, w, other) else .none;
+                if (joined == .along) return .along;
+                if (try in_face.byLoops(self.body(k), f, mid, try self.edgesOf(k, f), self.diag) != .outside) return .in;
+                // Beside the face, though its boundary keeps within reach of the piece all
+                // the way through a vertex off the other face: neither the piece nor the run
+                // is where the two meet, and the other face's section is left open there
+                if (joined == .off_other) return self.diag.fail(error.Degenerate, .{
+                    .code = .below_feature_size,
+                    .entity = .of(.face, @backingInt(f)),
+                    .label = if (k == 0) "a face of the first operand whose boundary keeps within reach of its section with a face of the second through a vertex off that face, the section beside it by its loops," else "a face of the second operand whose boundary keeps within reach of its section with a face of the first through a vertex off that face, the section beside it by its loops,",
+                    .threshold = self.p.tol.xsect,
+                });
+                return .beside;
             },
         }
     }
 
-    /// Whether merged vertices `u` and `w` are joined along face `f`'s boundary by a run of
-    /// its pave blocks within reach of the piece between them (the intersection tolerance
-    /// and their gaps), each vertex between on face `other`, the one the piece is a section
-    /// with: the piece is that run, already the face's (OCCT's `IsExistingPaveBlock`: a
+    /// How merged vertices `u` and `w` are joined along face `f`'s boundary (`Run`): by a
+    /// run of its pave blocks within reach of the piece between them (the intersection
+    /// tolerance and their gaps), each vertex between on face `other`, the one the piece is
+    /// a section with: the piece is that run, already the face's (OCCT's `IsExistingPaveBlock`: a
     /// section block with an existing block's ends, its middle on it). Both ends on the
     /// boundary and the middle near it is not enough: a chord across a sliver one tolerance
     /// wide has them (the solids fuzzer, 2026-11-14: a strip 2.05e-4 wide at a tolerance of
@@ -1796,12 +1824,15 @@ const Filler = struct {
     /// other face: the run is the section only through vertices on it, and a box's corner
     /// 3.3e-5 from where a face cut its three edges was the section's on one of its faces
     /// and not on another, by a hair of reach, and the corner's faces did not close (the
-    /// 10K fuzz session, 2026-11-15). The edges are lines (M4): a block whose ends are
-    /// within reach of the piece is within reach along it. The run found is the section,
+    /// 10K fuzz session, 2026-11-15); such a run is reported (`Run.off_other`), both ways
+    /// round asked first, for `lies` to read with the face's loops (ex). The edges are
+    /// lines (M4): a block whose ends are within reach of the piece is within reach along
+    /// it. The run found is the section,
     /// and its edges' lines go into the result (D28): each must lie on the other face's
     /// plane as the checker holds an edge to its surfaces (`runOnPlane`).
-    fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, other: FaceRef) Error!bool {
+    fn alongBoundary(self: *Filler, k: usize, f: types.FaceIndex, u: u32, w: u32, other: FaceRef) Error!Run {
         const p = self.p;
+        var found: Run = .none;
         const operand = self.body(k);
         const a = p.point(u);
         const b = p.point(w);
@@ -1828,24 +1859,42 @@ const Filler = struct {
             const n = ring.items.len;
             for (ring.items, 0..) |v, start| {
                 if (v != u) continue;
-                // From `u` either way round, while the boundary keeps within reach
+                // From `u` either way round, while the boundary keeps within reach; both
+                // ways asked before a run through a vertex off `other` is reported
                 for ([_]usize{ 1, n - 1 }) |step| {
+                    var off_other = false;
                     var i = (start + step) % n;
                     while (i != start) : (i = (i + step) % n) {
                         const x = ring.items[i];
                         if (x == w) {
+                            if (off_other) {
+                                found = .off_other;
+                                break;
+                            }
                             try self.runOnPlane(k, ring.items, ring_edges.items, start, i, step, other);
-                            return true;
+                            return .along;
                         }
-                        if (!Incidence.in(p.incidences.items, .{ .face = other, .vertex = x })) break;
                         const off = vec.distance(p.point(x), closestOnSegment(a, b, p.point(x)));
                         if (!try self.within(off, reach, .of(.face, @backingInt(f)))) break;
+                        if (!Incidence.in(p.incidences.items, .{ .face = other, .vertex = x })) off_other = true;
                     }
                 }
             }
         }
-        return false;
+        return found;
     }
+
+    /// How a face's boundary joins two merged vertices along a piece (`alongBoundary`).
+    const Run = enum {
+        /// No run of the boundary keeps within reach of the piece.
+        none,
+        /// A run within reach of the piece, every vertex between on the other face: the
+        /// piece is that run.
+        along,
+        /// A run within reach of the piece only through a vertex the paves kept off the
+        /// other face.
+        off_other,
+    };
 
     /// The run of face boundary blocks from ring position `from` to `to` (stepping by
     /// `step` round a ring of `ring.len`), which `alongBoundary` takes for a section with

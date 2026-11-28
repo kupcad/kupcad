@@ -1141,7 +1141,14 @@ importing only those before it, which the layering test holds):**
   mouth cut the corner's three edges, the chord between its crossings of the mouth's two
   edges lay over the open mouth 1.5e-5 from one of them, and the piece of the hull's face
   in the pocket had a seam on the face about the mouth that read it inside
-  (`unclassified`, the locus session on 0856d7ba, 2026-11-21, bt). Each merged vertex strictly inside a face of the other operand is
+  (`unclassified`, the locus session on 0856d7ba, 2026-11-21, bt). A chord beside the
+  face by its loops while the face's boundary keeps within reach of it all the way,
+  through a vertex the paves kept off the other face, is refused (`below_feature_size`):
+  the faces meet there by the tolerance, neither the chord nor the run is where, and the
+  vertex is within the tolerance of their section and past it from the other face (a
+  hull's face 19° to a plate's bottom, its corner between two on the bottom 2.5e-5 over
+  it: the bottom's section left a slit, an edge with three faces; the locus session on
+  73d5d8ee, ex, 2026-11-28). Each merged vertex strictly inside a face of the other operand is
   kept (`Paves.touches`), whichever stage found it: a corner of one solid on a face of
   the other, or crossings of its edges merged into one there (a tetrahedron's tip just
   over the tolerance past a box's top, its pocket's apex on the top, 2026-11-17). Pave

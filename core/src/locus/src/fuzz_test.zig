@@ -289,6 +289,28 @@ const EW_WALL_XSECTS: f64 = 3;
 const EW_WALL_MOVE: vec.Vec3 = .{ 0, -1, 0 };
 const EW_WALL_NUDGE: vec.Vec3 = .{ 2.000000005684342e-5, 0, 5e-6 };
 const EW_WALL_LIFTS = [_]f64{ 0, 5e-6, 1e-5, -1e-5 };
+/// Find ex (the locus session on 73d5d8ee, run 146682), as the fuzzer drew it, all at the
+/// tests' zone: the tetrahedron with a gap of 3 tolerances about `EX_TETRA_AT` nudged
+/// `EX_TETRA_NUDGE`, joined with the hull of `EX_FIRST_HULL` scaled `EX_FIRST_SCALE` and
+/// nudged `EX_FIRST_NUDGE`, less the hull of `EX_SECOND_HULL` moved `EX_SECOND_MOVE` and
+/// nudged `EX_SECOND_NUDGE`; then the plate over `EX_PLATE` scaled `EX_PLATE_SCALE`, moved
+/// `EX_PLATE_MOVE` and nudged `EX_PLATE_NUDGE` and each of `EX_PLATE_LIFTS` more in z: its
+/// bottom 1.5e-5 under two corners of the joined hull's face and 2.5e-5 under the corner
+/// between them in the find, then nearer and farther, and 1e-5 either way, where the paves
+/// put all three corners on the bottom (the section the face's boundary) or none.
+const EX_TETRA_AT: vec.Vec3 = .{ 1, 3, 4 };
+const EX_TETRA_NUDGE: vec.Vec3 = .{ -1e-5, 1e-5, -2e-5 };
+const EX_FIRST_HULL = [_]vec.Vec3{ .{ 1, 1, 2 }, .{ 3, 0, 3 }, .{ 0, 2, 2 }, .{ 1, 0, 4 }, .{ 1, 1, 4 }, .{ 0, 3, 1 }, .{ 0, 4, 3 }, .{ 0, 3, 4 } };
+const EX_FIRST_SCALE: vec.Vec3 = .{ 2, 2, 0.5 };
+const EX_FIRST_NUDGE: vec.Vec3 = .{ -2e-5, 5e-6, -5e-6 };
+const EX_SECOND_HULL = [_]vec.Vec3{ .{ 4, 2, 1 }, .{ 2, 4, 1 }, .{ 4, 3, 4 }, .{ 1, 1, 3 }, .{ 0, 3, 4 }, .{ 4, 3, 3 }, .{ 0, 3, 2 }, .{ 1, 1, 3 } };
+const EX_SECOND_MOVE: vec.Vec3 = .{ -1, -1, 0 };
+const EX_SECOND_NUDGE: vec.Vec3 = .{ 0, 0, 5e-6 };
+const EX_PLATE = [2]vec.Vec3{ .{ -98, 2, 2 }, .{ 52, 52, 4 } };
+const EX_PLATE_SCALE: vec.Vec3 = .{ 0.5, 0.5, 0.5 };
+const EX_PLATE_MOVE: vec.Vec3 = .{ 0, 1, 0 };
+const EX_PLATE_NUDGE: vec.Vec3 = .{ 2.0000000696331883e-5, 0, -2.0000000696331883e-5 };
+const EX_PLATE_LIFTS = [_]f64{ 0, 2.5e-6, -2.5e-6, 5e-6, -5e-6, 1e-5, -1e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2533,6 +2555,75 @@ test "Fuzz solids: a fragment whose corners lie on one side of a face it crosses
     }
 }
 
+test "Fuzz solids: a section beside a face by its loops, the face's boundary within reach of it through a corner off the other face, is refused, turned, mirrored, far and either way round" {
+    // The locus session's find ex on 73d5d8ee (run 146682), as the fuzzer drew it:
+    // ((tetrahedron ∪ hull) - hull) - plate. A face of the joined hull, 19° to the plate's
+    // bottom, has two corners 1.5e-5 over the bottom, which the paves put on it, and the
+    // corner between them 2.5e-5 over it, which they kept off it; that corner lies 1.5e-5
+    // from the chord of the other two and 6.7e-6 inside it in the face's plane. The chord,
+    // the piece of where the face and the bottom meet, is in the bottom; for the face its
+    // middle is within reach of its boundary, the boundary from end to end within reach of
+    // it but through the corner off the bottom, so no run of the face's own (`alongBoundary`),
+    // and by the face's loops beside it: a section of neither face. The bottom's section
+    // with the hull was left open there, a slit, the bottom kept whole across the hull's
+    // footprint and a hull's face rising from the slit: an edge with three faces, NotValid
+    // for every operation either way round. Neither the piece nor the run is where the two
+    // meet: the corner within reach of their section and off the bottom is a feature within
+    // twice the tolerance of the bottom away from where they meet, refused
+    // (`below_feature_size`; `pave.Filler.lies`). The plate lifted by each of
+    // `EX_PLATE_LIFTS`, the chain moved by each of the moves, every operation either way
+    // round decided alike and through the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const tetra: GapShape = .{ .kind = .tetrahedron, .at = EX_TETRA_AT, .lo = vec.ZERO3, .hi = vec.ZERO3, .xsects = std.mem.indexOfScalar(f64, &GAP_XSECTS, 3).? };
+    var tetra_shape = try tetra.build(tol, &diag);
+    defer tetra_shape.deinit();
+    var tetra_body = try euPlaced(&tetra_shape, 0, null, vec.ZERO3, EX_TETRA_NUDGE, &diag);
+    defer tetra_body.deinit();
+    var first_shape = try solid_hull.hull(testing.allocator, tol, &EX_FIRST_HULL, &diag);
+    defer first_shape.deinit();
+    var first = try euPlaced(&first_shape, 0, EX_FIRST_SCALE, vec.ZERO3, EX_FIRST_NUDGE, &diag);
+    defer first.deinit();
+    var joined = try solid_boolean.tests.sound(&tetra_body, &first, .@"union");
+    defer joined.deinit();
+    var second_shape = try solid_hull.hull(testing.allocator, tol, &EX_SECOND_HULL, &diag);
+    defer second_shape.deinit();
+    var second = try euPlaced(&second_shape, 0, null, EX_SECOND_MOVE, EX_SECOND_NUDGE, &diag);
+    defer second.deinit();
+    var running = try solid_boolean.tests.sound(&joined, &second, .difference);
+    defer running.deinit();
+    var plate_shape = try boxFrom(EX_PLATE[0], EX_PLATE[1], tol, &diag);
+    defer plate_shape.deinit();
+    for (EX_PLATE_LIFTS) |lift| {
+        var plate = try euPlaced(&plate_shape, 0, EX_PLATE_SCALE, EX_PLATE_MOVE, vec.add(EX_PLATE_NUDGE, .{ 0, 0, lift }), &diag);
+        defer plate.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &running, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &plate, &move, .{}, &diag);
+            defer b.deinit();
+            for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection }) |op| {
+                const forward = try booleanOutcome(&a, &b, op);
+                const swapped = try booleanOutcome(&b, &a, op);
+                errdefer std.debug.print("the plate lifted {e} more, move {d}, the {t}: {any}, the other way round {any}\n", .{ lift, m, op, forward, swapped });
+                try testing.expectEqual(std.meta.activeTag(forward), std.meta.activeTag(swapped));
+                if (forward == .made) try testing.expectEqual(forward.made, swapped.made);
+            }
+            errdefer std.debug.print("the plate lifted {e} more, move {d}\n", .{ lift, m });
+            try expectStepWith(&a, &b, &diag);
+            try expectStepWith(&b, &a, &diag);
+        }
+    }
+}
+
 /// `shape` placed as the solids fuzzer places a solid (`generatedBody`): turned `turn` about
 /// z through the grid's middle, scaled by `scale`, moved by `move`, then nudged by `nudge`,
 /// one map composed in that order.
@@ -3662,6 +3753,11 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // a section 70° off the planes' line, whose turn read it below the wall's bottom where
         // every corner of it lay above, IntersectionFailed (classify.faceSide: corners first)
         "solids 0 0 4 1 3 0 3 0 3 5 0 1 1 2 10 14 9 7 3 1 0 0 3 0 4 0 3 0 0 0 2 5 7 9 10 0 3 3 1 5 2 0 4 1 0 4 2 0 4 1 11 -2 3 13 1",
+        // The locus session on 73d5d8ee (ex, run 146682): ((tetrahedron ∪ hull) - hull) -
+        // plate; a hull's face's section with the plate's bottom beside the face by its loops,
+        // its boundary within reach through a corner off the bottom: the bottom's section
+        // left open, an edge with three faces, NotValid (pave.lies: below_feature_size)
+        "solids 3 2 5 1 0 2 3 2 4 4 1 3 2 6 5 8 15 3 2 1 8 1 1 2 3 0 3 0 2 2 1 0 4 1 1 4 0 3 1 0 4 3 0 3 4 2 0 2 2 0 8 3 4 10 0 3 1 8 4 2 1 2 4 1 4 3 4 1 1 3 0 3 4 4 3 3 0 3 2 1 1 3 2 1 -2 -2 3 5 1 3 2 0 3 2 3 2 4 2 0 0 0 0 11 2 12 15 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
