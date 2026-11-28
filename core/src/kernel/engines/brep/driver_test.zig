@@ -576,12 +576,13 @@ test "Driver: the mesh of a cube and of a cylinder, the cylinder's on the mesh e
     try std.testing.expectEqual(@as(usize, 8 * 3), box_mesh.vert_props.len);
     try std.testing.expectEqual(@as(usize, 12 * 3), box_mesh.tri_verts.len);
     try std.testing.expectEqual(@as(?usize, 12), driver.driver.numTrisFn(cube));
-    // A cylinder of radius 5: 16 segments at the default resolution (by length), the
-    // `segments:` given ignored as the exact engine does; two circles of 16 vertices
+    // A cylinder of radius 5: 32 segments at the default resolution (the chord rule, capped
+    // by the angle's, to a multiple of 4), the `segments:` given ignored as the exact engine
+    // does; two circles of 32 vertices
     const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 15, false, 32) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cyl);
     const n = TEST_CONFIG.segmentsFor(5);
-    try std.testing.expectEqual(@as(u32, 16), n);
+    try std.testing.expectEqual(@as(u32, 32), n);
     const mesh = driver.driver.getMeshFn(std.testing.allocator, cyl) orelse return error.KernelFailed;
     defer std.testing.allocator.free(mesh.vert_props);
     defer std.testing.allocator.free(mesh.tri_verts);

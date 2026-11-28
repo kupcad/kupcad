@@ -2358,6 +2358,14 @@ test "Compiler: a filter runs only the tests whose name holds its text, the rest
     for (tests[1..]) |t| try testing.expectEqual(.skipped, t.status);
 }
 
+test "Compiler: assert_raises needs a block without parameters and at most a class and a message" {
+    try expectCompileError("assert_raises(ArgumentError)", error.InvalidTest, 1, 1, "assert_raises takes a block: assert_raises(ArgumentError) do ... end");
+    try expectCompileError("assert_raises(ArgumentError) { |e| e }", error.InvalidTest, 1, 1, "assert_raises' block takes no parameters");
+    try expectCompileError("assert_raises(ArgumentError, \"m\", 3) { 1 }", error.TooManyArguments, 1, 1, "assert_raises takes an error class and a message at most");
+    try expectCompileError("assert_raises(kind: ArgumentError) { 1 }", error.InvalidTest, 1, 1, "assert_raises takes its class and message as plain arguments");
+    try expectCompileError("def assert_raises\nend", error.ProtectedSymbol, 1, 1, "'assert_raises' is a built-in and can't be redefined");
+}
+
 test "Compiler: a test block anywhere but the top level, or of another shape, is invalid-test" {
     const nested = "a test block goes at the top level of a file, not inside a def, a class, a block or a branch";
     try expectCompileError("def f\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);

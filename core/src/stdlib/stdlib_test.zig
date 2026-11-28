@@ -393,7 +393,7 @@ test "Stdlib: CAD.config applies each setting and current_config reads it back" 
     ));
     // Read back with the keys CAD.config takes.
     try testing.expectEqualStrings(
-        "{engine: :brep, tolerance: 0.001, resolution: {segments: 24, min_angle: 6, min_length: 0.5}, max_vertices: 1000, " ++
+        "{engine: :brep, tolerance: 0.001, resolution: {segments: 24, min_angle: 6, min_length: 0.5, chord: 0.02}, max_vertices: 1000, " ++
             "manifold: {simplify_coplanar: true}, brep: {max_newton_trials: 20, max_marching_steps: 900}}",
         vm.globals.get("r").?.asString().chars,
     );
@@ -452,7 +452,7 @@ test "Stdlib: CAD.config rejects settings it doesn't have or can't use" {
         .{ .src = comptime rescued("CAD.config(tolerence: 1e-3)"), .expected = "ArgumentError: CAD.config does not take a keyword 'tolerence' (it accepts: engine, tolerance, resolution, max_vertices, manifold, brep)" },
         .{ .src = comptime rescued("CAD.config(manifold: { fixed_segments: 16 })"), .expected = "ArgumentError: CAD.config manifold does not take a keyword 'fixed_segments' (it accepts: simplify_coplanar)" },
         .{ .src = comptime rescued("CAD.config(brep: { chordal_deflection: 0.1 })"), .expected = "ArgumentError: CAD.config brep does not take a keyword 'chordal_deflection' (it accepts: max_newton_trials, max_marching_steps)" },
-        .{ .src = comptime rescued("CAD.config(resolution: { fn: 8 })"), .expected = "ArgumentError: CAD.config resolution does not take a keyword 'fn' (it accepts: segments, min_angle, min_length)" },
+        .{ .src = comptime rescued("CAD.config(resolution: { fn: 8 })"), .expected = "ArgumentError: CAD.config resolution does not take a keyword 'fn' (it accepts: segments, min_angle, min_length, chord)" },
         // Wrong types.
         .{ .src = comptime rescued("CAD.config(engine: :openscad)"), .expected = "ValueError: CAD.config engine must be manifold or brep, got 'openscad'" },
         .{ .src = comptime rescued("CAD.config(tolerance: \"fine\")"), .expected = "TypeError: CAD.config expects a number for tolerance, got String" },
@@ -1235,6 +1235,10 @@ test "Stdlib: a plane's normal as an Array or keywords, a helix by pitch or turn
         .{ .src = comptime rescued("cube(10).split_by_plane(normal: [0, 0, 1], nz: 1)"), .expected = .{ .str = "ArgumentError: split_by_plane takes normal: or nx, ny, nz, not both" } },
         // pitch 5 over 10 is two turns, the same solid as twist: 720
         .{ .src = "p = square(2).translate(5, 0)\nr = p.helix(10, pitch: 5).volume.round(6) == p.helix(10, 720).volume.round(6) && p.helix(10, turns: 2).volume.round(6) == p.helix(10, 720).volume.round(6)", .expected = .{ .boolean = true } },
+        // `slices:` is per turn, as `segments:` is: a helix of 16 turns with 8 a turn is as
+        // smooth as one of 2 turns with 8 a turn; 8 slices in all was a mangled coil
+        .{ .src = "p = square(2).translate(5, 0)\nr = (p.helix(32, pitch: 2, slices: 8).volume / 16 - p.helix(4, pitch: 2, slices: 8).volume / 2).abs < 0.01", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(2).translate(5, 0).extrude(10, twist: 720, slices: 4).genus", .expected = .{ .num = 0 } },
         .{ .src = comptime rescued("square(2).helix(10, twist: 90, pitch: 5)"), .expected = .{ .str = "ArgumentError: helix takes twist or pitch, not both" } },
         .{ .src = comptime rescued("square(2).helix(10, 90, turns: 1)"), .expected = .{ .str = "ArgumentError: helix takes its twist positionally or as pitch: or turns:, not both" } },
         .{ .src = comptime rescued("square(2).helix(10, pitch: 0)"), .expected = .{ .str = "ValueError: helix expects pitch to be a finite number greater than zero, got 0" } },
@@ -1706,6 +1710,63 @@ test "Stdlib: assert_equal and assert_near name what they compared" {
         .{ .src = comptime rescued("assert_near(10, 10, tolerance: -1)"), .expected = .{ .str = "ValueError: assert_near tolerance must be zero or more, got -1" } },
         .{ .src = comptime rescued("assert_near(10, 10, tol: 1)"), .expected = .{ .str = "ArgumentError: assert_near does not take a keyword 'tol' (it accepts: tolerance)" } },
         .{ .src = comptime rescued("assert_near(10)"), .expected = .{ .str = "ArgumentError: assert_near expects 2 to 3 arguments, got 1" } },
+    });
+}
+
+test "Stdlib: a Range filters as an Array does, and an Array of shapes sums to their union" {
+    try expectScripts(&.{
+        .{ .src = "r = (0...6).filter { |i| i.even? }", .expected = .{ .nums = &.{ 0, 2, 4 } } },
+        .{ .src = "r = (0...6).select { |i| i.odd? }", .expected = .{ .nums = &.{ 1, 3, 5 } } },
+        .{ .src = "r = (0...6).reject { |i| i.odd? }", .expected = .{ .nums = &.{ 0, 2, 4 } } },
+        .{ .src = comptime rescued("(0..3).filter"), .expected = .{ .str = "ArgumentError: Range#filter requires a block" } },
+        .{ .src = "r = [cube(1), cube(1).translate(5, 0, 0)].sum.volume", .expected = .{ .num = 2 } },
+        .{ .src = "r = [square(1), square(1).translate(5, 0)].sum.area", .expected = .{ .num = 2 } },
+        .{ .src = comptime rescued("[cube(1), 2].sum"), .expected = .{ .str = "TypeError: union expects a Solid or an Array of them for argument 1, got Number" } },
+    });
+}
+
+test "Stdlib: assert_near compares Arrays item by item, and assert_raises checks what a block raises" {
+    try expectScripts(&.{
+        .{ .src = "r = assert_near([1, 2, 3], [1, 2.001, 3], tolerance: 0.01).nil?", .expected = .{ .boolean = true } },
+        .{ .src = "r = assert_near(cube(2).bbox.size, [2, 2, 2]).nil?", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("assert_near([1, 2], [1, 3], tolerance: 0.1)"), .expected = .{ .str = "AssertionError: expected [1, 3] within 0.1, got [1, 2]" } },
+        .{ .src = comptime rescued("assert_near([1, 2], [1, 2, 3], \"the box\")"), .expected = .{ .str = "AssertionError: the box: expected [1, 2, 3] within 0.00001, got [1, 2]" } },
+        .{ .src = comptime rescued("assert_near([1, \"a\"], [1, 2])"), .expected = .{ .str = "TypeError: assert_near compares Arrays of numbers, got String and Number in them" } },
+        // The error raised is the value, so more can be checked on it
+        .{ .src = "e = assert_raises(ArgumentError, \"bad\") { raise ArgumentError, \"bad\" }\nr = e.is_a?(ArgumentError) && e.message == \"bad\"", .expected = .{ .boolean = true } },
+        .{ .src = "r = assert_raises { raise \"any\" }.message", .expected = .{ .str = "any" } },
+        .{ .src = comptime rescued("assert_raises(ArgumentError) { 1 }"), .expected = .{ .str = "AssertionError: expected ArgumentError to be raised, nothing was" } },
+        .{ .src = comptime rescued("assert_raises { 1 }"), .expected = .{ .str = "AssertionError: expected an error to be raised, nothing was" } },
+        .{ .src = comptime rescued("assert_raises(TypeError) { raise ArgumentError, \"x\" }"), .expected = .{ .str = "AssertionError: expected TypeError to be raised, got ArgumentError: x" } },
+        .{ .src = comptime rescued("assert_raises(ArgumentError, \"one\") { raise ArgumentError, \"two\" }"), .expected = .{ .str = "AssertionError: expected the message \"one\", got \"two\"" } },
+        .{ .src = comptime rescued("assert_raises(Array) { 1 }"), .expected = .{ .str = "TypeError: assert_raises expects an error class, got Array" } },
+        // Inside a method, a block and a loop alike: the compiler desugars it anywhere
+        .{ .src = "def f\n  assert_raises(ValueError) { [1].each { raise ValueError, \"deep\" } }\nend\nr = f.message", .expected = .{ .str = "deep" } },
+        .{ .src = "r = [1, 2].map { |i| assert_raises { raise \"e#{i}\" }.message }.join(\",\")", .expected = .{ .str = "e1,e2" } },
+    });
+}
+
+test "Stdlib: an anchor is a point on the box, and place moves a part anchor to anchor" {
+    try expectScripts(&.{
+        .{ .src = "r = cube(x: 40, y: 20, z: 4).anchor(:top)", .expected = .{ .nums = &.{ 20, 10, 4 } } },
+        .{ .src = "r = cube(x: 40, y: 20, z: 4).anchor(:top_front_left)", .expected = .{ .nums = &.{ 0, 0, 4 } } },
+        .{ .src = "r = cube(x: 40, y: 20, z: 4).anchor(\"bottom_right\")", .expected = .{ .nums = &.{ 40, 10, 0 } } },
+        .{ .src = "r = cube(x: 40, y: 20, z: 4).anchor([0, 1, -1])", .expected = .{ .nums = &.{ 20, 20, 0 } } },
+        .{ .src = "r = square(10).anchor(:back)", .expected = .{ .nums = &.{ 5, 10, 0 } } },
+        .{ .src = "r = assemble(name: \"a\", parts: [cube(2), cube(2).translate(4, 0, 0)]).anchor(:center)", .expected = .{ .nums = &.{ 3, 1, 1 } } },
+        // A part placed on a top stands on its bottom; at: and offset: say otherwise
+        .{ .src = "bolt = cylinder(d: 3, h: 10)\nplate = cube(x: 40, y: 20, z: 4)\nr = place(bolt, on: :top, of: plate).bbox.center.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 20, 10, 9 } } },
+        .{ .src = "r = place(cube(2), on: :top_right, of: cube(10), at: :bottom_left, offset: [1, 0, 0]).bbox.min", .expected = .{ .nums = &.{ 11, 4, 10 } } },
+        .{ .src = "r = place(square(2), on: :back, of: square(10)).bbox.min", .expected = .{ .nums = &.{ 4, 10, 0 } } },
+        .{ .src = "r = place(assemble(name: \"a\", parts: [cube(2)]), on: :top, of: cube(4)).bbox.min[2]", .expected = .{ .num = 4 } },
+        .{ .src = comptime rescued("cube(1).anchor(:tap)"), .expected = .{ .str = "ArgumentError: anchor: unknown anchor 'tap'; an anchor is top, bottom, left, right, front, back or center, joined by _ (:top_front_left)" } },
+        .{ .src = comptime rescued("cube(1).anchor(:top_bottom)"), .expected = .{ .str = "ArgumentError: anchor: the anchor 'top_bottom' names one axis twice" } },
+        .{ .src = comptime rescued("cube(1).anchor([1, 2, 0])"), .expected = .{ .str = "ArgumentError: anchor: an anchor as an Array is three of -1, 0 and 1, got Number" } },
+        .{ .src = comptime rescued("place(cube(1), of: cube(2))"), .expected = .{ .str = "ArgumentError: place needs on: the anchor of the shape to place the part at (:top, :front_left...)" } },
+        .{ .src = comptime rescued("place(cube(1), on: :top)"), .expected = .{ .str = "ArgumentError: place needs of: the shape to place the part on" } },
+        .{ .src = comptime rescued("place(5, on: :top, of: cube(2))"), .expected = .{ .str = "TypeError: place expects a Solid, a Sketch or an Assembly to place, got Number" } },
+        .{ .src = comptime rescued("place(square(1), on: :top, of: cube(2))"), .expected = .{ .str = "ValueError: a Sketch can only place in x and y (it lies in the XY plane), got z 2; extrude it to lift it" } },
+        .{ .src = comptime rescued("cube(1).offset(-1).anchor(:top)"), .expected = .{ .str = "ValueError: anchor: the shape is empty, with no box to anchor on" } },
     });
 }
 
@@ -2184,15 +2245,15 @@ test "Stdlib: a revolve, a twist and a helix take their share of a full turn's s
         .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(720)", .expected = 24 }, // a full turn at most
         .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(90, segments: 32)", .expected = 8 }, // per full turn
         .{ .src = fixed ++ "r = circle(r: 1).translate(x: 3).helix(h: 20, twist: 3600)", .expected = 240 },
-        .{ .src = fixed ++ "r = square(1).helix(5, 90, 8)", .expected = 8 }, // slices: is the count itself
+        .{ .src = fixed ++ "r = square(1).helix(5, 90, 8)", .expected = 2 }, // slices: per full turn: a quarter of 8
         .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90)", .expected = 6 },
-        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90, slices: 3)", .expected = 3 },
+        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90, slices: 12)", .expected = 3 }, // a quarter of 12 a turn
         .{ .src = fixed ++ "r = square(1).extrude(5, scale: 0.5)", .expected = 0 }, // a taper needs no slices
         // At the profile's farthest point: from the z axis for a twist (the corner [3, 3],
         // 2π·4.24 / 1 → 27), its farthest x for a revolve about y (8: 2π·8 → 51, a
         // quarter 13)
-        .{ .src = by_size ++ "r = square(6, center: true).extrude(5, twist: 360)", .expected = 27 },
-        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve", .expected = 51 },
+        .{ .src = by_size ++ "r = square(6, center: true).extrude(5, twist: 360)", .expected = 36 }, // the chord rule asks 33 at r 4.24, to a multiple of 4
+        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve", .expected = 52 },
         .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve(90)", .expected = 13 },
     };
     for (cases) |case| {
@@ -2469,7 +2530,7 @@ test "Stdlib: the sketch measures and operations answer alike on both engines" {
         .{ .src = "r = square(10).translate(5, 0).extrude(2).volume", .expected = 200 },
         .{ .src = "r = (square(10) - square(4).translate(3, 3)).extrude(2).volume", .expected = 168 },
         .{ .src = "r = square(4).offset(1, join: :miter).extrude(1).volume", .expected = 36 },
-        .{ .src = "r = text(\"Hi\", size: 10).extrude(2).volume", .expected = 43.42159032821655 },
+        .{ .src = "r = text(\"Hi\", size: 10).extrude(2).volume", .expected = 43.563731014728546 },
     };
     for ([_][]const u8{ "manifold", "brep" }) |engine| {
         for (cases) |case| {
@@ -3281,29 +3342,29 @@ test "Stdlib: each method gives back what the manifest says it does" {
     // the method really returns. `c` is a Solid, `s` a Sketch.
     const manifest = @import("manifest.zig");
     const calls = [_]struct { []const u8, []const u8 }{
-        .{ "union", "c.union(cube(1))" },                        .{ "difference", "c.difference(cube(1))" },
-        .{ "intersection", "c.intersection(cube(1))" },          .{ "translate", "c.translate(1, 0, 0)" },
-        .{ "rotate", "c.rotate(0, 0, 90)" },                     .{ "scale", "c.scale(2)" },
-        .{ "resize", "c.resize([4, 4, 4])" },                    .{ "project", "c.project" },
-        .{ "slice", "c.slice(1)" },                              .{ "center", "c.center" },
-        .{ "align", "c.align(cube(1), \"x\", \"min\")" },        .{ "mirror", "c.mirror(1, 0, 0)" },
-        .{ "split_by_plane", "c.split_by_plane(0, 0, 1, 1)" },   .{ "decompose", "c.decompose" },
-        .{ "genus", "c.genus" },                                 .{ "simplify", "c.simplify" },
-        .{ "bbox", "c.bbox" },                                   .{ "volume", "c.volume" },
-        .{ "surface_area", "c.surface_area" },                   .{ "extrude", "s.extrude(1)" },
-        .{ "revolve", "s.translate(5, 0).revolve(90)" },         .{ "hull", "c.hull(cube(1).translate(3, 0, 0))" },
-        .{ "helix", "s.helix(5, 90)" },                          .{ "loft", "s.loft(square(1), 5)" },
-        .{ "trim_by_plane", "c.trim_by_plane(0, 0, 1)" },        .{ "minkowski", "c.minkowski(sphere(0.5))" },
-        .{ "offset", "s.offset(1)" },                            .{ "transform", "c.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])" },
-        .{ "min_gap", "c.min_gap(cube(1).translate(5, 0, 0))" }, .{ "contains?", "c.contains?([1, 1, 1])" },
-        .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },    .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },
-        .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
-        .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
-        .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
-        .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
-        .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
-        .{ "shell", "c.shell(0.1)" },                            .{ "sweep", "s.sweep(line([0, 0], [1, 0]))" },
-        .{ "round_edges", "c.round_edges(0.2)" },
+        .{ "union", "c.union(cube(1))" },                                      .{ "difference", "c.difference(cube(1))" },
+        .{ "intersection", "c.intersection(cube(1))" },                        .{ "translate", "c.translate(1, 0, 0)" },
+        .{ "rotate", "c.rotate(0, 0, 90)" },                                   .{ "scale", "c.scale(2)" },
+        .{ "resize", "c.resize([4, 4, 4])" },                                  .{ "project", "c.project" },
+        .{ "slice", "c.slice(1)" },                                            .{ "center", "c.center" },
+        .{ "align", "c.align(cube(1), \"x\", \"min\")" },                      .{ "mirror", "c.mirror(1, 0, 0)" },
+        .{ "anchor", "c.anchor(:top)" },                                       .{ "split_by_plane", "c.split_by_plane(0, 0, 1, 1)" },
+        .{ "decompose", "c.decompose" },                                       .{ "genus", "c.genus" },
+        .{ "simplify", "c.simplify" },                                         .{ "bbox", "c.bbox" },
+        .{ "volume", "c.volume" },                                             .{ "surface_area", "c.surface_area" },
+        .{ "extrude", "s.extrude(1)" },                                        .{ "revolve", "s.translate(5, 0).revolve(90)" },
+        .{ "hull", "c.hull(cube(1).translate(3, 0, 0))" },                     .{ "helix", "s.helix(5, 90)" },
+        .{ "loft", "s.loft(square(1), 5)" },                                   .{ "trim_by_plane", "c.trim_by_plane(0, 0, 1)" },
+        .{ "minkowski", "c.minkowski(sphere(0.5))" },                          .{ "offset", "s.offset(1)" },
+        .{ "transform", "c.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])" }, .{ "min_gap", "c.min_gap(cube(1).translate(5, 0, 0))" },
+        .{ "contains?", "c.contains?([1, 1, 1])" },                            .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },
+        .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },                   .{ "repeat_polar", "c.repeat_polar(3)" },
+        .{ "material", "c.material(color: \"#ff0000\")" },                     .{ "highlight", "c.highlight" },
+        .{ "ghost", "c.ghost" },                                               .{ "named", "c.named(\"block\")" },
+        .{ "bom", "c.bom" },                                                   .{ "area", "s.area" },
+        .{ "center_of_mass", "c.center_of_mass" },                             .{ "intersects?", "c.intersects?(cube(1))" },
+        .{ "mass", "c.material(density: 1).mass" },                            .{ "shell", "c.shell(0.1)" },
+        .{ "sweep", "s.sweep(line([0, 0], [1, 0]))" },                         .{ "round_edges", "c.round_edges(0.2)" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
@@ -3509,8 +3570,9 @@ test "Stdlib: each Assembly method gives back what the manifest says it does" {
             try testing.expectEqual(manifest.Result.receiver, m.result);
         } else {
             const expected = comptime if (m.result == .receiver) "Assembly" else m.result.className().?;
-            // A density, for mass
-            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1).material(density: 1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
+            // A density, for mass; an anchor's name, for anchor
+            const call = comptime if (std.mem.eql(u8, m.name, "anchor")) "anchor(:top)" else m.name;
+            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1).material(density: 1)])\nr = \"#{a." ++ call ++ ".class}\"", .expected = .{ .str = expected } }});
         }
     }
 }

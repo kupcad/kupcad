@@ -12,6 +12,7 @@ const iteration = @import("iteration.zig");
 const callBlock = iteration.callBlock;
 const callBlockHolding = iteration.callBlockHolding;
 const arguments = @import("../arguments.zig");
+const shape_methods = @import("../methods.zig");
 
 /// Array#length / Array#size
 pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
@@ -341,6 +342,10 @@ fn orderOf(a: value.Value, b: value.Value) std.math.Order {
 /// for each (0 for an empty Array). Anything else is a TypeError (it used to be skipped), and
 /// a total beyond the Number range a RangeError.
 pub fn arraySum(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
+    // Shapes add by union: an Array of Solids or of Sketches sums to one, as `+` adds them
+    if (block == null and arr.items.items.len > 0 and (arr.items.items[0].isGeometry() or arr.items.items[0].isCrossSection())) {
+        return shape_methods.meshUnion(vm, arr.items.items[0], arr.items.items[1..]);
+    }
     var sum: f64 = 0.0;
     var all_finite = true;
     // By index: the block may change the Array

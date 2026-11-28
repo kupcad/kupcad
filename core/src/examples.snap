@@ -12,7 +12,7 @@ cup
   exports svg
   drawn 1 id=cup fill=#000000 stroke=#000000
 fan_wheel
-  part 1 manifold volume=13699.258642449655 area=11060.714904054668 min=-39.11584638267548,-39.99552407241094,0 max=39.49038719438524,37.421356400612204,20 genus=1 vertices=657 triangles=1314
+  part 1 manifold volume=18209.192140076066 area=11362.895923853212 min=-39.10526970968128,-39.98426505532212,0 max=39.54516839340085,37.52609061312444,20 genus=1 vertices=330 triangles=660
   group 1 name=fan wheel copies=1 material=#c0392bff
   exports glb
 grid_organizer
@@ -20,7 +20,7 @@ grid_organizer
   group 1 name=tray copies=1 material=#3c6e91ff
   exports glb
 hex_bit_holder
-  part 1 manifold volume=33933.33788964843 area=12054.32253910761 min=0,0,0 max=78.1,28.7,18 genus=0 vertices=317 triangles=630
+  part 1 manifold volume=33951.85813818916 area=12059.750796441422 min=0,0,0 max=78.1,28.7,18 genus=0 vertices=575 triangles=1146
   group 1 name=bit holder copies=1 material=#2f4858ff
   exports glb
 hinge
@@ -30,18 +30,18 @@ hinge
   group 2 name=leaf copies=1 material=#9acd32ff
   exports glb
 honeycomb_wall
-  part 1 manifold volume=23952.118349087134 area=19043.725656486833 min=-11.799999999999997,-13.347005383792514,0 max=99,69.9850667912948,8 genus=18 vertices=240 triangles=548
-  part 2 manifold volume=4384.960041295818 area=2136.9445738651025 min=21.8,6.293117934166919,0 max=43.60000000000001,31.465589670834603,33 genus=0 vertices=66 triangles=128
+  part 1 manifold volume=23959.308593802398 area=19047.57265891123 min=-11.799999999999997,-13.347005383792514,0 max=99,69.9850667912948,8 genus=18 vertices=272 triangles=612
+  part 2 manifold volume=4390.319968981832 area=2139.70354775862 min=21.8,6.293117934166919,0 max=43.60000000000001,31.465589670834603,33 genus=0 vertices=94 triangles=184
   group 1 name=wall copies=1 material=#4a4e69ff
   group 2 name=hook copies=1 material=#f2a541ff
   exports glb
 name_tag
-  part 1 manifold volume=2682.346062879795 area=2305.638318991189 min=-25.7861328125,-9.159423828125,0 max=25.7861328125,9.159423828125,4 genus=1 vertices=387 triangles=774
+  part 1 manifold volume=2678.1475702691764 area=2304.086865467747 min=-25.7861328125,-9.159423828125,0 max=25.7861328125,9.159423828125,4 genus=1 vertices=649 triangles=1298
   group 1 name=tag copies=1 material=#1f6f8bff
   exports glb
 parabolic_dish
-  part 1 manifold volume=30797.07677633065 area=49232.39792625129 min=-60,-59.6713137220964,-2 max=60,59.6713137220964,24.5 genus=0 vertices=3782 triangles=7560
-  part 2 manifold volume=449.6250071626849 area=529.4061826299867 min=-4,-4,0 max=4,4,46 genus=0 vertices=86 triangles=168
+  part 1 manifold volume=30824.4285924445 area=49268.98999383777 min=-60,-60,-2 max=60,60,24.5 genus=0 vertices=4034 triangles=8064
+  part 2 manifold volume=527.4845063607283 area=557.9770747955021 min=-4,-4,0 max=4,4,46 genus=0 vertices=305 triangles=606
   group 1 name=dish copies=1 material=#d8dee9ff
   group 2 name=receiver copies=1 material=#bf616aff
   exports glb
@@ -99,14 +99,14 @@ spiral_staircase
   group 3 name=step copies=14 material=#c8a165ff
   exports glb
 standoff
-  part 1 manifold volume=5150.982915946414 area=4212.124101444654 min=-13.980861451446813,-4.070106383802021,0 max=14.1,28.09554139813615,25 genus=3 vertices=171 triangles=350
+  part 1 manifold volume=5227.237414629032 area=4219.592317253616 min=-14.1,-4.1,0 max=14.1,28.09554139813615,25 genus=3 vertices=301 triangles=610
   group 1 name=- copies=1
   exports glb
 text
-  part 1 manifold volume=719.1938254982233 area=2027.034469625105 min=0.8251953125,-2.03125,0 max=64.2236328125,7.5,5 genus=-7 vertices=586 triangles=1140
+  part 1 manifold volume=720.7387369126083 area=2029.8921470450737 min=0.8251953125,-2.03125,0 max=64.2236328125,7.5,5 genus=-7 vertices=996 triangles=1960
   group 1 name=- copies=1
   exports glb
 twisted_vase
-  part 1 manifold volume=103356.45868699913 area=67909.24930656842 min=-48.4527104850313,-48.86298606187783,0 max=47.45081211363904,45.96715768407144,120 genus=0 vertices=455 triangles=906
+  part 1 manifold volume=104658.32929652308 area=67209.9878897729 min=-48.4527104850313,-48.86298606187783,0 max=47.445068229881706,45.9817051637415,120 genus=0 vertices=175 triangles=346
   group 1 name=vase copies=1 material=#3a7d8cff
   exports glb

@@ -1600,7 +1600,12 @@ test "LSP: every declared capability has its handler" {
 /// The documented `def` named `name` of the document (its `# @doc` block), if one.
 fn functionDocNamed(arena: std.mem.Allocator, doc: *const api.Document, name: []const u8) ?api.FunctionDoc {
     const functions = api.functionDocs(arena, doc) catch return null;
-    for (functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
+    for (functions) |function| {
+        if (std.mem.eql(u8, function.name, name)) return function;
+        // A class's `Nut#solid` or `Nut.sizes`, by the method's own name
+        const bare = std.mem.lastIndexOfAny(u8, function.name, "#.") orelse continue;
+        if (std.mem.eql(u8, function.name[bare + 1 ..], name)) return function;
+    }
     return null;
 }
 

@@ -7,16 +7,19 @@ const EngineConfig = engine_config.EngineConfig;
 const Resolution = engine_config.Resolution;
 
 test "Resolution: a fixed count wins, otherwise the finer of angle and length rules" {
-    const defaults: Resolution = .{}; // 12 degrees, 2 units
-    // Small circles are limited by edge length: 2πr / 2.
-    try testing.expectEqual(@as(u32, 7), defaults.segmentsFor(2)); // ceil(6.28)
+    const defaults: Resolution = .{}; // 12 degrees, 2 units, 0.02 mm of chord error
+    // Small circles were limited by edge length (2πr / 2, 7 for r = 2), which made a 3.4 mm
+    // hole a 10-gon 3.2 mm across the flats: the chord rule asks π / acos(1 - 0.02 / 2) = 23
+    // (23, rounded up to a multiple of 4)
+    try testing.expectEqual(@as(u32, 24), defaults.segmentsFor(2));
+    try testing.expectEqual(@as(u32, 8), (Resolution{ .chord = 1 }).segmentsFor(2)); // by length alone: 7, to 8
     // Large ones by angle: 360 / 12.
-    try testing.expectEqual(@as(u32, 30), defaults.segmentsFor(100));
+    try testing.expectEqual(@as(u32, 32), defaults.segmentsFor(100)); // 30, to a multiple of 4
     // Never fewer than 5, however small the circle.
-    try testing.expectEqual(@as(u32, 5), defaults.segmentsFor(0.01));
+    try testing.expectEqual(@as(u32, 8), defaults.segmentsFor(0.01));
     // A degenerate radius gets the floor rather than a NaN count.
-    try testing.expectEqual(@as(u32, 5), defaults.segmentsFor(0));
-    try testing.expectEqual(@as(u32, 5), defaults.segmentsFor(std.math.nan(f64)));
+    try testing.expectEqual(@as(u32, 8), defaults.segmentsFor(0));
+    try testing.expectEqual(@as(u32, 8), defaults.segmentsFor(std.math.nan(f64)));
 
     const fixed: Resolution = .{ .segments = 6 };
     try testing.expectEqual(@as(u32, 6), fixed.segmentsFor(0.01));
@@ -82,7 +85,8 @@ test "EngineConfig: resultHash changes with every setting that changes a result"
 
 test "EngineConfig: chordError is how far a circle at this resolution strays from round" {
     // 16 segments for a radius-5 circle at the default resolution (by length: 2π·5 / 2).
-    try testing.expectApproxEqAbs(5.0 * (1.0 - @cos(std.math.pi / 16.0)), (EngineConfig{}).chordError(5), 1e-12);
+    // 32 segments for r = 5 since the chord rule (16 by length alone)
+    try testing.expectApproxEqAbs(5.0 * (1.0 - @cos(std.math.pi / 32.0)), (EngineConfig{}).chordError(5), 1e-12);
     // A square's corners stray 1 - cos 45° of the radius.
     try testing.expectApproxEqAbs(1.0 - @sqrt(0.5), (EngineConfig{ .resolution = .{ .segments = 4 } }).chordError(1), 1e-12);
 }

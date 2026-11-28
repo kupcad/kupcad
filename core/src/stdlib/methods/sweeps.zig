@@ -3,7 +3,7 @@
 //! each checking its arguments and adding a DAG node. Exported through methods.zig. A
 //! sweep that turns the profile (a revolve, a twist) gets its share of the segments a full
 //! turn gets at the profile's farthest point from the axis, as OpenSCAD's rotate_extrude
-//! and linear_extrude do (`segments:` is per full turn; `slices:` the count itself).
+//! and linear_extrude do (`segments:` and `slices:` are both per full turn).
 
 const std = @import("std");
 const arguments = @import("../arguments.zig");
@@ -350,13 +350,15 @@ const Sweep = struct {
     }
 };
 
-/// The slices a twist of `twist_degrees` is cut into: the script's `slices`, or with none
-/// (0), the twist's share of a full turn at the profile's farthest point from the z axis.
-/// An untwisted extrusion needs none between its ends, and an empty profile has nothing
-/// to cut.
+/// The slices a twist of `twist_degrees` is cut into: the twist's share of a full turn's
+/// count, the script's `slices` per turn or, with none (0), the segments the resolution
+/// gives a turn at the profile's farthest point from the z axis (so `slices:` is per full
+/// turn, as `segments:` is: a 16-turn helix with `slices: 24` got 24 slices in all, a
+/// mangled thread). An untwisted extrusion needs none between its ends, and an empty
+/// profile has nothing to cut.
 fn twistSlices(vm: *VM, receiver: value.Value, slices: i32, twist_degrees: f64) !i32 {
-    if (slices > 0 or twist_degrees == 0) return slices;
-    const per_turn = try perTurnAbout(vm, receiver, .z, &.{ .extrude, .extrude_twist }) orelse return slices;
+    if (twist_degrees == 0) return slices; // given, kept: a straight extrusion in layers
+    const per_turn: i32 = if (slices > 0) slices else try perTurnAbout(vm, receiver, .z, &.{ .extrude, .extrude_twist }) orelse return 0;
     return @intCast(turnShare(@intCast(per_turn), twist_degrees / 360.0));
 }
 

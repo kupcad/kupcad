@@ -7,6 +7,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const iteration = @import("iteration.zig");
 const arguments = @import("../arguments.zig");
+const array_mod = @import("array.zig");
 
 fn spanOf(r: *value.ObjRange) iteration.Span {
     return .{ .start = r.start, .end = r.end, .step = r.step, .is_exclusive = r.is_exclusive };
@@ -27,6 +28,25 @@ pub fn rangeMap(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.V
 /// Range#to_a
 pub fn rangeToA(vm: *VM, r: *value.ObjRange) !value.Value {
     return iteration.collect(vm, spanOf(r), null, "Range#to_a");
+}
+
+/// Range#filter { |i| ... } (also #select): the values the block is truthy for, as an
+/// Array; Array#filter over the Range's values.
+pub fn rangeFilter(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.Value {
+    return keepWhere(vm, r, block, true, "Range#filter");
+}
+
+/// Range#reject { |i| ... }: the values the block is false or nil for.
+pub fn rangeReject(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.Value {
+    return keepWhere(vm, r, block, false, "Range#reject");
+}
+
+fn keepWhere(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure, truthy: bool, method: []const u8) !value.Value {
+    const b = try arguments.requireBlock(vm, block, method);
+    const all = try rangeToA(vm, r);
+    vm.push(all); // rooted while the block runs
+    defer _ = vm.pop();
+    return if (truthy) array_mod.arrayFilter(vm, all.asArray(), b) else array_mod.arrayReject(vm, all.asArray(), b);
 }
 
 /// Range#size / #length
@@ -87,6 +107,9 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "each", .func = common.wrapMethod(rangeEach) },
     .{ .name = "map", .func = common.wrapMethod(rangeMap) },
     .{ .name = "to_a", .func = common.wrapMethod(rangeToA) },
+    .{ .name = "filter", .func = common.wrapMethod(rangeFilter) },
+    .{ .name = "select", .func = common.wrapMethod(rangeFilter) },
+    .{ .name = "reject", .func = common.wrapMethod(rangeReject) },
     .{ .name = "size", .func = common.wrapMethod(rangeSize) },
     .{ .name = "length", .func = common.wrapMethod(rangeSize) },
     .{ .name = "count", .func = common.wrapMethod(rangeCount) },

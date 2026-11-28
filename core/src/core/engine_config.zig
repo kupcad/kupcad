@@ -55,6 +55,7 @@ pub const EngineConfig = struct {
             return std.fmt.comptimePrint("resolution segments must be 0 (automatic) or 3 to {d}", .{MAX_SEGMENTS});
         if (!isPositive(res.min_angle) or res.min_angle > 180.0) return "resolution min_angle must be above 0 and at most 180 degrees";
         if (!isPositive(res.min_length)) return "resolution min_length must be a positive number";
+        if (!isPositive(res.chord)) return "resolution chord must be a positive number";
         if (self.max_vertices == 0) return "max_vertices must be at least 1";
         if (self.brep.max_newton_trials == 0 or self.brep.max_newton_trials > limits.MAX_NEWTON_TRIALS)
             return std.fmt.comptimePrint("brep max_newton_trials must be 1 to {d}", .{limits.MAX_NEWTON_TRIALS});
@@ -87,6 +88,7 @@ pub const EngineConfig = struct {
         std.hash.autoHash(&h, self.resolution.segments);
         std.hash.autoHash(&h, @as(u64, @bitCast(self.resolution.min_angle)));
         std.hash.autoHash(&h, @as(u64, @bitCast(self.resolution.min_length)));
+        std.hash.autoHash(&h, @as(u64, @bitCast(self.resolution.chord)));
         std.hash.autoHash(&h, self.manifold.simplify_coplanar);
         std.hash.autoHash(&h, self.brep.max_newton_trials);
         std.hash.autoHash(&h, self.brep.max_marching_steps);

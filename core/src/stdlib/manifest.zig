@@ -142,6 +142,7 @@ pub const language_intrinsics = [_]struct { []const u8, Intrinsic }{
     .{ "defined?", .defined_chk },
     .{ "params", .protected_symbol }, // CLI injection map
     .{ "test", .protected_symbol }, // a test block (compiler/compiler.zig), never a script's own def
+    .{ "assert_raises", .protected_symbol }, // desugared by the compiler too
 };
 
 /// What a `test("name") do ... end` block calls under `kupcad test` (compiler/compiler.zig
@@ -150,6 +151,8 @@ pub const test_block = struct {
     pub const begin: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestBegin);
     pub const pass: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestPass);
     pub const fail: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestFail);
+    /// What `assert_raises(Class, message) do ... end` calls with what its block raised.
+    pub const raised: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeAssertRaised);
 };
 
 pub const global_functions = [_]GlobalFunction{
@@ -166,6 +169,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "benchmark", .func = common.wrapGlobal(diagnostics_mod.nativeBenchmark), .category = .io, .result = .varies },
     .{ .name = "assemble", .func = common.wrapGlobal(assembly_mod.nativeAssemble), .category = .brep_op, .result = .assembly },
     .{ .name = "union", .func = common.wrapGlobal(assembly_mod.nativeUnion), .category = .csg_operator, .result = .solid },
+    .{ .name = "place", .func = common.wrapGlobal(methods.globalPlace), .category = .transform, .result = .varies },
     .{ .name = "batch_hull", .func = common.wrapGlobal(assembly_mod.nativeBatchHull), .category = .csg_operator, .result = .solid },
     .{ .name = "highlight", .func = common.wrapGlobal(methods.globalHighlight), .category = .transform, .result = .solid },
     .{ .name = "ghost", .func = common.wrapGlobal(methods.globalGhost), .category = .transform, .result = .nothing },
@@ -204,6 +208,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("slice", .transform, methods.meshSlice, &sig.SLICE, .sketch, .solids),
     method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
     method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver, .both),
+    method("anchor", .inspection_method, methods.meshAnchor, &sig.ANCHOR, .array, .both),
     method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver, .both),
     // `on_face` returns a Workplane, a value with no methods yet: hidden until the fluent
     // sketching API it belongs to exists (CadQuery's Workplane does the local-coordinate
@@ -288,6 +293,7 @@ pub const assembly_methods = [_]MeshMethod{
     method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
     method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
     method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver, .both),
+    method("anchor", .inspection_method, methods.meshAnchor, &sig.ANCHOR, .array, .both),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),

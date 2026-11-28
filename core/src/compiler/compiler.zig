@@ -1632,6 +1632,7 @@ pub const Compiler = struct {
             if (mc.block == .none) return self.fail(error.InvalidTest, macros.TEST_FORM_HELP, .{});
             return self.fail(error.InvalidTest, "a test block goes at the top level of a file, not inside a def, a class, a block or a branch", .{});
         }
+        if (mc.receiver == .none and std.mem.eql(u8, func_name, "assert_raises")) return self.compileAssertRaises(node);
         // Where the call is: its instruction, emitted after its receiver and arguments, is
         // put back there (callAt), so a run's error or warning in the call is placed at the
         // call and not at its last argument
@@ -2718,6 +2719,59 @@ pub const Compiler = struct {
         self.patchJump(done_jump);
         self.current_stack_depth = entry_depth;
         return true;
+    }
+
+    /// `assert_raises(ErrorClass = nil, message = nil) do ... end`, anywhere: as if written
+    ///
+    ///     raised = nil                      # a hidden local
+    ///     begin
+    ///       <body>
+    ///     rescue Exception => e
+    ///       raised = e
+    ///     end
+    ///     __raised(raised, ErrorClass, message)   # stdlib/diagnostics.zig's check; the error
+    ///
+    /// which no native could do alone, as none catches what a block raises. Its value is the
+    /// error raised.
+    fn compileAssertRaises(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const mc = self.tree.methodCall(node);
+        if (mc.block == .none) return self.fail(error.InvalidTest, "assert_raises takes a block: assert_raises(ArgumentError) do ... end", .{});
+        const args = self.tree.getNamedArgs(mc.args);
+        if (args.len > 2) return self.fail(error.TooManyArguments, "assert_raises takes an error class and a message at most", .{});
+        for (args) |arg| if (arg.name != .none or arg.modifier != null) return self.fail(error.InvalidTest, "assert_raises takes its class and message as plain arguments", .{});
+        const block_payload = self.tree.block(self.tree.getNode(mc.block).?);
+        if (block_payload.params.start != block_payload.params.end) return self.fail(error.InvalidTest, "assert_raises' block takes no parameters", .{});
+        const body = self.tree.getNodes(block_payload.stmts);
+        const entry_depth = self.current_stack_depth;
+        const slot = try self.hiddenLocalSlots(1);
+
+        try self.emitOp(.op_nil);
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+        try self.emitOp(.op_pop);
+        const rescue_jump = try self.emitJump(.op_setup_rescue);
+        try self.unwind_stack.append(self.allocator, .rescue_handler);
+        for (body) |stmt| {
+            try self.compileNode(stmt);
+            try self.emitOp(.op_pop);
+        }
+        _ = self.unwind_stack.pop();
+        try self.emitOp(.op_pop_rescue);
+        const end_jump = try self.emitJump(.op_jump);
+        self.patchJump(rescue_jump);
+        self.current_stack_depth = entry_depth + 1; // the error, pushed by the throw
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+        try self.emitOp(.op_pop);
+        self.patchJump(end_jump);
+        self.current_stack_depth = entry_depth;
+
+        const check = try self.nativeConstant("assert_raises", manifest.test_block.raised);
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, check);
+        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, slot);
+        if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
+        if (args.len > 1) try self.compileNode(args[1].value) else try self.emitOp(.op_nil);
+        try self.emitCall(.op_call, .{ .count = 3 });
+        self.simulatePop(4);
+        self.simulatePush(1); // the error raised
     }
 
     /// What the file's test blocks share, made at the first: the natives as constants, and

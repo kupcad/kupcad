@@ -124,20 +124,32 @@ pub const Tolerance = struct {
 /// $fn, $fa and $fs). KupCAD's mesh engine follows the same rule, so both kernels cut a
 /// curve alike.
 pub const Resolution = struct {
-    segments: u32 = 0, // 0 = from min_angle and min_length
+    segments: u32 = 0, // 0 = from min_angle, min_length and chord
     min_angle: f64 = 12.0,
     min_length: f64 = 2.0,
+    /// The most a circle's edge may stray from the arc it stands for (its sagitta), in
+    /// millimetres: small circles get the segments this takes, where the length rule
+    /// alone made a 3.4 mm hole a 10-gon 3.2 mm across the flats, undersized for its
+    /// screw. The angle rule still caps the count, so a large circle costs no more.
+    chord: f64 = 0.02,
 
-    /// The number of edges a full circle of `radius` gets.
+    /// The number of edges a full circle of `radius` gets: at most `min_angle` of arc
+    /// each and no shorter than `min_length`, whichever gives fewer, but at least as many
+    /// as keep the edges within `chord` of the arc, up to the angle rule's count; then
+    /// rounded up to a multiple of 4, so a quarter arc ends on the axes and a half circle's
+    /// chords reach its full width (an odd count put no vertex at 90°, and the mesh engine's
+    /// box of an arc fell short of the exact engine's).
     pub fn segmentsFor(self: Resolution, radius: f64) u32 {
         if (self.segments > 0) return self.segments;
-        if (!(radius > 0.0)) return MIN_AUTO_SEGMENTS;
+        if (!(radius > 0.0)) return (MIN_AUTO_SEGMENTS + 3) / 4 * 4;
         const by_angle = 360.0 / self.min_angle;
         const by_length = 2.0 * std.math.pi * radius / self.min_length;
-        const count = @ceil(@min(by_angle, by_length));
+        const by_chord = if (self.chord < radius) std.math.pi / std.math.acos(1.0 - self.chord / radius) else 1.0;
+        const count = @ceil(@min(by_angle, @max(by_length, by_chord)));
         // Past u32 the count is meaningless anyway; callers clamp to their own limits.
-        if (!(count < @as(f64, std.math.maxInt(u32)))) return std.math.maxInt(u32);
-        return @max(MIN_AUTO_SEGMENTS, @as(u32, @intFromFloat(count)));
+        if (!(count < @as(f64, std.math.maxInt(u32)) - 4)) return std.math.maxInt(u32);
+        const at_least = @max(MIN_AUTO_SEGMENTS, @as(u32, @intFromFloat(count)));
+        return (at_least + 3) / 4 * 4;
     }
 
     /// The most a free-form curve's span may bow from its chord of length `chord`: the
@@ -154,6 +166,8 @@ pub const Resolution = struct {
             2.0 * std.math.pi / @as(f64, @floatFromInt(MIN_AUTO_SEGMENTS))
         else
             self.min_angle * std.math.pi / 180.0;
-        return 0.5 * chord * @tan(turning / 4.0);
+        const bow = 0.5 * chord * @tan(turning / 4.0);
+        // A small circle is cut by the chord rule, so a span passes by it too
+        return if (self.segments > 0) bow else @min(bow, self.chord);
     }
 };

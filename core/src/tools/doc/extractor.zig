@@ -111,7 +111,8 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSche
     return schema;
 }
 
-/// The documented `def`s of the file's top level, in order (FunctionDoc); its strings are
+/// The documented `def`s of the file's top level and of its classes and modules (a method
+/// as `Nut#solid`, a class method as `Nut.sizes`), in order (FunctionDoc); its strings are
 /// the Document's, or `allocator`'s.
 pub fn functionDocs(allocator: std.mem.Allocator, doc: *const Document) ![]FunctionDoc {
     var found: std.ArrayList(FunctionDoc) = .empty;
@@ -119,11 +120,48 @@ pub fn functionDocs(allocator: std.mem.Allocator, doc: *const Document) ![]Funct
     const root = doc.tree.getNode(doc.tree.root) orelse return found.toOwnedSlice(allocator);
     for (doc.tree.getNodes(doc.tree.block(root).stmts)) |stmt_idx| {
         const node = doc.tree.getNode(stmt_idx) orelse continue;
-        if (node.tag != .def_stmt) continue;
+        switch (node.tag) {
+            .def_stmt => try addFunctionDoc(allocator, doc, node, null, &found),
+            .class_stmt => {
+                const cs = doc.tree.classStmt(node);
+                try addMethodDocs(allocator, doc, doc.tree.getString(doc.tree.className(cs)), cs.body, &found);
+            },
+            .module_stmt => {
+                const ms = doc.tree.moduleStmt(node);
+                try addMethodDocs(allocator, doc, doc.tree.getString(ms.name), ms.body, &found);
+            },
+            else => {},
+        }
+    }
+    return found.toOwnedSlice(allocator);
+}
+
+/// The documented `def`s of a class or module body, named `Owner#method` (or
+/// `Owner.method` for a class method).
+fn addMethodDocs(allocator: std.mem.Allocator, doc: *const Document, owner: []const u8, body: ast.NodeIndex, found: *std.ArrayList(FunctionDoc)) !void {
+    const body_node = doc.tree.getNode(body) orelse return;
+    if (body_node.tag != .block) return;
+    for (doc.tree.getNodes(doc.tree.block(body_node).stmts)) |stmt_idx| {
+        const node = doc.tree.getNode(stmt_idx) orelse continue;
+        if (node.tag == .def_stmt) try addFunctionDoc(allocator, doc, node, owner, found);
+    }
+}
+
+/// Adds the `def` at `node` to `found` when a doc block stands above it, named after
+/// `owner` when it is a class's or module's.
+fn addFunctionDoc(allocator: std.mem.Allocator, doc: *const Document, node: *const ast.Node, owner: ?[]const u8, found: *std.ArrayList(FunctionDoc)) !void {
+    {
         const start = doc.tokens.starts[node.main_token];
         const block = commentBlockAbove(doc.source, start);
+        const ds = doc.tree.defStmt(node);
+        const bare = doc.tree.getString(ds.name);
+        const method_name = if (std.mem.startsWith(u8, bare, "self.")) bare[5..] else bare;
+        const name = if (owner) |o|
+            try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ o, if (ds.is_class_method or std.mem.startsWith(u8, bare, "self.")) "." else "#", method_name })
+        else
+            bare;
         var function: FunctionDoc = .{
-            .name = doc.tree.getString(doc.tree.defStmt(node).name),
+            .name = name,
             .line = doc.line_index.humanPosition(start).line,
             .signature = "",
         };
@@ -148,12 +186,11 @@ pub fn functionDocs(allocator: std.mem.Allocator, doc: *const Document) ![]Funct
                 allocator.free(content);
             }
         }
-        if (function.doc == null and params.items.len == 0 and function.returns == null and function.example == null) continue;
-        function.signature = try signatureOf(allocator, &doc.tree, node);
+        if (function.doc == null and params.items.len == 0 and function.returns == null and function.example == null) return;
+        function.signature = try signatureOf(allocator, &doc.tree, node, name);
         function.params = try params.toOwnedSlice(allocator);
         try found.append(allocator, function);
     }
-    return found.toOwnedSlice(allocator);
 }
 
 /// `content` (owned) without the line breaks it starts with: a tag whose text is all on the
@@ -183,12 +220,12 @@ fn commentBlockAbove(source: []const u8, start: usize) []const u8 {
     return source[block_start..end];
 }
 
-/// How the `def` at `node` is called: `name(a, b = …, key:, *rest, **opts, &blk)`.
-fn signatureOf(allocator: std.mem.Allocator, tree: *const ast.Tree, node: *const ast.Node) ![]const u8 {
+/// How the `def` at `node` is called, as `name`: `name(a, b = …, key:, *rest, **opts, &blk)`.
+fn signatureOf(allocator: std.mem.Allocator, tree: *const ast.Tree, node: *const ast.Node, name: []const u8) ![]const u8 {
     const ds = tree.defStmt(node);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
-    try out.writer.writeAll(tree.getString(ds.name));
+    try out.writer.writeAll(name);
     try out.writer.writeByte('(');
     for (tree.getParams(ds.params), 0..) |param, i| {
         if (i > 0) try out.writer.writeAll(", ");

@@ -24,19 +24,120 @@ const MATRIX_2D_LEN = 6;
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try arguments.parseVec3(vm, args, 0.0, "translate");
+    return translated(vm, receiver, vec, "translate");
+}
+
+/// `receiver` (a Solid, a Sketch or an Assembly) moved by `vec`, for `method`'s errors.
+fn translated(vm: *VM, receiver: value.Value, vec: [3]f64, method: []const u8) !value.Value {
     if (receiver.isAssembly()) return assembly.translated(vm, receiver, vec);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
         if (vec[2] != 0.0) {
-            return vm.fail(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
+            return vm.fail(.ValueError, "a Sketch can only {s} in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{ method, value.fmtNumber(vec[2]) });
         }
         const mat = affine2.translation(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return arguments.notDefinedFor(vm, "translate", receiver);
+    return arguments.notDefinedFor(vm, method, receiver);
+}
+
+/// A place on a shape's bounding box: along each axis its low end (-1), its middle (0) or
+/// its high end (1). Named `:top`/`:bottom` (z), `:right`/`:left` (x), `:back`/`:front`
+/// (y) and `:center`, joined by `_` for an edge or a corner (`:top_front_left`), as a
+/// Symbol or a String; or written as an Array of three of -1, 0 and 1.
+const Anchor = struct {
+    side: [3]i8,
+
+    fn parse(vm: *VM, val: value.Value, method: []const u8) !Anchor {
+        var side = [3]i8{ 0, 0, 0 };
+        if (val.isArray()) {
+            const items = val.asArray().items.items;
+            if (items.len != 3) return vm.fail(.ArgumentError, "{s}: an anchor as an Array is three of -1, 0 and 1, got {d} items", .{ method, items.len });
+            for (items, &side) |item, *s| {
+                if (!item.isNumber() or (item.asNumber() != -1 and item.asNumber() != 0 and item.asNumber() != 1)) {
+                    return vm.fail(.ArgumentError, "{s}: an anchor as an Array is three of -1, 0 and 1, got {s}", .{ method, vm.typeName(item) });
+                }
+                s.* = @intFromFloat(item.asNumber());
+            }
+            return .{ .side = side };
+        }
+        const text = val.nameChars() orelse return vm.fail(.TypeError, "{s} expects an anchor's name (:top, :bottom, :left, :right, :front, :back, :center, joined by _) or an Array of three of -1, 0 and 1, got {s}", .{ method, vm.typeName(val) });
+        var set = [3]bool{ false, false, false };
+        var words = std.mem.splitScalar(u8, text, '_');
+        var any = false;
+        while (words.next()) |word| {
+            any = true;
+            const axis: usize, const sign: i8 = if (std.mem.eql(u8, word, "right")) .{ 0, 1 } else if (std.mem.eql(u8, word, "left")) .{ 0, -1 } else if (std.mem.eql(u8, word, "back")) .{ 1, 1 } else if (std.mem.eql(u8, word, "front")) .{ 1, -1 } else if (std.mem.eql(u8, word, "top")) .{ 2, 1 } else if (std.mem.eql(u8, word, "bottom")) .{ 2, -1 } else if (std.mem.eql(u8, word, "center")) continue else {
+                return vm.fail(.ArgumentError, "{s}: unknown anchor '{s}'; an anchor is top, bottom, left, right, front, back or center, joined by _ (:top_front_left)", .{ method, text });
+            };
+            if (set[axis]) return vm.fail(.ArgumentError, "{s}: the anchor '{s}' names one axis twice", .{ method, text });
+            set[axis] = true;
+            side[axis] = sign;
+        }
+        if (!any) return vm.fail(.ArgumentError, "{s}: an anchor's name can't be empty", .{method});
+        return .{ .side = side };
+    }
+
+    /// Where it is on `box`.
+    fn on(self: Anchor, box: geom.BoundingBox) [3]f64 {
+        var at: [3]f64 = undefined;
+        for (&at, self.side, 0..) |*p, s, axis| p.* = switch (s) {
+            -1 => box.min[axis],
+            1 => box.max[axis],
+            else => (box.min[axis] + box.max[axis]) / 2.0,
+        };
+        return at;
+    }
+
+    /// The anchor across the box: a top's bottom, a front left's back right.
+    fn opposite(self: Anchor) Anchor {
+        return .{ .side = .{ -self.side[0], -self.side[1], -self.side[2] } };
+    }
+};
+
+/// `shape.anchor(name)`: the point on the shape's bounding box the anchor names, `[x, y,
+/// z]` (z 0 for a Sketch). An empty shape has no box, so no anchor.
+pub fn meshAnchor(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (args.len != 1) return vm.fail(.ArgumentError, "anchor expects 1 argument, the anchor's name, got {d}", .{args.len});
+    const anchor = try Anchor.parse(vm, args[0], "anchor");
+    const box = try arguments.boundsOf(vm, receiver, "anchor") orelse return vm.fail(.ValueError, "anchor: the shape is empty, with no box to anchor on", .{});
+    return vec3Value(vm, anchor.on(box));
+}
+
+/// `place(part, on:, of:, at:, offset:)`: `part` moved so its `at` anchor meets the `on`
+/// anchor of `of` (its opposite anchor when `at:` is left out: a part placed on another's
+/// top stands on its bottom), then `offset` further, `[x, y, z]`. A Solid, a Sketch or an
+/// Assembly, moved as `translate` moves it: nothing turns.
+pub fn globalPlace(vm: *VM, args: []const value.Value) !value.Value {
+    const Opts = struct { on: ?value.Value = null, of: ?value.Value = null, at: ?value.Value = null, offset: ?value.Value = null };
+    const parsed = try arguments.parseKwargs(Opts, vm, args, "place");
+    if (parsed.positional.len != 1) return vm.fail(.ArgumentError, "place takes the part to place, then on:, of: and optionally at: and offset:, got {d} positional arguments", .{parsed.positional.len});
+    const part = parsed.positional[0];
+    if (!part.isGeometry() and !part.isCrossSection() and !part.isAssembly()) return vm.fail(.TypeError, "place expects a Solid, a Sketch or an Assembly to place, got {s}", .{vm.typeName(part)});
+    const of = parsed.opts.of orelse return vm.fail(.ArgumentError, "place needs of: the shape to place the part on", .{});
+    const on_val = parsed.opts.on orelse return vm.fail(.ArgumentError, "place needs on: the anchor of the shape to place the part at (:top, :front_left...)", .{});
+    if (!of.isGeometry() and !of.isCrossSection() and !of.isAssembly()) return vm.fail(.TypeError, "place expects a Solid, a Sketch or an Assembly for of:, got {s}", .{vm.typeName(of)});
+    const on = try Anchor.parse(vm, on_val, "place");
+    const at = if (parsed.opts.at) |a| try Anchor.parse(vm, a, "place") else on.opposite();
+    var offset = [3]f64{ 0, 0, 0 };
+    if (parsed.opts.offset) |o| offset = try arguments.parsePoint(3, vm, o, "place", 0);
+    const target_box = try arguments.boundsOf(vm, of, "place") orelse return vm.fail(.ValueError, "place: the shape to place on is empty, with no anchors", .{});
+    const part_box = try arguments.boundsOf(vm, part, "place") orelse return part;
+    const to = on.on(target_box);
+    const from = at.on(part_box);
+    const vec = [3]f64{ to[0] - from[0] + offset[0], to[1] - from[1] + offset[1], to[2] - from[2] + offset[2] };
+    return translated(vm, part, vec, "place");
+}
+
+fn vec3Value(vm: *VM, v: [3]f64) !value.Value {
+    const arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&arr.obj));
+    defer _ = vm.pop();
+    for (v) |n| try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(n));
+    return value.Value.initObj(&arr.obj);
 }
 
 /// `rotate(x, y, z)` in degrees, or `rotate(a)`: about z, for a Solid as for a Sketch

@@ -18,6 +18,7 @@ pub const SCALE = TRANSLATE;
 pub const MIRROR = TRANSLATE;
 pub const RESIZE = Signature{ .positional = &.{"size"}, .keywords = &.{"auto"} };
 pub const CENTER = Signature{ .positional = &.{"axes"} };
+pub const ANCHOR = Signature{ .positional = &.{"name"} };
 pub const ALIGN = Signature{ .positional = &.{ "target", "axes", "my_align", "target_align", "offset" } };
 pub const TRANSFORM = Signature{ .positional = &.{"matrix"} };
 pub const REPEAT_LINEAR = Signature{ .positional = &.{ "count", "x", "y", "z" }, .keywords = &arguments.VEC3_NAMES };

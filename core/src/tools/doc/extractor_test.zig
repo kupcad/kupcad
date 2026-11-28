@@ -292,7 +292,7 @@ test "Extractor: a def's @doc block above it, its params, return and example, an
         \\end
         \\
         \\class Nut
-        \\  # @doc A method's isn't read: the top level's defs alone
+        \\  # @doc A method's is read too, under its class
         \\  def solid
         \\  end
         \\end
@@ -301,7 +301,8 @@ test "Extractor: a def's @doc block above it, its params, return and example, an
     defer doc.deinit();
     const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
-    try testing.expectEqual(@as(usize, 1), schema.functions.len);
+    try testing.expectEqual(@as(usize, 2), schema.functions.len);
+    try testing.expectEqualStrings("Nut#solid", schema.functions[1].name);
     const bolt = schema.functions[0];
     try testing.expectEqualStrings("bolt", bolt.name);
     try testing.expectEqual(@as(u32, 16), bolt.line);
@@ -317,6 +318,42 @@ test "Extractor: a def's @doc block above it, its params, return and example, an
     // The JSON `kupcad doc` prints carries them
     const json = try std.fmt.allocPrint(arena.allocator(), "{f}", .{std.json.fmt(schema, .{})});
     try testing.expect(std.mem.find(u8, json, "\"functions\":[{\"name\":\"bolt\",\"line\":16,") != null);
+}
+
+test "Extractor: a class's or module's documented methods are listed under their owner" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\class Nut
+        \\  # @doc The nut's body.
+        \\  # @param size The size
+        \\  def solid(size)
+        \\    cube(1)
+        \\  end
+        \\
+        \\  # @doc Every size.
+        \\  def self.sizes
+        \\    [1]
+        \\  end
+        \\
+        \\  def plain
+        \\  end
+        \\end
+        \\module Helpers
+        \\  # @return A Number
+        \\  def twice(x) = x * 2
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const functions = try extractor.functionDocs(arena.allocator(), &doc);
+    try testing.expectEqual(@as(usize, 3), functions.len);
+    try testing.expectEqualStrings("Nut#solid", functions[0].name);
+    try testing.expectEqualStrings("Nut#solid(size)", functions[0].signature);
+    try testing.expectEqual(@as(u32, 4), functions[0].line);
+    try testing.expectEqualStrings("Nut.sizes", functions[1].name);
+    try testing.expectEqualStrings("Helpers#twice", functions[2].name);
+    try testing.expectEqualStrings("Helpers#twice(x)", functions[2].signature);
 }
 
 test "Extractor: a def with one tag alone is documented, a file without any has no functions" {

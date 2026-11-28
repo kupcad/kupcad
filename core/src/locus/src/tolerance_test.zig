@@ -63,9 +63,13 @@ test "Tolerance: the comparisons" {
 test "Resolution: segments when set, else by angle and length, never under five" {
     try testing.expectEqual(@as(u32, 12), (Resolution{ .segments = 12 }).segmentsFor(1000));
     const auto: Resolution = .{};
-    try testing.expectEqual(@as(u32, 30), auto.segmentsFor(1000)); // 360 / 12
-    try testing.expectEqual(@as(u32, 5), auto.segmentsFor(0.1)); // 2π·0.1 / 2 < 5
-    try testing.expectEqual(@as(u32, 5), auto.segmentsFor(0));
-    try testing.expectEqual(@as(u32, 5), auto.segmentsFor(-1));
-    try testing.expectEqual(@as(u32, 16), auto.segmentsFor(5)); // ⌈2π·5 / 2⌉ = 16
+    try testing.expectEqual(@as(u32, 32), auto.segmentsFor(1000)); // 360 / 12 = 30, to a multiple of 4
+    try testing.expectEqual(@as(u32, 8), auto.segmentsFor(0.1)); // 2π·0.1 / 2 < 5, at least 5, to a multiple of 4
+    try testing.expectEqual(@as(u32, 8), auto.segmentsFor(0));
+    try testing.expectEqual(@as(u32, 8), auto.segmentsFor(-1));
+    // ⌈2π·5 / 2⌉ = 16 by length, but the chord rule (0.02 mm) asks 35, capped by the angle's 30, to 32
+    try testing.expectEqual(@as(u32, 32), auto.segmentsFor(5));
+    try testing.expectEqual(@as(u32, 24), auto.segmentsFor(1.7)); // π / acos(1 - 0.02 / 1.7) = 21, to 24
+    try testing.expectEqual(@as(u32, 16), (Resolution{ .chord = 1 }).segmentsFor(5)); // the chord rule off
+
 }

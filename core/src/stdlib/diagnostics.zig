@@ -64,12 +64,32 @@ pub fn nativeAssertNear(vm: *VM, args: []const value.Value) anyerror!value.Value
     if (parsed.positional.len < 2 or parsed.positional.len > 3) {
         return vm.fail(.ArgumentError, "assert_near expects 2 to 3 arguments, got {d}", .{parsed.positional.len});
     }
-    const actual = try arguments.requireNumber(vm, parsed.positional[0], "assert_near", "actual");
-    const expected = try arguments.requireNumber(vm, parsed.positional[1], "assert_near", "expected");
     const message: ?value.Value = if (parsed.positional.len == 3) parsed.positional[2] else null;
     const tolerance = parsed.opts.tolerance orelse vm.config().tolerance;
     if (!(tolerance >= 0)) return vm.fail(.ValueError, "assert_near tolerance must be zero or more, got {d}", .{tolerance});
-    if (actual == expected or @abs(actual - expected) <= tolerance) return value.Value.initNil();
+    // Two Arrays of numbers compare item by item: a point, a bounding box's size
+    if (parsed.positional[0].isArray() and parsed.positional[1].isArray()) {
+        const actuals = parsed.positional[0].asArray().items.items;
+        const expecteds = parsed.positional[1].asArray().items.items;
+        var near = actuals.len == expecteds.len;
+        if (near) for (actuals, expecteds) |a, e| {
+            if (!a.isNumber() or !e.isNumber()) return vm.fail(.TypeError, "assert_near compares Arrays of numbers, got {s} and {s} in them", .{ vm.typeName(a), vm.typeName(e) });
+            if (!isNear(a.asNumber(), e.asNumber(), tolerance)) near = false;
+        };
+        if (near) return value.Value.initNil();
+        var out = try startComparison(vm, message, "assert_near");
+        defer out.deinit();
+        try out.writeAll("expected ");
+        try out.inspect(parsed.positional[1]);
+        try out.writeAll(" within ");
+        try out.display(value.Value.initNumber(tolerance));
+        try out.writeAll(", got ");
+        try out.inspect(parsed.positional[0]);
+        return raiseAssertion(vm, null, try out.toString());
+    }
+    const actual = try arguments.requireNumber(vm, parsed.positional[0], "assert_near", "actual");
+    const expected = try arguments.requireNumber(vm, parsed.positional[1], "assert_near", "expected");
+    if (isNear(actual, expected, tolerance)) return value.Value.initNil();
     var out = try startComparison(vm, message, "assert_near");
     defer out.deinit();
     try out.writeAll("expected ");
@@ -79,6 +99,59 @@ pub fn nativeAssertNear(vm: *VM, args: []const value.Value) anyerror!value.Value
     try out.writeAll(", got ");
     try out.display(parsed.positional[0]);
     return raiseAssertion(vm, null, try out.toString());
+}
+
+fn isNear(actual: f64, expected: f64, tolerance: f64) bool {
+    return actual == expected or @abs(actual - expected) <= tolerance;
+}
+
+/// `assert_raises(ErrorClass = StandardError, message = nil) do ... end`, which the
+/// compiler desugars (compiler/compiler.zig's compileAssertRaises) into a `begin ... rescue`
+/// that hands what was raised, or nil, to this native: an AssertionError when nothing was
+/// raised, when it isn't of the class, or when its message isn't `message`; else the
+/// error, the expression's value.
+pub fn nativeAssertRaised(vm: *VM, raised: value.Value, class: value.Value, message: value.Value) anyerror!value.Value {
+    var expected_class: ?*value.ObjClass = null;
+    if (!class.isNil()) {
+        if (!class.isClass()) return vm.fail(.TypeError, "assert_raises expects an error class, got {s}", .{vm.typeName(class)});
+        const exception = vm.classes.get(.exception);
+        if (exception != null and !VM.isSubclassOf(class.asClass(), exception.?)) return vm.fail(.TypeError, "assert_raises expects an error class, got {s}", .{class.asClass().name.chars});
+        expected_class = class.asClass();
+    }
+    if (!message.isNil() and !message.isString()) return vm.fail(.TypeError, "assert_raises expects a String for the message, got {s}", .{vm.typeName(message)});
+    const class_name = if (expected_class) |c| c.name.chars else "an error";
+    var out: Text = .init(vm);
+    defer out.deinit();
+    if (raised.isNil()) {
+        try out.writeAll("expected ");
+        try out.writeAll(class_name);
+        try out.writeAll(" to be raised, nothing was");
+        return raiseAssertion(vm, null, try out.toString());
+    }
+    if (!raised.isInstance()) return raiseAssertion(vm, null, try vm.allocateString("expected an error to be raised, got something else"));
+    const inst = raised.asInstance();
+    if (expected_class) |c| if (!VM.isSubclassOf(inst.class, c)) {
+        try out.writeAll("expected ");
+        try out.writeAll(class_name);
+        try out.writeAll(" to be raised, got ");
+        try out.writeAll(inst.class.name.chars);
+        if (try vm.errorField(inst, "message")) |m| {
+            try out.writeAll(": ");
+            try out.display(m);
+        }
+        return raiseAssertion(vm, null, try out.toString());
+    };
+    if (message.isString()) {
+        const got = try vm.errorField(inst, "message") orelse value.Value.initNil();
+        if (!got.isString() or !std.mem.eql(u8, got.asString().chars, message.asString().chars)) {
+            try out.writeAll("expected the message ");
+            try out.inspect(message);
+            try out.writeAll(", got ");
+            try out.inspect(got);
+            return raiseAssertion(vm, null, try out.toString());
+        }
+    }
+    return raised;
 }
 
 /// A failed comparison's message, begun with the script's own `message` (a String, else a
