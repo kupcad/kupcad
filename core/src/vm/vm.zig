@@ -257,6 +257,9 @@ pub const VM = struct {
     /// where no one is at a terminal to answer it, such as the LSP, whose stdin and stdout
     /// carry the protocol: there `debugger()` does nothing.
     debugger_handler: ?*const fn (vm: *VM) void = null,
+    /// Under `kupcad test --filter`, the text a test block's name must contain to run; every
+    /// test runs without one (stdlib/diagnostics.zig).
+    test_filter: ?[]const u8 = null,
     /// Where the evaluator tells it is evaluating geometry, for a host that shows the run's
     /// progress (the CLI's progress line); no one by default. Kept apart from `host`, which
     /// each module's run sets again.
@@ -347,6 +350,9 @@ pub const VM = struct {
     throw_seq: u64 = 0,
     // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
     last_throw_target: ?usize = null,
+    /// Where the latest throw was raised (the running code's place then), for a test block
+    /// to report a failure's line once its rescue has popped the frames.
+    last_throw_place: ?LinePosition = null,
     /// A block's `break` on its way out (see carryBreak). It travels here, not on the
     /// stack, so the natives it passes through find the stack as they left it.
     pending_break: ?PendingBreak = null,
@@ -3704,6 +3710,7 @@ pub const VM = struct {
         const err_val = self.stack[self.stack_top - 1];
 
         self.throw_seq +%= 1;
+        self.last_throw_place = self.runningPlace().position;
         self.last_throw_target = if (self.rescue_frames.items.len > 0)
             self.rescue_frames.items[self.rescue_frames.items.len - 1].frame_count
         else

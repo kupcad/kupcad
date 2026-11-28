@@ -1209,3 +1209,45 @@ test "LSP: a build that ends within the delay, or for an editor without progress
         }
     }
 }
+
+test "LSP: a hover on a documented def, or a call of it, shows its @doc block" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "# @doc A bolt along -z.\n# @param len The length\n# @return A Solid\n# @example\n#   bolt(10)\ndef bolt(len, thread: false)\n  cylinder(r: 3, h: len)\nend\nb = bolt(10)\ndef plain\nend\nplain()\n");
+    const on_call = server.hover(URI, 8, 4).?;
+    errdefer std.debug.print("on call:\n{s}\n", .{on_call});
+    try testing.expect(std.mem.find(u8, on_call, "```kupcad\n(method) bolt(len, thread: …)\n```\nA bolt along -z.\n\n**Parameters**\n- `len`: The length\n\n**Returns:** A Solid\n\n**Example**\n```kupcad\nbolt(10)\n```\n") != null);
+    const on_def = server.hover(URI, 5, 0).?;
+    errdefer std.debug.print("on def:\n{s}\n", .{on_def});
+    try testing.expect(std.mem.find(u8, on_def, "(method) bolt(len, thread: …)") != null);
+    // One without a block keeps the bare line
+    try testing.expect(std.mem.find(u8, server.hover(URI, 11, 0).?, "(method) plain(...)") != null);
+}
+
+test "LSP: a code lens runs each test block, and one the whole file's, on the first" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    const arena = server.arena.allocator();
+    try server.open(URI, "x = 1\ntest(\"one\") do\n  assert_equal(x, 1)\nend\n  test(\"two\") do\nend\ntest(:bad) do\nend\n");
+    const lenses = (try server.handler.@"textDocument/codeLens"(arena, .{ .textDocument = .{ .uri = URI } })).?;
+    try testing.expectEqual(@as(usize, 3), lenses.len);
+    try testing.expectEqualStrings("Run test", lenses[0].command.?.title);
+    try testing.expectEqualStrings("kupcad.runTest", lenses[0].command.?.command);
+    try testing.expectEqual(@as(u32, 1), lenses[0].range.start.line);
+    try testing.expectEqualStrings("one", lenses[0].command.?.arguments.?[0].object.get("name").?.string);
+    try testing.expectEqualStrings(URI, lenses[0].command.?.arguments.?[0].object.get("uri").?.string);
+    try testing.expectEqualStrings("Run all tests", lenses[1].command.?.title);
+    try testing.expectEqual(@as(u32, 1), lenses[1].range.start.line);
+    try testing.expect(lenses[1].command.?.arguments.?[0].object.get("name") == null);
+    // The second block, where it stands; the malformed one gets no lens
+    try testing.expectEqualStrings("two", lenses[2].command.?.arguments.?[0].object.get("name").?.string);
+    try testing.expectEqual(@as(u32, 4), lenses[2].range.start.line);
+    try testing.expectEqual(@as(u32, 2), lenses[2].range.start.character);
+
+    // A file without tests: no lenses; a closed one: nothing
+    try server.open(LIB_URI, "cube(1)\n");
+    try testing.expectEqual(@as(usize, 0), (try server.handler.@"textDocument/codeLens"(arena, .{ .textDocument = .{ .uri = LIB_URI } })).?.len);
+    try testing.expect(try server.handler.@"textDocument/codeLens"(arena, .{ .textDocument = .{ .uri = "file:///work/closed.kup" } }) == null);
+}

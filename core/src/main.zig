@@ -1,5 +1,5 @@
 //! The `kupcad` executable: dispatches the first argument to a subcommand from `COMMANDS`
-//! (build, watch, check, fmt, doc, pkg, lsp, dev, version) and answers `--help` and
+//! (build, run, test, watch, check, fmt, doc, pkg, lsp, dev, version) and answers `--help` and
 //! `--version`.
 
 const std = @import("std");
@@ -12,6 +12,7 @@ const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 const watch_cmd = @import("cli/watch.zig");
 const run_cmd = @import("cli/run_cmd.zig");
+const test_cmd = @import("cli/test_cmd.zig");
 const version_cmd = @import("cli/version_cmd.zig");
 const outcome_mod = @import("cli/outcome.zig");
 const Outcome = outcome_mod.Outcome;
@@ -37,6 +38,7 @@ const Command = struct {
 pub const COMMANDS = [_]Command{
     .{ .name = "build", .summary = "Run a KupCAD script and export its final geometry", .usage = build_cmd.USAGE, .run = build_cmd.execute },
     .{ .name = "run", .summary = "Run a KupCAD script, printing what it prints, writing no model", .usage = run_cmd.USAGE, .run = run_cmd.execute },
+    .{ .name = "test", .summary = "Run the test blocks of .kup files", .usage = test_cmd.USAGE, .run = test_cmd.execute },
     .{ .name = "watch", .summary = "Rebuild a script whenever it changes", .usage = watch_cmd.USAGE, .run = watch_cmd.execute },
     .{ .name = "check", .summary = "Lint and analyze KupCAD files", .usage = check_cmd.USAGE, .run = check_cmd.execute },
     .{ .name = "fmt", .summary = "Format KupCAD files", .usage = fmt_cmd.USAGE, .run = fmt_cmd.execute },

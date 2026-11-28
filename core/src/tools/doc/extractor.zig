@@ -1,6 +1,7 @@
-//! `extractSchema`: reads a script's `@title`, `@description` and `@author` comments and
-//! its `param` calls into a `UiSchema` without running it (`kupcad doc`, through api.zig): each
-//! parameter's rules as param_rules.zig builds them from the literals the call is written with.
+//! `extractSchema`: reads a script's `@title`, `@description` and `@author` comments, its
+//! `param` calls and the `# @doc` blocks above its `def`s (`functionDocs`) into a `UiSchema`
+//! without running it (`kupcad doc`, through api.zig): each parameter's rules as
+//! param_rules.zig builds them from the literals the call is written with.
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
@@ -45,9 +46,29 @@ pub const ParamMetadata = struct {
     }
 };
 
+/// A parameter a `# @param name text` line describes.
+pub const ParamDoc = struct { name: []const u8, description: []const u8 };
+
+/// A `def` at a file's top level with a doc block above it: the comment lines right above
+/// the `def`, tagged `# @doc` (what it does; the lines indented past its `#` continue it),
+/// `# @param name text`, `# @return text` (or `@returns`) and `# @example` (the lines under
+/// it). The hover in the editor and `kupcad doc` show it.
+pub const FunctionDoc = struct {
+    name: []const u8,
+    /// The line its `def` is on, from 1.
+    line: u32,
+    /// How it is called: `bolt(len, thread:)`.
+    signature: []const u8,
+    doc: ?[]const u8 = null,
+    params: []const ParamDoc = &.{},
+    returns: ?[]const u8 = null,
+    example: ?[]const u8 = null,
+};
+
 pub const UiSchema = struct {
     meta: PresentationMeta,
     parameters: []ParamMetadata,
+    functions: []FunctionDoc = &.{},
 };
 
 /// The schema of `doc`'s script; its strings are the Document's, or `allocator`'s.
@@ -86,7 +107,102 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSche
     try visitor.walk(ParamVisitor, &vis, &doc.tree, doc.tree.root);
 
     schema.parameters = try params.toOwnedSlice(allocator);
+    schema.functions = try functionDocs(allocator, doc);
     return schema;
+}
+
+/// The documented `def`s of the file's top level, in order (FunctionDoc); its strings are
+/// the Document's, or `allocator`'s.
+pub fn functionDocs(allocator: std.mem.Allocator, doc: *const Document) ![]FunctionDoc {
+    var found: std.ArrayList(FunctionDoc) = .empty;
+    errdefer found.deinit(allocator);
+    const root = doc.tree.getNode(doc.tree.root) orelse return found.toOwnedSlice(allocator);
+    for (doc.tree.getNodes(doc.tree.block(root).stmts)) |stmt_idx| {
+        const node = doc.tree.getNode(stmt_idx) orelse continue;
+        if (node.tag != .def_stmt) continue;
+        const start = doc.tokens.starts[node.main_token];
+        const block = commentBlockAbove(doc.source, start);
+        var function: FunctionDoc = .{
+            .name = doc.tree.getString(doc.tree.defStmt(node).name),
+            .line = doc.line_index.humanPosition(start).line,
+            .signature = "",
+        };
+        var params: std.ArrayList(ParamDoc) = .empty;
+        defer params.deinit(allocator);
+        var lines = std.mem.splitScalar(u8, block, '\n');
+        var at: usize = 0;
+        while (lines.next()) |line| : (at += line.len + 1) {
+            // A continuation line starts no tag, so each tag is read once, from its own line
+            const tag = try docstring.parse(allocator, block[at..]) orelse continue;
+            const content = try withoutLeadingBreaks(allocator, tag.content);
+            if (std.mem.eql(u8, tag.tag, "doc")) {
+                function.doc = content;
+            } else if (std.mem.eql(u8, tag.tag, "param")) {
+                const name_end = std.mem.findAny(u8, content, " \t\n") orelse content.len;
+                try params.append(allocator, .{ .name = content[0..name_end], .description = std.mem.trimStart(u8, content[name_end..], " \t\n") });
+            } else if (std.mem.eql(u8, tag.tag, "return") or std.mem.eql(u8, tag.tag, "returns")) {
+                function.returns = content;
+            } else if (std.mem.eql(u8, tag.tag, "example")) {
+                function.example = content;
+            } else {
+                allocator.free(content);
+            }
+        }
+        if (function.doc == null and params.items.len == 0 and function.returns == null and function.example == null) continue;
+        function.signature = try signatureOf(allocator, &doc.tree, node);
+        function.params = try params.toOwnedSlice(allocator);
+        try found.append(allocator, function);
+    }
+    return found.toOwnedSlice(allocator);
+}
+
+/// `content` (owned) without the line breaks it starts with: a tag whose text is all on the
+/// lines under it (`# @example`, then the code) began with one.
+fn withoutLeadingBreaks(allocator: std.mem.Allocator, content: []u8) ![]u8 {
+    const trimmed = std.mem.trimStart(u8, content, "\n");
+    if (trimmed.len == content.len) return content;
+    defer allocator.free(content);
+    return allocator.dupe(u8, trimmed);
+}
+
+/// The comment lines right above the statement at `start`, with nothing but blank space
+/// between them and it: the block, or empty.
+fn commentBlockAbove(source: []const u8, start: usize) []const u8 {
+    // Back to the start of the statement's line, then up while each line is a comment
+    var line_start = std.mem.lastIndexOfScalar(u8, source[0..start], '\n') orelse return "";
+    const end = line_start;
+    var block_start: usize = end;
+    while (true) {
+        const prev_line_start = if (line_start == 0) 0 else (std.mem.lastIndexOfScalar(u8, source[0..line_start], '\n') orelse 0);
+        const line = std.mem.trim(u8, source[prev_line_start..line_start], " \t\r\n");
+        if (line.len == 0 or line[0] != '#') break;
+        block_start = if (prev_line_start == 0) 0 else prev_line_start + 1;
+        if (prev_line_start == 0) break;
+        line_start = prev_line_start;
+    }
+    return source[block_start..end];
+}
+
+/// How the `def` at `node` is called: `name(a, b = …, key:, *rest, **opts, &blk)`.
+fn signatureOf(allocator: std.mem.Allocator, tree: *const ast.Tree, node: *const ast.Node) ![]const u8 {
+    const ds = tree.defStmt(node);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    try out.writer.writeAll(tree.getString(ds.name));
+    try out.writer.writeByte('(');
+    for (tree.getParams(ds.params), 0..) |param, i| {
+        if (i > 0) try out.writer.writeAll(", ");
+        if (param.modifier) |modifier| try out.writer.writeAll(switch (modifier) {
+            .splat => "*",
+            .double_splat => "**",
+            .block => "&",
+        });
+        try out.writer.writeAll(tree.getString(param.name));
+        if (param.is_keyword) try out.writer.writeByte(':');
+        if (param.default_value != .none) try out.writer.writeAll(if (param.is_keyword) " …" else " = …");
+    }
+    try out.writer.writeByte(')');
+    return out.toOwnedSlice();
 }
 
 /// The script's `@title`, `@description` and `@author`: the tags of the comments above its

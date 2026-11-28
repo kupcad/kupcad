@@ -543,6 +543,8 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
             group: ?[]const u8,
             description: ?[]const u8,
         },
+        /// The documented defs (`# @doc`), none here
+        functions: []struct { name: []const u8, line: u32, signature: []const u8, doc: ?[]const u8, params: []std.json.Value, returns: ?[]const u8, example: ?[]const u8 },
     };
     const parsed = try std.json.parseFromSlice(Schema, testing.allocator, res[0..len], .{});
     defer parsed.deinit();
@@ -558,6 +560,7 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
     try testing.expectEqualStrings("Width", s.parameters[0].title.?);
     try testing.expectEqualStrings("Across the plate", s.parameters[0].description.?);
     try testing.expectEqual(@as(?[]const u8, null), s.parameters[1].title);
+    try testing.expectEqual(@as(usize, 0), s.functions.len);
     try testing.expectEqual(@as(?[]const u8, null), s.parameters[1].unit);
     try testing.expectEqualStrings("material", s.parameters[1].name);
     try testing.expectEqualStrings("PLA", s.parameters[1].default_value.string);

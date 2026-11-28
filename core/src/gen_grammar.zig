@@ -51,6 +51,9 @@ pub const Vocabulary = struct {
         var words: Vocabulary = .{};
         errdefer words.deinit(allocator);
         for (kupcad_lexer.keywords.keys()) |key| try words.keywords.append(allocator, key);
+        // A test block's `test` reads as a keyword, as Zig's does: to the lexer it is a name,
+        // which the compiler alone keeps for the block (a protected one)
+        try words.keywords.append(allocator, "test");
         for (manifest.global_functions) |gf| {
             try words.functions.append(allocator, gf.name);
             switch (gf.category) {

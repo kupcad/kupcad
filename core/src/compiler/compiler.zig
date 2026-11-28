@@ -47,6 +47,9 @@ pub const CompileError = error{
     /// `attr_reader`, `attr_writer` or `attr_accessor` given something other than a name
     /// written as a symbol or a string.
     InvalidAttribute,
+    /// A `test` block somewhere other than the top level of a file, or without a name
+    /// written as a string and a block.
+    InvalidTest,
 };
 
 /// The first error of a failed compile: where it happened and what went wrong, for callers
@@ -81,6 +84,7 @@ fn describeError(err: CompileError) []const u8 {
         error.OutsideMethod => "yield, block_given? and super are only valid inside a def",
         error.MisplacedSplat => "'*' and '**' only spread values inside an array, a hash or a call's arguments",
         error.InvalidAttribute => "attr_reader, attr_writer and attr_accessor take names as symbols or strings",
+        error.InvalidTest => macros.TEST_FORM_HELP,
         error.UnknownNode, error.CorruptedBytecode => "internal compiler error",
     };
 }
@@ -103,8 +107,19 @@ fn codeOf(err: CompileError) common_errors.Code {
         error.OutsideMethod => .@"outside-method",
         error.MisplacedSplat => .@"misplaced-splat",
         error.InvalidAttribute => .@"invalid-attribute",
+        error.InvalidTest => .@"invalid-test",
     };
 }
+
+/// What a file's test blocks share (Compiler.testSupport).
+const TestSupport = struct {
+    /// The constant slots of the natives a test calls (stdlib/manifest.zig's `test_block`).
+    begin: usize,
+    pass: usize,
+    fail: usize,
+    /// The hidden local a failed test's error waits in while its native is pushed.
+    error_slot: u16,
+};
 
 /// How many values a call pushed for its arguments, and how (see chunk.CallFlags).
 const CallArgs = struct {
@@ -190,6 +205,12 @@ pub const Compiler = struct {
     /// Set (on the root compiler) to the path of the file being compiled, relative to the
     /// project root: its relative imports are its neighbours (core/import_path.zig).
     module_path: []const u8 = "",
+    /// Whether the file's `test("name") do ... end` blocks are compiled, which `kupcad test`
+    /// asks for the file it tests; everywhere else (a build, a preview, an imported module)
+    /// a test block compiles to nothing, as Zig's do.
+    compile_tests: bool = false,
+    /// What every test block of the file shares, made at the first (testSupport).
+    test_support: ?TestSupport = null,
     active_namespaces: usize = 0,
     has_export_module: bool = false,
     // Lexical Scope tracking
@@ -1604,6 +1625,13 @@ pub const Compiler = struct {
     fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const mc = self.tree.methodCall(node);
         const func_name = self.tree.getString(mc.method_name);
+        // `test` is a test block's and nothing else's (a protected name): one with a block
+        // reaches here only from inside something, as the file's own body took its; one
+        // without a block is no test at all
+        if (mc.receiver == .none and std.mem.eql(u8, func_name, "test")) {
+            if (mc.block == .none) return self.fail(error.InvalidTest, macros.TEST_FORM_HELP, .{});
+            return self.fail(error.InvalidTest, "a test block goes at the top level of a file, not inside a def, a class, a block or a branch", .{});
+        }
         // Where the call is: its instruction, emitted after its receiver and arguments, is
         // put back there (callAt), so a run's error or warning in the call is placed at the
         // call and not at its last argument
@@ -2225,11 +2253,18 @@ pub const Compiler = struct {
             slot += 1;
         }
 
+        // A test block is a statement of the file's own body alone, where it is compiled as
+        // a test (compileTestBlock); anywhere else it is the error that says so
+        const is_file_body = self.enclosing == null and node == self.tree.getNode(self.tree.root);
         if (stmts.len == 0) {
             try self.emitOp(.op_nil);
         } else {
             for (stmts, 0..) |stmt_idx, i| {
-                try self.compileNode(stmt_idx);
+                if (is_file_body and try self.compileTestBlock(stmt_idx)) {
+                    try self.emitOp(.op_nil); // its value as a statement: a test is no expression
+                } else {
+                    try self.compileNode(stmt_idx);
+                }
 
                 // Unconditionally pop every statement except the last one!
                 if (i < stmts.len - 1) {
@@ -2608,6 +2643,102 @@ pub const Compiler = struct {
     fn emitCallOperands(self: *Compiler, call: CallArgs) CompileError!void {
         try self.emitByte(@intCast(call.count));
         try self.emitByte(@bitCast(call.flags));
+    }
+
+    /// Compiles the statement at `stmt_idx` as a test block, if it is one (`test("name") do
+    /// ... end` at the file's top level; false for any other statement): to nothing unless
+    /// `compile_tests`, else to the calls that run its body under `kupcad test`, as if
+    /// written
+    ///
+    ///     if __begin("name")          # false when --filter leaves it out
+    ///       begin
+    ///         <body>
+    ///         __pass()
+    ///       rescue => e
+    ///         __fail(e)               # an assertion, any error, a kernel error
+    ///       end
+    ///     end
+    ///
+    /// with the natives (stdlib/manifest.zig's `test_block`) as constants of the chunk, so
+    /// no script can name them, and the error in a hidden local while its native is pushed
+    /// under it. The body's statements are the file's own code: they see its variables and
+    /// defs, and set its variables as top-level code does.
+    fn compileTestBlock(self: *Compiler, stmt_idx: ast.NodeIndex) CompileError!bool {
+        const node = self.tree.getNode(stmt_idx) orelse return false;
+        if (!macros.isTestForm(self.tree, node)) return false;
+        if (node.main_token < self.token_starts.len) self.current_source_offset = self.token_starts[node.main_token];
+        const name = macros.testName(self.tree, node) orelse return self.fail(error.InvalidTest, macros.TEST_FORM_HELP, .{});
+        if (!self.compile_tests) return true;
+
+        const support = try self.testSupport();
+        const body = self.tree.getNodes(self.tree.block(self.tree.getNode(macros.testBody(self.tree, node)).?).stmts);
+        const entry_depth = self.current_stack_depth;
+
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, support.begin);
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, try self.makeStringConstant(name));
+        try self.emitCall(.op_call, .{ .count = 1 });
+        self.simulatePop(2);
+        self.simulatePush(1); // whether it runs
+        const skip_jump = try self.emitJump(.op_jump_if_false);
+        try self.emitOp(.op_pop);
+
+        const rescue_jump = try self.emitJump(.op_setup_rescue);
+        try self.unwind_stack.append(self.allocator, .rescue_handler);
+        for (body) |body_stmt| {
+            try self.compileNode(body_stmt);
+            try self.emitOp(.op_pop);
+        }
+        _ = self.unwind_stack.pop();
+        try self.emitOp(.op_pop_rescue);
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, support.pass);
+        try self.emitCall(.op_call, .{ .count = 0 });
+        self.simulatePop(1);
+        self.simulatePush(1);
+        try self.emitOp(.op_pop);
+        const end_jump = try self.emitJump(.op_jump);
+
+        // `op_setup_rescue` jumps here with the error pushed
+        self.patchJump(rescue_jump);
+        self.current_stack_depth = entry_depth + 1;
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, support.error_slot); // keeps it on the stack
+        try self.emitOp(.op_pop);
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, support.fail);
+        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, support.error_slot);
+        try self.emitCall(.op_call, .{ .count = 1 });
+        self.simulatePop(2);
+        self.simulatePush(1);
+        try self.emitOp(.op_pop);
+        const done_jump = try self.emitJump(.op_jump);
+
+        // A test the filter leaves out: its false is still on the stack
+        self.patchJump(skip_jump);
+        self.current_stack_depth = entry_depth + 1;
+        try self.emitOp(.op_pop);
+        self.patchJump(end_jump);
+        self.patchJump(done_jump);
+        self.current_stack_depth = entry_depth;
+        return true;
+    }
+
+    /// What the file's test blocks share, made at the first: the natives as constants, and
+    /// the hidden local that holds a failed test's error.
+    fn testSupport(self: *Compiler) CompileError!TestSupport {
+        if (self.test_support) |support| return support;
+        const support: TestSupport = .{
+            .begin = try self.nativeConstant("test", manifest.test_block.begin),
+            .pass = try self.nativeConstant("test", manifest.test_block.pass),
+            .fail = try self.nativeConstant("test", manifest.test_block.fail),
+            .error_slot = try self.hiddenLocalSlots(1),
+        };
+        self.test_support = support;
+        return support;
+    }
+
+    /// The constant slot of the native `function`, named `name` in its errors. A native
+    /// lives as long as the VM (memory.zig's builtins arena), so none is rooted here.
+    fn nativeConstant(self: *Compiler, name: []const u8, function: value.NativeFn) CompileError!usize {
+        const native = self.vm.gc.allocateNative(name, function) catch return error.OutOfMemory;
+        return self.makeConstant(value.Value.initObj(&native.obj));
     }
 
     /// Unifies Method, Macro, and Statement parsing for Classes, Modules, and Singleton blocks

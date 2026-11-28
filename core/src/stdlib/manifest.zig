@@ -141,6 +141,15 @@ pub const language_intrinsics = [_]struct { []const u8, Intrinsic }{
     .{ "yield", .yield_call },
     .{ "defined?", .defined_chk },
     .{ "params", .protected_symbol }, // CLI injection map
+    .{ "test", .protected_symbol }, // a test block (compiler/compiler.zig), never a script's own def
+};
+
+/// What a `test("name") do ... end` block calls under `kupcad test` (compiler/compiler.zig
+/// puts them in the chunk's constants): none is a global a script can name.
+pub const test_block = struct {
+    pub const begin: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestBegin);
+    pub const pass: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestPass);
+    pub const fail: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestFail);
 };
 
 pub const global_functions = [_]GlobalFunction{
@@ -151,6 +160,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "debugger", .func = common.wrapGlobal(diagnostics_mod.nativeDebugger), .category = .io, .result = .nothing },
     .{ .name = "param", .func = common.wrapGlobal(params_mod.nativeParam), .category = .io, .result = .varies },
     .{ .name = "assert", .func = common.wrapGlobal(diagnostics_mod.nativeAssert), .category = .io, .result = .nothing },
+    .{ .name = "assert_equal", .func = common.wrapGlobal(diagnostics_mod.nativeAssertEqual), .category = .io, .result = .nothing },
+    .{ .name = "assert_near", .func = common.wrapGlobal(diagnostics_mod.nativeAssertNear), .category = .io, .result = .nothing },
     .{ .name = "warn", .func = common.wrapGlobal(diagnostics_mod.nativeWarn), .category = .io, .result = .nothing },
     .{ .name = "benchmark", .func = common.wrapGlobal(diagnostics_mod.nativeBenchmark), .category = .io, .result = .varies },
     .{ .name = "assemble", .func = common.wrapGlobal(assembly_mod.nativeAssemble), .category = .brep_op, .result = .assembly },

@@ -292,6 +292,8 @@ export const fake = {
   answer: undefined,
   /** What was opened outside VS Code. @type {string[]} */
   opened: [],
+  /** The terminals created: each its name, folder, whether shown, and the lines sent. @type {{ name: string, cwd: string | undefined, shown: boolean, sent: string[] }[]} */
+  terminals: [],
   /** The progress notifications: their titles, whether they can be cancelled, and what each reported. @type {{ title: string, cancellable: boolean, reports: unknown[] }[]} */
   progress: [],
   /** @type {Map<string, Uint8Array>} the file system: what was there, and what was written, by path */
@@ -386,6 +388,7 @@ export function resetFake() {
   fake.visibleEditors = [];
   fake.shownDocuments = [];
   fake.logs = [];
+  fake.terminals = [];
 }
 
 /**
@@ -472,6 +475,28 @@ export const window = {
   showErrorMessage: say('error'),
   showWarningMessage: say('warning'),
   showInformationMessage: say('information'),
+  get terminals() {
+    return fake.terminals;
+  },
+  /** @param {{ name: string, cwd?: string }} options */
+  createTerminal(options) {
+    const terminal = {
+      name: options.name,
+      cwd: options.cwd,
+      shown: false,
+      /** @type {string[]} */
+      sent: [],
+      show() {
+        terminal.shown = true;
+      },
+      /** @param {string} text */
+      sendText(text) {
+        terminal.sent.push(text);
+      },
+    };
+    fake.terminals.push(terminal);
+    return terminal;
+  },
 };
 
 export const workspace = {

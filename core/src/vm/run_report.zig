@@ -1,7 +1,8 @@
 //! What a run tells its host besides its model and its error: its warnings (a mesh mended,
 //! a feature the engine lacks), each where the script was when it warned (`VM.warn`), the
 //! parameter whose value stopped it (stdlib/params.zig), for a host's control to mark, and,
-//! for a preview, what it printed (its frame's, the console beside the model's).
+//! for a preview, what it printed (its frame's, the console beside the model's), and, under
+//! `kupcad test`, how each of its test blocks went.
 //! A fresh VM's is empty; `VM.resetRunOutput` empties it before a session runs a module.
 
 const std = @import("std");
@@ -32,8 +33,23 @@ pub const Source = struct {
     module: ?[]u8 = null,
 };
 
+/// How a `test("name") do ... end` block went: running while its body runs; skipped when
+/// `kupcad test --filter` left it out.
+pub const TestResult = struct {
+    name: []u8,
+    status: enum { running, passed, failed, skipped } = .running,
+    /// What failed it, as an uncaught error is told (`AssertionError: expected 3, got 4`,
+    /// then the backtrace's lines); owned, null unless failed.
+    failure: ?[]u8 = null,
+    /// Where the error that failed it was raised; null unless failed, or where the script
+    /// wasn't running.
+    position: ?LinePosition = null,
+};
+
 pub const RunReport = struct {
     warnings: std.ArrayList(Warning) = .empty,
+    /// The test blocks run so far, in order (stdlib/diagnostics.zig).
+    tests: std.ArrayList(TestResult) = .empty,
     /// Where each part's name was first given, by the name (owned): a viewer shows the part's
     /// line, its source, from the part.
     part_sources: std.StringHashMapUnmanaged(Source) = .empty,
@@ -49,6 +65,7 @@ pub const RunReport = struct {
     pub fn deinit(self: *RunReport, allocator: std.mem.Allocator) void {
         self.clear(allocator);
         self.warnings.deinit(allocator);
+        self.tests.deinit(allocator);
         self.part_sources.deinit(allocator);
         self.output.deinit(allocator);
     }
@@ -59,6 +76,11 @@ pub const RunReport = struct {
             if (w.module) |m| allocator.free(m);
         }
         self.warnings.clearRetainingCapacity();
+        for (self.tests.items) |t| {
+            allocator.free(t.name);
+            if (t.failure) |f| allocator.free(f);
+        }
+        self.tests.clearRetainingCapacity();
         var sources = self.part_sources.iterator();
         while (sources.next()) |entry| {
             allocator.free(entry.key_ptr.*);
@@ -68,6 +90,37 @@ pub const RunReport = struct {
         self.forgetRefusal(allocator);
         self.output.clearRetainingCapacity();
         self.output_cut = false;
+    }
+
+    /// Starts the test `name` (copied): running until endTest.
+    pub fn beginTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8) !void {
+        try self.addTest(allocator, name, .running);
+    }
+
+    /// Notes the test `name` (copied) as skipped: the filter left it out.
+    pub fn skipTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8) !void {
+        try self.addTest(allocator, name, .skipped);
+    }
+
+    fn addTest(self: *RunReport, allocator: std.mem.Allocator, name: []const u8, status: @FieldType(TestResult, "status")) !void {
+        const owned = try allocator.dupe(u8, name);
+        errdefer allocator.free(owned);
+        try self.tests.append(allocator, .{ .name = owned, .status = status });
+    }
+
+    /// Ends the running test: passed, or failed by `failure` (copied), raised at `position`.
+    /// Nothing without one running (its body can't end twice, so none is lost).
+    pub fn endTest(self: *RunReport, allocator: std.mem.Allocator, failure: ?[]const u8, position: ?LinePosition) !void {
+        const last = self.tests.getLastOrNull() orelse return;
+        if (last.status != .running) return;
+        const current = &self.tests.items[self.tests.items.len - 1];
+        if (failure) |f| {
+            current.failure = try allocator.dupe(u8, f);
+            current.status = .failed;
+            current.position = position;
+        } else {
+            current.status = .passed;
+        }
     }
 
     /// Keeps `text` the run printed, as much of it as MAX_OUTPUT_BYTES leaves room for, cut
