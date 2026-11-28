@@ -237,6 +237,36 @@ const EU_SECOND_WALL_NUDGE: vec.Vec3 = .{ 0, 2e-5, 0 };
 const EU_HULL = [_]vec.Vec3{ .{ 2, 4, 4 }, .{ 3, 0, 0 }, .{ 3, 0, 3 }, .{ 4, 2, 3 }, .{ 0, 4, 1 }, .{ 0, 0, 2 }, .{ 1, 2, 3 } };
 const EU_HULL_NUDGE: vec.Vec3 = .{ -1e-5, 5e-6, -1e-5 };
 const EU_HULL_LIFTS = [_]f64{ 0, -5e-6, 5e-6, -1.5e-5 };
+/// Find ev (the locus_solids session on 73d5d8ee, run 164113), as the fuzzer drew it:
+/// the plate over `EV_PLATE` at zone `EV_COARSE`, turned `EV_PLATE_TURN` about z, moved
+/// `EV_PLATE_MOVE` and nudged `EV_PLATE_NUDGE`, joined with the box over `EV_BOX` scaled
+/// `EV_BOX_SCALE`, moved `EV_BOX_MOVE` and nudged `EV_BOX_NUDGE`; their union intersected
+/// with the hull of `EV_HULL` moved `EV_HULL_MOVE` and nudged `EV_HULL_NUDGE`; that, with
+/// the wall about `EV_WALL_AT` across `EV_WALL_LO` to `EV_WALL_HI`, 2.1 tolerances thick at
+/// `EV_COARSE`, nudged `EV_WALL_NUDGE` and each of `EV_WALL_SIDES` more in x and
+/// `EV_WALL_FRONTS` in y: its top in one plane with the hull's top to rounding, its front
+/// 5e-5 before the box's in the find, then nearer, farther and behind it; its side
+/// 3.1e-4 past the hull's corner in the find (a corner of the tops' region the zone
+/// across), then farther, where the corner is no sliver.
+const EV_COARSE: f64 = 1e-4;
+const EV_PLATE = [2]vec.Vec3{ .{ -48, 2, 0 }, .{ 102, 102, 4 } };
+const EV_PLATE_TURN: f64 = 0.014142253476507214;
+const EV_PLATE_MOVE: vec.Vec3 = .{ 0.5, 0, 1 };
+const EV_PLATE_NUDGE: vec.Vec3 = .{ 0, -5e-5, 0 };
+const EV_BOX = [2]vec.Vec3{ .{ 1, 0, 3 }, .{ 4, 2, 4 } };
+const EV_BOX_SCALE: vec.Vec3 = .{ 2, 0.5, 1 };
+const EV_BOX_MOVE: vec.Vec3 = .{ 0, 1, 0 };
+const EV_BOX_NUDGE: vec.Vec3 = .{ -2e-2, 0, 2.0000000011368685e-4 };
+const EV_HULL = [_]vec.Vec3{ .{ 2, 3, 1 }, .{ 3, 0, 4 }, .{ 3, 3, 4 }, .{ 1, 2, 1 }, .{ 2, 2, 4 }, .{ 3, 0, 1 }, .{ 1, 1, 3 } };
+const EV_HULL_MOVE: vec.Vec3 = .{ 0, -1, 0 };
+const EV_HULL_NUDGE: vec.Vec3 = .{ -5e-5, 0, 1e-4 };
+const EV_WALL_AT: vec.Vec3 = .{ 2, 3, 0 };
+const EV_WALL_LO: vec.Vec3 = .{ 0, 1, 1 };
+const EV_WALL_HI: vec.Vec3 = .{ 4, 4, 4 };
+const EV_WALL_XSECTS: f64 = 2.1;
+const EV_WALL_NUDGE: vec.Vec3 = .{ 5e-5, 0, 1e-4 };
+const EV_WALL_FRONTS = [_]f64{ -5e-5, -2.5e-5, -7.5e-5, -1e-4, 2.5e-5 };
+const EV_WALL_SIDES = [_]f64{ 0, 1e-4, 2e-4, 4e-4 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2345,6 +2375,78 @@ test "Fuzz solids: a hull's apex at a thin wall's top corner, a sliver of its fa
     }
 }
 
+test "Fuzz solids: a common block whose faces' planes tie with the other operand's to rounding takes the line of the planes they may take, either way round, turned, mirrored and far" {
+    // The locus_solids session's find ev on 73d5d8ee (run 164113), as the fuzzer drew it:
+    // ((plate ∪ box) ∩ hull) ∩ wall at one zone, the wall's top in one plane with the
+    // hull's top to rounding and its front 5e-5 before the box's front. The tops' group
+    // took the first operand's plane, the operands' order its only difference
+    // (`TieFace.before`), and the fronts' the box's, the inner, either way round; the
+    // common block along their edge then took the line of the operand whose planes its
+    // faces all took (`Provenance.tiedLines`): the box's front line one way round and,
+    // the planes of both operands taken the other way round, neither line in both, the
+    // first operand's, the wall's front line. A corner of the tops' region between the
+    // wall's side and the hull's edge, the zone across, measured a sliver on the box's
+    // line (inside the wall's front, the intersection's own boundary) and not on the
+    // wall's: refused one way round and made the other. A plane the tie rule tells apart
+    // from another only by the operands' order is either face's to take
+    // (`Provenance.representative`'s run of planes alike), so it says nothing of the
+    // line: the box's front line either way round, the corner refused alike. The wall
+    // moved by each of `EV_WALL_SIDES` and `EV_WALL_FRONTS` (before the fix 36 of the 120
+    // cases differed, the wall's front before the box's and its side 0 or 1e-4 farther
+    // out), the chain moved by each of the moves, the union and the intersection made or
+    // refused alike either way round, every operation through the solids oracles
+    const coarse = tolerance.Tolerance.fromZone(EV_COARSE);
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var plate_shape = try boxFrom(EV_PLATE[0], EV_PLATE[1], coarse, &diag);
+    defer plate_shape.deinit();
+    var plate = try euPlaced(&plate_shape, EV_PLATE_TURN, null, EV_PLATE_MOVE, EV_PLATE_NUDGE, &diag);
+    defer plate.deinit();
+    var box_shape = try boxFrom(EV_BOX[0], EV_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    var box_body = try euPlaced(&box_shape, 0, EV_BOX_SCALE, EV_BOX_MOVE, EV_BOX_NUDGE, &diag);
+    defer box_body.deinit();
+    var joined = try solid_boolean.tests.sound(&plate, &box_body, .@"union");
+    defer joined.deinit();
+    var drawn = try solid_hull.hull(testing.allocator, tol, &EV_HULL, &diag);
+    defer drawn.deinit();
+    var hull_body = try euPlaced(&drawn, 0, null, EV_HULL_MOVE, EV_HULL_NUDGE, &diag);
+    defer hull_body.deinit();
+    var running = try solid_boolean.tests.sound(&joined, &hull_body, .intersection);
+    defer running.deinit();
+    const wall: GapShape = .{ .kind = .wall, .at = EV_WALL_AT, .lo = EV_WALL_LO, .hi = EV_WALL_HI, .xsects = std.mem.indexOfScalar(f64, &GAP_XSECTS, EV_WALL_XSECTS).? };
+    var wall_shape = try wall.build(coarse, &diag);
+    defer wall_shape.deinit();
+    for (EV_WALL_SIDES) |side| for (EV_WALL_FRONTS) |front| {
+        var wall_body = try euPlaced(&wall_shape, 0, null, vec.ZERO3, vec.add(EV_WALL_NUDGE, .{ side, front, 0 }), &diag);
+        defer wall_body.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &running, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &wall_body, &move, .{}, &diag);
+            defer b.deinit();
+            for ([_]solid_boolean.pipeline.Op{ .@"union", .intersection }) |op| {
+                const forward = try booleanOutcome(&a, &b, op);
+                const swapped = try booleanOutcome(&b, &a, op);
+                errdefer std.debug.print("the wall moved {e} in x and {e} in y, move {d}, the {t}: {any}, the other way round {any}\n", .{ side, front, m, op, forward, swapped });
+                try testing.expectEqual(std.meta.activeTag(forward), std.meta.activeTag(swapped));
+                if (forward == .made) try testing.expectEqual(forward.made, swapped.made);
+            }
+            errdefer std.debug.print("the wall moved {e} in x and {e} in y, move {d}\n", .{ side, front, m });
+            try expectStepWith(&a, &b, &diag);
+            try expectStepWith(&b, &a, &diag);
+        }
+    };
+}
+
 /// `shape` placed as the solids fuzzer places a solid (`generatedBody`): turned `turn` about
 /// z through the grid's middle, scaled by `scale`, moved by `move`, then nudged by `nudge`,
 /// one map composed in that order.
@@ -3463,6 +3565,12 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // outside by its seam on the top, whose turn was noise, IntersectionFailed
         // (classify.cornersSide: the corners the paves put off the face decide)
         "solids 3 1 5 2 3 4 1 2 4 0 0 4 2 0 11 10 11 3 3 0 3 4 0 4 0 3 0 2 5 0 0 1 0 12 10 1 10 0 3 3 1 3 1 3 4 0 2 4 0 3 4 2 1 7 -2 7 0 3 1 7 2 4 4 3 0 0 3 0 3 4 2 3 0 4 1 0 0 2 1 2 3 2 3 6 3 6 9 1",
+        // The locus_solids session on 73d5d8ee (ev, run 164113): ((plate ∪ box) ∩ hull) ∩
+        // wall, the tops one plane to rounding, the fronts 5e-5 apart; the block along their
+        // edge took the box's line one way round and the wall's the other, a corner the zone
+        // across a sliver on the box's only: refused one way round, made the other
+        // (Provenance.representative: a plane tied by the operands' order is either's)
+        "solids 2 1 4 2 4 0 4 0 2 5 2 1 4 2 8 3 1 0 1 4 0 2 3 4 1 0 2 0 1 14 2 11 13 0 2 1 7 2 3 1 3 0 4 3 3 4 1 2 1 2 2 4 3 0 1 1 1 3 3 2 4 -2 5 3 2 3 3 1 3 2 0 4 3 1 4 0 1 4 1 3 4 5 14 1",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});

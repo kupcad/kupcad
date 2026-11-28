@@ -711,14 +711,23 @@ pub const TieFace = struct {
     /// tops 5e-6 apart and each kept alike, took the lower top in place and the upper
     /// turned 0.3 about x (the audit of the ties, finding 4, 2026-11-22).
     pub fn before(x: TieFace, y: TieFace, at: Vec3, scale: f64, tol: Tolerance) bool {
+        if (x.ahead(y, at, scale, tol)) |first| return first;
+        if (x.operand != y.operand) return x.operand < y.operand;
+        return x.face < y.face;
+    }
+
+    /// Whether `x` comes before `y` by the geometry and the zones, the rule's steps before
+    /// the operands' order (`before`); null where only the operands' order (or the faces'
+    /// indices) tells them apart, a choice the other order of the operands makes the other
+    /// way, which says nothing of the geometry.
+    pub fn ahead(x: TieFace, y: TieFace, at: Vec3, scale: f64, tol: Tolerance) ?bool {
         if (tol.sameDirection(x.outward, y.outward)) {
             const hx = vec.dot(vec.sub(at, x.frame.origin), x.outward);
             const hy = vec.dot(vec.sub(at, y.frame.origin), y.outward);
             if (!canonical.sameToRounding(hx, hy, scale)) return hx > hy;
         }
         if (x.zone != y.zone) return x.zone < y.zone;
-        if (x.operand != y.operand) return x.operand < y.operand;
-        return x.face < y.face;
+        return null;
     }
 };
 

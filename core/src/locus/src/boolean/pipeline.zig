@@ -1087,6 +1087,12 @@ const Provenance = struct {
     keeps: []const select.Keep,
     /// Each operand's face's plane: the face whose record it takes.
     plane_of: [2][]Face = .{ &.{}, &.{} },
+    /// Each operand's face's planes alike (`representative`): the faces of its group whose
+    /// planes the tie rule tells apart from the one taken only by the operands' order, the
+    /// taken one first, a run of `alike_faces`; empty for a face in no group, whose own
+    /// plane is its only one.
+    alike_of: [2][]Run = .{ &.{}, &.{} },
+    alike_faces: std.ArrayList(Face) = .empty,
     /// Each piece between two merged vertices (the smaller first): its source.
     line_of: std.AutoHashMapUnmanaged([2]u32, Source) = .empty,
     /// The common blocks whose faces along them were as many of each operand's
@@ -1101,6 +1107,7 @@ const Provenance = struct {
     merged: std.ArrayList(u32) = .empty,
 
     const Face = struct { operand: u1, face: u32 };
+    const Run = struct { start: u32 = 0, len: u32 = 0 };
     /// A point of a face and its gap: a plane holds it within the tolerance and that gap,
     /// as the paves found it in the plane (`incidence.reach`).
     const Reaching = struct { at: Vec3, gap: f64 };
@@ -1115,6 +1122,8 @@ const Provenance = struct {
         for (0..2) |k| {
             self.plane_of[k] = try allocator.alloc(Face, paves.operands[k].faces.items.len);
             for (self.plane_of[k], 0..) |*face, i| face.* = .{ .operand = @intCast(k), .face = @intCast(i) };
+            self.alike_of[k] = try allocator.alloc(Run, paves.operands[k].faces.items.len);
+            @memset(self.alike_of[k], .{});
         }
         // Pieces of operand edges (a common block one edge of one of the two, `blockLines`),
         // then the section segments
@@ -1190,15 +1199,23 @@ const Provenance = struct {
     }
 
     /// A tied common block's line (`blockLines`: as many faces of each operand's along it)
-    /// by the planes its kept faces took (`samePlanes`): where every one took a plane of one
-    /// operand, that operand's edge, the line its faces' planes meet in; else, with the
-    /// operands at one zone, the edge of the operand whose line lies in every one of those
-    /// planes, to rounding at the block's two ends; else the tie rule's (the finer zone's,
-    /// then the first operand's). The result's edge lies between those faces, and the plane
-    /// choice is one decision already made for them, by intrinsic measures before the
-    /// operands' order (D28's tie rule, `planar_faces.TieFace.before`); the line by the
-    /// operands' order alone was a second decision of the same thing, and could disagree
-    /// with the first: a box's top and side each one plane with a trimmed plate's, a zone
+    /// by the planes its kept faces may take (`samePlanes`, `planesOf`): where every one may
+    /// take a plane of one operand and not every one the other's, that operand's edge, the
+    /// line its faces' planes meet in; else, with the operands at one zone, the edge of the
+    /// operand whose line lies in every one of those planes, to rounding at the block's two
+    /// ends; else the tie rule's (the finer zone's, then the first operand's). A face whose
+    /// group's plane the tie rule chose by the operands' order alone may take either plane
+    /// (`representative`'s planes alike): by the plane taken, the hull's top and a wall's,
+    /// one plane to rounding, took the first operand's, and the block along the tops' front
+    /// edge took the box's line, 5e-5 inside the wall's front, one way round (every face
+    /// on the first operand's planes) and the wall's the other (planes of both, neither
+    /// line in both: the first operand's); a corner of the tops' region the zone across
+    /// was a sliver on the box's line only, the intersection refused one way round and
+    /// made the other (find ev, the locus_solids session on 73d5d8ee). The result's edge
+    /// lies between those faces, and the plane choice is one decision already made for
+    /// them, by intrinsic measures before the operands' order (D28's tie rule,
+    /// `planar_faces.TieFace.before`); the line by the operands' order alone was a second
+    /// decision of the same thing, and could disagree with the first: a box's top and side each one plane with a trimmed plate's, a zone
     /// apart, both at zone 1e-5, both faces took the box's planes either way round, and the
     /// edge between them took the plate's line one way round and the box's the other, 1e-5
     /// off its faces' planes along an edge 1 long: the intersection's area differed by
@@ -1221,33 +1238,44 @@ const Provenance = struct {
             const block = p.common.items[index];
             const ends = [2]Vec3{ p.point(block.vertices[0]), p.point(block.vertices[1]) };
             const lines = [2]curves.Line{ self.edgeLine(0, block.edges[0]), self.edgeLine(1, block.edges[1]) };
-            // The operands whose planes the kept faces along the block took (bit k for k),
-            // and whether each operand's line lies in every one of those planes
-            var took: u2 = 0;
+            // The operands whose planes every kept face along the block could take, its
+            // own or one alike (bit k for k), and whether each operand's line lies in every
+            // one of those planes
+            var every: u2 = 0b11;
             var holds = [2]bool{ true, true };
             for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
                 if (keep == .drop) continue;
                 if (!self.alongBlock(i, block.vertices)) continue;
-                const chosen = self.plane_of[fragment.operand][fragment.face];
-                took |= @as(u2, 1) << chosen.operand;
-                const taken = planeOf(p.operands[chosen.operand], chosen.face);
-                for (lines, &holds) |line, *held| {
-                    if (!held.*) continue;
-                    for (ends) |end| {
-                        const foot = line.eval(line.project(end));
-                        const scale = canonical.magnitude(&.{ foot, taken.frame.origin });
-                        if (!canonical.sameToRounding(taken.height(foot), 0, scale)) held.* = false;
+                var could: u2 = 0;
+                for (self.planesOf(fragment.operand, fragment.face)) |face| {
+                    could |= @as(u2, 1) << face.operand;
+                    const taken = planeOf(p.operands[face.operand], face.face);
+                    for (lines, &holds) |line, *held| {
+                        if (!held.*) continue;
+                        for (ends) |end| {
+                            const foot = line.eval(line.project(end));
+                            const scale = canonical.magnitude(&.{ foot, taken.frame.origin });
+                            if (!canonical.sameToRounding(taken.height(foot), 0, scale)) held.* = false;
+                        }
                     }
                 }
+                every &= could;
             }
-            const operand: u1 = switch (took) {
+            const operand: u1 = switch (every) {
                 0b01 => 0,
                 0b10 => 1,
-                0b11 => if (one_zone and holds[0] != holds[1]) (if (holds[0]) 0 else 1) else continue,
-                else => continue,
+                else => if (one_zone and holds[0] != holds[1]) (if (holds[0]) 0 else 1) else continue,
             };
             self.line_of.putAssumeCapacity(block.vertices, .{ .edge = .{ .operand = operand, .edge = block.edges[operand] } });
         }
+    }
+
+    /// The planes face `face` of `operand` may take: its group's alike (`representative`),
+    /// else the one it took.
+    fn planesOf(self: *const Provenance, operand: u1, face: u32) []const Face {
+        const run = self.alike_of[operand][face];
+        if (run.len == 0) return (&self.plane_of[operand][face])[0..1];
+        return self.alike_faces.items[run.start..][0..run.len];
     }
 
     /// Whether fragment `i`'s loops run along the piece between merged vertices `ends`
@@ -1271,6 +1299,8 @@ const Provenance = struct {
 
     fn deinit(self: *Provenance) void {
         for (self.plane_of) |list| self.allocator.free(list);
+        for (self.alike_of) |list| self.allocator.free(list);
+        self.alike_faces.deinit(self.allocator);
         self.line_of.deinit(self.allocator);
         self.tied.deinit(self.allocator);
         self.planes.deinit(self.allocator);
@@ -1336,15 +1366,21 @@ const Provenance = struct {
             defer start = end;
             const group = order[start..end];
             if (group.len < 2) continue;
-            const chosen = try self.representative(group, n_a, diag);
+            const alike = try self.representative(group, n_a, diag);
             for (group) |node| {
                 const face = nodeFace(node, n_a);
-                self.plane_of[face.operand][face.face] = chosen;
+                self.plane_of[face.operand][face.face] = self.alike_faces.items[alike.start];
+                self.alike_of[face.operand][face.face] = alike;
             }
         }
     }
 
-    fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Face {
+    /// The group's plane (`samePlanes`), the face whose record it takes first in the run of
+    /// `alike_faces` returned, then the faces whose planes hold the group alike and the tie
+    /// rule tells apart from it only by the operands' order (`TieFace.ahead`), each of which
+    /// the other order of the operands could take: the planes a line along the group may be
+    /// read against (`tiedLines`).
+    fn representative(self: *Provenance, group: []const u32, n_a: u32, diag: *Diagnostics) Error!Run {
         const p = self.paves;
         // Every face's points, measured against each candidate's plane
         var points: std.ArrayList(Reaching) = .empty;
@@ -1397,15 +1433,30 @@ const Provenance = struct {
                 if (!fx and x.moved != y.moved) return x.moved < y.moved;
                 return o.tieFace(x).before(o.tieFace(y), o.at, o.scale, o.paves.tol);
             }
+            /// Told apart only by the operands' order (or the faces' indices).
+            fn alike(o: @This(), x: Candidate, y: Candidate) bool {
+                const fx = o.first(x);
+                if (fx != o.first(y)) return false;
+                if (!fx and x.moved != y.moved) return false;
+                return o.tieFace(x).ahead(o.tieFace(y), o.at, o.scale, o.paves.tol) == null;
+            }
         };
-        std.mem.sort(Candidate, holding.items, Order{ .least = least, .scale = scale, .at = centroid, .paves = p }, Order.lessThan);
+        const order: Order = .{ .least = least, .scale = scale, .at = centroid, .paves = p };
+        std.mem.sort(Candidate, holding.items, order, Order.lessThan);
         var pressed: ?Face = null;
-        for (holding.items) |candidate| {
+        for (holding.items, 0..) |candidate, i| {
             if (try self.keepsApart(group, n_a, candidate.plane, diag)) |g| {
                 pressed = pressed orelse g;
                 continue;
             }
-            return candidate.face;
+            const start: u32 = @intCast(self.alike_faces.items.len);
+            try self.alike_faces.append(self.allocator, candidate.face);
+            for (holding.items[i + 1 ..]) |other| {
+                if (!order.alike(candidate, other)) continue;
+                if (try self.keepsApart(group, n_a, other.plane, diag) != null) continue;
+                try self.alike_faces.append(self.allocator, other.face);
+            }
+            return .{ .start = start, .len = @intCast(self.alike_faces.items.len - start) };
         }
         if (pressed) |g| return diag.fail(error.Degenerate, .{ .code = .below_feature_size, .entity = .of(.face, g.face), .label = "a face of a group the paves found in one plane, each plane of which takes it within the tolerance of a feature of its own operand it is apart from", .threshold = p.tol.xsect });
         if (at) |a| return diag.fail(error.Degenerate, .{ .code = .at_tolerance, .entity = .of(.face, a.face.face), .label = "a face's plane, which the faces the paves found in one plane with it lie in or not, to within rounding", .measured = a.comparison.measured, .threshold = a.comparison.limit });
