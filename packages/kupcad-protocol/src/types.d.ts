@@ -100,6 +100,21 @@ export interface Preview {
 export interface UiSchema {
   meta: Meta;
   parameters: ParamSpec[];
+  /** The top-level `def`s with a `# @doc` block above them, in order. */
+  functions: FunctionDoc[];
+}
+
+/** A documented `def`: its `# @doc`, `@param`, `@return` and `@example` tags. */
+export interface FunctionDoc {
+  name: string;
+  /** The line its `def` is on, from 1. */
+  line: number;
+  /** How it is called: `bolt(len, thread: …)`. */
+  signature: string;
+  doc: string | null;
+  params: { name: string; description: string }[];
+  returns: string | null;
+  example: string | null;
 }
 
 /** A script's `@title`, `@description` and `@author` comments. */

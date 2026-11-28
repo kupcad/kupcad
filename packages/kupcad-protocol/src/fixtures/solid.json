@@ -63,7 +63,8 @@
           "group": "Size",
           "description": null
         }
-      ]
+      ],
+      "functions": []
     },
     "values": {
       "width": 25
