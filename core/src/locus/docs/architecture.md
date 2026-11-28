@@ -634,7 +634,11 @@ vertex on the other's circle, left their own circles' tangents 44° the other wa
 from their ends, a map of genus one; 2026-11-21, the locus target's overlay, cb), unless
 two samples lie within their own rounding of one line through the vertex: leaving it one
 way, the two are tangent to that rounding and the one bending further left is further
-round (a line bends none, an arc `1/r` to its side, radii compared exactly), and a sample
+round (a line bends none, an arc `1/r` to its side, radii compared exactly; two arcs of
+one radius about different centres by their tangents, the exact turn of the centres about
+the vertex, `tangentOrder`: round joins of radius 1.5 about corners 7.1e-5 apart crossed
+at 4.7e-5 rad, and moved 3.6e6 out read as one curve, the faces between walked into the
+outer boundary, an offset 1.5 short, the 2D chain fuzzer's find ey, 2026-11-28), and a sample
 within its rounding of the x axis is put in the half its bend takes it to (`leavingSide`,
 `Leaving.upperHalf`; the bend a reach along, `s²/2r`, is under the rounding of a sample at
 the arc's coordinates for large radii or far out: a disc of radius 1e5 tangent inside a

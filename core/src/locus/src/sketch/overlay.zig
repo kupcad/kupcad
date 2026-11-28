@@ -1297,7 +1297,9 @@ pub fn leavingSide(v: Vec2, p: Leaving, q: Leaving) f64 {
         if (@abs(side) <= band) {
             // Leaving the opposite ways along one line: neither side
             if (vec.dot2(vec.sub2(x.sample, v), vec.sub2(y.sample, v)) <= 0) return 0;
-            return bendOrder(y, x);
+            const bend = bendOrder(y, x);
+            if (bend != 0) return bend;
+            return tangentOrder(v, x, y);
         }
         // The nearer sample's distance from the farther one's line, against the zone
         if (@abs(side) <= @max(x.zone, y.zone) * @max(to_x, to_y)) {
@@ -1371,6 +1373,26 @@ fn offCircle(arc: Arc, p: Vec2) f64 {
 /// length, the same number whichever way the segment runs (`onLine`, `sideOf`).
 fn offLine(a: Vec2, b: Vec2, p: Vec2) f64 {
     return @abs(predicates.orient2d(a, b, p)) / vec.distance2(a, b);
+}
+
+/// Which way round `y` leaves `v` from `x`, two arcs of one radius turning one way whose
+/// samples leave `v` along one line to their rounding (`leavingSide`): by their tangents
+/// at `v`, square to the radii from their circles' centres, the exact turn of the centres
+/// about `v`; 0 for one circle. Equal bends are not one circle when the centres differ:
+/// two round joins of radius 1.5 about corners 7e-5 apart, their arcs crossing at 4.7e-5
+/// rad 3.6e6 out, left the crossing within the samples' rounding of each other, equal
+/// bends read as one curve, unordered, and the faces between them were walked into the
+/// outer boundary, a region of area 1.5 lost from an offset (the 2D chain fuzzer's find
+/// ey on 73d5d8ee, the chain moved whole). The turn of two tangents is first order, the
+/// bend second: the tangents tell the circles apart wherever their samples cannot.
+fn tangentOrder(v: Vec2, x: Leaving, y: Leaving) f64 {
+    const cx = (x.circle orelse return 0).c;
+    const cy = (y.circle orelse return 0).c;
+    // A circle turning left leaves `v` square to `v − c`, ccw; turning right, cw: the
+    // tangents' cross is the radii's, `orient2d(v, cx, cy)`, for either way alike
+    const turn = predicates.orient2d(v, cx, cy);
+    if (turn == 0) return 0;
+    return if (turn > 0) 1 else -1;
 }
 
 /// +1 when `x` bends further left than `y`, −1 further right, 0 alike.

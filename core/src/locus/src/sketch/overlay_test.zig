@@ -58,6 +58,26 @@ const HAIR_PROBE_XS = [_]f64{ -2, 0, 2 };
 const STUB_RADIUS: f64 = 4;
 const STUB_ANGLES = [_]f64{ 3e-4, 1.2e-3, 4e-3 };
 const STUB_PAST_CHORD: f64 = 1e-2;
+
+/// The grazing joins family (the test of two pies of one radius about corners a hair apart,
+/// find ey): the corner, the radius, the start and end directions of the first pie (a join
+/// at a corner of two lines) and of the second (a join at a cusp, its radial edge where
+/// the two circles cross), the distances between the corners along the direction square
+/// to the second's start (the find's 7.1e-5 among them), the moves (a turn and a shift as
+/// the 2D chain fuzzer moves a sheet whole, the find's last), and how near each move's
+/// area comes to the area in place.
+const GRAZING_CORNER: Vec2 = .{ 5, 6 };
+const GRAZING_RADIUS: f64 = 1.5;
+const GRAZING_FIRST = [2]Vec2{ .{ 0.9701425001453318, 0.24253562503633322 }, .{ -0.9486832980505135, 0.31622776601683794 } };
+const GRAZING_SECOND = [2]Vec2{ .{ 0.4472135954999579, 0.8944271909999159 }, .{ -0.4472135954999579, -0.8944271909999159 } };
+const GRAZING_APART = [_]f64{ 7.0977e-5, 3e-5, 1.5e-4, 1e-3 };
+const GRAZING_MOVES = [_]struct { angle: f64, shift: Vec2 }{
+    .{ .angle = 0, .shift = .{ 0, 0 } },
+    .{ .angle = PI / 2.0, .shift = .{ 0, 0 } },
+    .{ .angle = 0.3, .shift = .{ 1e5, -2e5 } },
+    .{ .angle = PI / 4.0, .shift = .{ 2e6, -3e6 } },
+};
+const GRAZING_AREA_CLOSE: f64 = 1e-6;
 const STUB_REST: f64 = 1;
 
 /// The triple point family (the tests of three curves crossing pairwise within a zone or so
@@ -1844,5 +1864,58 @@ test "overlay: the tangent circles of find eb, turned by hairs and quarter turns
         try ebArrangement(&o, angle, shift, mirrored);
         try o.run();
         try expectPlanar(&o);
+    };
+}
+
+test "overlay: two pies of one radius about corners a hair apart, their arcs crossing at a grazing angle by a radial edge's end, are planar and as large wherever they are, mirrored or not" {
+    // The 2D chain fuzzer's find ey on 73d5d8ee: an offset's round joins at two corners
+    // 7.1e-5 apart, one closing a cusp; their circles, of one radius, crossed at 4.7e-5 rad
+    // 6.3e-5 from the cusp join's radial edge's end, and, the sheet moved 3.6e6 out, the
+    // arcs leaving the crossing that way were within their samples' rounding of each
+    // other: equal bends read as one curve, unordered (`leavingSide`), and the faces
+    // between were walked into the outer boundary, 1.5 of area lost. Equal bends of two
+    // circles are told apart by their tangents (`tangentOrder`). Each distance apart,
+    // each move, mirrored or not: planar, and the pies' union the area it has in place
+    for (GRAZING_APART) |apart| for ([_]bool{ false, true }) |mirrored| {
+        const away = vec.scale2(vec.perp2(GRAZING_SECOND[0]), -apart);
+        const centres = [2]Vec2{ GRAZING_CORNER, vec.add2(GRAZING_CORNER, away) };
+        const ends = [2][2]Vec2{ GRAZING_FIRST, GRAZING_SECOND };
+        var in_place: f64 = 0;
+        for (GRAZING_MOVES, 0..) |move, m| {
+            var o = Overlay.init(testing.allocator, tol);
+            defer o.deinit();
+            const turn: Vec2 = .{ @cos(move.angle), @sin(move.angle) };
+            for (centres, ends) |c, e| {
+                _ = try o.addInput();
+                const a = vec.addScaled2(c, e[0], GRAZING_RADIUS);
+                const b = vec.addScaled2(c, e[1], GRAZING_RADIUS);
+                var pie = [3]overlay.InputEdge{
+                    .{ .a = c, .b = a },
+                    .{ .a = a, .b = b, .arc = .{ .c = c, .r = GRAZING_RADIUS, .ccw = true } },
+                    .{ .a = b, .b = c },
+                };
+                if (mirrored) {
+                    var turned: [3]overlay.InputEdge = undefined;
+                    // Mirrored, then run the other way round: a region still
+                    for (pie, 0..) |edge, k| {
+                        const m_edge = mirroredEdge(edge);
+                        turned[2 - k] = .{ .a = m_edge.b, .b = m_edge.a, .arc = if (m_edge.arc) |arc| .{ .c = arc.c, .r = arc.r, .ccw = !arc.ccw } else null };
+                    }
+                    pie = turned;
+                }
+                for (pie) |edge| try o.addEdge(movedEdge(edge, turn, move.shift));
+            }
+            try o.run();
+            errdefer std.debug.print("{e} apart, mirrored {}, move {d}\n", .{ apart, mirrored, m });
+            try expectPlanar(&o);
+            var area: f64 = 0;
+            for (o.faces.items, 0..) |f, i| {
+                if (o.windingOf(@intCast(i), 0) == 0 and o.windingOf(@intCast(i), 1) == 0) continue;
+                area += o.cycles.items[f.outer].area;
+                for (o.holesOf(@intCast(i))) |h| area += o.cycles.items[h].area;
+            }
+            if (m == 0) in_place = area;
+            try testing.expectApproxEqAbs(in_place, area, GRAZING_AREA_CLOSE);
+        }
     };
 }
