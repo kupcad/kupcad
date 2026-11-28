@@ -143,7 +143,7 @@ test "Extractor: the schema is what param accepts, choices included, as JSON" {
     ++
         \\{"name":"holes","type":"number","min":null,"max":null,"in":[2,4,-6],"items":null,"tuple":null,"fields":null,"min_items":null,"max_items":null,"title":null,"unit":null,"step":null,"default_value":4,"group":null,"description":null},
     ++
-        \\{"name":"size","type":"number","min":null,"max":null,"in":null,"items":null,"tuple":null,"fields":null,"min_items":null,"max_items":null,"title":null,"unit":null,"step":null,"default_value":1,"group":null,"description":null}]}
+        \\{"name":"size","type":"number","min":null,"max":null,"in":null,"items":null,"tuple":null,"fields":null,"min_items":null,"max_items":null,"title":null,"unit":null,"step":null,"default_value":1,"group":null,"description":null}],"functions":[]}
     , out.written());
 }
 

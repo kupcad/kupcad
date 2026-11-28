@@ -2344,15 +2344,18 @@ test "Compiler: a tested file runs each test block in order, each isolated, and 
     }
 }
 
-test "Compiler: a filter runs only the tests whose name holds its text" {
+test "Compiler: a filter runs only the tests whose name holds its text, the rest skipped" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     const res = try runTested(&vm, TESTED_SCRIPT, "pass");
     try testing.expectEqual(.ok, res.status);
     try testing.expectEqual(@as(f64, 1), res.top.asNumber());
-    try testing.expectEqual(@as(usize, 1), vm.report.tests.items.len);
-    try testing.expectEqualStrings("passes", vm.report.tests.items[0].name);
+    const tests = vm.report.tests.items;
+    try testing.expectEqual(@as(usize, 4), tests.len);
+    try testing.expectEqualStrings("passes", tests[0].name);
+    try testing.expectEqual(.passed, tests[0].status);
+    for (tests[1..]) |t| try testing.expectEqual(.skipped, t.status);
 }
 
 test "Compiler: a test block anywhere but the top level, or of another shape, is invalid-test" {

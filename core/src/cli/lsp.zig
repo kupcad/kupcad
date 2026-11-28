@@ -935,8 +935,9 @@ pub const Handler = struct {
         const target_node = doc.tree.getNode(found_node_idx).?;
         const scope = findEnclosingScope(&doc, found_node_idx);
 
+        // The text is the arena's, as the answer is: freed at the end here (the arena reclaims
+        // its last allocation), the answer read memory that the next allocation reused
         var out: std.Io.Writer.Allocating = .init(arena);
-        defer out.deinit();
 
         // AST Base Formatting
         if (target_node.tag == .identifier or target_node.tag == .assignment) {
@@ -983,7 +984,7 @@ pub const Handler = struct {
             .contents = .{
                 .markup_content = .{
                     .kind = .markdown,
-                    .value = out.written(),
+                    .value = out.toOwnedSlice() catch return null,
                 },
             },
         };

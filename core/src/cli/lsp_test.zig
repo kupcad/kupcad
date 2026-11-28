@@ -1214,7 +1214,7 @@ test "LSP: a hover on a documented def, or a call of it, shows its @doc block" {
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    try server.open(URI, "# @doc A bolt along -z.\n# @param len The length\n# @return A Solid\n# @example\n#   bolt(10)\ndef bolt(len, thread: false)\n  cylinder(r: 3, h: len)\nend\nb = bolt(10)\ndef plain\nend\nplain\n");
+    try server.open(URI, "# @doc A bolt along -z.\n# @param len The length\n# @return A Solid\n# @example\n#   bolt(10)\ndef bolt(len, thread: false)\n  cylinder(r: 3, h: len)\nend\nb = bolt(10)\ndef plain\nend\nplain()\n");
     const on_call = server.hover(URI, 8, 4).?;
     errdefer std.debug.print("on call:\n{s}\n", .{on_call});
     try testing.expect(std.mem.find(u8, on_call, "```kupcad\n(method) bolt(len, thread: …)\n```\nA bolt along -z.\n\n**Parameters**\n- `len`: The length\n\n**Returns:** A Solid\n\n**Example**\n```kupcad\nbolt(10)\n```\n") != null);
