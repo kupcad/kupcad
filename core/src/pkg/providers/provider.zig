@@ -127,7 +127,7 @@ pub const ParsedPackage = struct {
     }
 
     /// Stable, filesystem-safe identifier for the package at its ref: the key of its
-    /// kupcad.lock entry and store rows. A git-host package reads as its location, and a
+    /// kupcad.pkg.lock entry and store rows. A git-host package reads as its location, and a
     /// hash of location and ref keeps it unambiguous: `github.com/a-b/c` and
     /// `github.com/a/b-c` were both `github.com-a-b-c`, and one repository at two refs was
     /// one package, whichever install worker finished first. URL/path based packages

@@ -29,7 +29,7 @@ browser IDE embed; it keeps nothing of the page's.
 * **For a host of several scripts** (the browser IDE's project): `open(script, restore)` opens one
   as another document, the editor made again on it with an undo history of its own (none of the last
   one's), run as `load` runs one; `open(text, restore, 'json')` opens a JSON file of the project (a
-  package's `kupcad.json` or `kupcad.lock`, data a script imports) the same way, edited with nothing
+  package's `kupcad.pkg.json` or `kupcad.pkg.lock`, data a script imports) the same way, edited with nothing
   run, no model, status or parameters shown. `snapshot()` is the editor as it is, its undo history
   with it, for `open` to give back when the host opens that file again; `run()` runs the script
   again as it is (what it imports changed), and `focus()` puts the focus in the editor (a script the

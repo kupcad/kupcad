@@ -7,7 +7,7 @@ const Reporter = @import("reporter.zig").Reporter;
 
 test "pkg: a request is read whole before anything is opened, a stray argument refused" {
     // `prune --forse` pruned without --force, and `add` checked its argument only after
-    // reading kupcad.json
+    // reading kupcad.pkg.json
     const cases = [_]struct { args: []const []const u8, request: ?pkg_cmd.Request = null, message: []const u8 = "" }{
         .{ .args = &.{"init"}, .request = .init },
         .{ .args = &.{"install"}, .request = .install },
@@ -51,7 +51,7 @@ test "pkg: a request is read whole before anything is opened, a stray argument r
 }
 
 test "pkg init: writes a manifest once, and refuses to overwrite an existing one" {
-    // It overwrote kupcad.json, dependencies and all, and exited 0.
+    // It overwrote kupcad.pkg.json, dependencies and all, and exited 0.
     var mem = MemoryVfs.init(testing.allocator);
     defer mem.deinit();
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -59,15 +59,15 @@ test "pkg init: writes a manifest once, and refuses to overwrite an existing one
     const reporter: Reporter = .{ .io = testing.io, .capture = &out.writer };
 
     try testing.expectEqual(.success, try pkg_cmd.initManifest(testing.allocator, mem.vfs(), reporter));
-    try testing.expectEqualStrings("Initialized kupcad.json\n", out.written());
-    const fresh = try mem.vfs().readFile(testing.allocator, "kupcad.json");
+    try testing.expectEqualStrings("Initialized kupcad.pkg.json\n", out.written());
+    const fresh = try mem.vfs().readFile(testing.allocator, "kupcad.pkg.json");
     defer testing.allocator.free(fresh);
 
-    try mem.vfs().writeFile("kupcad.json", "{ \"name\": \"mine\", \"version\": \"1.0.0\", \"dependencies\": { \"hw\": \"github.com/x/hw\" } }");
+    try mem.vfs().writeFile("kupcad.pkg.json", "{ \"name\": \"mine\", \"version\": \"1.0.0\", \"dependencies\": { \"hw\": \"github.com/x/hw\" } }");
     out.clearRetainingCapacity();
     try testing.expectEqual(.failure, try pkg_cmd.initManifest(testing.allocator, mem.vfs(), reporter));
-    try testing.expect(std.mem.startsWith(u8, out.written(), "Error: kupcad.json already exists here; nothing changed."));
-    const kept = try mem.vfs().readFile(testing.allocator, "kupcad.json");
+    try testing.expect(std.mem.startsWith(u8, out.written(), "Error: kupcad.pkg.json already exists here; nothing changed."));
+    const kept = try mem.vfs().readFile(testing.allocator, "kupcad.pkg.json");
     defer testing.allocator.free(kept);
     try testing.expect(std.mem.find(u8, kept, "github.com/x/hw") != null);
 }

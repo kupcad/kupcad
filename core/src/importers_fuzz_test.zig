@@ -1,6 +1,6 @@
 //! Fuzzing what KupCAD reads but didn't write: an STL, OBJ, 3MF, DXF, SVG or font file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
-//! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
+//! viewport client, and a cloned project's kupcad.pkg.lock, kupcad.pkg.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
 //! and keep what it promises of what it accepts: an STL mesh's faces point at its vertices
 //! and every vertex is finite (mended too, core/mesh_repair.zig), a drawing's outlines and open paths are finite, a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
@@ -332,7 +332,7 @@ fn checkHandshake(request: []const u8) !void {
 
 // --- A cloned project's files ---
 
-test "fuzz: a project's kupcad.lock" {
+test "fuzz: a project's kupcad.pkg.lock" {
     try fuzzParser(checkLockfile, &.{
         "{\"version\":\"1.0.0\",\"packages\":{\"github.com-a-b\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"sha256-abc\",\"dependencies\":{\"hw\":\"github.com/a/hw\"}}}}",
         "{\"version\":\"2.0.0\",\"packages\":{}}",
@@ -345,12 +345,12 @@ fn checkLockfile(content: []const u8) !void {
     defer warnings.restore();
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
-    try files.vfs().writeFile("kupcad.lock", content);
+    try files.vfs().writeFile("kupcad.pkg.lock", content);
     var lockfile = Lockfile.load(testing.allocator, files.vfs()) catch return;
     lockfile.deinit();
 }
 
-test "fuzz: a dependency's kupcad.json" {
+test "fuzz: a dependency's kupcad.pkg.json" {
     try fuzzParser(checkManifest, &.{
         "{\"name\":\"bolts\",\"version\":\"1.2.0\",\"dependencies\":{\"hw\":\"github.com/a/hw@v1.0.0\",\"local\":\"file:../x\"}}",
         "{\"dependencies\":[]}",

@@ -41,8 +41,8 @@ host brings the file system.
 * **The folder** (`listFolder(root, { readDir })`; alone, without Svelte, from `@kupcad/files/tree`,
   for Node or a module no Svelte compiler sees): the tree of `root`, each folder's folders first,
   hidden folders, `node_modules` and `target` left out, and a folder holding files but no script or
-  file a script reads (`kindOf`: a package's `kupcad.lock` too), at most `MAX_ENTRIES`. What a file
-  is read as, opened as text: a script or JSON (`languageOf`, `kupcad.json` and `kupcad.lock` among
+  file a script reads (`kindOf`: a package's `kupcad.pkg.lock` too), at most `MAX_ENTRIES`. What a file
+  is read as, opened as text: a script or JSON (`languageOf`, `kupcad.pkg.json` and `kupcad.pkg.lock` among
   the JSON). The names a new entry may take (`nameProblem`, `scriptName`), and paths in it
   (`childPath`, `parentOf`, `within`) with the host's separator, `/` or `\`.
 * **The project** (`Project`, one per folder opened, over the host's file system: `readDir`,

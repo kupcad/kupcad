@@ -36,7 +36,7 @@ test "Manifest: saves and loads from VFS correctly" {
     try testing.expectEqualStrings("github.com/kupcad/std", dep_url);
 }
 
-test "Manifest: returns ManifestNotFound for missing kupcad.json" {
+test "Manifest: returns ManifestNotFound for missing kupcad.pkg.json" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
@@ -56,7 +56,7 @@ test "Manifest: gracefully rejects corrupted JSON files" {
         \\  "version: 1.0.0
         \\
     ;
-    try fs.writeFile("kupcad.json", bad_json);
+    try fs.writeFile("kupcad.pkg.json", bad_json);
 
     // Attempt to load the corrupted manifest
     const result = Manifest.load(testing.allocator, fs);
@@ -80,7 +80,7 @@ test "Manifest: forward compatibility (ignores unknown JSON fields)" {
         \\  "dependencies": {}
         \\}
     ;
-    try fs.writeFile("kupcad.json", future_json);
+    try fs.writeFile("kupcad.pkg.json", future_json);
 
     // The parser should safely ignore the extra fields
     var manifest = try Manifest.load(testing.allocator, fs);
@@ -92,7 +92,7 @@ test "Manifest: forward compatibility (ignores unknown JSON fields)" {
     // Saved with a dependency added: what it doesn't read is kept, where it was
     try manifest.setDependency("std", "github.com/kupcad/std@v1");
     try manifest.save(fs);
-    const saved = try fs.readFile(testing.allocator, "kupcad.json");
+    const saved = try fs.readFile(testing.allocator, "kupcad.pkg.json");
     defer testing.allocator.free(saved);
     try testing.expectEqualStrings(
         \\{
@@ -134,7 +134,7 @@ test "Manifest: rejects ill-shaped manifests and unsafe aliases" {
     for (cases) |c| {
         var mem_vfs = MemoryVfs.init(testing.allocator);
         defer mem_vfs.deinit();
-        try mem_vfs.vfs().writeFile("kupcad.json", c.json);
+        try mem_vfs.vfs().writeFile("kupcad.pkg.json", c.json);
         testing.expectError(c.err, Manifest.load(testing.allocator, mem_vfs.vfs())) catch |err| {
             std.debug.print("manifest: {s}\n", .{c.json});
             return err;
@@ -142,7 +142,7 @@ test "Manifest: rejects ill-shaped manifests and unsafe aliases" {
     }
 }
 
-// Audit fix: strings were written unescaped into kupcad.json.
+// Audit fix: strings were written unescaped into kupcad.pkg.json.
 test "Manifest: strings are JSON-escaped on save" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -172,7 +172,7 @@ test "Manifest: setDependency adds an alias or replaces what it named" {
 }
 
 test "Manifest: a dependency's manifest gives its dependencies, checked as the project's are" {
-    // The resolver parsed a dependency's kupcad.json by hand, a copy of Manifest.load's.
+    // The resolver parsed a dependency's kupcad.pkg.json by hand, a copy of Manifest.load's.
     var deps = try Manifest.parseDependencies(testing.allocator, "{ \"dependencies\": { \"screws\": \"github.com/kupcad/screws@v1\" } }");
     defer string_map.deinitOwned(testing.allocator, &deps);
     try testing.expectEqualStrings("github.com/kupcad/screws@v1", deps.get("screws").?);

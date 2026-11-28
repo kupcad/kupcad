@@ -1,12 +1,12 @@
 //! Where a script named on the command line runs: the folder its file system is rooted at
 //! (its imports, its packages and its own exports are read and written from there) and its
 //! path from there. One under the current directory runs in its project's folder there: the
-//! nearest from its own folder up to the current directory that holds a kupcad.json (the
+//! nearest from its own folder up to the current directory that holds a kupcad.pkg.json (the
 //! package manifest, whose packages are installed beside it), else the current directory,
 //! as it always has, however it is named (`parts/a.kup`, or its absolute path, which a file
 //! system refuses). Rooted at the current directory, `kupcad run proj/main.kup` read the
 //! packages of `proj` from `./.kupcad/pkg`. One outside it (`../parts/a.kup`) runs in its
-//! project's folder, the nearest above it that holds a kupcad.json or a .kupcad.json, else
+//! project's folder, the nearest above it that holds a kupcad.pkg.json or a .kupcad.json, else
 //! in its own. Rooted at the current directory, it could import nothing.
 
 const std = @import("std");

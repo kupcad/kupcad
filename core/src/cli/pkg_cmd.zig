@@ -1,5 +1,5 @@
 //! `kupcad pkg`: the package manager's subcommands, `init`, `add`, `install`, `prune` and
-//! `doctor`, over kupcad.json, kupcad.lock and the global package store.
+//! `doctor`, over kupcad.pkg.json, kupcad.pkg.lock and the global package store.
 
 const std = @import("std");
 const Doctor = @import("../pkg/health.zig").Doctor;
@@ -33,9 +33,9 @@ pub const USAGE = blk: {
     for (@typeInfo(Subcommand).@"enum".field_names, 0..) |name, i| list = list ++ (if (i == 0) "" else "|") ++ name;
     break :blk "Usage: kupcad pkg <" ++ list ++ ">\n" ++
         \\
-        \\  init               Create kupcad.json in this directory
-        \\  add <alias>=<url>  Add a dependency to kupcad.json and install
-        \\  install            Install the dependencies, pinned by kupcad.lock
+        \\  init               Create kupcad.pkg.json in this directory
+        \\  add <alias>=<url>  Add a dependency to kupcad.pkg.json and install
+        \\  install            Install the dependencies, pinned by kupcad.pkg.lock
         \\  prune [--force]    Remove packages no project uses from the global store
         \\  doctor             Check the global store for missing or corrupt files
         \\
@@ -114,18 +114,18 @@ fn unexpected(reporter: Reporter, command: []const u8, arg: []const u8) ?Request
     return null;
 }
 
-/// `kupcad pkg init`: a fresh kupcad.json, unless the project has one (it was overwritten,
+/// `kupcad pkg init`: a fresh kupcad.pkg.json, unless the project has one (it was overwritten,
 /// dependencies and all, with exit status 0).
 pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !Outcome {
     if (fs.readFile(allocator, manifest_mod.FILE_NAME)) |existing| {
         allocator.free(existing);
-        reporter.err("Error: kupcad.json already exists here; nothing changed. Edit it, or `kupcad pkg add` a dependency.\n", .{});
+        reporter.err("Error: kupcad.pkg.json already exists here; nothing changed. Edit it, or `kupcad pkg add` a dependency.\n", .{});
         return .failure;
     } else |err| if (err != error.FileNotFound) return err;
     var manifest = try Manifest.init(allocator, "new-project");
     defer manifest.deinit();
     try manifest.save(fs);
-    reporter.out("Initialized kupcad.json\n", .{});
+    reporter.out("Initialized kupcad.pkg.json\n", .{});
     return .success;
 }
 
@@ -178,11 +178,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     }
 }
 
-/// `add` records `added` in kupcad.json and then installs, exactly like `install` (no
+/// `add` records `added` in kupcad.pkg.json and then installs, exactly like `install` (no
 /// `added`).
 fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?Dependency, fs: Vfs, cafs: *Cafs, store: *Store) !Outcome {
     var manifest = Manifest.load(allocator, fs) catch |err| {
-        log_helpers.printStderr(init.io, "Error: could not read kupcad.json: {s} (run `kupcad pkg init` to create one)\n", .{@errorName(err)});
+        log_helpers.printStderr(init.io, "Error: could not read kupcad.pkg.json: {s} (run `kupcad pkg init` to create one)\n", .{@errorName(err)});
         return .failure;
     };
     defer manifest.deinit();
@@ -190,13 +190,13 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
     // Load the existing lockfile so installs are pinned to the locked commits and
     // verified against the recorded integrity (missing file -> empty lockfile).
     var lockfile = Lockfile.load(allocator, fs) catch |err| {
-        log_helpers.printStderr(init.io, "Error: failed to read kupcad.lock: {s}\n", .{@errorName(err)});
+        log_helpers.printStderr(init.io, "Error: failed to read kupcad.pkg.lock: {s}\n", .{@errorName(err)});
         return .failure;
     };
     defer lockfile.deinit();
 
     if (added) |dependency| {
-        // Saved only once the install succeeds, so a failed `add` leaves kupcad.json as it was.
+        // Saved only once the install succeeds, so a failed `add` leaves kupcad.pkg.json as it was.
         try manifest.setDependency(dependency.alias, dependency.url);
 
         if (dependency.package.constraint != null) {
@@ -209,7 +209,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
         }
     }
 
-    // The project is the working directory, whose kupcad.json this reads
+    // The project is the working directory, whose kupcad.pkg.json this reads
     var resolver = Resolver.init(allocator, init.io, cafs, store, &manifest, &lockfile, ".");
     defer resolver.deinit();
 
@@ -218,7 +218,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
     progress.start(.forProcess(init), "", .{});
     progress.stage("Installing packages", .{});
     resolver.progress = progress.core();
-    // Any resolution/verification failure aborts before kupcad.lock is rewritten.
+    // Any resolution/verification failure aborts before kupcad.pkg.lock is rewritten.
     const resolved = resolver.resolve();
     progress.stop();
     resolved catch |err| {
@@ -234,7 +234,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
     try lockfile.save(fs);
     // The project is the working directory, where it linked
     resolver.unlinkStale(std.Io.Dir.cwd()) catch |err| {
-        log_helpers.printStderr(init.io, "Error: removing the packages kupcad.lock no longer has failed: {s}\n", .{@errorName(err)});
+        log_helpers.printStderr(init.io, "Error: removing the packages kupcad.pkg.lock no longer has failed: {s}\n", .{@errorName(err)});
         return .failure;
     };
     log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});

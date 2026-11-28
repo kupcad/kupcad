@@ -453,7 +453,7 @@ test "kupcad: a script imports its neighbours however it is named, from wherever
     defer sb.deinit();
     try sb.tmp.dir.createDirPath(testing.io, "proj/parts");
     try sb.tmp.dir.createDirPath(testing.io, "other");
-    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.pkg.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/lib.kup", .data = "side = 3\nexport side\n" });
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/parts/main.kup", .data = "import { side } from \"../lib.kup\"\nputs side * 2\ncube(side)\n" });
     const main_abs = try std.fs.path.join(testing.allocator, &.{ sb.path, "proj", "parts", "main.kup" });
@@ -466,7 +466,7 @@ test "kupcad: a script imports its neighbours however it is named, from wherever
     const cases = [_]struct { cwd: []const u8, script: []const u8 }{
         .{ .cwd = proj, .script = main_abs },
         .{ .cwd = proj, .script = "parts/main.kup" },
-        // Outside the current directory: its project's folder, where kupcad.json is
+        // Outside the current directory: its project's folder, where kupcad.pkg.json is
         .{ .cwd = other, .script = "../proj/parts/main.kup" },
         .{ .cwd = other, .script = main_abs },
     };
@@ -487,7 +487,7 @@ test "kupcad: a script in a project below the current directory imports the proj
     var sb = try Sandbox.init();
     defer sb.deinit();
     try sb.tmp.dir.createDirPath(testing.io, "proj/.kupcad/pkg/c");
-    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.pkg.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/.kupcad/pkg/c/main.kup", .data = "side = 4\nexport side\n" });
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/main.kup", .data = "import { side } from \"c\"\nputs side\ncube(side)\n" });
     const proj = try std.fs.path.join(testing.allocator, &.{ sb.path, "proj" });
@@ -526,7 +526,7 @@ test "kupcad: check and fmt read each file's settings from the nearest .kupcad.j
     });
 }
 
-test "kupcad: pkg add of a local package records it, and keeps what else kupcad.json says" {
+test "kupcad: pkg add of a local package records it, and keeps what else kupcad.pkg.json says" {
     var sb = try Sandbox.init();
     defer sb.deinit();
     const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
@@ -534,7 +534,7 @@ test "kupcad: pkg add of a local package records it, and keeps what else kupcad.
     var env = std.process.Environ.Map.init(testing.allocator);
     defer env.deinit();
     try env.put("KUPCAD_HOME", home);
-    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "kupcad.json", .data = "{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {}\n}\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "kupcad.pkg.json", .data = "{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {}\n}\n" });
     const archive = try pkg_helpers.buildTarGz(testing.allocator, &.{.{ .name = "main.kup", .data = "export { part }\npart = cube(1)\n" }});
     defer testing.allocator.free(archive);
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "screws.tar.gz", .data = archive });
@@ -552,14 +552,14 @@ test "kupcad: pkg add of a local package records it, and keeps what else kupcad.
     defer testing.allocator.free(said);
     try testing.expect(std.mem.find(u8, added.stdout, said) != null);
     // It used to write back the name, the version and the dependencies alone
-    const saved = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    const saved = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.pkg.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(saved);
     // The spec as JSON writes it: a Windows path's `\\` escaped
     const expected = try std.fmt.allocPrint(testing.allocator, "{{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {{\n    \"screws\": {f}\n  }}\n}}\n", .{std.json.fmt(spec, .{})});
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, saved);
     // And locked
-    try sb.tmp.dir.access(testing.io, "kupcad.lock", .{});
+    try sb.tmp.dir.access(testing.io, "kupcad.pkg.lock", .{});
 }
 
 test "kupcad: pkg add of an archive's URL installs it, a script imports it, and install fetches it again" {
@@ -593,10 +593,10 @@ test "kupcad: pkg add of an archive's URL installs it, a script imports it, and 
     defer added.deinit();
     errdefer std.debug.print("pkg add said:\n{s}{s}\n", .{ added.stdout, added.stderr });
     try testing.expectEqual(@as(u8, 0), added.code);
-    const manifest = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    const manifest = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.pkg.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(manifest);
     try testing.expect(std.mem.find(u8, manifest, url) != null);
-    const lock = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.lock", testing.allocator, .limited(4096));
+    const lock = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.pkg.lock", testing.allocator, .limited(4096));
     defer testing.allocator.free(lock);
     try testing.expect(std.mem.find(u8, lock, "\"integrity\": \"sha") != null);
 
@@ -622,7 +622,7 @@ test "kupcad: pkg add of an archive's URL installs it, a script imports it, and 
     try testing.expectEqual(@as(u8, 0), rebuilt.code);
 }
 
-test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
+test "kupcad: pkg add that fails to install leaves kupcad.pkg.json as it was" {
     var sb = try Sandbox.init();
     defer sb.deinit();
     const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
@@ -634,14 +634,14 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
     defer created.deinit();
     try testing.expectEqual(@as(u8, 0), created.code);
-    const before = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    const before = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.pkg.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(before);
 
     // It used to save the dependency first, so every later install failed on it too.
     const added = try kupcadIn(sb.path, &.{ "pkg", "add", "missing=file:/nonexistent-kupcad-test/pkg.tar.gz" }, &env);
     defer added.deinit();
     try testing.expectEqual(@as(u8, 1), added.code);
-    const after = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    const after = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.pkg.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(after);
     try testing.expectEqualStrings(before, after);
 
@@ -652,7 +652,7 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     try testing.expect(std.mem.find(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
-test "kupcad: pkg install needs kupcad.json; install, prune and doctor run on a fresh store" {
+test "kupcad: pkg install needs kupcad.pkg.json; install, prune and doctor run on a fresh store" {
     var sb = try Sandbox.init();
     defer sb.deinit();
     const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
@@ -664,7 +664,7 @@ test "kupcad: pkg install needs kupcad.json; install, prune and doctor run on a 
     const without = try kupcadIn(sb.path, &.{ "pkg", "install" }, &env);
     defer without.deinit();
     try testing.expectEqual(@as(u8, 1), without.code);
-    try testing.expect(std.mem.find(u8, without.stderr, "could not read kupcad.json") != null);
+    try testing.expect(std.mem.find(u8, without.stderr, "could not read kupcad.pkg.json") != null);
     try testing.expect(std.mem.find(u8, without.stderr, "run `kupcad pkg init` to create one") != null);
 
     const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);

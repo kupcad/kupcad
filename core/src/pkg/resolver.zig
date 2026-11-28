@@ -1,5 +1,5 @@
 //! `Resolver`: installs a manifest's dependency tree, fetching packages concurrently,
-//! verifying them against kupcad.lock, recording their lock entries and dropping stale ones,
+//! verifying them against kupcad.pkg.lock, recording their lock entries and dropping stale ones,
 //! then links them into the project (`linkWorkspace`) and removes the links an install no
 //! longer makes (`unlinkStale`).
 //!
@@ -66,7 +66,7 @@ pub const Resolver = struct {
     store: *Store,
     manifest: *Manifest,
     lockfile: *Lockfile,
-    /// The project's folder (its kupcad.json's), which a `file:` archive is read from and
+    /// The project's folder (its kupcad.pkg.json's), which a `file:` archive is read from and
     /// may not leave.
     project_dir: []const u8,
     /// One HTTP client for every package: the connections are pooled and the system's
@@ -201,7 +201,7 @@ pub const Resolver = struct {
                 first_visit = true;
                 if (self.lockfile.packages.get(pkg_id)) |locked| {
                     // The pin only applies to the ref it was resolved from; editing the
-                    // ref in kupcad.json is an explicit request to re-resolve.
+                    // ref in kupcad.pkg.json is an explicit request to re-resolve.
                     if (locked.resolved.len > 0 and std.mem.eql(u8, locked.ref, parsed.ref)) {
                         pinned_commit = try self.allocator.dupe(u8, locked.resolved);
                         pinned_integrity = try self.allocator.dupe(u8, locked.integrity);
@@ -271,11 +271,11 @@ pub const Resolver = struct {
         if (pinned_commit != null) {
             const expected = pinned_integrity orelse "";
             if (expected.len == 0) {
-                log.warn("kupcad.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
+                log.warn("kupcad.pkg.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
                 return error.LockfileMissingIntegrity;
             }
             integrity.verify(self.allocator, files, expected) catch |err| {
-                log.warn("Integrity mismatch for {s}@{s}: kupcad.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
+                log.warn("Integrity mismatch for {s}@{s}: kupcad.pkg.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
                 return err;
             };
         }
@@ -348,7 +348,7 @@ pub const Resolver = struct {
         return std.fmt.bufPrint(buf, "{s} {s}", .{ verb, alias }) catch verb;
     }
 
-    /// Reads kupcad.json out of the Content Addressable filesystem to find child dependencies.
+    /// Reads kupcad.pkg.json out of the Content Addressable filesystem to find child dependencies.
     /// Malformed manifests and invalid entries are errors, never silently skipped,
     /// so a broken dependency tree can't masquerade as a successful install.
     fn spawnTransitiveDependencies(self: *Resolver, pkg_id: []const u8, manifest_hash: []const u8) !void {
@@ -383,7 +383,7 @@ pub const Resolver = struct {
             const pkg_id = entry.key_ptr.*;
             const locked = entry.value_ptr.*;
 
-            // Both come from kupcad.lock and are joined into filesystem paths.
+            // Both come from kupcad.pkg.lock and are joined into filesystem paths.
             try validate.validatePathSegment(pkg_id);
             try validate.validatePathSegment(locked.resolved);
 
@@ -481,7 +481,7 @@ pub const Resolver = struct {
     /// Removes from the project at `project` (where `linkWorkspace` linked) what this install
     /// doesn't link: the links in PACKAGE_DIR of aliases the manifest doesn't have, and the
     /// store folders no lock entry is (an upgrade's old commit). They stayed: a dependency
-    /// taken out of kupcad.json still imported, and each old commit's hard links kept its
+    /// taken out of kupcad.pkg.json still imported, and each old commit's hard links kept its
     /// blobs from the global store's prune. Only a symlink named as an alias and a folder
     /// named as a store entry go, nothing else a person put there.
     pub fn unlinkStale(self: *Resolver, project: std.Io.Dir) !void {
@@ -528,7 +528,7 @@ pub const Resolver = struct {
         return stale;
     }
 
-    /// Whether `name` is the store folder of a package kupcad.lock has, `<id>-<commit>`.
+    /// Whether `name` is the store folder of a package kupcad.pkg.lock has, `<id>-<commit>`.
     fn isLockedFolder(self: *Resolver, name: []const u8) bool {
         var it = self.lockfile.packages.iterator();
         while (it.next()) |entry| {
@@ -539,11 +539,11 @@ pub const Resolver = struct {
         return false;
     }
 
-    /// A dependency resolve should have locked isn't in kupcad.lock: the install fails, as
+    /// A dependency resolve should have locked isn't in kupcad.pkg.lock: the install fails, as
     /// linking past it left the project without the package (an import of it failed later,
     /// far from the cause).
     fn notLocked(alias: []const u8) error{DependencyNotLocked} {
-        log.warn("Dependency '{s}' is not in kupcad.lock, so it can't be linked; run `kupcad pkg install` again", .{alias});
+        log.warn("Dependency '{s}' is not in kupcad.pkg.lock, so it can't be linked; run `kupcad pkg install` again", .{alias});
         return error.DependencyNotLocked;
     }
 };

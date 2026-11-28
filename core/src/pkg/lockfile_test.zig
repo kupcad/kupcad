@@ -34,7 +34,7 @@ test "Lockfile: saves deterministic JSON to VFS" {
     try lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-kupcad-std"), pkg);
     try lockfile.save(fs);
 
-    const content = try fs.readFile(testing.allocator, "kupcad.lock");
+    const content = try fs.readFile(testing.allocator, "kupcad.pkg.lock");
     defer testing.allocator.free(content);
 
     try testing.expect(std.mem.find(u8, content, "\"version\": \"" ++ @import("lockfile.zig").LOCKFILE_VERSION ++ "\"") != null);
@@ -58,7 +58,7 @@ test "Lockfile: rejects malformed JSON payloads safely" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("kupcad.lock", "{ broken_json: true ");
+    try mem_vfs.vfs().writeFile("kupcad.pkg.lock", "{ broken_json: true ");
 
     const result = Lockfile.load(testing.allocator, mem_vfs.vfs());
     try testing.expectError(error.UnexpectedToken, result);
@@ -67,7 +67,7 @@ test "Lockfile: rejects malformed JSON payloads safely" {
 fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
     const content = try testing.allocator.print("{{\"version\":\"{s}\",\"packages\":{{}}}}", .{version});
     defer testing.allocator.free(content);
-    try mem_vfs.vfs().writeFile("kupcad.lock", content);
+    try mem_vfs.vfs().writeFile("kupcad.pkg.lock", content);
     return Lockfile.load(testing.allocator, mem_vfs.vfs());
 }
 
@@ -86,12 +86,12 @@ test "Lockfile: it reads its own major and refuses any other" {
     for ([_][]const u8{ "2.0.0", "0.9.0", "not-a-version", "" }) |version| {
         try testing.expectError(error.UnsupportedLockfileVersion, loadVersion(&mem_vfs, version));
     }
-    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"packages\":{}}");
+    try mem_vfs.vfs().writeFile("kupcad.pkg.lock", "{\"packages\":{}}");
     try testing.expectError(error.UnsupportedLockfileVersion, Lockfile.load(testing.allocator, mem_vfs.vfs()));
 }
 
 // Audit fix: strings were written unescaped, so a hostile alias or ref could
-// inject keys into kupcad.lock.
+// inject keys into kupcad.pkg.lock.
 test "Lockfile: strings are JSON-escaped on save" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -124,9 +124,9 @@ test "Lockfile: a package's resolved commit is one, or the lock is refused" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     // It is joined into a store path and an archive URL before it is checked at link time
-    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"../../x\",\"ref\":\"main\",\"integrity\":\"\"}}}");
+    try mem_vfs.vfs().writeFile("kupcad.pkg.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"../../x\",\"ref\":\"main\",\"integrity\":\"\"}}}");
     try testing.expectError(error.InvalidResolvedCommit, Lockfile.load(testing.allocator, mem_vfs.vfs()));
-    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"\"}}}");
+    try mem_vfs.vfs().writeFile("kupcad.pkg.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"\"}}}");
     var lock = try Lockfile.load(testing.allocator, mem_vfs.vfs());
     defer lock.deinit();
     try testing.expectEqualStrings("0123456789abcdef0123456789abcdef01234567", lock.packages.get("github.com/u/r").?.resolved);

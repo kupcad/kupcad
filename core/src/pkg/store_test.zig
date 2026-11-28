@@ -30,7 +30,7 @@ test "Store: registerPackage records metadata and file hashes for lookup" {
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
     try files.put("lib/main.kup", "hash_main_123");
-    try files.put("kupcad.json", "hash_json_456");
+    try files.put("kupcad.pkg.json", "hash_json_456");
     try store.registerPackage("github.com-kupcad-std", "commit-abc", "github", "sha256-mockhash", &files);
 
     try testing.expect(try store.hasPackage("github.com-kupcad-std", "commit-abc"));
@@ -46,7 +46,7 @@ test "Store: registerPackage records metadata and file hashes for lookup" {
     defer freeMap(&cached);
     try testing.expectEqual(@as(usize, 2), cached.count());
     try testing.expectEqualStrings("hash_main_123", cached.get("lib/main.kup").?);
-    try testing.expectEqualStrings("hash_json_456", cached.get("kupcad.json").?);
+    try testing.expectEqualStrings("hash_json_456", cached.get("kupcad.pkg.json").?);
 }
 
 // Audit fix: re-registering used INSERT OR IGNORE (stale integrity kept) and
@@ -301,7 +301,7 @@ test "Store: a write waits for another connection's lock instead of failing" {
 
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
-    try files.put("kupcad.json", "hash_json");
+    try files.put("kupcad.pkg.json", "hash_json");
     const started = std.Io.Clock.Timestamp.now(testing.io, .awake);
     writing.set(testing.io);
     try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);

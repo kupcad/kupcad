@@ -198,7 +198,7 @@
    * Opens a file in the editor in place of the one there as another document: the editor made
    * again on it, its undo history its own, not the last one's (`restore`, an earlier
    * `snapshot()` of it, gives it back). A script runs at once as `load` runs one; a JSON file (a
-   * package's kupcad.json or kupcad.lock, data a script imports) is edited with nothing run,
+   * package's kupcad.pkg.json or kupcad.pkg.lock, data a script imports) is edited with nothing run,
    * nothing in the viewer.
    * @param {string} text one of the page's files
    * @param {unknown} [restore] the snapshot the page kept when it opened another

@@ -6,7 +6,7 @@
 // formatting, renaming, definitions. It tells its host of each change the user makes to the
 // script; one the host makes (setValue) it doesn't. A host that shows another script in its
 // place keeps this one's snapshot(), its undo history with it, and restores it (`restore`). It
-// edits a JSON file of a project too (`language`: a package's kupcad.json and kupcad.lock, the
+// edits a JSON file of a project too (`language`: a package's kupcad.pkg.json and kupcad.pkg.lock, the
 // data a script imports): highlighted, its syntax errors marked, with nothing of KupCAD's.
 
 import {

@@ -1,5 +1,5 @@
 //! A package's integrity: a SHA-256 over its `path -> blob hash` map, in sorted order and
-//! length-prefixed so two different maps never hash alike, as `kupcad.lock` pins it
+//! length-prefixed so two different maps never hash alike, as `kupcad.pkg.lock` pins it
 //! (`compute`, `verify`). Pure hashing; the store only records the result.
 
 const std = @import("std");

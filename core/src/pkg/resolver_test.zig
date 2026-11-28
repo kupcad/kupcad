@@ -220,7 +220,7 @@ test "Resolver: a package's own dependencies are linked in its folder, where its
 }
 
 test "Resolver: unlinkStale removes the links and store folders an install no longer makes, and nothing else" {
-    // `pkg install` only added: a dependency taken out of kupcad.json still imported, and an
+    // `pkg install` only added: a dependency taken out of kupcad.pkg.json still imported, and an
     // upgrade's old commit kept its blobs from the store's prune
     var fx: Fixture = undefined;
     try fx.init();
@@ -270,7 +270,7 @@ test "Resolver: linkWorkspace refuses a locked package the store doesn't have" {
     try testing.expectError(error.PackageNotInStore, fx.link());
 }
 
-test "Resolver: linkWorkspace fails on a dependency kupcad.lock doesn't have" {
+test "Resolver: linkWorkspace fails on a dependency kupcad.pkg.lock doesn't have" {
     // It warned and linked the others: the install passed, and the import failed later
     const warnings = test_support.expectWarnings();
     defer warnings.restore();
@@ -283,7 +283,7 @@ test "Resolver: linkWorkspace fails on a dependency kupcad.lock doesn't have" {
 }
 
 // Lockfile and store values are joined into filesystem paths; a tampered
-// kupcad.lock or index must not be able to place files outside the store.
+// kupcad.pkg.lock or index must not be able to place files outside the store.
 test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
     {
         var fx: Fixture = undefined;
@@ -440,7 +440,7 @@ test "Resolver: a pin for a different ref is re-resolved, stale entries dropped"
     const good_integrity = try testing.allocator.dupe(u8, (try fx.entry(pkg_id)).integrity);
     defer testing.allocator.free(good_integrity);
 
-    // The ref changed in kupcad.json (local deps have ref ""), so the old pin
+    // The ref changed in kupcad.pkg.json (local deps have ref ""), so the old pin
     // (with its now-irrelevant integrity) must not be enforced.
     const e = try fx.entry(pkg_id);
     try setOwned(&e.ref, "v9");
@@ -474,7 +474,7 @@ test "Resolver: forbidden or malformed transitive deps fail the install" {
         .{ .manifest =
         \\{"dependencies":{"x":"127.0.0.1/u/r"}}
         , .err = error.UnknownPackageHost },
-        // Alias from an untrusted kupcad.json is used as a symlink name
+        // Alias from an untrusted kupcad.pkg.json is used as a symlink name
         .{ .manifest =
         \\{"dependencies":{"../../../../evil":"github.com/a/b"}}
         , .err = error.InvalidAlias },
@@ -491,7 +491,7 @@ test "Resolver: forbidden or malformed transitive deps fail the install" {
         var fx: Fixture = undefined;
         try fx.init();
         defer fx.deinit();
-        const pkg_id = try fx.addLocalDep("p", &.{.{ .name = "kupcad.json", .data = c.manifest }});
+        const pkg_id = try fx.addLocalDep("p", &.{.{ .name = "kupcad.pkg.json", .data = c.manifest }});
         defer testing.allocator.free(pkg_id);
         testing.expectError(c.err, fx.resolve()) catch |err| {
             std.debug.print("transitive manifest: {s}\n", .{c.manifest});

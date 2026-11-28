@@ -1,6 +1,6 @@
 //! Input validation for untrusted package metadata.
 //!
-//! Aliases, refs, hosts and ids come from kupcad.json / kupcad.lock files that may
+//! Aliases, refs, hosts and ids come from kupcad.pkg.json / kupcad.pkg.lock files that may
 //! originate from a downloaded (attacker-controlled) package. They end up in
 //! filesystem paths (symlink names, store folders) and in request URLs, so they
 //! are restricted to conservative charsets instead of being escaped ad hoc.
@@ -59,7 +59,7 @@ pub fn validateRef(ref: []const u8) ValidationError!void {
 
 /// A version range after `@` (`^1.2`, `>=2.0.0`): an operator, then a version of digits and
 /// dots, with an optional `v`. It is parsed, never put in a URL, but it is kept in
-/// kupcad.lock and shown, so it gets a charset too.
+/// kupcad.pkg.lock and shown, so it gets a charset too.
 pub fn validateRange(range: []const u8) ValidationError!void {
     if (range.len == 0 or range.len > limits.MAX_REF_LEN) return error.InvalidRef;
     for (range) |c| {

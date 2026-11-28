@@ -1,4 +1,4 @@
-//! `Lockfile`: reads and writes a project's `kupcad.lock`, the resolved source, ref,
+//! `Lockfile`: reads and writes a project's `kupcad.pkg.lock`, the resolved source, ref,
 //! integrity and dependencies of every installed package (`LockedPackage`).
 
 const std = @import("std");
@@ -53,7 +53,7 @@ pub const Lockfile = struct {
     }
 
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Lockfile {
-        const content = fs.readFile(allocator, "kupcad.lock") catch |err| switch (err) {
+        const content = fs.readFile(allocator, "kupcad.pkg.lock") catch |err| switch (err) {
             error.FileNotFound => return Lockfile.init(allocator),
             else => return err,
         };
@@ -69,7 +69,7 @@ pub const Lockfile = struct {
 
         const version = if (root.object.get("version")) |v| (if (v == .string) v.string else "") else "";
         if (!isSupported(version)) {
-            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ version, LOCKFILE_MAJOR });
+            log.warn("kupcad.pkg.lock version \"{s}\" is not supported (this kupcad reads {d}.x lockfiles); upgrade kupcad or delete kupcad.pkg.lock to re-resolve", .{ version, LOCKFILE_MAJOR });
             return error.UnsupportedLockfileVersion;
         }
 
@@ -182,6 +182,6 @@ pub const Lockfile = struct {
         }
         try jw.endObject();
         try jw.endObject();
-        try fs.writeFile("kupcad.lock", aw.written());
+        try fs.writeFile("kupcad.pkg.lock", aw.written());
     }
 };

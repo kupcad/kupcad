@@ -130,7 +130,7 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   anything in a folder the tree leaves out. Every file changed is told to the server too
   (`workspace/didChangeWatchedFiles`), which runs again the script shown when it reads one: a
   data file saved, or a module no editor has open changed by another program.
-* **A JSON file** (a data file, `kupcad.json`, `kupcad.lock`) opens in the editor as text, its
+* **A JSON file** (a data file, `kupcad.pkg.json`, `kupcad.pkg.lock`) opens in the editor as text, its
   syntax errors marked, and isn't the server's: the preview stays the last script's, which runs
   again as the file is saved.
 * **The scripts read** (`@kupcad/files`' `Scripts`): each one's text, as it is now and as the disk

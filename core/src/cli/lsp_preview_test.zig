@@ -447,7 +447,7 @@ test "LSP preview: a document opened from outside the workspace imports its neig
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(testing.io, "proj/parts");
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{}" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.pkg.json", .data = "{}" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/lib.kup", .data = "side = 3\nexport side\n" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "secret.kup", .data = "side = 9\nexport side\n" });
     const base = try tmp.dir.realPathFileAlloc(testing.io, ".", a);

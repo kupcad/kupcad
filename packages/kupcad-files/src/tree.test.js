@@ -241,12 +241,16 @@ describe('a file', () => {
   });
 
   it("is listed as data where it is a package's lockfile, JSON though its extension isn't", () => {
-    expect(['kupcad.lock', 'yarn.lock', 'kupcad.json'].map(kindOf)).toEqual(['data', null, 'data']);
+    expect(['kupcad.pkg.lock', 'yarn.lock', 'kupcad.pkg.json'].map(kindOf)).toEqual([
+      'data',
+      null,
+      'data',
+    ]);
   });
 
   it('is opened as a script, as JSON, or not at all as text', () => {
     expect(
-      ['a.kup', 'kupcad.json', 'sizes.JSON', 'kupcad.lock', 'mesh.stl', 'notes.txt'].map(
+      ['a.kup', 'kupcad.pkg.json', 'sizes.JSON', 'kupcad.pkg.lock', 'mesh.stl', 'notes.txt'].map(
         languageOf,
       ),
     ).toEqual(['kupcad', 'json', 'json', 'json', null, null]);

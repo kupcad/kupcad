@@ -19,7 +19,7 @@ export const DATA_EXTENSIONS = new Set([
 ]);
 export { SCRIPT_EXTENSION } from '@kupcad/protocol';
 /** A package's lockfile, JSON though its extension doesn't say so. */
-const LOCK_FILE = 'kupcad.lock';
+const LOCK_FILE = 'kupcad.pkg.lock';
 /** Folders that hold no file of the user's: hidden ones (.git, .kupcad's packages) and build output. */
 export const SKIPPED_FOLDER = /^\.|^node_modules$|^target$/;
 /** A folder with more files than this is no project: the list stops there. */
@@ -144,8 +144,8 @@ export function kindOf(name) {
 }
 
 /**
- * What a file is read as when it is opened as text: a script, or JSON (a package's kupcad.json
- * and kupcad.lock, data a script imports); null for one not opened as text.
+ * What a file is read as when it is opened as text: a script, or JSON (a package's kupcad.pkg.json
+ * and kupcad.pkg.lock, data a script imports); null for one not opened as text.
  * @param {string} name
  * @returns {'kupcad' | 'json' | null}
  */

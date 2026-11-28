@@ -1,4 +1,4 @@
-//! `Manifest`: a project's kupcad.json, its name, version and dependencies (alias to URL),
+//! `Manifest`: a project's kupcad.pkg.json, its name, version and dependencies (alias to URL),
 //! loaded and validated (`load`), changed (`setDependency`), and written back (`save`): the
 //! dependencies sorted, what it doesn't read (a description, a license) kept as it was.
 
@@ -10,7 +10,7 @@ const string_map = @import("string_map.zig");
 pub const StringMap = string_map.StringMap;
 
 /// The manifest's file, in a project's folder and at a package's top.
-pub const FILE_NAME = "kupcad.json";
+pub const FILE_NAME = "kupcad.pkg.json";
 /// The keys a manifest reads and writes itself, in the order a new one has them.
 const OWN_KEYS = [_][]const u8{ "name", "version", "dependencies" };
 
@@ -39,7 +39,7 @@ pub const Manifest = struct {
         if (self.file) |*file| file.deinit();
     }
 
-    /// Loads and parses kupcad.json from disk
+    /// Loads and parses kupcad.pkg.json from disk
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Manifest {
         const buffer = fs.readFile(allocator, FILE_NAME) catch |err| switch (err) {
             error.FileNotFound => return error.ManifestNotFound,
@@ -68,7 +68,7 @@ pub const Manifest = struct {
         return .{ .allocator = allocator, .name = name, .version = version, .dependencies = dependencies, .file = parsed };
     }
 
-    /// The `dependencies` of the kupcad.json in `json_bytes` (alias -> URL, owned): what the
+    /// The `dependencies` of the kupcad.pkg.json in `json_bytes` (alias -> URL, owned): what the
     /// resolver reads from a dependency's own manifest, which needn't name a version.
     pub fn parseDependencies(allocator: std.mem.Allocator, json_bytes: []const u8) !StringMap {
         var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return error.InvalidManifest;
@@ -103,7 +103,7 @@ pub const Manifest = struct {
         try string_map.putOwned(self.allocator, &self.dependencies, alias, url);
     }
 
-    /// Writes it to kupcad.json: the file's keys in its order, each it doesn't read as it
+    /// Writes it to kupcad.pkg.json: the file's keys in its order, each it doesn't read as it
     /// was, then any of its own the file lacked (a new one's name, version and dependencies);
     /// the dependencies sorted by alias, so the file changes as little as it can.
     pub fn save(self: *Manifest, fs: Vfs) !void {

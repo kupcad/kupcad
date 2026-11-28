@@ -107,7 +107,7 @@ const marked = (view) => {
 };
 
 describe('a JSON file', () => {
-  it("is read as JSON, not as a script: a package's kupcad.json", () => {
+  it("is read as JSON, not as a script: a package's kupcad.pkg.json", () => {
     const { view } = editorOn({
       value: '{ "name": "parts", "version": "1.0.0" }\n',
       language: 'json',

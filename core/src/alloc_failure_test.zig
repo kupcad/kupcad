@@ -230,10 +230,10 @@ fn packageFiles(_: void, allocator: std.mem.Allocator) anyerror![]const u8 {
     var disk = MemoryVfs.init(allocator);
     defer disk.deinit();
     const fs = disk.vfs();
-    try fs.writeFile("kupcad.json",
+    try fs.writeFile("kupcad.pkg.json",
         \\{"name": "bracket", "version": "1.2.0", "dependencies": {"hardware": "github.com/kupcad/hardware", "std": "github.com/kupcad/std#v1"}}
     );
-    try fs.writeFile("kupcad.lock",
+    try fs.writeFile("kupcad.pkg.lock",
         \\{"version": "1.0.0", "packages": {"github.com-kupcad-std": {"resolved": "0123456789abcdef0123456789abcdef01234567", "ref": "v1", "integrity": "sha256-AAAA", "dependencies": {"geom": "github.com/kupcad/geom"}}, "github.com-kupcad-geom": {"resolved": "", "ref": "main", "integrity": ""}}}
     );
     var manifest = try Manifest.load(allocator, fs);
@@ -241,7 +241,7 @@ fn packageFiles(_: void, allocator: std.mem.Allocator) anyerror![]const u8 {
     var lockfile = try Lockfile.load(allocator, fs);
     defer lockfile.deinit();
     try lockfile.save(fs);
-    const saved = try fs.readFile(allocator, "kupcad.lock");
+    const saved = try fs.readFile(allocator, "kupcad.pkg.lock");
     defer allocator.free(saved);
     return std.fmt.allocPrint(allocator, "{s} {s}, {d} dependencies\n{s}", .{ manifest.name, manifest.version, manifest.dependencies.count(), saved });
 }

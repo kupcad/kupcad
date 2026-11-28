@@ -334,19 +334,19 @@ test "Cafs: a wrapped archive's top folder is not part of the package" {
 
     var archive = try fx.extractAs(&.{
         .{ .name = "parts-0123abc/", .kind = .dir },
-        .{ .name = "parts-0123abc/kupcad.json", .data = "{}" },
+        .{ .name = "parts-0123abc/kupcad.pkg.json", .data = "{}" },
         .{ .name = "parts-0123abc/lib/bolt.kup", .data = "def bolt() 1 end" },
     }, .wrapped);
     defer archive.deinit(testing.allocator);
     try testing.expectEqualStrings("parts-0123abc", archive.root);
     try testing.expectEqual(@as(u32, 2), archive.files.count());
-    try testing.expect(archive.files.contains("kupcad.json"));
+    try testing.expect(archive.files.contains("kupcad.pkg.json"));
     try testing.expect(archive.files.contains("lib/bolt.kup"));
 
     // An archive named directly is the package as it is.
-    var flat = try fx.extractAs(&.{.{ .name = "parts/kupcad.json", .data = "{}" }}, .flat);
+    var flat = try fx.extractAs(&.{.{ .name = "parts/kupcad.pkg.json", .data = "{}" }}, .flat);
     defer flat.deinit(testing.allocator);
-    try testing.expect(flat.files.contains("parts/kupcad.json"));
+    try testing.expect(flat.files.contains("parts/kupcad.pkg.json"));
     try testing.expectEqualStrings("", flat.root);
 }
 
@@ -372,7 +372,7 @@ test "Cafs: a wrapped archive must have exactly one top folder" {
     defer fx.deinit();
     try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{.{ .name = "README.md", .data = "x" }}, .wrapped);
     try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{
-        .{ .name = "a/kupcad.json", .data = "{}" },
+        .{ .name = "a/kupcad.pkg.json", .data = "{}" },
         .{ .name = "b/main.kup", .data = "x" },
     }, .wrapped);
 }
