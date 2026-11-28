@@ -257,6 +257,9 @@ pub const VM = struct {
     /// where no one is at a terminal to answer it, such as the LSP, whose stdin and stdout
     /// carry the protocol: there `debugger()` does nothing.
     debugger_handler: ?*const fn (vm: *VM) void = null,
+    /// Under `kupcad test --filter`, the text a test block's name must contain to run; every
+    /// test runs without one (stdlib/diagnostics.zig).
+    test_filter: ?[]const u8 = null,
     /// Where the evaluator tells it is evaluating geometry, for a host that shows the run's
     /// progress (the CLI's progress line); no one by default. Kept apart from `host`, which
     /// each module's run sets again.

@@ -192,7 +192,7 @@
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\w])(assert|benchmark|debugger|import_3mf|import_dxf|import_font|import_json|import_obj|import_step|import_stl|import_svg|inspect|param|print|puts|warn)(?![\\w?!])",
+      "match": "(?<![\\w])(assert|assert_equal|assert_near|benchmark|debugger|import_3mf|import_dxf|import_font|import_json|import_obj|import_step|import_stl|import_svg|inspect|param|print|puts|warn)(?![\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {

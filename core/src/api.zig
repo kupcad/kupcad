@@ -30,6 +30,8 @@ const Stopwatch = @import("core/stopwatch.zig").Stopwatch;
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 pub const Document = @import("frontend/document.zig").Document;
+/// Whether a file's top level holds a test block, for `kupcad test` to find the files to run.
+pub const hasTestBlocks = @import("compiler/macros.zig").hasTestBlocks;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 const suppressions = @import("tools/lint/suppressions.zig");

@@ -250,3 +250,29 @@ test "run report: a preview's run keeps what it prints, any other run writes it 
     try testing.expectEqual(.ok, try run(&built, "puts 1 + 1"));
     try testing.expectEqualStrings("", built.report.output.items);
 }
+
+test "run report: a test runs until it ends, passed or failed once, and clear frees them" {
+    var report: RunReport = .{};
+    defer report.deinit(testing.allocator);
+    // An end with no test running is nothing
+    try report.endTest(testing.allocator, "stray");
+    try testing.expectEqual(@as(usize, 0), report.tests.items.len);
+
+    try report.beginTest(testing.allocator, "a");
+    try testing.expectEqual(.running, report.tests.items[0].status);
+    try report.endTest(testing.allocator, null);
+    try testing.expectEqual(.passed, report.tests.items[0].status);
+    // Ended already: a second end changes nothing
+    try report.endTest(testing.allocator, "late");
+    try testing.expectEqual(.passed, report.tests.items[0].status);
+    try testing.expectEqual(@as(?[]u8, null), report.tests.items[0].failure);
+
+    try report.beginTest(testing.allocator, "b");
+    try report.endTest(testing.allocator, "E: m");
+    try testing.expectEqual(@as(usize, 2), report.tests.items.len);
+    try testing.expectEqual(.failed, report.tests.items[1].status);
+    try testing.expectEqualStrings("E: m", report.tests.items[1].failure.?);
+
+    report.clear(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), report.tests.items.len);
+}

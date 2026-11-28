@@ -2267,3 +2267,106 @@ test "Compiler: a node it can't compile is an error, not nil" {
     const res = try run(&vm, "## @label size\nx = nil");
     try testing.expectEqual(.ok, res.status);
 }
+
+/// Compiles `source` with its test blocks, as `kupcad test` compiles the file it tests, and
+/// runs it; `filter` as `--filter` gives it.
+fn runTested(vm: *VM, source: []const u8, filter: ?[]const u8) !RunResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
+    defer comp.deinit();
+    comp.compile_tests = true;
+    try comp.compile(doc.tree.root);
+
+    vm.test_filter = filter;
+    vm.line_index = &doc.line_index;
+    defer vm.line_index = null;
+    const status = vm.interpret(&out_chunk);
+    const top = if (vm.stack_top > 0) vm.stack[vm.stack_top - 1] else value.Value.initNil();
+    return .{ .status = status, .top = top };
+}
+
+const TESTED_SCRIPT =
+    \\n = 0
+    \\test("passes") do
+    \\  n += 1
+    \\  assert_equal(n, 1)
+    \\end
+    \\test("fails") do
+    \\  assert_equal(n, 2, "n")
+    \\end
+    \\test("raises") do
+    \\  raise ArgumentError, "boom"
+    \\end
+    \\test("after") do
+    \\  n += 1
+    \\end
+    \\n
+;
+
+test "Compiler: a test block compiles to nothing unless the file is tested" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    // Built, previewed or imported, a test's body never runs: the script's value is its own
+    const res = try run(&vm, TESTED_SCRIPT);
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(@as(f64, 0), res.top.asNumber());
+    try testing.expectEqual(@as(usize, 0), vm.report.tests.items.len);
+}
+
+test "Compiler: a tested file runs each test block in order, each isolated, and reports it" {
+    for ([_]bool{ false, true }) |gc_stress| {
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.hooks.setZealousGc(gc_stress);
+        const res = try runTested(&vm, TESTED_SCRIPT, null);
+        try testing.expectEqual(.ok, res.status);
+        // A test's body is the file's own code: it sets the file's variables
+        try testing.expectEqual(@as(f64, 2), res.top.asNumber());
+
+        const tests = vm.report.tests.items;
+        try testing.expectEqual(@as(usize, 4), tests.len);
+        try testing.expectEqualStrings("passes", tests[0].name);
+        try testing.expectEqual(.passed, tests[0].status);
+        try testing.expectEqual(.failed, tests[1].status);
+        try testing.expectEqualStrings("AssertionError: n: expected 2, got 1\n    from script:7:3:in 'script'", tests[1].failure.?);
+        try testing.expectEqual(.failed, tests[2].status);
+        try testing.expectEqualStrings("ArgumentError: boom\n    from script:10:3:in 'script'", tests[2].failure.?);
+        // A failure stops its own test alone
+        try testing.expectEqualStrings("after", tests[3].name);
+        try testing.expectEqual(.passed, tests[3].status);
+    }
+}
+
+test "Compiler: a filter runs only the tests whose name holds its text" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try runTested(&vm, TESTED_SCRIPT, "pass");
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(@as(f64, 1), res.top.asNumber());
+    try testing.expectEqual(@as(usize, 1), vm.report.tests.items.len);
+    try testing.expectEqualStrings("passes", vm.report.tests.items[0].name);
+}
+
+test "Compiler: a test block anywhere but the top level, or of another shape, is invalid-test" {
+    const nested = "a test block goes at the top level of a file, not inside a def, a class, a block or a branch";
+    try expectCompileError("def f\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
+    try expectCompileError("if true\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
+    try expectCompileError("class C\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
+    try expectCompileError("[1].each do\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
+    try expectCompileError("x = test(\"a\") do\nend", error.InvalidTest, 1, 5, nested);
+    const shape = "a test takes its name as a string literal and a block without parameters: test \"name\" do ... end";
+    try expectCompileError("x = 1\ntest(:a) do\nend", error.InvalidTest, 2, 1, shape);
+    try expectCompileError("test(\"a\", \"b\") do\nend", error.InvalidTest, 1, 1, shape);
+    try expectCompileError("test(name: \"a\") do\nend", error.InvalidTest, 1, 1, shape);
+    try expectCompileError("test(\"a\") do |x|\n  x\nend", error.InvalidTest, 1, 1, shape);
+    // Without a block, `test` is a call like any other (a def of the script's own)
+    try compileOnly("def test(name)\n  name\nend\ntest(\"a\")");
+}

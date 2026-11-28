@@ -1,11 +1,54 @@
 //! The methods `attr_reader`, `attr_writer` and `attr_accessor` define: `emitAccessor` compiles
 //! a getter or a setter of an instance variable as its own function and emits the bytecode
-//! that binds it to the class. Called by `compiler.zig`.
+//! that binds it to the class. Called by `compiler.zig`. The shape of a test block,
+//! `test "name" do ... end`, is told here too (`isTestForm`, `testName`, `hasTestBlocks`),
+//! for the compiler and for `kupcad test`, which looks for files holding one.
 
 const std = @import("std");
+const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
+
+/// What a test block looks like, for the error that one doesn't.
+pub const TEST_FORM_HELP = "a test takes its name as a string literal and a block without parameters: test \"name\" do ... end";
+
+/// Whether `node` is a call of `test` with a block and no receiver: a test block, or an
+/// attempt at one (`testName` tells which).
+pub fn isTestForm(tree: *const ast.Tree, node: *const ast.Node) bool {
+    if (node.tag != .method_call) return false;
+    const mc = tree.methodCall(node);
+    return mc.receiver == .none and mc.block != .none and std.mem.eql(u8, tree.getString(mc.method_name), "test");
+}
+
+/// The name of the test block `node` (isTestForm): its one argument, a plain string
+/// literal, with a block that takes no parameters; null for any other shape.
+pub fn testName(tree: *const ast.Tree, node: *const ast.Node) ?[]const u8 {
+    const mc = tree.methodCall(node);
+    const args = tree.getNamedArgs(mc.args);
+    if (args.len != 1 or args[0].name != .none or args[0].modifier != null) return null;
+    const arg = tree.getNode(args[0].value) orelse return null;
+    if (arg.tag != .string) return null;
+    const block = tree.block(tree.getNode(mc.block).?);
+    if (block.params.start != block.params.end) return null;
+    return tree.getString(tree.stringId(arg));
+}
+
+/// The block node of the test block `node` (isTestForm).
+pub fn testBody(tree: *const ast.Tree, node: *const ast.Node) ast.NodeIndex {
+    return tree.methodCall(node).block;
+}
+
+/// Whether the file's top level holds a test block (or an attempt at one, which fails to
+/// compile: `kupcad test` runs the file to say so).
+pub fn hasTestBlocks(tree: *const ast.Tree) bool {
+    const root = tree.getNode(tree.root) orelse return false;
+    if (root.tag != .block) return false;
+    for (tree.getNodes(tree.block(root).stmts)) |stmt_idx| {
+        if (tree.getNode(stmt_idx)) |stmt| if (isTestForm(tree, stmt)) return true;
+    }
+    return false;
+}
 
 /// What an accessor does with its instance variable.
 pub const Accessor = enum {

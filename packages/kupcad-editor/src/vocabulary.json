@@ -42,6 +42,8 @@
     "arc",
     "assemble",
     "assert",
+    "assert_equal",
+    "assert_near",
     "batch_hull",
     "benchmark",
     "block_given?",

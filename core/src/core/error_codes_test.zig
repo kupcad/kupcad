@@ -46,6 +46,7 @@ test "Error codes: a script for each code gets that code" {
         .{ .@"unexpected-block", "f(&b) { 1 }" },
         .{ .@"outside-loop", "break" },
         .{ .@"outside-method", "yield" },
+        .{ .@"invalid-test", "def f\n  test(\"a\") do\n  end\nend" },
         .{ .@"export-before-definition", "export { w }\nw = 1\n" },
         .{ .@"used-before-definition", "puts(w)\nw = 1\n" },
         .{ .@"builtin-redefined", "cube = 5" },

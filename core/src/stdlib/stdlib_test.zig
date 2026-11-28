@@ -1686,6 +1686,29 @@ test "Stdlib: built-in methods check their argument count, types and block" {
     });
 }
 
+test "Stdlib: assert_equal and assert_near name what they compared" {
+    try expectScripts(&.{
+        .{ .src = "r = assert_equal([1, 2], [1, 2]).nil?", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("assert_equal(\"a\", :a)"), .expected = .{ .str = "AssertionError: expected :a, got \"a\"" } },
+        .{ .src = comptime rescued("assert_equal(3, 4)"), .expected = .{ .str = "AssertionError: expected 4, got 3" } },
+        .{ .src = comptime rescued("assert_equal([1, \"x\"], nil, \"the parts\")"), .expected = .{ .str = "AssertionError: the parts: expected nil, got [1, \"x\"]" } },
+        // The message is read on a failure alone, as assert's is
+        .{ .src = "r = assert_equal(1, 1, 2).nil?", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("assert_equal(1, 2, 2)"), .expected = .{ .str = "TypeError: assert_equal expects a String for its message, got Number" } },
+        .{ .src = comptime rescued("assert_equal(1)"), .expected = .{ .str = "ArgumentError: assert_equal expects 2 to 3 arguments, got 1" } },
+        // Within the active tolerance (1e-5) without one of its own
+        .{ .src = "r = assert_near(10, 10.000001).nil?", .expected = .{ .boolean = true } },
+        .{ .src = "r = assert_near(10, 10.4, tolerance: 0.5).nil?", .expected = .{ .boolean = true } },
+        .{ .src = "r = CAD.with_config(tolerance: 0.5) { assert_near(10, 10.4) }.nil?", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("assert_near(10.5, 10)"), .expected = .{ .str = "AssertionError: expected 10 within 0.00001, got 10.5" } },
+        .{ .src = comptime rescued("assert_near(10.5, 10, \"the height\", tolerance: 0.1)"), .expected = .{ .str = "AssertionError: the height: expected 10 within 0.1, got 10.5" } },
+        .{ .src = comptime rescued("assert_near(\"10\", 10)"), .expected = .{ .str = "TypeError: assert_near expects a number for actual, got String" } },
+        .{ .src = comptime rescued("assert_near(10, 10, tolerance: -1)"), .expected = .{ .str = "ValueError: assert_near tolerance must be zero or more, got -1" } },
+        .{ .src = comptime rescued("assert_near(10, 10, tol: 1)"), .expected = .{ .str = "ArgumentError: assert_near does not take a keyword 'tol' (it accepts: tolerance)" } },
+        .{ .src = comptime rescued("assert_near(10)"), .expected = .{ .str = "ArgumentError: assert_near expects 2 to 3 arguments, got 1" } },
+    });
+}
+
 test "Stdlib: errors carry their real cause, never a generic message" {
     // Each used to be "CAD Kernel / Method Error" or "Native Execution Error" (or, for a
     // Sketch passed where a Solid was assumed, undefined behaviour).

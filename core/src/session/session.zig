@@ -160,6 +160,9 @@ pub const ScriptSession = struct {
     params: ParamValues = .{},
 
     observer: ?RunObserver = null,
+    /// The module (by its path in the project) whose `test "name" do ... end` blocks are
+    /// compiled and run, under `kupcad test`; none by default, and never an import's.
+    tests_in: ?[]const u8 = null,
 
     /// The modules the loaded modules import that couldn't be read (a file not there yet, a
     /// package not installed) or were too large, by path, keys owned: their imports report
@@ -501,6 +504,7 @@ pub const ScriptSession = struct {
         var comp = Compiler.forDocument(self.allocator, &doc, &out_chunk, &self.vm);
         defer comp.deinit();
         comp.module_path = mod.path;
+        comp.compile_tests = if (self.tests_in) |path| std.mem.eql(u8, path, mod.path) else false;
         // Modules importing this one read it through the VM's import cache, which would
         // keep serving its old exports.
         self.vm.forgetModule(mod.path);

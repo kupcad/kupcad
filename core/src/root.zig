@@ -137,6 +137,7 @@ test {
     _ = @import("cli/watch_test.zig");
     _ = @import("cli/debugger_test.zig");
     _ = @import("cli/run_cmd_test.zig");
+    _ = @import("cli/test_cmd_test.zig");
     _ = @import("cli/lsp_definition_test.zig");
     _ = @import("cli/config_test.zig");
     _ = @import("cli/diagnostic_report_test.zig");
