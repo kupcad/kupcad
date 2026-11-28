@@ -2,5 +2,5 @@
 
 module Kupcad
   # The KupCAD release the gem comes from, and the libkupcad it carries
-  VERSION = '0.1.13'
+  VERSION = '0.1.14'
 end
