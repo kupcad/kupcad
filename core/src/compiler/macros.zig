@@ -1,7 +1,7 @@
 //! The methods `attr_reader`, `attr_writer` and `attr_accessor` define: `emitAccessor` compiles
 //! a getter or a setter of an instance variable as its own function and emits the bytecode
 //! that binds it to the class. Called by `compiler.zig`. The shape of a test block,
-//! `test "name" do ... end`, is told here too (`isTestForm`, `testName`, `hasTestBlocks`),
+//! `test("name") do ... end`, is told here too (`isTestForm`, `testName`, `hasTestBlocks`),
 //! for the compiler and for `kupcad test`, which looks for files holding one.
 
 const std = @import("std");
@@ -11,7 +11,7 @@ const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
 
 /// What a test block looks like, for the error that one doesn't.
-pub const TEST_FORM_HELP = "a test takes its name as a string literal and a block without parameters: test \"name\" do ... end";
+pub const TEST_FORM_HELP = "a test takes its name as a string literal and a block without parameters: test(\"name\") do ... end";
 
 /// Whether `node` is a call of `test` with a block and no receiver: a test block, or an
 /// attempt at one (`testName` tells which).

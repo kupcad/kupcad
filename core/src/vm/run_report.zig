@@ -33,7 +33,7 @@ pub const Source = struct {
     module: ?[]u8 = null,
 };
 
-/// How a `test "name" do ... end` block went: running while its body runs.
+/// How a `test("name") do ... end` block went: running while its body runs.
 pub const TestResult = struct {
     name: []u8,
     status: enum { running, passed, failed } = .running,

@@ -118,7 +118,7 @@ test "kupcad test: a file that doesn't run, a run stopped inside a test, no test
         .{ .args = &.{broken}, .says = "  FAIL the file didn't run\n0 passed, 0 failed in 1 file, 1 file didn't run\n" },
         // A fatal error (the stack overflowed) ends the file inside the test
         .{ .args = &.{deep}, .says = "  FAIL deep: the run stopped inside it\n  FAIL the file didn't run\n" },
-        .{ .args = &.{empty}, .says = "No tests found: no file holds a test \"name\" do ... end block\n" },
+        .{ .args = &.{empty}, .says = "No tests found: no file holds a test(\"name\") do ... end block\n" },
         .{ .args = &.{ tree.dir, "--bogus" }, .says = "Error: Unknown option '--bogus'\n\nUsage: kupcad test" },
         .{ .args = &.{ tree.dir, "--filter" }, .says = "Error: Missing value after '--filter'\n\nUsage: kupcad test" },
     };

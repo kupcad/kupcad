@@ -307,7 +307,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `outside-loop` | A `break` or `next` outside a loop or block. |
 | `outside-method` | A `yield`, `block_given?` or `super` outside a method. |
 | `invalid-attribute` | An `attr_reader`, `attr_writer` or `attr_accessor` given something other than a name written as a symbol or a string (`attr_reader(size)`; write `attr_reader(:size)`). They define their methods while the script compiles, so a name can't be computed. |
-| `invalid-test` | A test block (`test("name") do ... end`) somewhere other than the top level of a file (inside a `def`, a class, a block or a branch), or without a name written as a string literal and a block that takes no parameters. See *Tests* under section 10. |
+| `invalid-test` | A test block (`test("name") do ... end`) somewhere other than the top level of a file (inside a `def`, a class, a block or a branch), without a block, or without a name written as a string literal and a block that takes no parameters. See *Tests* under section 10. |
 | `builtin-redefined` | A built-in, such as `cube`, assigned or redefined. |
 | `import-collision` | An import named like a variable of the file. |
 | `export-before-definition` | An `export` of a name the file sets only further down (`export { w }` above `w = 1`): an export reads its names where it stands, so move it below them. |
@@ -750,7 +750,7 @@ kupcad test --filter round        # only the tests whose name contains "round"
 * **Each test is on its own:** a failed `assert`, `assert_equal` or `assert_near`, any other error raised in the body, and a kernel error (a measure of an impossible shape) fail that test and the next one runs. An error that stops the run (a stack overflow, the memory limit, `--timeout`) ends the file, which is then reported as not run. A test prints what it prints.
 * **The report** names each test as `ok` or `FAIL`, a failure with the error as an uncaught one is told (`AssertionError: expected 4, got 3`, then the backtrace's lines), and ends with the count: `3 passed, 1 failed in 2 files`. The exit status is 1 when a test failed, a file didn't run, or no file held a test (a mistyped path can't pass a CI job).
 * **Only the files run hold tests that run:** a file a test file imports has its own `test` blocks compiled to nothing, so a library's tests run from its own folder and never from a project's. From a directory, a file without a test block is left alone (it may be a model that writes files or raises); named outright, a file runs whatever it holds.
-* **The form** is `test("name") do ... end`: a bare call of `test` with a block, its one argument a string literal and the block without parameters, at the top level of the file (not inside a `def`, a class, a block or an `if`); another shape is the compile error `invalid-test`, which `kupcad check` reports too. A `test` without a block is a call like any other, so a `def test` of a script's own still works.
+* **The form** is `test("name") do ... end`: a bare call of `test` with a block, its one argument a string literal and the block without parameters, at the top level of the file (not inside a `def`, a class, a block or an `if`); another shape, a `test(...)` without a block among them, is the compile error `invalid-test`, which `kupcad check` reports too. `test` is a built-in name: assigning it or writing a `def test` is `builtin-redefined`, as for `cube`.
 
 ### Linting (`kupcad check`)
 

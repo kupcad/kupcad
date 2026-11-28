@@ -160,7 +160,7 @@ pub const ScriptSession = struct {
     params: ParamValues = .{},
 
     observer: ?RunObserver = null,
-    /// The module (by its path in the project) whose `test "name" do ... end` blocks are
+    /// The module (by its path in the project) whose `test("name") do ... end` blocks are
     /// compiled and run, under `kupcad test`; none by default, and never an import's.
     tests_in: ?[]const u8 = null,
 

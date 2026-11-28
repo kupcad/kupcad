@@ -205,7 +205,7 @@ pub const Compiler = struct {
     /// Set (on the root compiler) to the path of the file being compiled, relative to the
     /// project root: its relative imports are its neighbours (core/import_path.zig).
     module_path: []const u8 = "",
-    /// Whether the file's `test "name" do ... end` blocks are compiled, which `kupcad test`
+    /// Whether the file's `test("name") do ... end` blocks are compiled, which `kupcad test`
     /// asks for the file it tests; everywhere else (a build, a preview, an imported module)
     /// a test block compiles to nothing, as Zig's do.
     compile_tests: bool = false,
@@ -1625,8 +1625,11 @@ pub const Compiler = struct {
     fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const mc = self.tree.methodCall(node);
         const func_name = self.tree.getString(mc.method_name);
-        // A test block reaches here only from inside something: the file's own body took its
-        if (macros.isTestForm(self.tree, node)) {
+        // `test` is a test block's and nothing else's (a protected name): one with a block
+        // reaches here only from inside something, as the file's own body took its; one
+        // without a block is no test at all
+        if (mc.receiver == .none and std.mem.eql(u8, func_name, "test")) {
+            if (mc.block == .none) return self.fail(error.InvalidTest, macros.TEST_FORM_HELP, .{});
             return self.fail(error.InvalidTest, "a test block goes at the top level of a file, not inside a def, a class, a block or a branch", .{});
         }
         // Where the call is: its instruction, emitted after its receiver and arguments, is
@@ -2642,7 +2645,7 @@ pub const Compiler = struct {
         try self.emitByte(@bitCast(call.flags));
     }
 
-    /// Compiles the statement at `stmt_idx` as a test block, if it is one (`test "name" do
+    /// Compiles the statement at `stmt_idx` as a test block, if it is one (`test("name") do
     /// ... end` at the file's top level; false for any other statement): to nothing unless
     /// `compile_tests`, else to the calls that run its body under `kupcad test`, as if
     /// written

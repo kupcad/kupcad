@@ -141,9 +141,10 @@ pub const language_intrinsics = [_]struct { []const u8, Intrinsic }{
     .{ "yield", .yield_call },
     .{ "defined?", .defined_chk },
     .{ "params", .protected_symbol }, // CLI injection map
+    .{ "test", .protected_symbol }, // a test block (compiler/compiler.zig), never a script's own def
 };
 
-/// What a `test "name" do ... end` block calls under `kupcad test` (compiler/compiler.zig
+/// What a `test("name") do ... end` block calls under `kupcad test` (compiler/compiler.zig
 /// puts them in the chunk's constants): none is a global a script can name.
 pub const test_block = struct {
     pub const begin: value.NativeFn = common.wrapGlobal(diagnostics_mod.nativeTestBegin);

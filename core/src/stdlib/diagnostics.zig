@@ -2,7 +2,7 @@
 //! AssertionError, or the given class, through the VM's rescue machinery, and so do
 //! `assert_equal` and `assert_near`, naming what they compared; `warn` prints a warning
 //! through the host; `benchmark` times its block; `debugger` pauses in the host's debugger
-//! (cli/debugger.zig in a terminal). The natives a `test "name" do ... end` block compiles
+//! (cli/debugger.zig in a terminal). The natives a `test("name") do ... end` block compiles
 //! to under `kupcad test` (`nativeTestBegin`, `nativeTestPass`, `nativeTestFail`) keep each
 //! test's outcome in the run's report.
 
@@ -94,7 +94,7 @@ fn startComparison(vm: *VM, message: ?value.Value, comptime method: []const u8) 
     return out;
 }
 
-// --- Test blocks (`test "name" do ... end`, compiled by compiler/compiler.zig) ---
+// --- Test blocks (`test("name") do ... end`, compiled by compiler/compiler.zig) ---
 
 /// Starts the test `name`: whether it runs, which it doesn't when `VM.test_filter` names
 /// text its name lacks (`kupcad test --filter`); one that runs is in the report from here.

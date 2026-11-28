@@ -1,4 +1,4 @@
-//! `kupcad test`: runs the test blocks (`test "name" do ... end`, compiled only here:
+//! `kupcad test`: runs the test blocks (`test("name") do ... end`, compiled only here:
 //! compiler/compiler.zig's compileTestBlock) of the files named and of every file under
 //! the directories named that holds one, each as `kupcad run` runs a script, and reports
 //! how each test went from the run's report (vm/run_report.zig).
@@ -20,7 +20,7 @@ const progress = @import("progress.zig");
 pub const USAGE =
     \\Usage: kupcad test [<file|dir>...] [--filter <text>]
     \\
-    \\Runs the test blocks (test "name" do ... end) of the files named, and of every .kup
+    \\Runs the test blocks (test("name") do ... end) of the files named, and of every .kup
     \\file under the directories named (the current one without any) that holds one, except
     \\in hidden directories (.kupcad's installed packages). A test fails by an assertion
     \\(assert, assert_equal, assert_near) or any other error in its body. Fails when a test
@@ -138,7 +138,7 @@ const Totals = struct {
 
     fn report(self: Totals, reporter: Reporter) void {
         if (self.files == 0 and self.files_failed == 0) {
-            reporter.err("No tests found: no file holds a test \"name\" do ... end block\n", .{});
+            reporter.err("No tests found: no file holds a test(\"name\") do ... end block\n", .{});
             return;
         }
         reporter.out("{d} passed, {d} failed in {d} {s}", .{ self.passed, self.tests_failed, self.files, plural(self.files, "file", "files") });

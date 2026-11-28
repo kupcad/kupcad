@@ -2362,11 +2362,13 @@ test "Compiler: a test block anywhere but the top level, or of another shape, is
     try expectCompileError("class C\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
     try expectCompileError("[1].each do\n  test(\"a\") do\n  end\nend", error.InvalidTest, 2, 3, nested);
     try expectCompileError("x = test(\"a\") do\nend", error.InvalidTest, 1, 5, nested);
-    const shape = "a test takes its name as a string literal and a block without parameters: test \"name\" do ... end";
+    const shape = "a test takes its name as a string literal and a block without parameters: test(\"name\") do ... end";
     try expectCompileError("x = 1\ntest(:a) do\nend", error.InvalidTest, 2, 1, shape);
     try expectCompileError("test(\"a\", \"b\") do\nend", error.InvalidTest, 1, 1, shape);
     try expectCompileError("test(name: \"a\") do\nend", error.InvalidTest, 1, 1, shape);
     try expectCompileError("test(\"a\") do |x|\n  x\nend", error.InvalidTest, 1, 1, shape);
-    // Without a block, `test` is a call like any other (a def of the script's own)
-    try compileOnly("def test(name)\n  name\nend\ntest(\"a\")");
+    try expectCompileError("x = 1\ntest(\"a\")", error.InvalidTest, 2, 1, shape);
+    // `test` is a built-in name, so a script can't mean its own by it
+    try expectCompileError("def test(name)\n  name\nend", error.ProtectedSymbol, 1, 1, "'test' is a built-in and can't be redefined");
+    try expectCompileError("test = 1", error.ProtectedSymbol, 1, 1, "'test' is a built-in and can't be assigned");
 }
