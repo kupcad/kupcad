@@ -1172,7 +1172,13 @@ importing only those before it, which the layering test holds):**
   on the line of one of its two edges, which the assembly chooses by the result's faces
   along it, `Provenance.blockLines`, as many of each by the finer zone's, then the first
   operand's (the nightly's by, 2026-11-21: two regions of both along a block, a corner
-  triangle a sliver on one line only); the operands' contact for the result report).
+  triangle a sliver on one line only); the operands' contact for the result report). A
+  piece several edges of one operand hold (a vertex the paves put on two edges of it near
+  where they meet) takes the line of theirs lying nearest the planes of the result's faces
+  along it (`Provenance.sharedLines`, the least gap, as `simplify.hold` picks a joined
+  edge's line), not the edges' order, which a mirror changes: two hull edges 20° apart,
+  the piece from their corner to a crossing merged onto both, by the order the line 3e-4
+  off the face it bounded, `gap_too_large`, mirrored the other and made (fc, 2026-11-28).
 - `imprint.zig`: per face, the overlay of its loops cut at their paves (input 0) and its
   section segments there and back (input 1); each region input 0 winds about is a fragment,
   its cycles read back as merged vertices by their coordinates. A vertex the overlay made

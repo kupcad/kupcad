@@ -1125,15 +1125,23 @@ const Provenance = struct {
             self.alike_of[k] = try allocator.alloc(Run, paves.operands[k].faces.items.len);
             @memset(self.alike_of[k], .{});
         }
-        // Pieces of operand edges (a common block one edge of one of the two, `blockLines`),
-        // then the section segments
+        // Pieces of operand edges (a common block one edge of one of the two, `blockLines`;
+        // a piece several edges of one operand hold, the one its faces along it tell,
+        // `sharedLines`), then the section segments
+        var shared: std.ArrayList(Shared) = .empty;
+        defer shared.deinit(allocator);
         for (0..2) |k| for (paves.edge_paves[k], 0..) |list, e| {
             if (list.items.len < 2) continue;
             for (list.items[0 .. list.items.len - 1], list.items[1..]) |x, y| {
-                const entry = try self.line_of.getOrPut(allocator, .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) });
-                if (!entry.found_existing) entry.value_ptr.* = .{ .edge = .{ .operand = @intCast(k), .edge = @intCast(e) } };
+                const key: [2]u32 = .{ @min(x.vertex, y.vertex), @max(x.vertex, y.vertex) };
+                const entry = try self.line_of.getOrPut(allocator, key);
+                const source: Source = .{ .edge = .{ .operand = @intCast(k), .edge = @intCast(e) } };
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = source;
+                } else if (entry.value_ptr.* == .edge and entry.value_ptr.edge.operand == k) try shared.append(allocator, .{ .piece = key, .source = source });
             }
         };
+        self.sharedLines(shared.items);
         var sections = paves.section_line_of.iterator();
         while (sections.next()) |section| {
             const entry = try self.line_of.getOrPut(allocator, section.key_ptr.*);
@@ -1145,6 +1153,50 @@ const Provenance = struct {
         try self.samePlanes(diag);
         try self.tiedLines();
         return self;
+    }
+
+    /// Another edge of one operand over a piece an edge of it holds already (`line_of`).
+    const Shared = struct { piece: [2]u32, source: Source };
+
+    /// The line of each piece several edges of one operand hold (`shared`, each further
+    /// edge's): of their lines, the one lying nearest the planes of the result's faces
+    /// along the piece (`offFaces`: the least gap the edge then needs, as `simplify.hold`
+    /// chooses a joined edge's line and OCCT keeps a merged edge's tolerance least); as near
+    /// to rounding, the first edge's. A vertex the paves put on two edges of a solid 20°
+    /// apart, where they were the tolerance apart, made the piece from their shared corner
+    /// to it a block of both, and the result's edge there lay between a face of each edge,
+    /// the face between the two gone: by the edges' order alone it took the line 3e-4 off
+    /// the other's face, refused `gap_too_large`, where mirrored, the edges numbered the
+    /// other way, it took the line within the tolerance of both faces and was made (find
+    /// fc, the locus session on 419c261b).
+    fn sharedLines(self: *Provenance, shared: []const Shared) void {
+        for (shared) |s| {
+            const taken = self.line_of.getPtr(s.piece).?;
+            const near = self.offFaces(s.source.edge.operand, s.source.edge.edge, s.piece);
+            const far = self.offFaces(taken.edge.operand, taken.edge.edge, s.piece);
+            if (!canonical.sameToRounding(near.height, far.height, @max(near.scale, far.scale)) and near.height < far.height) taken.* = s.source;
+        }
+    }
+
+    /// How far a line lies off planes, and the size of the coordinates that was measured at.
+    const Off = struct { height: f64, scale: f64 };
+
+    /// The greatest height of the line of edge `e` of `operand` over the planes of the kept
+    /// fragments' faces along the piece between merged vertices `ends` (the smaller first),
+    /// at the line's feet at the two ends (a line's height over a plane is linear).
+    fn offFaces(self: *const Provenance, operand: u1, e: u32, ends: [2]u32) Off {
+        const line = self.edgeLine(operand, e);
+        var off: Off = .{ .height = 0, .scale = 0 };
+        for (self.fragments.items.items, self.keeps, 0..) |fragment, keep, i| {
+            if (keep == .drop or !self.alongBlock(i, ends)) continue;
+            const face_plane = planeOf(self.paves.operands[fragment.operand], fragment.face);
+            for (ends) |v| {
+                const foot = line.eval(line.project(self.paves.point(v)));
+                off.height = @max(off.height, @abs(face_plane.height(foot)));
+                off.scale = @max(off.scale, canonical.magnitude(&.{ foot, face_plane.frame.origin }));
+            }
+        }
+        return off;
     }
 
     /// Each common block's line: one of its two edges', by the result's faces along the

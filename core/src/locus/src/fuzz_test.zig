@@ -402,6 +402,21 @@ const FB_WALL_NUDGE: vec.Vec3 = .{ -5e-6, -1.9999999926915505e-5, -2e-5 };
 const FB_BOX = [2]vec.Vec3{ .{ 0, 1, 0 }, .{ 4, 4, 4 } };
 const FB_BOX_NUDGE: vec.Vec3 = .{ -5e-6, -5e-6, -1e-5 };
 const FB_BOX_SHIFTS = [_]vec.Vec3{ vec.ZERO3, .{ -1e-6, 0, -1e-6 }, .{ -3e-6, 0, 0 }, .{ 0, 0, -3e-6 }, .{ 1e-6, 0, 1e-6 } };
+/// Find fc (the locus session on 419c261b, run 108208), as the fuzzer drew it: the plate
+/// over `FC_PLATE` nudged `FC_PLATE_NUDGE` at a zone of 1e-4, joined with the hull of
+/// `FC_HULL` scaled `FC_HULL_SCALE`, moved `FC_HULL_MOVE` and nudged `FC_HULL_NUDGE` at the
+/// tests' zone; then the plate over `FC_SECOND` nudged `FC_SECOND_NUDGE` and each of
+/// `FC_SECOND_SHIFTS` more in x, at a zone of 1e-4: its end 3e-4 short of the hull's corner
+/// at x = 2.0001 in the find, then nearer and farther.
+const FC_PLATE = [2]vec.Vec3{ .{ 2, -48, 3 }, .{ 102, 52, 4 } };
+const FC_PLATE_NUDGE: vec.Vec3 = .{ 2e-4, 2.000000014495072e-4, 2e-2 };
+const FC_HULL = [_]vec.Vec3{ .{ 3, 2, 2 }, .{ 4, 1, 3 }, .{ 1, 3, 4 }, .{ 2, 2, 2 }, .{ 2, 3, 0 }, .{ 4, 3, 4 }, .{ 4, 0, 1 }, .{ 4, 0, 0 } };
+const FC_HULL_SCALE: vec.Vec3 = .{ 0.5, 2, 1 };
+const FC_HULL_MOVE: vec.Vec3 = .{ 0, -1, 0 };
+const FC_HULL_NUDGE: vec.Vec3 = .{ 1e-4, 0, 2e-4 };
+const FC_SECOND = [2]vec.Vec3{ .{ -48, -98, 3 }, .{ 2, 102, 4 } };
+const FC_SECOND_NUDGE: vec.Vec3 = .{ -2e-4, -2e-2, 2.000000014495072e-4 };
+const FC_SECOND_SHIFTS = [_]f64{ 0, 2e-5, -2e-5, 5e-5, -5e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2940,6 +2955,67 @@ test "Fuzz solids: a box's corner put on a hull's edge past the tolerance, its g
     }
 }
 
+test "Fuzz solids: a piece two edges of one solid hold takes the line its faces lie nearest, mirrored, turned, far and either way round" {
+    // The locus session's find fc on 419c261b (run 108208), as the fuzzer drew it: (plate ∪
+    // hull) ∪ plate, the second plate's end 3e-4 short of a hull's corner, its bottom
+    // through it. Where the second plate's end crossed one of two edges of the hull leaving
+    // the corner 20° apart, the paves put the crossing on the other edge too, the edges the
+    // tolerance apart there, and the piece from the corner to it was a block of both. The
+    // result's edge there lay between a face of each, the face between them gone; the line
+    // was the edge's numbered first, and the mirror numbered them the other way: in place
+    // the line within the tolerance of both faces, made, mirrored the line 3e-4 off the
+    // plate's end, refused `gap_too_large`. Of the edges over such a piece, the line
+    // nearest the planes of the result's faces along it (`Provenance.sharedLines`). The
+    // second plate nudged by each of `FC_SECOND_SHIFTS` more in x, the chain moved by each
+    // of the moves, the union and the intersection decided alike either way round, every
+    // operation through the solids oracles, turned and mirrored as in place
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    const plate_tol = tolerance.Tolerance.fromZone(PLATE_ZONE);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    var plate_shape = try boxFrom(FC_PLATE[0], FC_PLATE[1], plate_tol, &diag);
+    defer plate_shape.deinit();
+    var plate = try euPlaced(&plate_shape, 0, null, vec.ZERO3, FC_PLATE_NUDGE, &diag);
+    defer plate.deinit();
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &FC_HULL, &diag);
+    defer hull_shape.deinit();
+    var hull_body = try euPlaced(&hull_shape, 0, FC_HULL_SCALE, FC_HULL_MOVE, FC_HULL_NUDGE, &diag);
+    defer hull_body.deinit();
+    var second_shape = try boxFrom(FC_SECOND[0], FC_SECOND[1], plate_tol, &diag);
+    defer second_shape.deinit();
+    for (FC_SECOND_SHIFTS) |shift| {
+        var second = try euPlaced(&second_shape, 0, null, vec.ZERO3, vec.add(FC_SECOND_NUDGE, .{ shift, 0, 0 }), &diag);
+        defer second.deinit();
+        var outcomes: [moves.len][oracle.OPS.len]BooleanOutcome = undefined;
+        for (moves, 0..) |move, m| {
+            // The chain moved from its first solids, as the mirrored replay takes it: the
+            // join's edges numbered as the moved solids give them
+            var plate_moved = try transform.transform(testing.allocator, &plate, &move, .{}, &diag);
+            defer plate_moved.deinit();
+            var hull_moved = try transform.transform(testing.allocator, &hull_body, &move, .{}, &diag);
+            defer hull_moved.deinit();
+            var a = try solid_boolean.tests.sound(&plate_moved, &hull_moved, .@"union");
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &second, &move, .{}, &diag);
+            defer b.deinit();
+            errdefer std.debug.print("the second plate shifted {e} more, move {d}\n", .{ shift, m });
+            outcomes[m] = try expectStepEitherWay(&a, &b, &diag);
+        }
+        // Turned and mirrored in place as in place; far out, mirrored as not
+        for (outcomes[1..], 1..) |outcome, m| {
+            errdefer std.debug.print("the second plate shifted {e} more, move {d}: {any}, unmoved or near {any}\n", .{ shift, m, outcome, outcomes[if (m < FE_FAR_MOVES) 0 else FE_FAR_MOVES] });
+            try testing.expectEqualDeep(outcomes[if (m < FE_FAR_MOVES) 0 else FE_FAR_MOVES], outcome);
+        }
+    }
+}
+
 /// The step of `a` and `b` either way round (`expectStepWith`), the union and the
 /// intersection decided alike both ways: refused for the same finding or made with the
 /// same counts. The outcomes of `a` with `b`, by `oracle.OPS`.
@@ -4119,6 +4195,10 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // the edge was joined: at_tolerance one way round, made the other (simplify.lineHolds:
         // an edge's end on its line by record)
         "solids 1 8 1 3 0 2 3 1 3 4 2 0 0 0 0 1 3 0 4 0 4 3 0 0 0 1 1 0 0 2 1 10 4 3 2 3 1 3 1 4 4 1 2 4 0 3 0 0 4 0 3 1 4 10 8 7 0 3 0 0 4 1 4 0 4 2 1 4 4 6 10 0",
+        // The locus session on 419c261b (fc, run 108208): (plate ∪ hull) ∪ plate ∪ plate, a
+        // piece two hull edges held took the first-numbered edge's line, which the mirror
+        // changed: gap_too_large mirrored, made in place (Provenance.sharedLines)
+        "solids 2 2 4 1 3 3 4 1 1 7 11 13 7 3 1 1 8 3 2 2 4 1 3 1 3 4 2 2 2 2 3 0 4 3 4 4 0 1 4 0 0 2 0 0 2 1 5 -2 7 8 0 1 2 1 2 0 4 3 4 2 1 8 14 11 5 0 3 2 3 4 0 1 1 2 3 1 2 10 13 3 0",
         // The locus_solids session on 419c261b (fd, run 404245): ((hull - box) ∪ plate) ∪ wall,
         // a strip of the wall's face within the tolerance of the plate's end read outside by
         // the turn, the rest inside, unclassified (classify.departure: the point in the
