@@ -1276,7 +1276,16 @@ importing only those before it, which the layering test holds):**
   session on 73d5d8ee, ew, 2026-11-28); with corners either side it crosses the plane, and
   the turn says which way it leaves the piece (a face 1e-9 rad off a box's side, 2e-5
   outside it, turned toward the box but met its plane 2e4 away: read by the turn inside,
-  every corner outside, `unclassified`; the ReleaseSafe session on a1444371, ci). The
+  every corner outside, `unclassified`; the ReleaseSafe session on a1444371, ci). A
+  section's turn is clear only where the fragment leaves the piece past the tolerance of
+  the face, the point that far into it inside the fragment as well as over the face
+  (`classify.departure`, OCCT's `PointNearEdge`, a point inside the face): a sliver of the
+  fragment between the section and its own edge, within the tolerance of the face all
+  over, shows the side of nothing beyond the tolerance (a hull's top 0.61° off a plate's,
+  a wedge of it 3.7e-5 under the plate's top beside their hinge, read inside where the
+  rest lay above and in front of the plate's side; a wall's face beside a plate's end in a
+  strip 3.6e-4 wide within 1.5e-4 of it, read outside where the rest lay behind a hull's
+  faces: `unclassified`, the sessions on 419c261b, fa and fd, 2026-11-28). The
   result's faces about an edge where solids touch are ordered by the same reading
   (`pipeline.pairByWedges`): two neighbours about it parallel within the angular
   tolerance and on one side of it, each on the side of the other its corners lie on, the

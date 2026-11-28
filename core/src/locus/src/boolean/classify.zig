@@ -522,8 +522,10 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, f
             const middle = vec.lerp(paves.point(x), paves.point(y), 0.5);
             const gap = @max(paves.gaps.items[x], paves.gaps.items[y]);
             const edges = try seams.edgesOf(allocator, paves, other, g, diag);
+            const away = departure(body, g, n_g, middle, leave.into, across, paves.tol.xsect + gap);
             const clear = leave.clear and try in_face.placeWithin(paves.decide, body, g, middle, gap, edges, diag) == .inside and
-                try in_face.placeWithin(paves.decide, body, g, departure(body, g, n_g, middle, leave.into, across, paves.tol.xsect + gap), gap, edges, diag) == .inside;
+                try in_face.placeWithin(paves.decide, body, g, away.foot, gap, edges, diag) == .inside and
+                fragmentHolds(paves, fragments, i, away.point);
             return .{ .class = faceSide(paves, fragments, i, body, g, n_g, across), .clear = clear };
         },
     }
@@ -531,23 +533,53 @@ fn pieceSide(allocator: std.mem.Allocator, paves: *const Paves, seams: *Seams, f
 
 /// Where fragment `i`, leaving a piece of its section with face `g` (outward normal
 /// `n_g`) at `middle` along `into` (`across` = `into`·`n_g`), has gone `reach` behind or
-/// in front of `g`'s plane, put back on the plane: the foot of the point the fragment's
-/// side is read at. The turn is the side only where the fragment leaves the piece that
-/// far while over `g`; a face the fragment runs off before it is past the tolerance of
-/// `g` bounds nothing there beyond the tolerance, and the fragment's side is another's to
-/// show. OCCT's `IsInternalFace` reads a split face's state at a point of the face
-/// offset from the section edge past the tolerance (`BOPTools_AlgoTools3D::PointNearEdge`).
+/// in front of `g`'s plane (`point`), and that point put back on the plane (`foot`): where
+/// the fragment's side is read. The turn is the side only where the fragment leaves the
+/// piece that far, the point in the fragment (`fragmentHolds`), while over `g`, its foot in
+/// `g`; a face the fragment runs off before it is past the tolerance of `g`, or a
+/// fragment that ends before it is, bounds nothing there beyond the tolerance, and the
+/// fragment's side is another's to show. OCCT's `IsInternalFace` reads a split face's
+/// state at a point of the face offset from the section edge past the tolerance
+/// (`BOPTools_AlgoTools3D::PointNearEdge`, a point inside the face).
 /// A hull's edge across a plate's end, the plate 3 tolerances thick, lay on the end over
 /// the plate's thickness, and the hull's face along it left the end 17.5° off it toward the
 /// plate's inside: 1.8e-5 behind the end at most before it ran out under the plate's bottom,
 /// within the tolerance of the end all the while. The piece's middle was 3e-5 from the
 /// end's top and bottom, clear of them, and the face read inside the plate though every
 /// point of it lay outside; its seams disagreed with the hull's other faces'
-/// (`unclassified`; the ReleaseSafe session on ff515852, df, 2026-11-22).
-fn departure(body: *const Body, g: types.FaceIndex, n_g: Vec3, middle: Vec3, into: Vec3, across: f64, reach: f64) Vec3 {
+/// (`unclassified`; the ReleaseSafe session on ff515852, df, 2026-11-22). A sliver of a
+/// fragment between its section with `g` and its own edge, within the tolerance of `g`
+/// all over, read by the turn there the fragment's side of `g`: a hull's top a hair off
+/// parallel to a plate's top (0.61°), a wedge of it 3.7e-5 under the plate's top beside
+/// the hinge they meet along, the rest of the fragment above that top and in front of the
+/// plate's side, read inside where its section with the side read it outside; a wall's
+/// face along a plate's end, a strip of it 3.6e-4 wide beside its section with the end
+/// and within 1.5e-4 of it, read outside where the fragment's sections with a hull's
+/// faces read it inside (`unclassified`; the sessions on 419c261b, fa and fd).
+const Departure = struct { point: Vec3, foot: Vec3 };
+
+fn departure(body: *const Body, g: types.FaceIndex, n_g: Vec3, middle: Vec3, into: Vec3, across: f64, reach: f64) Departure {
     const q = vec.addScaled(middle, into, reach / @abs(across));
     const origin = planar_faces.frameOf(body, g).?.origin;
-    return vec.addScaled(q, n_g, -vec.dot(vec.sub(q, origin), n_g));
+    return .{ .point = q, .foot = vec.addScaled(q, n_g, -vec.dot(vec.sub(q, origin), n_g)) };
+}
+
+/// Whether point `q`, on the plane of fragment `i`'s face, lies in the fragment: inside
+/// its loops by their crossings in that plane (a spur, run both ways, crosses twice).
+fn fragmentHolds(paves: *const Paves, fragments: *const Fragments, i: usize, q: Vec3) bool {
+    const frame = planeOfFragment(paves, fragments, i);
+    const at = planar_faces.flat(frame, q);
+    var inside = false;
+    for (fragments.loopsOf(i)) |loop| {
+        const vertices = fragments.loopVertices(loop);
+        for (vertices, 0..) |v, k| {
+            const a = planar_faces.flat(frame, paves.point(v));
+            const b = planar_faces.flat(frame, paves.point(vertices[(k + 1) % vertices.len]));
+            if ((a[1] > at[1]) == (b[1] > at[1])) continue;
+            if (at[0] < a[0] + (at[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1])) inside = !inside;
+        }
+    }
+    return inside;
 }
 
 /// The way a section piece from merged vertex `x` to `y` leaves into its fragment (of a

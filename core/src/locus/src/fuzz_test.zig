@@ -331,6 +331,57 @@ const FE_SECOND_NUDGE: vec.Vec3 = .{ 0, -2e-4, 2.0000000143529634e-4 };
 const FE_LIFTS = [_]f64{ 0, -1e-8, 5e-9, -2e-8, 1e-8, -1e-7, 1e-7 };
 /// The first of the test's moves out to 3e5, where D27's band is wider.
 const FE_FAR_MOVES = 4;
+/// Find fa (the locus session on 419c261b, run 67819), as the fuzzer drew it: the plate
+/// over `FA_PLATE` scaled by a half, moved `FA_PLATE_MOVE` and nudged `FA_PLATE_NUDGE` at
+/// a zone of 1e-4, joined with the box over `FA_BOX` turned 1e-6 about y through the
+/// grid's middle and nudged `FA_BOX_NUDGE`, then with the hull of `FA_HULL` turned 0.3
+/// about z and nudged `FA_HULL_NUDGE`, both at the tests' zone; then the plate over
+/// `FA_CUTTER` turned `FA_CUTTER_TURN` (the angular tolerance less D27's band) about
+/// `FA_CUTTER_AXIS`, scaled `FA_CUTTER_SCALE` and nudged `FA_CUTTER_NUDGE` and each of
+/// `FA_CUTTER_LIFTS` more in z, at a zone of 1e-4: its top a hair off parallel to the
+/// hull's, hinged on it at its front edge.
+const FA_PLATE = [2]vec.Vec3{ .{ -98, -48, 0 }, .{ 102, 52, 2 } };
+const FA_PLATE_MOVE: vec.Vec3 = .{ -1, 0, 0.5 };
+const FA_PLATE_NUDGE: vec.Vec3 = .{ 0, 2e-4, 0 };
+const FA_BOX = [2]vec.Vec3{ .{ 2, 1, 0 }, .{ 4, 3, 4 } };
+const FA_BOX_NUDGE: vec.Vec3 = .{ 1.0000000005684345e-4, 2.5e-5, 1e-4 };
+const FA_HULL = [_]vec.Vec3{ .{ 1, 4, 0 }, .{ 1, 3, 3 }, .{ 1, 0, 3 }, .{ 0, 1, 0 }, .{ 3, 1, 1 }, .{ 3, 2, 3 }, .{ 3, 3, 1 }, .{ 0, 4, 1 } };
+const FA_HULL_NUDGE: vec.Vec3 = .{ -2.5e-5, 1e-4, -5e-5 };
+const FA_CUTTER = [2]vec.Vec3{ .{ -48, 2, 0 }, .{ 102, 52, 3 } };
+const FA_CUTTER_AXIS: vec.Vec3 = .{ 1, 2, 3 };
+const FA_CUTTER_TURN: f64 = 0.014142253476507214;
+const FA_CUTTER_SCALE: vec.Vec3 = .{ 1, 0.5, 1 };
+const FA_CUTTER_NUDGE: vec.Vec3 = .{ 1e-4, -1e-4, -5e-5 };
+const FA_CUTTER_LIFTS = [_]f64{ 0, 2e-5, -2e-5, 5e-5, -1e-4 };
+/// Zones of a chain's solids drawn by size: a plate's.
+const PLATE_ZONE: f64 = 1e-4;
+/// Find fd (the locus_solids session on 419c261b, run 404245), as the fuzzer drew it: the
+/// hull of `FD_HULL` turned `FD_HULL_TURN` (the angular tolerance and D27's band) about
+/// `FD_HULL_AXIS` through the grid's middle, moved `FD_HULL_MOVE` and nudged
+/// `FD_HULL_NUDGE`, less the box over `FD_BOX` turned a quarter of π about x, moved
+/// `FD_BOX_MOVE` and nudged `FD_BOX_NUDGE`, both at the tests' zone; joined with the plate
+/// over `FD_PLATE` moved `FD_PLATE_MOVE` and nudged `FD_PLATE_NUDGE` at a zone of 1e-4;
+/// then the wall with a gap of `FD_WALL_XSECTS` tolerances about `FD_WALL_AT` across
+/// `FD_WALL_LO` to `FD_WALL_HI`, turned a quarter of π about y, nudged `FD_WALL_NUDGE` and
+/// each of `FD_WALL_SHIFTS` more in x, at a zone of 1e-4: its face along the plate's end
+/// within 1.5e-4 of it beside their section.
+const FD_HULL = [_]vec.Vec3{ .{ 0, 0, 2 }, .{ 1, 0, 0 }, .{ 3, 4, 1 }, .{ 1, 4, 3 }, .{ 0, 0, 1 }, .{ 1, 1, 3 }, .{ 3, 2, 3 }, .{ 4, 1, 2 } };
+const FD_HULL_AXIS: vec.Vec3 = .{ 1, 2, 3 };
+const FD_HULL_TURN: f64 = 0.014142253477512098;
+const FD_HULL_MOVE: vec.Vec3 = .{ 1, 1e-15, 0 };
+const FD_HULL_NUDGE: vec.Vec3 = .{ 0, -1.9999999928787438e-5, 2.0000000071212565e-5 };
+const FD_BOX = [2]vec.Vec3{ .{ 2, 0, 2 }, .{ 4, 2, 4 } };
+const FD_BOX_MOVE: vec.Vec3 = .{ 0, 1, 0 };
+const FD_BOX_NUDGE: vec.Vec3 = .{ 2.000000005684342e-5, 0, 1.9999999943156583e-5 };
+const FD_PLATE = [2]vec.Vec3{ .{ 2, -48, 0 }, .{ 102, 2, 4 } };
+const FD_PLATE_MOVE: vec.Vec3 = .{ 0, -1, -1 };
+const FD_PLATE_NUDGE: vec.Vec3 = .{ 2e-4, 0, 0 };
+const FD_WALL_AT: vec.Vec3 = .{ 2, 4, 4 };
+const FD_WALL_LO: vec.Vec3 = .{ 3, 0, 2 };
+const FD_WALL_HI: vec.Vec3 = .{ 4, 3, 3 };
+const FD_WALL_XSECTS: f64 = 2.5;
+const FD_WALL_NUDGE: vec.Vec3 = .{ 1e-4, -1e-4, 1e-4 };
+const FD_WALL_SHIFTS = [_]f64{ 0, 2e-5, -2e-5, 5e-5, -5e-5 };
 /// Find ej (the locus session on 5e73cbcd): a sketch chain's result with a corner 3.95e-10
 /// past the zone from another edge's line, decided apart in place, read at the zone to
 /// rounding moved whole (a turn of π/4, then `EJ_SHIFT`). The tests' sheet: a unit square
@@ -2698,6 +2749,125 @@ test "Fuzz solids: plates in one plane at three corners of their overlap and pas
     }
 }
 
+test "Fuzz solids: a sliver of a fragment beside its section with a face a hair off parallel, within the tolerance of it all over, does not show the fragment's side, turned, mirrored, far and either way round" {
+    // The locus session's find fa on 419c261b (run 67819), as the fuzzer drew it: (plate ∪
+    // box ∪ hull) ∩ plate, the cutter turned by the angular tolerance less D27's band, its
+    // top 0.61° off the hull's and hinged on it where its front edge crossed the hull's top.
+    // A fragment of the hull's top, mostly above the cutter's top and in front of its side,
+    // had a sliver between its section with the cutter's top (the hinge) and its own edge
+    // 3.7e-5 under that top at most. The turn at the hinge read that sliver, inside, as
+    // clearly as the side's section read the fragment outside: `unclassified`,
+    // IntersectionFailed. The turn is the side only where the fragment leaves the piece
+    // past the tolerance of the face (`classify.departure`, OCCT's `PointNearEdge`, a
+    // point in the face), so the sliver's piece shows no side clearly. The cutter lifted by
+    // each of `FA_CUTTER_LIFTS`, the chain moved by each of the moves, the union and the
+    // intersection decided alike either way round, every operation through the solids
+    // oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    const plate_tol = tolerance.Tolerance.fromZone(PLATE_ZONE);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var plate_shape = try boxFrom(FA_PLATE[0], FA_PLATE[1], plate_tol, &diag);
+    defer plate_shape.deinit();
+    var plate = try euPlaced(&plate_shape, 0, @splat(0.5), FA_PLATE_MOVE, FA_PLATE_NUDGE, &diag);
+    defer plate.deinit();
+    var box_shape = try boxFrom(FA_BOX[0], FA_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    var box = try transform.transform(testing.allocator, &box_shape, &Affine.translate(FA_BOX_NUDGE).compose(&Affine.rotateAbout(middle, vec.Y3, 1e-6)), .{}, &diag);
+    defer box.deinit();
+    var first = try solid_boolean.tests.sound(&plate, &box, .@"union");
+    defer first.deinit();
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &FA_HULL, &diag);
+    defer hull_shape.deinit();
+    var hull_body = try euPlaced(&hull_shape, 0.3, null, vec.ZERO3, FA_HULL_NUDGE, &diag);
+    defer hull_body.deinit();
+    var joined = try solid_boolean.tests.sound(&first, &hull_body, .@"union");
+    defer joined.deinit();
+    var cutter_shape = try boxFrom(FA_CUTTER[0], FA_CUTTER[1], plate_tol, &diag);
+    defer cutter_shape.deinit();
+    for (FA_CUTTER_LIFTS) |lift| {
+        const place = Affine.translate(vec.add(FA_CUTTER_NUDGE, .{ 0, 0, lift })).compose(&Affine.scaleBy(FA_CUTTER_SCALE).compose(&Affine.rotateAbout(middle, vec.normalized(FA_CUTTER_AXIS).?, FA_CUTTER_TURN)));
+        var cutter = try transform.transform(testing.allocator, &cutter_shape, &place, .{}, &diag);
+        defer cutter.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &cutter, &move, .{}, &diag);
+            defer b.deinit();
+            errdefer std.debug.print("the cutter lifted {e} more, move {d}\n", .{ lift, m });
+            _ = try expectStepEitherWay(&a, &b, &diag);
+        }
+    }
+}
+
+test "Fuzz solids: a strip of a wall's face beside its section with a plate's end, within the tolerance of the end all over, does not show the face's side, turned, mirrored, far and either way round" {
+    // The locus_solids session's find fd on 419c261b (run 404245), as the fuzzer drew it:
+    // ((hull - box) ∪ plate) ∪ wall. A fragment of the wall's face, its normal a quarter of
+    // π off the plate's end, met the end along a section and ran beside it in a strip
+    // 3.6e-4 wide, within 1.5e-4 of the end all over, up to its own edge; the rest of it lay
+    // behind the hull's faces. The turn at the end's section read the strip, in front of
+    // the end, outside, as clearly as the sections with the hull's faces read the fragment
+    // inside: `unclassified`, IntersectionFailed. As in find fa, the turn is the side only
+    // where the fragment leaves the piece past the tolerance (`classify.departure`). The
+    // wall shifted by each of `FD_WALL_SHIFTS`, the chain moved by each of the moves, the
+    // union and the intersection decided alike either way round, every operation through
+    // the solids oracles
+    const moves = [_]Affine{
+        Affine.translate(vec.ZERO3),
+        Affine.rotate(vec.Z3, std.math.pi / 2.0),
+        Affine.rotate(vec.Z3, std.math.pi),
+        Affine.mirror(vec.X3),
+        Affine.translate(EI_FAR),
+        Affine.translate(EI_FAR).compose(&Affine.mirror(vec.X3)),
+    };
+    const plate_tol = tolerance.Tolerance.fromZone(PLATE_ZONE);
+    var diag = Diagnostics.init(testing.allocator);
+    defer diag.deinit();
+    const middle: vec.Vec3 = @splat(@as(f64, @floatFromInt(SOLID_GRID)) / 2);
+    var hull_shape = try solid_hull.hull(testing.allocator, tol, &FD_HULL, &diag);
+    defer hull_shape.deinit();
+    const hull_place = Affine.translate(vec.add(FD_HULL_MOVE, FD_HULL_NUDGE)).compose(&Affine.rotateAbout(middle, vec.normalized(FD_HULL_AXIS).?, FD_HULL_TURN));
+    var hull_body = try transform.transform(testing.allocator, &hull_shape, &hull_place, .{}, &diag);
+    defer hull_body.deinit();
+    var box_shape = try boxFrom(FD_BOX[0], FD_BOX[1], tol, &diag);
+    defer box_shape.deinit();
+    const box_place = Affine.translate(vec.add(FD_BOX_MOVE, FD_BOX_NUDGE)).compose(&Affine.rotateAbout(middle, vec.X3, std.math.pi / 4.0));
+    var box = try transform.transform(testing.allocator, &box_shape, &box_place, .{}, &diag);
+    defer box.deinit();
+    var cut = try solid_boolean.tests.sound(&hull_body, &box, .difference);
+    defer cut.deinit();
+    var plate_shape = try boxFrom(FD_PLATE[0], FD_PLATE[1], plate_tol, &diag);
+    defer plate_shape.deinit();
+    var plate = try euPlaced(&plate_shape, 0, null, FD_PLATE_MOVE, FD_PLATE_NUDGE, &diag);
+    defer plate.deinit();
+    var joined = try solid_boolean.tests.sound(&cut, &plate, .@"union");
+    defer joined.deinit();
+    const wall: GapShape = .{ .kind = .wall, .at = FD_WALL_AT, .lo = FD_WALL_LO, .hi = FD_WALL_HI, .xsects = std.mem.indexOfScalar(f64, &GAP_XSECTS, FD_WALL_XSECTS).? };
+    var wall_shape = try wall.build(plate_tol, &diag);
+    defer wall_shape.deinit();
+    for (FD_WALL_SHIFTS) |shift| {
+        const place = Affine.translate(vec.add(FD_WALL_NUDGE, .{ shift, 0, 0 })).compose(&Affine.rotateAbout(middle, vec.Y3, std.math.pi / 4.0));
+        var wall_body = try transform.transform(testing.allocator, &wall_shape, &place, .{}, &diag);
+        defer wall_body.deinit();
+        for (moves, 0..) |move, m| {
+            var a = try transform.transform(testing.allocator, &joined, &move, .{}, &diag);
+            defer a.deinit();
+            var b = try transform.transform(testing.allocator, &wall_body, &move, .{}, &diag);
+            defer b.deinit();
+            errdefer std.debug.print("the wall shifted {e} more, move {d}\n", .{ shift, m });
+            _ = try expectStepEitherWay(&a, &b, &diag);
+        }
+    }
+}
+
 /// The step of `a` and `b` either way round (`expectStepWith`), the union and the
 /// intersection decided alike both ways: refused for the same finding or made with the
 /// same counts. The outcomes of `a` with `b`, by `oracle.OPS`.
@@ -3867,6 +4037,16 @@ test "Fuzz finds: the finds of 2026-11-13 replay clean, the local sessions' and 
         // each face's edge across the other and out there, imprinted on neither,
         // imprint_unmatched (pave.passesOut: a block from the boundary out, apartInPlane)
         "solids 2 2 3 0 4 2 3 1 1 -1 3 -2 15 1 3 2 0 4 2 3 2 3 0 3 8 3 -2 8 11 8 2",
+        // The locus session on 419c261b (fa, run 67819): (plate ∪ box ∪ hull) ∩ plate turned
+        // the angular tolerance less the band, a wedge of the hull's top within the tolerance
+        // of the cutter's top beside their hinge read inside by the turn, the rest outside,
+        // unclassified (classify.departure: the point in the fragment)
+        "solids 2 0 4 1 3 0 2 1 0 0 0 0 -2 7 1 15 3 1 0 2 4 1 3 0 4 0 1 7 3 11 3 7 7 0 2 1 8 1 4 0 1 3 3 1 0 3 0 1 0 3 1 1 3 2 3 3 3 1 0 4 1 0 2 3 1 4 7 6 15 0 2 2 1 4 2 3 0 3 0 3 5 0 1 0 1 5 6 4 11 2",
+        // The locus_solids session on 419c261b (fd, run 404245): ((hull - box) ∪ plate) ∪ wall,
+        // a strip of the wall's face within the tolerance of the plate's end read outside by
+        // the turn, the rest inside, unclassified (classify.departure: the point in the
+        // fragment)
+        "solids 1 8 0 0 2 1 0 0 3 4 1 1 4 3 0 0 1 1 1 3 3 2 3 4 1 2 0 3 4 3 2 10 11 1 1 7 3 2 0 2 4 0 2 2 4 0 0 2 2 11 2 9 12 1 2 2 2 4 1 2 0 4 1 2 7 -2 -2 7 0 1 3 1 4 2 3 4 4 0 3 4 2 3 0 1 2 5 6 5 6 0",
     };
     for (finds) |line| {
         errdefer std.debug.print("the replay that failed: {s}\n", .{line});
